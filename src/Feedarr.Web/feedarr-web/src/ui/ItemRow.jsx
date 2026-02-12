@@ -1,6 +1,6 @@
 import React from "react";
-import { IonToggle } from "@ionic/react";
 import AppIcon from "./AppIcon.jsx";
+import ToggleSwitch from "./ToggleSwitch.jsx";
 
 /**
  * IconBtn - Bouton avec icône lucide-react
@@ -105,11 +105,10 @@ export default function ItemRow({
           ))}
 
           {showToggle && (
-            <IonToggle
+            <ToggleSwitch
               checked={enabled}
               onIonChange={onToggle}
               disabled={toggleDisabled}
-              className="settings-toggle"
               title={enabled ? "Désactiver" : "Activer"}
             />
           )}

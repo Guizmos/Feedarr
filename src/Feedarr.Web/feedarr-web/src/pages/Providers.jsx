@@ -4,16 +4,13 @@ import Loader from "../ui/Loader.jsx";
 import { useSubbarSetter } from "../layout/useSubbar.js";
 import SubAction from "../ui/SubAction.jsx";
 import Modal from "../ui/Modal.jsx";
-import { IonToggle, setupIonicReact } from "@ionic/react";
-import "@ionic/react/css/core.css";
+import ToggleSwitch from "../ui/ToggleSwitch.jsx";
 import ItemRow from "../ui/ItemRow.jsx";
 import {
   buildProviderRows,
   labelForProviderType,
   normalizeProviderBaseUrl,
 } from "./providersListModel.js";
-
-setupIonicReact({ mode: "md" });
 
 function shouldRetryJackett(error) {
   const msg = String(error?.message || "");
@@ -545,7 +542,7 @@ export default function Providers() {
           <div className="formactions">
             <div className="formactions-row">
               <div className="formactions-left">
-                <IonToggle
+                <ToggleSwitch
                   checked={modalEnabled}
                   onIonChange={(e) => setModalEnabled(e.detail.checked)}
                   className="settings-toggle"

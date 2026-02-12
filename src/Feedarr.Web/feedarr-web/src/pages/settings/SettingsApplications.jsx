@@ -1,9 +1,9 @@
 import React from "react";
 import Modal from "../../ui/Modal.jsx";
 import ItemRow from "../../ui/ItemRow.jsx";
-import { IonToggle } from "@ionic/react";
 import { fmtBytes } from "./settingsUtils.js";
 import AppIcon from "../../ui/AppIcon.jsx";
+import ToggleSwitch from "../../ui/ToggleSwitch.jsx";
 
 export default function SettingsApplications({
   arrApps,
@@ -173,7 +173,7 @@ export default function SettingsApplications({
                   <span className="indexer-status">
                     {arrSyncSettings.arrAutoSyncEnabled ? "Actif" : "Desactive"}
                   </span>
-                  <IonToggle
+                  <ToggleSwitch
                     checked={arrSyncSettings.arrAutoSyncEnabled}
                     onIonChange={(e) => {
                       const enabled = e.detail.checked;
@@ -521,7 +521,7 @@ export default function SettingsApplications({
                     <div className="indexer-row indexer-row--settings">
                       <span className="indexer-title">Dossiers par saison</span>
                       <div className="indexer-actions">
-                        <IonToggle
+                        <ToggleSwitch
                           checked={arrModalSeasonFolder}
                           onIonChange={(e) => setArrModalSeasonFolder(e.detail.checked)}
                           className="settings-toggle"
@@ -534,7 +534,7 @@ export default function SettingsApplications({
                     <div className="indexer-row indexer-row--settings">
                       <span className="indexer-title">Rechercher épisodes manquants</span>
                       <div className="indexer-actions">
-                        <IonToggle
+                        <ToggleSwitch
                           checked={arrModalSearchMissing}
                           onIonChange={(e) => setArrModalSearchMissing(e.detail.checked)}
                           className="settings-toggle"
@@ -547,7 +547,7 @@ export default function SettingsApplications({
                     <div className="indexer-row indexer-row--settings">
                       <span className="indexer-title">Rechercher cutoff non atteint</span>
                       <div className="indexer-actions">
-                        <IonToggle
+                        <ToggleSwitch
                           checked={arrModalSearchCutoff}
                           onIonChange={(e) => setArrModalSearchCutoff(e.detail.checked)}
                           className="settings-toggle"
@@ -576,7 +576,7 @@ export default function SettingsApplications({
                     <div className="indexer-row indexer-row--settings">
                       <span className="indexer-title">Rechercher le film à l'ajout</span>
                       <div className="indexer-actions">
-                        <IonToggle
+                        <ToggleSwitch
                           checked={arrModalSearchForMovie}
                           onIonChange={(e) => setArrModalSearchForMovie(e.detail.checked)}
                           className="settings-toggle"

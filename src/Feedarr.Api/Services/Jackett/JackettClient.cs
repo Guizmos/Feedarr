@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Feedarr.Api.Services.Security;
 
 namespace Feedarr.Api.Services.Jackett;
 
@@ -13,12 +14,9 @@ public sealed class JackettClient
 
     private static string NormalizeBaseUrl(string baseUrl)
     {
-        var trimmed = (baseUrl ?? "").Trim().TrimEnd('/');
-        if (trimmed.EndsWith("/api/v2.0", StringComparison.OrdinalIgnoreCase))
-        {
-            trimmed = trimmed[..^"/api/v2.0".Length];
-        }
-        return trimmed;
+        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl("jackett", baseUrl, out var normalizedBaseUrl, out var error))
+            throw new ArgumentException(error, nameof(baseUrl));
+        return normalizedBaseUrl;
     }
 
     private static string BuildIndexersUrl(string baseUrl, string apiKey)

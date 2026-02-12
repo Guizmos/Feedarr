@@ -8,6 +8,9 @@ using Feedarr.Api.Dtos.System;
 using Feedarr.Api.Options;
 using Feedarr.Api.Services;
 using Feedarr.Api.Services.Backup;
+using Feedarr.Api.Services.Diagnostics;
+using Feedarr.Api.Services.Security;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace Feedarr.Api.Controllers;
 
@@ -16,6 +19,9 @@ namespace Feedarr.Api.Controllers;
 public sealed class SystemController : ControllerBase
 {
     private static readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
+    private static readonly TimeSpan StorageUsageCacheDuration = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan StatsCacheDuration = TimeSpan.FromSeconds(20);
+    private const string StorageUsageCacheKey = "system:storage-usage:v1";
     private static readonly Regex _semVerRegex = new(
         @"(?<!\d)v?(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase
@@ -26,7 +32,9 @@ public sealed class SystemController : ControllerBase
     private readonly AppOptions _opts;
     private readonly SettingsRepository _settings;
     private readonly ProviderStatsService _providerStats;
+    private readonly ApiRequestMetricsService _apiRequestMetrics;
     private readonly BackupService _backupService;
+    private readonly IMemoryCache _cache;
     private readonly ILogger<SystemController> _log;
 
     private string DataDirAbs =>
@@ -44,7 +52,9 @@ public sealed class SystemController : ControllerBase
         Microsoft.Extensions.Options.IOptions<AppOptions> opts,
         SettingsRepository settings,
         ProviderStatsService providerStats,
+        ApiRequestMetricsService apiRequestMetrics,
         BackupService backupService,
+        IMemoryCache cache,
         ILogger<SystemController> log)
     {
         _db = db;
@@ -52,7 +62,9 @@ public sealed class SystemController : ControllerBase
         _opts = opts.Value;
         _settings = settings;
         _providerStats = providerStats;
+        _apiRequestMetrics = apiRequestMetrics;
         _backupService = backupService;
+        _cache = cache;
         _log = log;
     }
 
@@ -96,8 +108,8 @@ public sealed class SystemController : ControllerBase
             Version = version,
             Environment = _env.EnvironmentName,
             UptimeSeconds = (long)(DateTimeOffset.UtcNow - _startedAt).TotalSeconds,
-            DataDir = _opts.DataDir ?? "data",
-            DbPath = _db.DbPath,
+            DataDir = "hidden",
+            DbPath = Path.GetFileName(_db.DbPath),
             DbSizeMB = dbSizeMb,
             SourcesCount = sourcesCount,
             ReleasesCount = releasesCount,
@@ -122,6 +134,13 @@ public sealed class SystemController : ControllerBase
             fanart = new { calls = stats.Fanart.Calls, failures = stats.Fanart.Failures, avgMs = stats.Fanart.AvgMs },
             igdb = new { calls = stats.Igdb.Calls, failures = stats.Igdb.Failures, avgMs = stats.Igdb.AvgMs }
         });
+    }
+
+    // GET /api/system/perf
+    [HttpGet("perf")]
+    public IActionResult Performance([FromQuery] int top = 20)
+    {
+        return Ok(_apiRequestMetrics.Snapshot(top));
     }
 
     // GET /api/system/onboarding
@@ -275,6 +294,10 @@ public sealed class SystemController : ControllerBase
     [HttpGet("stats/summary")]
     public IActionResult StatsSummary()
     {
+        const string cacheKey = "system:stats:summary:v1";
+        if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
+            return Ok(cached);
+
         using var conn = _db.Open();
 
         var activeIndexers = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM sources WHERE enabled = 1;");
@@ -288,10 +311,8 @@ public sealed class SystemController : ControllerBase
         var totalFailures = providerStats.Tmdb.Failures + providerStats.Tvmaze.Failures
                           + providerStats.Fanart.Failures + providerStats.Igdb.Failures;
 
-        var postersDir = Path.Combine(_opts.DataDir ?? "data", "posters");
-        var localPosters = 0;
-        try { if (Directory.Exists(postersDir)) localPosters = Directory.GetFiles(postersDir, "*.*", SearchOption.TopDirectoryOnly).Length; }
-        catch (Exception ex) { _log.LogWarning(ex, "Failed to count local posters"); }
+        var storage = GetStorageUsageSnapshot();
+        var localPosters = storage.PostersTopLevelCount;
 
         var missingPoster = conn.ExecuteScalar<int>(
             @"SELECT COUNT(1) FROM releases
@@ -302,7 +323,7 @@ public sealed class SystemController : ControllerBase
             ? (int)Math.Round(((releasesCount - missingPoster) / (double)releasesCount) * 100)
             : 0;
 
-        return Ok(new
+        var payload = new
         {
             version = GetAppVersion(),
             uptimeSeconds = (long)(DateTimeOffset.UtcNow - _startedAt).TotalSeconds,
@@ -312,7 +333,10 @@ public sealed class SystemController : ControllerBase
             totalFailures,
             releasesCount,
             matchingPercent = Math.Max(0, Math.Min(100, matchingPercent))
-        });
+        };
+
+        _cache.Set(cacheKey, payload, StatsCacheDuration);
+        return Ok(payload);
     }
 
     // GET /api/system/stats/feedarr - Feedarr overview tab
@@ -320,23 +344,17 @@ public sealed class SystemController : ControllerBase
     public IActionResult StatsFeedarr([FromQuery] int days = 30)
     {
         days = days switch { 7 => 7, 90 => 90, _ => 30 };
+        var cacheKey = $"system:stats:feedarr:v1:{days}";
+        if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
+            return Ok(cached);
 
         using var conn = _db.Open();
 
         var releasesCount = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM releases;");
 
-        var dbSizeMb = 0.0;
-        try
-        {
-            if (System.IO.File.Exists(_db.DbPath))
-                dbSizeMb = Math.Round(new FileInfo(_db.DbPath).Length / 1024d / 1024d, 2);
-        }
-        catch (Exception ex) { _log.LogWarning(ex, "Failed to read database size"); }
-
-        var postersDir = Path.Combine(_opts.DataDir ?? "data", "posters");
-        var localPosters = 0;
-        try { if (Directory.Exists(postersDir)) localPosters = Directory.GetFiles(postersDir, "*.*", SearchOption.TopDirectoryOnly).Length; }
-        catch (Exception ex) { _log.LogWarning(ex, "Failed to count local posters"); }
+        var storage = GetStorageUsageSnapshot();
+        var dbSizeMb = Math.Round(storage.DatabaseBytes / 1024d / 1024d, 2);
+        var localPosters = storage.PostersTopLevelCount;
 
         var missingPosters = conn.ExecuteScalar<int>(
             @"SELECT COUNT(1) FROM releases
@@ -369,47 +387,45 @@ public sealed class SystemController : ControllerBase
             new { sinceTs }
         ).Select(r => new { date = r.date, count = r.count }).ToList();
 
-        // Storage breakdown
-        long databaseBytes = 0, postersBytes = 0, backupsBytes = 0;
-        try { if (System.IO.File.Exists(DbPathAbs)) databaseBytes = new FileInfo(DbPathAbs).Length; }
-        catch (Exception ex) { _log.LogWarning(ex, "Failed to read database file size"); }
-        try
-        {
-            var pd = Path.Combine(DataDirAbs, "posters");
-            if (Directory.Exists(pd))
-                postersBytes = Directory.GetFiles(pd, "*.*", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length);
-        }
-        catch (Exception ex) { _log.LogWarning(ex, "Failed to calculate posters directory size"); }
-        try
-        {
-            if (Directory.Exists(BackupDirAbs))
-                backupsBytes = Directory.GetFiles(BackupDirAbs, "*.zip", SearchOption.TopDirectoryOnly).Sum(f => new FileInfo(f).Length);
-        }
-        catch (Exception ex) { _log.LogWarning(ex, "Failed to calculate backups directory size"); }
+        // Storage breakdown (cached)
+        var databaseBytes = storage.DatabaseBytes;
+        var postersBytes = storage.PostersBytes;
+        var backupsBytes = storage.BackupsBytes;
 
-        // Arr apps stats
-        var arrApps = conn.Query<(long id, string name, string type, int isEnabled)>(
-            "SELECT id, name, type, is_enabled FROM arr_applications ORDER BY type, name"
-        ).Select(a =>
+        // Arr apps stats (single query, no N+1)
+        var arrApps = conn.Query<ArrAppStatsRow>(
+            """
+            SELECT
+                a.id as Id,
+                a.name as Name,
+                a.type as Type,
+                a.is_enabled as IsEnabled,
+                COALESCE(li.library_count, 0) as LibraryCount,
+                s.last_sync_at as LastSyncAt,
+                COALESCE(s.last_sync_count, 0) as LastSyncCount,
+                s.last_error as LastError
+            FROM arr_applications a
+            LEFT JOIN (
+                SELECT app_id, COUNT(*) as library_count
+                FROM arr_library_items
+                GROUP BY app_id
+            ) li ON li.app_id = a.id
+            LEFT JOIN arr_sync_status s ON s.app_id = a.id
+            ORDER BY a.type, a.name;
+            """
+        ).Select(row => new
         {
-            var itemCount = conn.ExecuteScalar<int>(
-                "SELECT COUNT(*) FROM arr_library_items WHERE app_id = @id",
-                new { id = a.id });
-            var syncRow = conn.QueryFirstOrDefault<(string lastSyncAt, int? lastSyncCount, string lastError)>(
-                "SELECT last_sync_at, last_sync_count, last_error FROM arr_sync_status WHERE app_id = @id",
-                new { id = a.id });
-            return new
-            {
-                id = a.id, name = a.name, type = a.type,
-                enabled = a.isEnabled == 1,
-                libraryCount = itemCount,
-                lastSyncAt = syncRow.lastSyncAt,
-                lastSyncCount = syncRow.lastSyncCount ?? 0,
-                lastError = syncRow.lastError
-            };
+            id = row.Id,
+            name = row.Name,
+            type = row.Type,
+            enabled = row.IsEnabled == 1,
+            libraryCount = row.LibraryCount,
+            lastSyncAt = row.LastSyncAt,
+            lastSyncCount = row.LastSyncCount,
+            lastError = row.LastError
         }).ToList();
 
-        return Ok(new
+        var payload = new
         {
             version = GetAppVersion(),
             uptimeSeconds = (long)(DateTimeOffset.UtcNow - _startedAt).TotalSeconds,
@@ -424,13 +440,20 @@ public sealed class SystemController : ControllerBase
             releasesPerDay,
             storage = new { databaseBytes, postersBytes, backupsBytes },
             arrApps
-        });
+        };
+
+        _cache.Set(cacheKey, payload, StatsCacheDuration);
+        return Ok(payload);
     }
 
     // GET /api/system/stats/indexers - Indexers tab
     [HttpGet("stats/indexers")]
     public IActionResult StatsIndexers()
     {
+        const string cacheKey = "system:stats:indexers:v1";
+        if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
+            return Ok(cached);
+
         using var conn = _db.Open();
 
         var activeIndexers = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM sources WHERE enabled = 1;");
@@ -471,13 +494,16 @@ public sealed class SystemController : ControllerBase
             lastStatus = r.lastStatus, lastError = r.lastError, lastItemCount = r.lastItemCount
         }).ToList();
 
-        return Ok(new
+        var payload = new
         {
             activeIndexers, totalIndexers,
             queries = indexerStats.Queries, failures = indexerStats.Failures,
             syncJobs = indexerStats.SyncJobs, syncFailures = indexerStats.SyncFailures,
             indexerStatsBySource, releasesByCategoryByIndexer, indexerDetails
-        });
+        };
+
+        _cache.Set(cacheKey, payload, StatsCacheDuration);
+        return Ok(payload);
     }
 
     // GET /api/system/stats/providers - Providers tab
@@ -499,11 +525,21 @@ public sealed class SystemController : ControllerBase
     [HttpGet("stats/releases")]
     public IActionResult StatsReleases()
     {
+        const string cacheKey = "system:stats:releases:v1";
+        if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
+            return Ok(cached);
+
         using var conn = _db.Open();
 
         var releasesCount = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM releases;");
         var withPoster = conn.ExecuteScalar<int>(
-            "SELECT COUNT(1) FROM releases WHERE poster_file IS NOT NULL AND poster_file != '';");
+            """
+            SELECT COUNT(1)
+            FROM releases
+            LEFT JOIN media_entities me ON me.id = releases.entity_id
+            WHERE COALESCE(releases.poster_file, me.poster_file) IS NOT NULL
+              AND COALESCE(releases.poster_file, me.poster_file) != '';
+            """);
         var missingPoster = releasesCount - withPoster;
 
         var releasesByCategory = conn.Query<(int categoryId, int count)>(
@@ -552,17 +588,24 @@ public sealed class SystemController : ControllerBase
               LIMIT 20"
         ).Select(r => new { title = r.title, grabs = r.grabs, seeders = r.seeders ?? 0, sizeBytes = r.sizeBytes ?? 0, categoryId = r.categoryId ?? 0 }).ToList();
 
-        return Ok(new
+        var payload = new
         {
             releasesCount, withPoster, missingPoster,
             releasesByCategory, sizeDistribution, seedersDistribution, topGrabbed
-        });
+        };
+
+        _cache.Set(cacheKey, payload, StatsCacheDuration);
+        return Ok(payload);
     }
 
     // GET /api/system/stats - Extended statistics for dashboard (legacy)
     [HttpGet("stats")]
     public IActionResult Stats()
     {
+        const string cacheKey = "system:stats:legacy:v1";
+        if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
+            return Ok(cached);
+
         using var conn = _db.Open();
 
         // Basic counts
@@ -570,35 +613,9 @@ public sealed class SystemController : ControllerBase
         var totalIndexers = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM sources;");
         var releasesCount = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM releases;");
 
-        // Database size
-        var dbSizeMb = 0.0;
-        try
-        {
-            if (System.IO.File.Exists(_db.DbPath))
-            {
-                var bytes = new FileInfo(_db.DbPath).Length;
-                dbSizeMb = Math.Round(bytes / 1024d / 1024d, 2);
-            }
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Failed to read database size for stats endpoint");
-        }
-
-        // Poster count
-        var postersDir = Path.Combine(_opts.DataDir ?? "data", "posters");
-        var localPosters = 0;
-        try
-        {
-            if (Directory.Exists(postersDir))
-            {
-                localPosters = Directory.GetFiles(postersDir, "*.*", SearchOption.TopDirectoryOnly).Length;
-            }
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Failed to count local posters for stats endpoint");
-        }
+        var storage = GetStorageUsageSnapshot();
+        var dbSizeMb = Math.Round(storage.DatabaseBytes / 1024d / 1024d, 2);
+        var localPosters = storage.PostersTopLevelCount;
 
         // Provider stats
         var providerStats = _providerStats.Snapshot();
@@ -644,7 +661,7 @@ public sealed class SystemController : ControllerBase
             count = r.count
         }).ToList();
 
-        return Ok(new
+        var payload = new
         {
             // Summary cards
             activeIndexers,
@@ -677,7 +694,10 @@ public sealed class SystemController : ControllerBase
             releasesByCategory,
             indexerStatsBySource,
             releasesByCategoryByIndexer
-        });
+        };
+
+        _cache.Set(cacheKey, payload, StatsCacheDuration);
+        return Ok(payload);
     }
 
     // GET /api/system/storage
@@ -758,50 +778,15 @@ public sealed class SystemController : ControllerBase
             }
         }
 
+        var storage = GetStorageUsageSnapshot();
+
         // Calculate usage
         var usage = new StorageUsageDto();
-
-        // Database size
-        try
-        {
-            if (System.IO.File.Exists(DbPathAbs))
-                usage.DatabaseBytes = new FileInfo(DbPathAbs).Length;
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Failed to read database size for storage endpoint");
-        }
-
-        // Posters folder
-        var postersDir = Path.Combine(DataDirAbs, "posters");
-        try
-        {
-            if (Directory.Exists(postersDir))
-            {
-                var files = Directory.GetFiles(postersDir, "*.*", SearchOption.AllDirectories);
-                usage.PostersCount = files.Length;
-                usage.PostersBytes = files.Sum(f => new FileInfo(f).Length);
-            }
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Failed to calculate posters storage usage in {PostersDir}", postersDir);
-        }
-
-        // Backups folder
-        try
-        {
-            if (Directory.Exists(BackupDirAbs))
-            {
-                var files = Directory.GetFiles(BackupDirAbs, "*.zip", SearchOption.TopDirectoryOnly);
-                usage.BackupsCount = files.Length;
-                usage.BackupsBytes = files.Sum(f => new FileInfo(f).Length);
-            }
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Failed to calculate backups storage usage in {BackupDir}", BackupDirAbs);
-        }
+        usage.DatabaseBytes = storage.DatabaseBytes;
+        usage.PostersCount = storage.PostersRecursiveCount;
+        usage.PostersBytes = storage.PostersBytes;
+        usage.BackupsCount = storage.BackupsCount;
+        usage.BackupsBytes = storage.BackupsBytes;
 
         return Ok(new StorageInfoDto
         {
@@ -852,12 +837,102 @@ public sealed class SystemController : ControllerBase
             return StatusCode(ex.StatusCode, new { error = "internal server error" });
         }
 
+        var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "backup operation failed");
         return ex.StatusCode switch
         {
-            StatusCodes.Status400BadRequest => BadRequest(new { error = ex.Message }),
-            StatusCodes.Status404NotFound => NotFound(new { error = ex.Message }),
-            StatusCodes.Status409Conflict => Conflict(new { error = ex.Message }),
-            _ => StatusCode(ex.StatusCode, new { error = ex.Message })
+            StatusCodes.Status400BadRequest => BadRequest(new { error = safeError }),
+            StatusCodes.Status404NotFound => NotFound(new { error = safeError }),
+            StatusCodes.Status409Conflict => Conflict(new { error = safeError }),
+            _ => StatusCode(ex.StatusCode, new { error = safeError })
         };
     }
+
+    private StorageUsageSnapshot GetStorageUsageSnapshot()
+    {
+        if (_cache.TryGetValue(StorageUsageCacheKey, out StorageUsageSnapshot? cached) && cached is not null)
+            return cached;
+
+        var snapshot = ComputeStorageUsageSnapshot();
+        _cache.Set(StorageUsageCacheKey, snapshot, StorageUsageCacheDuration);
+        return snapshot;
+    }
+
+    private StorageUsageSnapshot ComputeStorageUsageSnapshot()
+    {
+        long databaseBytes = 0;
+        int postersTopLevelCount = 0;
+        int postersRecursiveCount = 0;
+        long postersBytes = 0;
+        int backupsCount = 0;
+        long backupsBytes = 0;
+
+        try
+        {
+            if (System.IO.File.Exists(DbPathAbs))
+                databaseBytes = new FileInfo(DbPathAbs).Length;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to read database size");
+        }
+
+        var postersDir = Path.Combine(DataDirAbs, "posters");
+        try
+        {
+            if (Directory.Exists(postersDir))
+            {
+                postersTopLevelCount = Directory.GetFiles(postersDir, "*.*", SearchOption.TopDirectoryOnly).Length;
+                var files = Directory.GetFiles(postersDir, "*.*", SearchOption.AllDirectories);
+                postersRecursiveCount = files.Length;
+                postersBytes = files.Sum(f => new FileInfo(f).Length);
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to calculate posters usage in {PostersDir}", postersDir);
+        }
+
+        try
+        {
+            if (Directory.Exists(BackupDirAbs))
+            {
+                var files = Directory.GetFiles(BackupDirAbs, "*.zip", SearchOption.TopDirectoryOnly);
+                backupsCount = files.Length;
+                backupsBytes = files.Sum(f => new FileInfo(f).Length);
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to calculate backups usage in {BackupDir}", BackupDirAbs);
+        }
+
+        return new StorageUsageSnapshot(
+            databaseBytes,
+            postersTopLevelCount,
+            postersRecursiveCount,
+            postersBytes,
+            backupsCount,
+            backupsBytes
+        );
+    }
+
+    private sealed class ArrAppStatsRow
+    {
+        public long Id { get; set; }
+        public string Name { get; set; } = "";
+        public string Type { get; set; } = "";
+        public int IsEnabled { get; set; }
+        public int LibraryCount { get; set; }
+        public string? LastSyncAt { get; set; }
+        public int LastSyncCount { get; set; }
+        public string? LastError { get; set; }
+    }
+
+    private sealed record StorageUsageSnapshot(
+        long DatabaseBytes,
+        int PostersTopLevelCount,
+        int PostersRecursiveCount,
+        long PostersBytes,
+        int BackupsCount,
+        long BackupsBytes);
 }

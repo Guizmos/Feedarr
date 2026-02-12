@@ -5,6 +5,7 @@ using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Dtos.Providers;
 using Feedarr.Api.Services.Jackett;
 using Feedarr.Api.Services.Prowlarr;
+using Feedarr.Api.Services.Security;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Memory;
@@ -71,9 +72,8 @@ public sealed class ProvidersController : ControllerBase
         if (type is null)
             return Problem(title: "provider type invalid", statusCode: StatusCodes.Status400BadRequest);
 
-        var baseUrl = NormalizeBaseUrl(type, dto.BaseUrl);
-        if (string.IsNullOrWhiteSpace(baseUrl))
-            return Problem(title: "baseUrl missing", statusCode: StatusCodes.Status400BadRequest);
+        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl(type, dto.BaseUrl, out var baseUrl, out var baseUrlError))
+            return Problem(title: baseUrlError, statusCode: StatusCodes.Status400BadRequest);
 
         var apiKey = (dto.ApiKey ?? "").Trim();
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -94,9 +94,8 @@ public sealed class ProvidersController : ControllerBase
         if (type is null)
             return Problem(title: "provider type invalid", statusCode: StatusCodes.Status400BadRequest);
 
-        var baseUrl = NormalizeBaseUrl(type, dto.BaseUrl);
-        if (string.IsNullOrWhiteSpace(baseUrl))
-            return Problem(title: "baseUrl missing", statusCode: StatusCodes.Status400BadRequest);
+        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl(type, dto.BaseUrl, out var baseUrl, out var baseUrlError))
+            return Problem(title: baseUrlError, statusCode: StatusCodes.Status400BadRequest);
 
         var apiKey = (dto.ApiKey ?? "").Trim();
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -122,7 +121,7 @@ public sealed class ProvidersController : ControllerBase
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Provider test failed (inline)");
-            return Problem(title: "provider test failed", detail: ex.Message, statusCode: StatusCodes.Status502BadGateway);
+            return Problem(title: "provider test failed", detail: "upstream provider unavailable", statusCode: StatusCodes.Status502BadGateway);
         }
     }
 
@@ -141,12 +140,11 @@ public sealed class ProvidersController : ControllerBase
         if (string.IsNullOrWhiteSpace(name))
             name = DefaultName(type);
 
-        var baseUrl = string.IsNullOrWhiteSpace(dto.BaseUrl)
+        var rawBaseUrl = string.IsNullOrWhiteSpace(dto.BaseUrl)
             ? current.BaseUrl ?? ""
-            : NormalizeBaseUrl(type, dto.BaseUrl!);
-
-        if (string.IsNullOrWhiteSpace(baseUrl))
-            return Problem(title: "baseUrl missing", statusCode: StatusCodes.Status400BadRequest);
+            : dto.BaseUrl!;
+        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl(type, rawBaseUrl, out var baseUrl, out var baseUrlError))
+            return Problem(title: baseUrlError, statusCode: StatusCodes.Status400BadRequest);
 
         string? apiKeyMaybe = null;
         if (!string.IsNullOrWhiteSpace(dto.ApiKey))
@@ -213,17 +211,19 @@ public sealed class ProvidersController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(apiKey))
             return Problem(title: "provider configuration incomplete", statusCode: StatusCodes.Status400BadRequest);
+        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl(type, baseUrl, out var normalizedBaseUrl, out _))
+            return Problem(title: "provider baseUrl invalid", statusCode: StatusCodes.Status400BadRequest);
 
         try
         {
             List<(string id, string name, string torznabUrl)> list;
             if (type.Equals("prowlarr", StringComparison.OrdinalIgnoreCase))
             {
-                list = await _prowlarr.ListIndexersAsync(baseUrl, apiKey, ct);
+                list = await _prowlarr.ListIndexersAsync(normalizedBaseUrl, apiKey, ct);
             }
             else if (type.Equals("jackett", StringComparison.OrdinalIgnoreCase))
             {
-                list = await _jackett.ListIndexersAsync(baseUrl, apiKey, ct);
+                list = await _jackett.ListIndexersAsync(normalizedBaseUrl, apiKey, ct);
             }
             else
             {
@@ -235,7 +235,7 @@ public sealed class ProvidersController : ControllerBase
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Provider test failed: {Id}", id);
-            return Problem(title: "provider test failed", detail: ex.Message, statusCode: StatusCodes.Status502BadGateway);
+            return Problem(title: "provider test failed", detail: "upstream provider unavailable", statusCode: StatusCodes.Status502BadGateway);
         }
     }
 
@@ -252,6 +252,8 @@ public sealed class ProvidersController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(apiKey))
             return Problem(title: "provider configuration incomplete", statusCode: StatusCodes.Status400BadRequest);
+        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl(type, baseUrl, out var normalizedBaseUrl, out _))
+            return Problem(title: "provider baseUrl invalid", statusCode: StatusCodes.Status400BadRequest);
 
         if (!type.Equals("jackett", StringComparison.OrdinalIgnoreCase) &&
             !type.Equals("prowlarr", StringComparison.OrdinalIgnoreCase))
@@ -259,7 +261,7 @@ public sealed class ProvidersController : ControllerBase
 
         try
         {
-            List<(string id, string name, string torznabUrl)> list = await GetCachedIndexersAsync(id, type, baseUrl, apiKey, ct);
+            List<(string id, string name, string torznabUrl)> list = await GetCachedIndexersAsync(id, type, normalizedBaseUrl, apiKey, ct);
             var result = new List<object>(list.Count);
             foreach (var x in list)
             {
@@ -270,7 +272,7 @@ public sealed class ProvidersController : ControllerBase
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Provider indexers fetch failed: {Id}", id);
-            return Problem(title: "provider indexers fetch failed", detail: ex.Message, statusCode: StatusCodes.Status502BadGateway);
+            return Problem(title: "provider indexers fetch failed", detail: "upstream provider unavailable", statusCode: StatusCodes.Status502BadGateway);
         }
     }
 
@@ -325,22 +327,6 @@ public sealed class ProvidersController : ControllerBase
 
     private static string DefaultName(string type)
         => type.Equals("prowlarr", StringComparison.OrdinalIgnoreCase) ? "Prowlarr" : "Jackett";
-
-    private static string NormalizeBaseUrl(string type, string baseUrl)
-    {
-        var trimmed = (baseUrl ?? "").Trim().TrimEnd('/');
-        if (type.Equals("jackett", StringComparison.OrdinalIgnoreCase) &&
-            trimmed.EndsWith("/api/v2.0", StringComparison.OrdinalIgnoreCase))
-        {
-            trimmed = trimmed[..^"/api/v2.0".Length];
-        }
-        if (type.Equals("prowlarr", StringComparison.OrdinalIgnoreCase) &&
-            trimmed.EndsWith("/api/v1", StringComparison.OrdinalIgnoreCase))
-        {
-            trimmed = trimmed[..^"/api/v1".Length];
-        }
-        return trimmed;
-    }
 
     private sealed record CacheEntry(string Fingerprint, List<(string id, string name, string torznabUrl)> Indexers);
 }

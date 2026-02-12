@@ -1,5 +1,5 @@
 import React from "react";
-import { IonToggle } from "@ionic/react";
+import ToggleSwitch from "../../ui/ToggleSwitch.jsx";
 
 export default function SettingsUI({
   ui,
@@ -22,7 +22,7 @@ export default function SettingsUI({
                 <span className="indexer-status">
                   {ui.hideSeenByDefault ? "Actif" : "Désactivé"}
                 </span>
-                <IonToggle
+                <ToggleSwitch
                   checked={ui.hideSeenByDefault}
                   onIonChange={(e) => setUi((u) => ({ ...u, hideSeenByDefault: e.detail.checked }))}
                   className="settings-toggle"
@@ -38,7 +38,7 @@ export default function SettingsUI({
                 <span className="indexer-status">
                   {ui.showCategories ? "Actif" : "Désactivé"}
                 </span>
-                <IonToggle
+                <ToggleSwitch
                   checked={ui.showCategories}
                   onIonChange={(e) => setUi((u) => ({ ...u, showCategories: e.detail.checked }))}
                   className="settings-toggle"
@@ -54,7 +54,7 @@ export default function SettingsUI({
                 <span className="indexer-status">
                   {ui.enableMissingPosterView ? "Actif" : "Désactivé"}
                 </span>
-                <IonToggle
+                <ToggleSwitch
                   checked={ui.enableMissingPosterView}
                   onIonChange={(e) =>
                     setUi((u) => ({ ...u, enableMissingPosterView: e.detail.checked }))
@@ -72,7 +72,7 @@ export default function SettingsUI({
                 <span className="indexer-status">
                   {ui.animationsEnabled ? "Actif" : "Désactivé"}
                 </span>
-                <IonToggle
+                <ToggleSwitch
                   checked={ui.animationsEnabled}
                   onIonChange={(e) =>
                     setUi((u) => ({ ...u, animationsEnabled: e.detail.checked }))
@@ -114,7 +114,7 @@ export default function SettingsUI({
                 <span className="indexer-status">
                   {ui.badgeInfo ? "Actif" : "Désactivé"}
                 </span>
-                <IonToggle
+                <ToggleSwitch
                   checked={ui.badgeInfo}
                   onIonChange={(e) => setUi((u) => ({ ...u, badgeInfo: e.detail.checked }))}
                   className="settings-toggle"
@@ -130,7 +130,7 @@ export default function SettingsUI({
                 <span className="indexer-status">
                   {ui.badgeWarn ? "Actif" : "Désactivé"}
                 </span>
-                <IonToggle
+                <ToggleSwitch
                   checked={ui.badgeWarn}
                   onIonChange={(e) => setUi((u) => ({ ...u, badgeWarn: e.detail.checked }))}
                   className="settings-toggle"
@@ -146,7 +146,7 @@ export default function SettingsUI({
                 <span className="indexer-status">
                   {ui.badgeError ? "Actif" : "Désactivé"}
                 </span>
-                <IonToggle
+                <ToggleSwitch
                   checked={ui.badgeError}
                   onIonChange={(e) => setUi((u) => ({ ...u, badgeError: e.detail.checked }))}
                   className="settings-toggle"

@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Feedarr.Api.Services.Security;
 
 namespace Feedarr.Api.Services.Arr;
 
@@ -23,13 +24,9 @@ public sealed class RadarrClient
 
     private static string NormalizeBaseUrl(string baseUrl)
     {
-        var url = (baseUrl ?? "").Trim().TrimEnd('/');
-        if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
-            !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-        {
-            url = "http://" + url;
-        }
-        return url;
+        if (!OutboundUrlGuard.TryNormalizeArrBaseUrl(baseUrl, out var normalizedBaseUrl, out var error))
+            throw new ArgumentException(error, nameof(baseUrl));
+        return normalizedBaseUrl;
     }
 
     private HttpRequestMessage CreateRequest(HttpMethod method, string baseUrl, string endpoint, string apiKey)
@@ -50,17 +47,32 @@ public sealed class RadarrClient
 
             if (!response.IsSuccessStatusCode)
             {
-                var errorBody = await response.Content.ReadAsStringAsync(ct);
-                return (false, null, null, $"HTTP {(int)response.StatusCode}: {errorBody}");
+                return (false, null, null, $"HTTP {(int)response.StatusCode}");
             }
 
             var json = await response.Content.ReadAsStringAsync(ct);
             var status = JsonSerializer.Deserialize<SystemStatusResponse>(json, JsonOpts);
             return (true, status?.Version, status?.AppName ?? "Radarr", null);
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            return (false, null, null, ex.Message);
+            return (false, null, null, "arr service timeout");
+        }
+        catch (HttpRequestException)
+        {
+            return (false, null, null, "arr service unavailable");
+        }
+        catch (JsonException)
+        {
+            return (false, null, null, "invalid arr response");
+        }
+        catch (ArgumentException)
+        {
+            return (false, null, null, "baseUrl invalid");
+        }
+        catch
+        {
+            return (false, null, null, "connection failed");
         }
     }
 
@@ -166,7 +178,7 @@ public sealed class RadarrClient
             Success = false,
             Status = "error",
             MovieId = null,
-            Message = $"HTTP {(int)response.StatusCode}: {responseBody}"
+            Message = $"HTTP {(int)response.StatusCode}"
         };
     }
 

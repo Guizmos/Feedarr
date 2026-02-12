@@ -7,6 +7,7 @@ using Feedarr.Api.Services;
 using Feedarr.Api.Services.Arr;
 using Feedarr.Api.Services.Backup;
 using Feedarr.Api.Services.Posters;
+using Feedarr.Api.Services.Security;
 using Feedarr.Api.Services.Torznab;
 using Microsoft.Extensions.Options;
 
@@ -123,8 +124,9 @@ public sealed class SchedulerController : ControllerBase
             }
             catch (Exception ex)
             {
-                _sources.UpdateLastSync((long)s.Id, "error", ex.Message);
-                _activity.Add((long)s.Id, "error", "sync", $"Manual Run ERROR: {ex.Message}");
+                var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "manual sync failed");
+                _sources.UpdateLastSync((long)s.Id, "error", safeError);
+                _activity.Add((long)s.Id, "error", "sync", $"Manual Run ERROR: {safeError}");
             }
         }
 

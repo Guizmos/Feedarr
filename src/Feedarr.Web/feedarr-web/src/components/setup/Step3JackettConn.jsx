@@ -32,7 +32,7 @@ const STORAGE_KEYS = {
     configured: "feedarr:prowlarrConfigured",
   },
 };
-const EMPTY_CONFIG = { baseUrl: "", apiKey: "", indexers: [], configured: false };
+const EMPTY_CONFIG = { baseUrl: "", indexers: [], configured: false };
 
 function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -46,14 +46,12 @@ function readConfigFromStorage(providerKey) {
   const keys = STORAGE_KEYS[providerKey];
   if (!keys || typeof window === "undefined") return { ...EMPTY_CONFIG };
   const baseUrl = window.localStorage.getItem(keys.baseUrl) || "";
-  const apiKey = window.localStorage.getItem(keys.apiKey) || "";
   const configured = window.localStorage.getItem(keys.configured) === "true";
   const cached = window.localStorage.getItem(keys.indexers) || "";
   const cachedList = cached ? (JSON.parse(cached) || []) : [];
   return {
     baseUrl,
-    apiKey,
-    configured: configured && !!baseUrl && !!apiKey,
+    configured: configured && !!baseUrl,
     indexers: Array.isArray(cachedList) ? cachedList : [],
   };
 }
@@ -81,18 +79,20 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    Object.values(STORAGE_KEYS).forEach((keys) => {
+      window.localStorage.removeItem(keys.apiKey);
+    });
+
     const legacyProvider = window.localStorage.getItem(STORAGE_PROVIDER) || "";
     if (legacyProvider === "prowlarr") {
       const legacyKeys = STORAGE_KEYS.jackett;
       const proKeys = STORAGE_KEYS.prowlarr;
       const hasNew = window.localStorage.getItem(proKeys.configured) === "true";
       const legacyBase = window.localStorage.getItem(legacyKeys.baseUrl) || "";
-      const legacyKey = window.localStorage.getItem(legacyKeys.apiKey) || "";
       const legacyConfigured = window.localStorage.getItem(legacyKeys.configured) === "true";
       const legacyIndexers = window.localStorage.getItem(legacyKeys.indexers) || "";
-      if (!hasNew && (legacyConfigured || legacyBase || legacyKey)) {
+      if (!hasNew && (legacyConfigured || legacyBase)) {
         window.localStorage.setItem(proKeys.baseUrl, legacyBase);
-        window.localStorage.setItem(proKeys.apiKey, legacyKey);
         if (legacyIndexers) window.localStorage.setItem(proKeys.indexers, legacyIndexers);
         window.localStorage.setItem(proKeys.configured, legacyConfigured ? "true" : "false");
         window.localStorage.removeItem(legacyKeys.baseUrl);
@@ -118,7 +118,7 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
       setProvider(activeProvider);
       setSelectValue("");
       setBaseUrl(activeConfig.baseUrl);
-      setApiKey(activeConfig.apiKey);
+      setApiKey("");
       setIndexers(Array.isArray(activeConfig.indexers) ? activeConfig.indexers : []);
       setTestCount(Array.isArray(activeConfig.indexers) ? activeConfig.indexers.length : 0);
       setTestState("ok");
@@ -128,7 +128,6 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
         provider: activeProvider,
         ready: true,
         baseUrl: activeConfig.baseUrl,
-        apiKey: activeConfig.apiKey,
         indexers: Array.isArray(activeConfig.indexers) ? activeConfig.indexers : [],
       });
     }
@@ -138,8 +137,7 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
   useEffect(() => {
     if (!initialStatus?.ready) return;
     const nextBase = String(initialStatus.baseUrl || "");
-    const nextKey = String(initialStatus.apiKey || "");
-    if (!nextBase || !nextKey) return;
+    if (!nextBase) return;
     const nextProvider = initialStatus.provider || "jackett";
 
     // Rehydrate only when wizard state changes, not on local form edits.
@@ -147,7 +145,7 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
     setProvider(nextProvider);
     setSelectValue("");
     setBaseUrl(nextBase);
-    setApiKey(nextKey);
+    setApiKey("");
     setIndexers(Array.isArray(initialStatus.indexers) ? initialStatus.indexers : []);
     setTestState("ok");
     setTestMsg("Clés déjà enregistrées.");
@@ -157,7 +155,6 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
       ...prev,
       [nextProvider]: {
         baseUrl: nextBase,
-        apiKey: nextKey,
         indexers: Array.isArray(initialStatus.indexers) ? initialStatus.indexers : [],
         configured: true,
       },
@@ -189,7 +186,7 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
     setTestCount(0);
     setTestPulse("");
     setIndexers([]);
-    onStatusChange?.({ provider: "", ready: false, baseUrl: "", apiKey: "", indexers: [] });
+    onStatusChange?.({ provider: "", ready: false, baseUrl: "", indexers: [] });
     setModalOpen(false);
   }, [resetToken, onStatusChange]);
 
@@ -231,7 +228,7 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
     setProvider(providerKey);
     setSelectValue("");
     setBaseUrl(cfg.baseUrl || "");
-    setApiKey(cfg.apiKey || "");
+    setApiKey("");
     setIndexers(Array.isArray(cfg.indexers) ? cfg.indexers : []);
     setTestCount(Array.isArray(cfg.indexers) ? cfg.indexers.length : 0);
     if (cfg.configured) {
@@ -361,7 +358,7 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
     }
 
     window.localStorage.setItem(keys.baseUrl, normalized);
-    window.localStorage.setItem(keys.apiKey, key);
+    window.localStorage.removeItem(keys.apiKey);
     window.localStorage.setItem(keys.configured, "true");
     window.localStorage.setItem(STORAGE_PROVIDER, provider);
     if (indexers?.length) {
@@ -375,7 +372,6 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
       ...prev,
       [provider]: {
         baseUrl: normalized,
-        apiKey: key,
         indexers: Array.isArray(indexers) ? indexers : [],
         configured: true,
       },
@@ -384,7 +380,6 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
       provider,
       ready: true,
       baseUrl: normalized,
-      apiKey: key,
       indexers: Array.isArray(indexers) ? indexers : [],
     });
   }
@@ -428,14 +423,13 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
         provider: remaining.key,
         ready: cfg.configured,
         baseUrl: cfg.baseUrl,
-        apiKey: cfg.apiKey,
         indexers: Array.isArray(cfg.indexers) ? cfg.indexers : [],
       });
     } else {
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(STORAGE_PROVIDER);
       }
-      onStatusChange?.({ provider: "", ready: false, baseUrl: "", apiKey: "", indexers: [] });
+      onStatusChange?.({ provider: "", ready: false, baseUrl: "", indexers: [] });
     }
   }
 

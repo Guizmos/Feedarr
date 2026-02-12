@@ -5,6 +5,7 @@ using Feedarr.Api.Models.Settings;
 using Feedarr.Api.Options;
 using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services.Posters;
+using Feedarr.Api.Services.Security;
 using Feedarr.Api.Services.Torznab;
 using Feedarr.Api.Services.Backup;
 using Microsoft.Extensions.Options;
@@ -437,8 +438,9 @@ public sealed class RssSyncHostedService : BackgroundService
             {
                 // Record failed indexer query
                 providerStats.RecordIndexerQuery(false);
-                sources.UpdateLastSync(id, "error", ex.Message);
-                activity.Add(id, "error", "sync", $"AutoSync ERROR [{name}]: {ex.Message}");
+                var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "auto sync failed");
+                sources.UpdateLastSync(id, "error", safeError);
+                activity.Add(id, "error", "sync", $"AutoSync ERROR [{name}]: {safeError}");
             }
         }
     }

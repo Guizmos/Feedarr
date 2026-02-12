@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiPut } from "../../api/client.js";
 import Loader from "../../ui/Loader.jsx";
-import { IonToggle } from "@ionic/react";
+import ToggleSwitch from "../../ui/ToggleSwitch.jsx";
 
 const DEFAULT_GENERAL = {
   syncIntervalMinutes: "60",
@@ -165,7 +165,7 @@ export default function IndexersSyncSettingsCard({ onStateChange }) {
                 <span className="indexer-status">
                   {general.autoSyncEnabled ? "Actif" : "Desactive"}
                 </span>
-                <IonToggle
+                <ToggleSwitch
                   checked={general.autoSyncEnabled}
                   onIonChange={(e) => setGeneral((g) => ({ ...g, autoSyncEnabled: e.detail.checked }))}
                   className="settings-toggle"

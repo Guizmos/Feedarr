@@ -7,6 +7,7 @@ using Feedarr.Api.Services.Torznab;
 using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services;
 using Feedarr.Api.Services.Backup;
+using Feedarr.Api.Services.Security;
 using Microsoft.Extensions.Logging;
 
 namespace Feedarr.Api.Controllers;
@@ -73,7 +74,8 @@ public sealed class SourcesController : ControllerBase
         }
         catch (Exception ex)
         {
-            _activity.Add(sourceId, "error", "source", $"Caps failed and RSS fallback failed: {ex.Message}");
+            var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "caps/rss fallback failed");
+            _activity.Add(sourceId, "error", "source", $"Caps failed and RSS fallback failed: {safeError}");
             return false;
         }
     }
@@ -183,7 +185,7 @@ public sealed class SourcesController : ControllerBase
         catch (Exception ex)
         {
             res.Ok = false;
-            res.Error = ex.Message;
+            res.Error = ErrorMessageSanitizer.ToOperationalMessage(ex, "source test failed");
         }
         finally
         {
@@ -301,7 +303,8 @@ public sealed class SourcesController : ControllerBase
             catch (Exception ex)
             {
                 _log.LogWarning(ex, "Caps refresh failed during source creation for sourceId={SourceId}", id);
-                _activity.Add(id, "error", "source", $"Caps refresh failed on create: {ex.Message}");
+                var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "caps refresh failed");
+                _activity.Add(id, "error", "source", $"Caps refresh failed on create: {safeError}");
                 var okFallback = await TryFallbackCategoriesFromRss(id, url, mode, key, ct);
                 if (!okFallback)
                 {
@@ -447,7 +450,8 @@ public sealed class SourcesController : ControllerBase
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Caps refresh failed during source update for sourceId={SourceId}", id);
-            _activity.Add(id, "error", "source", $"Caps refresh failed: {ex.Message}");
+            var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "caps refresh failed");
+            _activity.Add(id, "error", "source", $"Caps refresh failed: {safeError}");
             var okFallback = await TryFallbackCategoriesFromRss(id, url, mode, keyForCaps, ct);
             if (!okFallback)
             {

@@ -53,7 +53,6 @@ export default function SetupWizard() {
     provider: "",
     ready: false,
     baseUrl: "",
-    apiKey: "",
   });
   const [jackettHasSources, setJackettHasSources] = useState(false);
   const [jackettResetToken, setJackettResetToken] = useState(0);
@@ -111,7 +110,7 @@ export default function SetupWizard() {
         if (shouldClear) {
           JACKETT_STORAGE_KEYS.forEach((key) => window.localStorage.removeItem(key));
           window.localStorage.removeItem(STORAGE_KEY);
-          setJackettStatus({ provider: "", ready: false, baseUrl: "", apiKey: "" });
+          setJackettStatus({ provider: "", ready: false, baseUrl: "" });
           setJackettHasSources(false);
           setStep(MIN_STEP);
           setMaxStep(MIN_STEP);

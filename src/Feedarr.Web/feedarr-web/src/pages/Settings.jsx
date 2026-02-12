@@ -3,8 +3,6 @@ import { useLocation } from "react-router-dom";
 import { useSubbarSetter } from "../layout/useSubbar.js";
 import SubAction from "../ui/SubAction.jsx";
 import Loader from "../ui/Loader.jsx";
-import { setupIonicReact } from "@ionic/react";
-import "@ionic/react/css/core.css";
 
 import useSettingsController from "./settings/useSettingsController.js";
 import SettingsGeneral from "./settings/SettingsGeneral.jsx";
@@ -14,8 +12,6 @@ import SettingsApplications from "./settings/SettingsApplications.jsx";
 import SettingsMaintenance from "./settings/SettingsMaintenance.jsx";
 import SettingsBackup from "./settings/SettingsBackup.jsx";
 import SettingsUsers from "./settings/SettingsUsers.jsx";
-
-setupIonicReact({ mode: "md" });
 
 export default function Settings() {
   const setContent = useSubbarSetter();

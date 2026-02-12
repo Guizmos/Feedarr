@@ -4,6 +4,7 @@ using Dapper;
 using Feedarr.Api.Data;
 using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Models.Settings;
+using Feedarr.Api.Services.Security;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http;
@@ -75,9 +76,8 @@ public sealed class SetupController : ControllerBase
         if (normalizedType is null)
             return Problem(title: "provider type invalid", statusCode: StatusCodes.Status400BadRequest);
 
-        var normalizedBaseUrl = NormalizeBaseUrl(normalizedType, dto.BaseUrl);
-        if (string.IsNullOrWhiteSpace(normalizedBaseUrl))
-            return Problem(title: "baseUrl missing", statusCode: StatusCodes.Status400BadRequest);
+        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl(normalizedType, dto.BaseUrl, out var normalizedBaseUrl, out var baseUrlError))
+            return Problem(title: baseUrlError, statusCode: StatusCodes.Status400BadRequest);
 
         var apiKey = (dto.ApiKey ?? "").Trim();
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -111,19 +111,4 @@ public sealed class SetupController : ControllerBase
         return null;
     }
 
-    private static string NormalizeBaseUrl(string type, string baseUrl)
-    {
-        var trimmed = (baseUrl ?? "").Trim().TrimEnd('/');
-        if (type.Equals("jackett", StringComparison.OrdinalIgnoreCase) &&
-            trimmed.EndsWith("/api/v2.0", StringComparison.OrdinalIgnoreCase))
-        {
-            trimmed = trimmed[..^"/api/v2.0".Length];
-        }
-        if (type.Equals("prowlarr", StringComparison.OrdinalIgnoreCase) &&
-            trimmed.EndsWith("/api/v1", StringComparison.OrdinalIgnoreCase))
-        {
-            trimmed = trimmed[..^"/api/v1".Length];
-        }
-        return trimmed;
-    }
 }

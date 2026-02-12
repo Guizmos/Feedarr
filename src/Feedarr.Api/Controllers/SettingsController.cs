@@ -24,6 +24,7 @@ public sealed class SettingsController : ControllerBase
     private readonly IgdbClient _igdb;
     private readonly TvMazeClient _tvmaze;
     private readonly IMemoryCache _cache;
+    private readonly ILogger<SettingsController> _log;
 
     public SettingsController(
         SettingsRepository repo,
@@ -32,7 +33,8 @@ public sealed class SettingsController : ControllerBase
         FanartClient fanart,
         IgdbClient igdb,
         TvMazeClient tvmaze,
-        IMemoryCache cache)
+        IMemoryCache cache,
+        ILogger<SettingsController> log)
     {
         _repo = repo;
         _app = app.Value;
@@ -41,6 +43,7 @@ public sealed class SettingsController : ControllerBase
         _igdb = igdb;
         _tvmaze = tvmaze;
         _cache = cache;
+        _log = log;
     }
 
     // --------------------
@@ -163,7 +166,7 @@ public sealed class SettingsController : ControllerBase
     [HttpPut("external")]
     public IActionResult PutExternal([FromBody] ExternalSettings dto)
     {
-        if (dto is null) return BadRequest(new { error = "body missing" });
+        if (dto is null) return Problem(title: "body missing", statusCode: StatusCodes.Status400BadRequest);
 
         var saved = _repo.SaveExternalPartial(dto);
 
@@ -200,7 +203,7 @@ public sealed class SettingsController : ControllerBase
     {
         var kind = (dto?.Kind ?? "").Trim().ToLowerInvariant();
         if (kind is not ("tmdb" or "tvmaze" or "fanart" or "igdb"))
-            return BadRequest(new { error = "invalid kind" });
+            return Problem(title: "invalid kind", statusCode: StatusCodes.Status400BadRequest);
 
         try
         {
@@ -227,7 +230,11 @@ public sealed class SettingsController : ControllerBase
         }
         catch (Exception ex)
         {
-            return Ok(new { ok = false, error = ex.Message });
+            _log.LogWarning(ex, "External provider test failed for kind={Kind}", kind);
+            return Problem(
+                title: "provider test failed",
+                detail: "upstream provider unavailable",
+                statusCode: StatusCodes.Status502BadGateway);
         }
     }
 
@@ -261,7 +268,7 @@ public sealed class SettingsController : ControllerBase
     [HttpPut("security")]
     public IActionResult PutSecurity([FromBody] SecuritySettingsDto dto)
     {
-        if (dto is null) return BadRequest(new { error = "body missing" });
+        if (dto is null) return Problem(title: "body missing", statusCode: StatusCodes.Status400BadRequest);
 
         var current = _repo.GetSecurity(new SecuritySettings());
 
@@ -283,10 +290,10 @@ public sealed class SettingsController : ControllerBase
         if (hasPasswordUpdate)
         {
             if (string.IsNullOrWhiteSpace(dto.Password) || string.IsNullOrWhiteSpace(dto.PasswordConfirmation))
-                return BadRequest(new { error = "password and confirmation required" });
+                return Problem(title: "password and confirmation required", statusCode: StatusCodes.Status400BadRequest);
 
             if (!string.Equals(dto.Password, dto.PasswordConfirmation, StringComparison.Ordinal))
-                return BadRequest(new { error = "password confirmation mismatch" });
+                return Problem(title: "password confirmation mismatch", statusCode: StatusCodes.Status400BadRequest);
 
             var (hash, salt) = HashPassword(dto.Password);
             next.PasswordHash = hash;
@@ -296,9 +303,9 @@ public sealed class SettingsController : ControllerBase
         if (auth == "basic")
         {
             if (string.IsNullOrWhiteSpace(next.Username))
-                return BadRequest(new { error = "username required for basic auth" });
+                return Problem(title: "username required for basic auth", statusCode: StatusCodes.Status400BadRequest);
             if (string.IsNullOrWhiteSpace(next.PasswordHash) || string.IsNullOrWhiteSpace(next.PasswordSalt))
-                return BadRequest(new { error = "password required for basic auth" });
+                return Problem(title: "password required for basic auth", statusCode: StatusCodes.Status400BadRequest);
         }
 
         _repo.SaveSecurity(next);

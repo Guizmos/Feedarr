@@ -1,6 +1,7 @@
 using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Models.Settings;
 using Feedarr.Api.Services.Backup;
+using Feedarr.Api.Services.Security;
 
 namespace Feedarr.Api.Services.Arr;
 
@@ -157,7 +158,8 @@ public sealed class ArrLibrarySyncService : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to sync {Type} app '{Name}' (id={Id})", app.Type, app.Name, app.Id);
-                libraryRepo.SetSyncError(app.Id, ex.Message);
+                var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "arr library sync failed");
+                libraryRepo.SetSyncError(app.Id, safeError);
             }
         }
 
@@ -216,7 +218,8 @@ public sealed class ArrLibrarySyncService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to sync {Type} app '{Name}' (id={Id})", app.Type, app.Name, app.Id);
-            libraryRepo.SetSyncError(app.Id, ex.Message);
+            var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "arr library sync failed");
+            libraryRepo.SetSyncError(app.Id, safeError);
             throw;
         }
     }

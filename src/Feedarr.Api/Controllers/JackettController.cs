@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Feedarr.Api.Services.Jackett;
 using Feedarr.Api.Data.Repositories;
+using Feedarr.Api.Services.Security;
 
 namespace Feedarr.Api.Controllers;
 
@@ -48,12 +49,14 @@ public sealed class JackettController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(baseUrl))
             return BadRequest(new { error = "baseUrl missing" });
+        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl("jackett", baseUrl, out var normalizedBaseUrl, out var baseUrlError))
+            return BadRequest(new { error = baseUrlError });
         if (string.IsNullOrWhiteSpace(apiKey))
             return BadRequest(new { error = "apiKey missing" });
 
         try
         {
-            var list = await _jackett.ListIndexersAsync(baseUrl, apiKey, ct);
+            var list = await _jackett.ListIndexersAsync(normalizedBaseUrl, apiKey, ct);
             var result = list.Select(x => new
             {
                 id = x.id,

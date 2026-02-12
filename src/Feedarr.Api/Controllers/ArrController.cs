@@ -6,6 +6,7 @@ using Feedarr.Api.Dtos.Arr;
 using Feedarr.Api.Services.Arr;
 using Feedarr.Api.Services.Backup;
 using Feedarr.Api.Services.Matching;
+using Feedarr.Api.Services.Security;
 
 namespace Feedarr.Api.Controllers;
 
@@ -13,6 +14,8 @@ namespace Feedarr.Api.Controllers;
 [Route("api/arr")]
 public sealed class ArrController : ControllerBase
 {
+    private const int MaxStatusItemsPerRequest = 250;
+
     private readonly ArrApplicationRepository _repo;
     private readonly ArrLibraryRepository _library;
     private readonly ReleaseRepository _releases;
@@ -23,6 +26,7 @@ public sealed class ArrController : ControllerBase
     private readonly MediaEntityArrStatusService _entityStatus;
     private readonly ActivityRepository _activity;
     private readonly ILogger<ArrController> _logger;
+    private readonly IWebHostEnvironment _env;
 
     public ArrController(
         ArrApplicationRepository repo,
@@ -34,7 +38,8 @@ public sealed class ArrController : ControllerBase
         ArrLibrarySyncService syncService,
         MediaEntityArrStatusService entityStatus,
         ActivityRepository activity,
-        ILogger<ArrController> logger)
+        ILogger<ArrController> logger,
+        IWebHostEnvironment env)
     {
         _repo = repo;
         _library = library;
@@ -46,6 +51,7 @@ public sealed class ArrController : ControllerBase
         _entityStatus = entityStatus;
         _activity = activity;
         _logger = logger;
+        _env = env;
     }
 
     private static List<int> ParseTags(string? tagsJson)
@@ -184,14 +190,15 @@ public sealed class ArrController : ControllerBase
         }
         catch (Exception ex)
         {
-            _activity.Add(null, "error", "arr", $"Sonarr add failed: {ex.Message}",
+            var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "sonarr add failed");
+            _activity.Add(null, "error", "arr", $"Sonarr add failed: {safeError}",
                 dataJson: $"{{\"tvdbId\":{dto.TvdbId}}}");
 
             return Ok(new ArrAddResponseDto
             {
                 Ok = false,
                 Status = "error",
-                Message = ex.Message
+                Message = safeError
             });
         }
     }
@@ -314,14 +321,15 @@ public sealed class ArrController : ControllerBase
         }
         catch (Exception ex)
         {
-            _activity.Add(null, "error", "arr", $"Radarr add failed: {ex.Message}",
+            var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "radarr add failed");
+            _activity.Add(null, "error", "arr", $"Radarr add failed: {safeError}",
                 dataJson: $"{{\"tmdbId\":{dto.TmdbId}}}");
 
             return Ok(new ArrAddResponseDto
             {
                 Ok = false,
                 Status = "error",
-                Message = ex.Message
+                Message = safeError
             });
         }
     }
@@ -331,25 +339,33 @@ public sealed class ArrController : ControllerBase
     [HttpPost("status")]
     public async Task<ActionResult<ArrStatusResponseDto>> CheckStatus([FromBody] ArrStatusRequestDto dto, CancellationToken ct)
     {
+        var items = dto?.Items?.Where(i => i is not null).ToList() ?? new List<ArrStatusItemDto>();
+        if (items.Count == 0)
+            return Problem(title: "items missing", statusCode: StatusCodes.Status400BadRequest);
+        if (items.Count > MaxStatusItemsPerRequest)
+            return Problem(
+                title: $"too many items (max {MaxStatusItemsPerRequest})",
+                statusCode: StatusCodes.Status400BadRequest);
+
         var response = new ArrStatusResponseDto();
         var sonarrCacheEnsured = false;
         var radarrCacheEnsured = false;
         var sw = Stopwatch.StartNew();
         var nowTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var statusRows = new List<ReleaseArrStatusRow>(dto.Items.Count);
-        var releaseIds = dto.Items
+        var statusRows = new List<ReleaseArrStatusRow>(items.Count);
+        var releaseIds = items
             .Where(i => i.ReleaseId.HasValue)
             .Select(i => i.ReleaseId!.Value)
             .Distinct()
             .ToArray();
         var entityStatusByRelease = _entityStatus.GetArrStatusForReleaseIds(releaseIds);
 
-        _logger.LogInformation("Arr status check started: {Count} items", dto.Items.Count);
+        _logger.LogInformation("Arr status check started: {Count} items", items.Count);
         var seriesCount = _library.GetTotalCountByType("series");
         var movieCount = _library.GetTotalCountByType("movie");
         _logger.LogDebug("Arr status DB counts: {SeriesCount} series, {MovieCount} movies", seriesCount, movieCount);
 
-        foreach (var item in dto.Items)
+        foreach (var item in items)
         {
             if (item.ReleaseId.HasValue &&
                 entityStatusByRelease.TryGetValue(item.ReleaseId.Value, out var entityStatus))
@@ -629,7 +645,7 @@ public sealed class ArrController : ControllerBase
         _logger.LogInformation(
             "Arr status check completed: {Matched}/{Total} (sonarr={SonarrCount}, radarr={RadarrCount}) in {ElapsedMs}ms",
             matchedCount,
-            dto.Items.Count,
+            items.Count,
             sonarrCount,
             radarrCount,
             sw.ElapsedMilliseconds);
@@ -649,7 +665,7 @@ public sealed class ArrController : ControllerBase
         }
         catch (BackupOperationException ex) when (ex.StatusCode == StatusCodes.Status409Conflict)
         {
-            return Conflict(new { ok = false, message = ex.Message });
+            return Problem(title: ex.Message, statusCode: StatusCodes.Status409Conflict);
         }
     }
 
@@ -664,7 +680,7 @@ public sealed class ArrController : ControllerBase
         }
         catch (BackupOperationException ex) when (ex.StatusCode == StatusCodes.Status409Conflict)
         {
-            return Conflict(new { ok = false, message = ex.Message });
+            return Problem(title: ex.Message, statusCode: StatusCodes.Status409Conflict);
         }
     }
 
@@ -679,11 +695,15 @@ public sealed class ArrController : ControllerBase
         }
         catch (BackupOperationException ex) when (ex.StatusCode == StatusCodes.Status409Conflict)
         {
-            return Conflict(new { ok = false, message = ex.Message });
+            return Problem(title: ex.Message, statusCode: StatusCodes.Status409Conflict);
         }
         catch (Exception ex)
         {
-            return Ok(new { ok = false, message = ex.Message });
+            _logger.LogWarning(ex, "Arr app sync failed for appId={AppId}", appId);
+            return Problem(
+                title: "arr sync failed",
+                detail: "upstream arr service unavailable",
+                statusCode: StatusCodes.Status502BadGateway);
         }
     }
 
@@ -699,6 +719,9 @@ public sealed class ArrController : ControllerBase
     [HttpGet("library/debug")]
     public IActionResult GetLibraryDebug([FromQuery] string? type, [FromQuery] string? search, [FromQuery] int limit = 20)
     {
+        if (!_env.IsDevelopment())
+            return NotFound(new { error = "endpoint not found" });
+
         var items = _library.GetDebugItems(type, search, limit);
         var counts = _library.GetItemCountByApp();
         var totalSeries = _library.GetTotalCountByType("series");
@@ -717,6 +740,9 @@ public sealed class ArrController : ControllerBase
     [HttpPost("library/test-match")]
     public IActionResult TestMatch([FromBody] ArrStatusItemDto item)
     {
+        if (!_env.IsDevelopment())
+            return NotFound(new { error = "endpoint not found" });
+
         var results = new List<object>();
 
         // Test Sonarr matching

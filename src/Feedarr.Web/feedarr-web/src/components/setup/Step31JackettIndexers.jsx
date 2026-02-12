@@ -1,11 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { IonToggle, setupIonicReact } from "@ionic/react";
-import "@ionic/react/css/core.css";
 import ItemRow from "../../ui/ItemRow.jsx";
 import Modal from "../../ui/Modal.jsx";
+import ToggleSwitch from "../../ui/ToggleSwitch.jsx";
 import { apiDelete, apiGet, apiPost, apiPut } from "../../api/client.js";
-
-setupIonicReact({ mode: "md" });
 
 const STORAGE_KEYS = {
   jackett: {
@@ -25,7 +22,7 @@ const PROVIDERS = [
   { key: "jackett", label: "Jackett" },
   { key: "prowlarr", label: "Prowlarr" },
 ];
-const EMPTY_CONFIG = { baseUrl: "", apiKey: "", indexers: [], configured: false };
+const EMPTY_CONFIG = { baseUrl: "", providerId: null, indexers: [], configured: false };
 
 function normalizeUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -35,14 +32,13 @@ function readProviderConfig(providerKey) {
   const keys = STORAGE_KEYS[providerKey];
   if (!keys || typeof window === "undefined") return { ...EMPTY_CONFIG };
   const baseUrl = window.localStorage.getItem(keys.baseUrl) || "";
-  const apiKey = window.localStorage.getItem(keys.apiKey) || "";
   const configured = window.localStorage.getItem(keys.configured) === "true";
   const cached = window.localStorage.getItem(keys.indexers) || "";
   const list = cached ? (JSON.parse(cached) || []) : [];
   return {
     baseUrl,
-    apiKey,
-    configured: configured && !!baseUrl && !!apiKey,
+    providerId: null,
+    configured: configured && !!baseUrl,
     indexers: Array.isArray(list) ? list : [],
   };
 }
@@ -72,11 +68,71 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
   const [saving, setSaving] = useState(false);
   const [busySourceId, setBusySourceId] = useState(null);
 
-  const loadProviderConfigs = useCallback(() => {
-    setProviderConfigs({
+  const loadProviderConfigs = useCallback(async () => {
+    const nextConfigs = {
       jackett: readProviderConfig("jackett"),
       prowlarr: readProviderConfig("prowlarr"),
-    });
+    };
+
+    try {
+      const providerList = await apiGet("/api/providers");
+      const byType = new Map(
+        (Array.isArray(providerList) ? providerList : [])
+          .map((provider) => [String(provider?.type || "").toLowerCase(), provider])
+      );
+
+      for (const provider of PROVIDERS) {
+        const row = byType.get(provider.key);
+        if (!row) continue;
+
+        const providerId = Number(row?.id);
+        const baseUrl = normalizeUrl(row?.baseUrl);
+        const configured = !!row?.enabled && !!row?.hasApiKey && !!baseUrl;
+
+        nextConfigs[provider.key] = {
+          ...nextConfigs[provider.key],
+          providerId: Number.isFinite(providerId) && providerId > 0 ? providerId : null,
+          baseUrl,
+          configured,
+        };
+
+        if (typeof window !== "undefined") {
+          const keys = STORAGE_KEYS[provider.key];
+          window.localStorage.setItem(keys.baseUrl, baseUrl || "");
+          window.localStorage.setItem(keys.configured, configured ? "true" : "false");
+          window.localStorage.removeItem(keys.apiKey);
+        }
+      }
+
+      await Promise.all(
+        PROVIDERS.map(async (provider) => {
+          const cfg = nextConfigs[provider.key];
+          if (!cfg?.configured || !cfg.providerId) return;
+
+          try {
+            const list = await apiGet(`/api/providers/${cfg.providerId}/indexers`);
+            const indexers = Array.isArray(list) ? list : [];
+            nextConfigs[provider.key] = {
+              ...nextConfigs[provider.key],
+              indexers,
+            };
+
+            if (typeof window !== "undefined") {
+              window.localStorage.setItem(
+                STORAGE_KEYS[provider.key].indexers,
+                JSON.stringify(indexers)
+              );
+            }
+          } catch {
+            // Keep cached list from storage.
+          }
+        })
+      );
+    } catch {
+      // Keep cached provider state from storage.
+    }
+
+    setProviderConfigs(nextConfigs);
   }, []);
 
   const loadSources = useCallback(async () => {
@@ -209,21 +265,19 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
       return;
     }
 
-    const providerLabel = getProviderLabel(providerKey);
-    const apiKey = providerConfigs[providerKey]?.apiKey || "";
-    if (!apiKey) {
-      setCapsError(`Clé API ${providerLabel} manquante.`);
+    const providerId = Number(providerConfigs[providerKey]?.providerId || 0);
+    if (!providerId) {
+      setCapsError("Fournisseur non configuré côté API.");
       return;
     }
 
     setCapsLoading(true);
     try {
-      const res = await apiPost("/api/categories/caps", {
+      const res = await apiPost("/api/categories/caps/provider", {
+        providerId,
         torznabUrl: indexer.torznabUrl,
-        apiKey,
-        authMode: "query",
-        indexerName: indexer?.name,
         indexerId: indexer?.id,
+        indexerName: indexer?.name,
       });
 
       const cats = Array.isArray(res?.categories) ? res.categories : [];
@@ -276,9 +330,9 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
 
     const providerKey = selectedProviderKey;
     const providerLabel = getProviderLabel(providerKey);
-    const apiKey = providerConfigs[providerKey]?.apiKey || "";
-    if (!apiKey) {
-      setCapsError(`Clé API ${providerLabel} manquante.`);
+    const providerId = Number(providerConfigs[providerKey]?.providerId || 0);
+    if (!providerId) {
+      setCapsError("Fournisseur non configuré côté API.");
       return;
     }
 
@@ -288,7 +342,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
         name: indexer.name || providerLabel,
         torznabUrl: indexer.torznabUrl,
         authMode: "query",
-        apiKey,
+        providerId,
         categories: selected.length > 0 ? selected.map((c) => ({
           id: c.id,
           name: c.name,
@@ -557,7 +611,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
           <div className="setup-jackett__categories">
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
               <span className="muted">Afficher seulement les catégories recommandées</span>
-              <IonToggle
+              <ToggleSwitch
                 checked={useRecommendedFilter}
                 onIonChange={(e) => setUseRecommendedFilter(e.detail.checked)}
                 className="settings-toggle settings-toggle--sm"

@@ -16,6 +16,8 @@ using Feedarr.Api.Services.TvMaze;
 using Microsoft.AspNetCore.Routing;
 using Feedarr.Api.Services.Security;
 using Feedarr.Api.Services.Backup;
+using Feedarr.Api.Services.Diagnostics;
+using Feedarr.Api.Filters;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.XmlEncryption;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -26,6 +28,8 @@ using System.Net.Sockets;
 using System.Runtime.InteropServices;
 
 var builder = WebApplication.CreateBuilder(args);
+var enforceHttps = builder.Configuration.GetValue("App:Security:EnforceHttps", !builder.Environment.IsDevelopment());
+var emitSecurityHeaders = builder.Configuration.GetValue("App:Security:EmitSecurityHeaders", true);
 
 // Data Protection pour le chiffrement des clés API
 var configuredDataDir = builder.Configuration.GetValue<string>("App:DataDir") ?? "data";
@@ -79,7 +83,13 @@ else
     });
 }
 
-builder.Services.AddControllers();
+builder.Services.AddScoped<ApiRequestMetricsFilter>();
+builder.Services.AddScoped<ApiErrorNormalizationFilter>();
+builder.Services.AddControllers(options =>
+{
+    options.Filters.AddService<ApiRequestMetricsFilter>();
+    options.Filters.AddService<ApiErrorNormalizationFilter>();
+});
 
 SqlMapper.AddTypeHandler(new SqliteInt32Handler());
 SqlMapper.AddTypeHandler(new SqliteNullableInt32Handler());
@@ -108,6 +118,7 @@ builder.Services.AddSingleton<MediaEntityArrStatusRepository>();
 // Services
 builder.Services.AddSingleton<BadgeSignal>();
 builder.Services.AddSingleton<ProviderStatsService>();
+builder.Services.AddSingleton<ApiRequestMetricsService>();
 builder.Services.AddSingleton<BackupExecutionCoordinator>();
 builder.Services.AddSingleton<BackupValidationService>();
 builder.Services.AddSingleton<BackupService>();
@@ -216,6 +227,35 @@ builder.Services.AddCors(o =>
 var app = builder.Build();
 
 app.UseForwardedHeaders();
+
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHsts();
+}
+
+if (enforceHttps)
+{
+    app.UseHttpsRedirection();
+}
+
+if (emitSecurityHeaders)
+{
+    app.Use(async (context, next) =>
+    {
+        context.Response.OnStarting(() =>
+        {
+            var headers = context.Response.Headers;
+            headers.TryAdd("X-Content-Type-Options", "nosniff");
+            headers.TryAdd("X-Frame-Options", "DENY");
+            headers.TryAdd("Referrer-Policy", "no-referrer");
+            headers.TryAdd("X-Permitted-Cross-Domain-Policies", "none");
+            headers.TryAdd("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+            headers.TryAdd("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+            return Task.CompletedTask;
+        });
+        await next();
+    });
+}
 
 // CORS (optionnel)
 app.UseCors("dev");

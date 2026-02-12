@@ -7,6 +7,7 @@ using Feedarr.Api.Models;
 using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services.Igdb;
 using Feedarr.Api.Services.Titles;
+using Feedarr.Api.Services.Security;
 
 namespace Feedarr.Api.Controllers;
 
@@ -35,9 +36,11 @@ public sealed class ReleasesController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(url))
             return NotFound(new { error = "release not found or no download_url" });
+        if (!OutboundUrlGuard.TryNormalizeDownloadUrl(url, out var normalizedUrl, out _))
+            return BadRequest(new { error = "invalid download_url" });
 
         // 🔐 le front ne voit jamais jackett_apikey
-        return Redirect(url);
+        return Redirect(normalizedUrl);
     }
 
     // POST /api/releases/{id}/seen

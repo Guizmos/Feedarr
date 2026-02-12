@@ -8,6 +8,7 @@ using Feedarr.Api.Services;
 using Feedarr.Api.Services.Fanart;
 using Feedarr.Api.Services.Igdb;
 using Feedarr.Api.Services.Posters;
+using Feedarr.Api.Services.Security;
 using Feedarr.Api.Services.Tmdb;
 using Feedarr.Api.Services.TvMaze;
 using Microsoft.Extensions.Options;
@@ -250,6 +251,12 @@ public sealed class MaintenanceController : ControllerBase
             return Ok(new { ok = true, scanned = 0, orphaned = 0, deleted = 0, freedBytes = 0L });
 
         var files = Directory.GetFiles(postersDir, "*.*", SearchOption.TopDirectoryOnly);
+        var fileNames = files
+            .Select(Path.GetFileName)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => name!)
+            .ToList();
+        var referencedPosters = _releases.GetReferencedPosterFiles(fileNames);
         var scanned = files.Length;
         var orphaned = 0;
         var deleted = 0;
@@ -258,7 +265,10 @@ public sealed class MaintenanceController : ControllerBase
         foreach (var file in files)
         {
             var fileName = Path.GetFileName(file);
-            if (_releases.GetPosterReferenceCount(fileName) > 0)
+            if (string.IsNullOrWhiteSpace(fileName))
+                continue;
+
+            if (referencedPosters.Contains(fileName))
                 continue;
 
             orphaned++;
@@ -323,7 +333,8 @@ public sealed class MaintenanceController : ControllerBase
             catch (Exception ex)
             {
                 sw.Stop();
-                return new { provider = t.provider, ok = false, elapsedMs = sw.ElapsedMilliseconds, error = (string?)ex.Message };
+                var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "provider test failed");
+                return new { provider = t.provider, ok = false, elapsedMs = sw.ElapsedMilliseconds, error = (string?)safeError };
             }
         }).ToList();
 

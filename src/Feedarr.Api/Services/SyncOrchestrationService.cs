@@ -5,6 +5,7 @@ using Feedarr.Api.Models.Settings;
 using Feedarr.Api.Options;
 using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services.Posters;
+using Feedarr.Api.Services.Security;
 using Feedarr.Api.Services.Torznab;
 using Microsoft.Extensions.Options;
 
@@ -378,9 +379,10 @@ public sealed class SyncOrchestrationService
         catch (Exception ex)
         {
             _log.LogError(ex, "Manual sync failed for sourceId={SourceId}", id);
-            _sources.UpdateLastSync(id, "error", ex.Message);
-            _activity.Add(id, "error", "sync", $"Sync ERROR: {ex.Message}");
-            return new SyncOrchestrationResult(false, null, null, 0, 0, ex.Message);
+            var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "sync failed");
+            _sources.UpdateLastSync(id, "error", safeError);
+            _activity.Add(id, "error", "sync", $"Sync ERROR: {safeError}");
+            return new SyncOrchestrationResult(false, null, null, 0, 0, safeError);
         }
     }
 

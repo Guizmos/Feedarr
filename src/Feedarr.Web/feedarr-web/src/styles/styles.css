@@ -3533,6 +3533,51 @@ html, body {
   border-radius: 9px;
 }
 
+/* Lightweight native switch used by ItemRow to avoid loading Ionic in shared chunks */
+.settings-toggle-native{
+  display: inline-flex;
+  align-items: center;
+  width: 44px;
+  height: 24px;
+  padding: 2px;
+  border: 1px solid rgba(15,23,42,.2);
+  border-radius: 12px;
+  background: #d1d5db;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease;
+}
+.settings-toggle-native.is-on{
+  background: #2493b5;
+  border-color: #2493b5;
+}
+.settings-toggle-native:disabled{
+  opacity: .6;
+  cursor: not-allowed;
+}
+.settings-toggle-native__thumb{
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,.2);
+  transform: translateX(0);
+  transition: transform .15s ease;
+}
+.settings-toggle-native.is-on .settings-toggle-native__thumb{
+  transform: translateX(20px);
+}
+.settings-toggle-native.settings-toggle--sm{
+  width: 34px;
+  height: 18px;
+}
+.settings-toggle-native.settings-toggle--sm .settings-toggle-native__thumb{
+  width: 14px;
+  height: 14px;
+}
+.settings-toggle-native.settings-toggle--sm.is-on .settings-toggle-native__thumb{
+  transform: translateX(16px);
+}
+
 /* loading spin for test */
 .iconbtn--spin .app-icon,
 .app-icon.iconbtn--spin{
@@ -3685,7 +3730,15 @@ html, body {
 .page--indexers .indexer-card:has(ion-toggle.settings-toggle[aria-disabled="true"]),
 .page--indexers .settings-rowcard:has(ion-toggle.settings-toggle[aria-disabled="true"]),
 .page--providers .indexer-card:has(ion-toggle.settings-toggle[aria-disabled="true"]),
-.page--providers .settings-rowcard:has(ion-toggle.settings-toggle[aria-disabled="true"]){
+.page--providers .settings-rowcard:has(ion-toggle.settings-toggle[aria-disabled="true"]),
+.page--settings .indexer-card:has(.settings-toggle-native[disabled]),
+.page--settings .settings-rowcard:has(.settings-toggle-native[disabled]),
+.page--system .indexer-card:has(.settings-toggle-native[disabled]),
+.page--system .settings-rowcard:has(.settings-toggle-native[disabled]),
+.page--indexers .indexer-card:has(.settings-toggle-native[disabled]),
+.page--indexers .settings-rowcard:has(.settings-toggle-native[disabled]),
+.page--providers .indexer-card:has(.settings-toggle-native[disabled]),
+.page--providers .settings-rowcard:has(.settings-toggle-native[disabled]){
   box-shadow: none !important;
 }
 

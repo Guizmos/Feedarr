@@ -41,11 +41,11 @@ public sealed class RetentionService
 
         var postersDir = _posters.PostersDirPath;
         var purged = 0;
+        var referencedPosters = _releases.GetReferencedPosterFiles(unique);
 
         foreach (var file in unique)
         {
-            var refCount = _releases.GetPosterReferenceCount(file);
-            if (refCount > 0) continue;
+            if (referencedPosters.Contains(file)) continue;
 
             try
             {

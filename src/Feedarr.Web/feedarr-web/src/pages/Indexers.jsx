@@ -5,10 +5,9 @@ import { useSubbarSetter } from "../layout/useSubbar.js";
 import SubAction from "../ui/SubAction.jsx";
 import Modal from "../ui/Modal.jsx";
 import AppIcon from "../ui/AppIcon.jsx";
+import ToggleSwitch from "../ui/ToggleSwitch.jsx";
 import { startNewIndexerTest, completeNewIndexerTest } from "../tasks/indexerTasks.js";
 import { startCapsRefresh, completeCapsRefresh } from "../tasks/categoriesTasks.js";
-import { IonToggle, setupIonicReact } from "@ionic/react";
-import "@ionic/react/css/core.css";
 import ItemRow, { CategoryBubble } from "../ui/ItemRow.jsx";
 import IndexersSyncSettingsCard from "../components/indexers/IndexersSyncSettingsCard.jsx";
 import useIndexerModal from "./indexers/hooks/useIndexerModal.js";
@@ -18,8 +17,6 @@ import {
   getSourceColor,
   normalizeHexColor,
 } from "../utils/sourceColors.js";
-
-setupIonicReact({ mode: "md" });
 
 const UNIFIED_PRIORITY = ["series", "anime", "films", "games", "spectacle", "shows"];
 
@@ -1003,7 +1000,7 @@ export default function Indexers() {
               <label className="muted">Categories retenues ({selectedCount}/{capsCount || allCategories.length})</label>
               <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "6px 0 10px" }}>
                 <span className="muted">Afficher seulement les catégories recommandées</span>
-                <IonToggle
+                <ToggleSwitch
                   checked={useRecommendedFilter}
                   onIonChange={(e) => setUseRecommendedFilter(e.detail.checked)}
                   className="settings-toggle settings-toggle--sm"
@@ -1012,7 +1009,7 @@ export default function Indexers() {
               <div className="category-picker">
                 {visibleCategories.map((cat) => (
                   <div key={cat.id} className="category-row">
-                    <IonToggle
+                    <ToggleSwitch
                       checked={selectedCategoryIds.has(cat.id)}
                       onIonChange={(e) => {
                         const checked = e.detail.checked;

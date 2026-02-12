@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Dtos.Arr;
 using Feedarr.Api.Services.Arr;
+using Feedarr.Api.Services.Security;
 
 namespace Feedarr.Api.Controllers;
 
@@ -103,9 +104,8 @@ public sealed class ArrAppsController : ControllerBase
         if (type != "sonarr" && type != "radarr")
             return BadRequest(new { error = "type must be 'sonarr' or 'radarr'" });
 
-        var baseUrl = (dto.BaseUrl ?? "").Trim();
-        if (string.IsNullOrWhiteSpace(baseUrl))
-            return BadRequest(new { error = "baseUrl missing" });
+        if (!OutboundUrlGuard.TryNormalizeArrBaseUrl(dto.BaseUrl, out var baseUrl, out var baseUrlError))
+            return BadRequest(new { error = baseUrlError });
 
         var apiKey = (dto.ApiKey ?? "").Trim();
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -158,10 +158,18 @@ public sealed class ArrAppsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(dto.ApiKey))
             apiKeyMaybe = dto.ApiKey.Trim();
 
+        string? baseUrlMaybe = null;
+        if (!string.IsNullOrWhiteSpace(dto.BaseUrl))
+        {
+            if (!OutboundUrlGuard.TryNormalizeArrBaseUrl(dto.BaseUrl, out var normalizedBaseUrl, out var baseUrlError))
+                return BadRequest(new { error = baseUrlError });
+            baseUrlMaybe = normalizedBaseUrl;
+        }
+
         var ok = _repo.Update(
             id,
             dto.Name?.Trim(),
-            dto.BaseUrl?.Trim(),
+            baseUrlMaybe,
             apiKeyMaybe,
             dto.RootFolderPath?.Trim(),
             dto.QualityProfileId,
@@ -265,9 +273,8 @@ public sealed class ArrAppsController : ControllerBase
         if (appType != "sonarr" && appType != "radarr")
             return BadRequest(new { error = "type query param must be 'sonarr' or 'radarr'" });
 
-        var baseUrl = (dto.BaseUrl ?? "").Trim();
-        if (string.IsNullOrWhiteSpace(baseUrl))
-            return BadRequest(new { error = "baseUrl missing" });
+        if (!OutboundUrlGuard.TryNormalizeArrBaseUrl(dto.BaseUrl, out var baseUrl, out var baseUrlError))
+            return BadRequest(new { error = baseUrlError });
 
         var apiKey = (dto.ApiKey ?? "").Trim();
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -279,11 +286,14 @@ public sealed class ArrAppsController : ControllerBase
     private async Task<ActionResult<ArrAppTestResultDto>> TestConnection(
         string type, string baseUrl, string apiKey, CancellationToken ct)
     {
+        if (!OutboundUrlGuard.TryNormalizeArrBaseUrl(baseUrl, out var normalizedBaseUrl, out var baseUrlError))
+            return BadRequest(new { error = baseUrlError });
+
         var sw = Stopwatch.StartNew();
 
         if (type == "sonarr")
         {
-            var (ok, version, appName, error) = await _sonarr.TestConnectionAsync(baseUrl, apiKey, ct);
+            var (ok, version, appName, error) = await _sonarr.TestConnectionAsync(normalizedBaseUrl, apiKey, ct);
             sw.Stop();
             return Ok(new ArrAppTestResultDto
             {
@@ -296,7 +306,7 @@ public sealed class ArrAppsController : ControllerBase
         }
         else
         {
-            var (ok, version, appName, error) = await _radarr.TestConnectionAsync(baseUrl, apiKey, ct);
+            var (ok, version, appName, error) = await _radarr.TestConnectionAsync(normalizedBaseUrl, apiKey, ct);
             sw.Stop();
             return Ok(new ArrAppTestResultDto
             {

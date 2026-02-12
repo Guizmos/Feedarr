@@ -1367,6 +1367,54 @@ LEFT JOIN media_entities me
         );
     }
 
+    public HashSet<string> GetReferencedPosterFiles(IEnumerable<string> posterFiles)
+    {
+        if (posterFiles is null)
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var files = posterFiles
+            .Where(file => !string.IsNullOrWhiteSpace(file))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (files.Count == 0)
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        using var conn = _db.Open();
+        var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        const int chunkSize = 400;
+
+        for (var index = 0; index < files.Count; index += chunkSize)
+        {
+            var chunk = files.Skip(index).Take(chunkSize).ToArray();
+            var rows = conn.Query<string>(
+                """
+                SELECT DISTINCT poster_file
+                FROM (
+                    SELECT r.poster_file as poster_file
+                    FROM releases r
+                    WHERE r.poster_file IN @files
+
+                    UNION ALL
+
+                    SELECT me.poster_file as poster_file
+                    FROM media_entities me
+                    WHERE me.poster_file IN @files
+                ) refs;
+                """,
+                new { files = chunk }
+            );
+
+            foreach (var file in rows)
+            {
+                if (!string.IsNullOrWhiteSpace(file))
+                    referenced.Add(file);
+            }
+        }
+
+        return referenced;
+    }
+
     public HashSet<string> GetReferencedPosterFiles()
     {
         using var conn = _db.Open();
@@ -1478,22 +1526,21 @@ LEFT JOIN media_entities me
     public int ReparseAllTitles(int batchSize = 1000)
     {
         using var conn = _db.Open();
-        var total = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM releases;");
-        if (total == 0) return 0;
-
+        var limit = Math.Clamp(batchSize <= 0 ? 1000 : batchSize, 1, 5000);
         var updated = 0;
-        var offset = 0;
+        long lastId = 0;
 
-        while (offset < total)
+        while (true)
         {
             var rows = conn.Query<(long id, string title, string? unifiedCategory)>(
                 """
                 SELECT id, title, unified_category as unifiedCategory
                 FROM releases
+                WHERE id > @lastId
                 ORDER BY id
-                LIMIT @limit OFFSET @offset;
+                LIMIT @limit;
                 """,
-                new { limit = batchSize, offset }
+                new { limit, lastId }
             ).AsList();
 
             if (rows.Count == 0) break;
@@ -1539,7 +1586,7 @@ LEFT JOIN media_entities me
                 updated++;
             }
             tx.Commit();
-            offset += rows.Count;
+            lastId = rows[^1].id;
         }
 
         return updated;

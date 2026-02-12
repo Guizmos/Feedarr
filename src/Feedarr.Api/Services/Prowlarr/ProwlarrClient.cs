@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Feedarr.Api.Services.Security;
 
 namespace Feedarr.Api.Services.Prowlarr;
 
@@ -13,12 +14,9 @@ public sealed class ProwlarrClient
 
     private static string NormalizeBaseUrl(string baseUrl)
     {
-        var trimmed = (baseUrl ?? "").Trim().TrimEnd('/');
-        if (trimmed.EndsWith("/api/v1", StringComparison.OrdinalIgnoreCase))
-        {
-            trimmed = trimmed[..^"/api/v1".Length];
-        }
-        return trimmed;
+        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl("prowlarr", baseUrl, out var normalizedBaseUrl, out var error))
+            throw new ArgumentException(error, nameof(baseUrl));
+        return normalizedBaseUrl;
     }
 
     private static string BuildIndexersUrl(string baseUrl)
