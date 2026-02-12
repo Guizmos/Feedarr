@@ -1,0 +1,61 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+Feedarr.sln
+*.ps1
+
+# Local-only folders (must not be tracked on GitHub)
+/.claude/
+/.tmp/
+/src/**/.tmp/
+/scripts/
+/src/Feedarr.Api.Tests/
+
+# .NET
+**/bin/
+**/obj/
+*.dll
+*.pdb
+
+# Node
+**/node_modules/
+**/dist/
+**/.vite/
+
+# Env
+.env
+.env.*
+
+# Logs
+*.log
+
+# Data (runtime)
+**/data/
+
+# IMPORTANT: do not ignore the API source folder 'Data' (Windows is case-insensitive)
+!src/Feedarr.Api/Data/
+!src/Feedarr.Api/Data/**
+
+# Ignore runtime artifacts inside the source tree
+src/Feedarr.Api/Data/posters/**
+src/Feedarr.Api/Data/keys/**
+src/Feedarr.Api/Data/*.db
+src/Feedarr.Api/Data/*.db-*
+src/Feedarr.Api/artifacts/
+artifacts/
+
+# DB files
+**/*.db
+**/*.sqlite
+
+# Docker env
+docker/*.env

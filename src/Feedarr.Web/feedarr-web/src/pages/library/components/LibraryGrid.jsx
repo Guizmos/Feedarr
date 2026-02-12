@@ -1,0 +1,43 @@
+import React from "react";
+import PosterCard from "../../../ui/PosterCard.jsx";
+
+/**
+ * Vue grille de la bibliothèque (cartes poster)
+ */
+export default function LibraryGrid({
+  items,
+  onDownload,
+  onOpen,
+  selectionMode,
+  selectedIds,
+  onToggleSelect,
+  onRename,
+  sortBy,
+  sourceNameById,
+  sourceColorById,
+  sourceId,
+  arrStatusMap,
+}) {
+  return (
+    <div className="grid">
+      {items.map((it) => (
+        <PosterCard
+          key={it.id}
+          item={it}
+          onDownload={onDownload}
+          onOpen={onOpen}
+          selectionMode={selectionMode}
+          selected={selectedIds.has(it.id)}
+          onToggleSelect={onToggleSelect}
+          onRename={onRename}
+          sortBy={sortBy}
+          indexerLabel={sourceNameById.get(Number(it.sourceId)) || ""}
+          indexerColor={sourceColorById.get(Number(it.sourceId)) || null}
+          showIndexerPill={!sourceId}
+          indexerPillPosition="left"
+          arrStatus={arrStatusMap[it.id]}
+        />
+      ))}
+    </div>
+  );
+}

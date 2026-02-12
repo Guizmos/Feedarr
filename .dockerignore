@@ -1,0 +1,21 @@
+.git
+.gitignore
+.vscode
+.idea
+**/bin
+**/obj
+**/node_modules
+**/dist
+**/.vite
+**/data
+
+# Keep API source folder 'Data' (case-sensitive in Linux, but explicit to avoid surprises)
+!src/Feedarr.Api/Data/
+!src/Feedarr.Api/Data/**
+
+# Exclude poster cache from build context
+src/Feedarr.Api/Data/posters/**
+**/*.db
+**/*.log
+README.md
+scripts/

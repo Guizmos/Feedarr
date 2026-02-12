@@ -1,0 +1,6 @@
+@Feedarr.Api_HostAddress = http://localhost:5003
+
+GET {{Feedarr.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

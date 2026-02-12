@@ -1,0 +1,117 @@
+import React from "react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Calendar,
+  Check,
+  CheckCheck,
+  CheckCircle,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  CirclePlus,
+  CircleX,
+  Clock,
+  Database,
+  Download,
+  Eye,
+  EyeOff,
+  FlaskConical,
+  History,
+  Image,
+  LayoutGrid,
+  LibraryBig,
+  ListFilter,
+  ListOrdered,
+  Loader2,
+  Menu,
+  Pencil,
+  RefreshCcw,
+  RefreshCw,
+  Save,
+  ScanSearch,
+  Search,
+  Server,
+  Settings,
+  Square,
+  SquareCheckBig,
+  Tags,
+  Trash2,
+  TriangleAlert,
+  Trophy,
+  Undo2,
+  X,
+} from "lucide-react";
+
+const ICON_MAP = {
+  add_circle: CirclePlus,
+  arrow_downward: ArrowDown,
+  arrow_upward: ArrowUp,
+  cancel: CircleX,
+  category: Tags,
+  check: Check,
+  check_box: SquareCheckBig,
+  check_box_outline_blank: Square,
+  check_circle: CheckCircle,
+  chevron_left: ChevronLeft,
+  chevron_right: ChevronRight,
+  close: X,
+  delete: Trash2,
+  dns: Server,
+  download: Download,
+  edit: Pencil,
+  error: TriangleAlert,
+  event: Calendar,
+  filter_list: ListFilter,
+  first_page: ChevronsLeft,
+  format_list_numbered: ListOrdered,
+  history: History,
+  image: Image,
+  image_search: ScanSearch,
+  last_page: ChevronsRight,
+  loading: Loader2,
+  menu: Menu,
+  military_tech: Trophy,
+  priority_high: TriangleAlert,
+  progress_activity: Loader2,
+  refresh: RefreshCw,
+  restore: Undo2,
+  save: Save,
+  schedule: Clock,
+  science: FlaskConical,
+  search: Search,
+  select_all: CheckCheck,
+  settings: Settings,
+  sort: ArrowUpDown,
+  storage: Database,
+  success: CheckCircle,
+  sync: RefreshCcw,
+  video_library: LibraryBig,
+  view_module: LayoutGrid,
+  visibility: Eye,
+  visibility_off: EyeOff,
+  warning: TriangleAlert,
+};
+
+export default function AppIcon({
+  name,
+  className = "",
+  size = "1em",
+  strokeWidth = 1.35,
+  ...props
+}) {
+  if (!name) return null;
+  const Icon = ICON_MAP[name] || Square;
+  const classes = className ? `app-icon ${className}` : "app-icon";
+  return (
+    <Icon
+      aria-hidden="true"
+      className={classes}
+      size={size}
+      strokeWidth={strokeWidth}
+      {...props}
+    />
+  );
+}

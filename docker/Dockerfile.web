@@ -1,0 +1,14 @@
+FROM node:18-alpine AS build
+WORKDIR /app
+
+COPY src/Feedarr.Web/feedarr-web/package*.json ./
+RUN npm ci
+
+COPY src/Feedarr.Web/feedarr-web/ ./
+RUN npm run build
+
+FROM nginx:1.25-alpine
+COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+
+EXPOSE 80
