@@ -1,65 +1,77 @@
+<p align="center">
+  <img src="docs/screenshots/logo.png" alt="Feedarr Logo" width="120" />
+</p>
+
+<h1 align="center">Feedarr</h1>
+
+<p align="center">
+  Smart release dashboard for Torznab, Jackett and Prowlarr.
+</p>
+
+<p align="center">
+  <a href="https://github.com/Guizmos/Feedarr/actions/workflows/docker-publish.yml">
+    <img src="https://github.com/Guizmos/Feedarr/actions/workflows/docker-publish.yml/badge.svg" alt="Build Status" />
+  </a>
+  <a href="https://github.com/Guizmos/Feedarr/releases">
+    <img src="https://img.shields.io/github/v/release/Guizmos/Feedarr" alt="Latest Release" />
+  </a>
+  <a href="https://hub.docker.com/r/guizmos/feedarr-api">
+    <img src="https://img.shields.io/docker/pulls/guizmos/feedarr-api?label=feedarr-api&logo=docker" alt="Docker Pulls API" />
+  </a>
+  <a href="https://hub.docker.com/r/guizmos/feedarr-web">
+    <img src="https://img.shields.io/docker/pulls/guizmos/feedarr-web?label=feedarr-web&logo=docker" alt="Docker Pulls Web" />
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/github/license/Guizmos/Feedarr" alt="License" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="#features">Features</a> |
+  <a href="#screenshots">Screenshots</a> |
+  <a href="#installation">Installation</a> |
+  <a href="#development">Development</a> |
+  <a href="#support">Support</a> |
+  <a href="#license">License</a>
+</p>
+
+## Features
+
+- Aggregate Torznab feeds from Jackett and Prowlarr.
+- Parse titles and enrich releases with TMDB, TVmaze, Fanart and IGDB metadata.
+- Display releases in a poster-based library with filters and details.
+- Manage providers, indexers and categories from the UI.
+- Backup, restore and maintenance workflows built into the API.
+- Sonarr/Radarr integration for library and status workflows.
+- Setup Wizard for first-run onboarding.
+
+## Screenshots
+
 <table>
   <tr>
-    <td width="96" valign="middle">
-      <img src="docs/screenshots/logo.png" alt="Feedarr logo" width="84" />
-    </td>
-    <td valign="middle">
-      <h1>Feedarr</h1>
-    </td>
-  </tr>
-</table>
-
-Feedarr est une application self-hosted qui centralise des flux Torznab (Jackett/Prowlarr), enrichit les releases (posters + metadata), puis les expose dans une interface orientee bibliotheque.
-
-## Captures d'ecran
-
-<table>
-  <tr>
-    <td><img src="docs/screenshots/light_radarr.png" alt="Light - Radarr" width="320" /></td>
     <td><img src="docs/screenshots/light_details.png" alt="Light - Details" width="320" /></td>
-    <td><img src="docs/screenshots/light_stat.png" alt="Light - Stat" width="320" /></td>
+    <td><img src="docs/screenshots/light_stat.png" alt="Light - Stats" width="320" /></td>
+    <td><img src="docs/screenshots/light_radarr.png" alt="Light - Radarr" width="320" /></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/dark_application.png" alt="Dark - Application" width="320" /></td>
+    <td><img src="docs/screenshots/dark_application.png" alt="Dark - Applications" width="320" /></td>
     <td><img src="docs/screenshots/dark_providers.png" alt="Dark - Providers" width="320" /></td>
-    <td><img src="docs/screenshots/dark_indexeurs.png" alt="Dark - Indexeurs" width="320" /></td>
+    <td><img src="docs/screenshots/dark_indexeurs.png" alt="Dark - Indexers" width="320" /></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/dark_fournisseur.png" alt="Dark - Fournisseur" width="320" /></td>
-    <td><img src="docs/screenshots/dark_top.png" alt="Dark - Top" width="320" /></td>
     <td><img src="docs/screenshots/dark_library.png" alt="Dark - Library" width="320" /></td>
+    <td><img src="docs/screenshots/dark_fournisseur.png" alt="Dark - Provider Details" width="320" /></td>
+    <td><img src="docs/screenshots/dark_top.png" alt="Dark - Top Releases" width="320" /></td>
   </tr>
 </table>
 
-## Fonctionnalites principales
+## Installation
 
-- Synchronisation RSS automatisee (sources Torznab).
-- Parsing titres films/series/jeux.
-- Enrichissement metadata via TMDB, TVmaze, Fanart et IGDB.
-- Gestion des providers Jackett/Prowlarr depuis l'UI.
-- Suivi activite, maintenance, nettoyage, backups/restores.
-- Setup Wizard pour onboarding rapide.
-- Integration Sonarr/Radarr (etat et synchronisation bibliotheque).
+### Docker Compose
 
-## Stack technique
-
-- Backend: ASP.NET Core (.NET 8), Dapper, SQLite
-- Frontend: React 19 + Vite 7
-- Runtime: Docker (images API + Web separées)
-
-## Structure du repository
-
-- `src/Feedarr.Api`: API backend
-- `src/Feedarr.Web/feedarr-web`: frontend React
-- `docker/`: Dockerfiles + compose + config nginx
-- `.github/workflows/`: pipeline CI/CD Docker + releases
-
-## Demarrage rapide (Docker)
-
-Prerequis:
-- Docker + Docker Compose
-
-Exemple `docker-compose.yml` (compatible Portainer, sans reseau externe obligatoire):
+Prerequisites:
+- Docker
+- Docker Compose or Portainer stack support
 
 ```yaml
 version: "3.9"
@@ -87,15 +99,17 @@ services:
       - "8888:80"
 ```
 
-Ports par defaut:
+Start:
+
+```bash
+docker compose up -d
+```
+
+Default endpoints:
 - Web: `http://localhost:8888`
 - API: `http://localhost:9999`
 
-Persistance:
-- Les donnees API sont montees vers `/app/data` (SQLite, posters, backups, cles).
-- Adapte le chemin host `/volume1/Docker/Feedarr/data` a ton environnement.
-
-Si tu utilises deja un reseau externe custom (ex: `docker_net`), tu peux l'ajouter en option:
+Optional external network (if your environment requires it):
 
 ```yaml
 services:
@@ -111,17 +125,31 @@ networks:
     external: true
 ```
 
-Lancement en CLI:
+### Runtime Configuration
 
-```bash
-docker compose up -d
-```
+Common API environment variables:
+- `ASPNETCORE_URLS`
+- `App__DataDir`
+- `App__DbFileName`
+- `App__SyncIntervalMinutes`
+- `App__RssLimit`
+- `App__RssLimitPerCategory`
+- `App__RssLimitGlobalPerSource`
+- `App__Security__EnforceHttps`
+- `App__Security__EmitSecurityHeaders`
+- `App__RateLimit__Stats__PermitLimit`
+- `App__RateLimit__Stats__WindowSeconds`
+- `App__ReverseProxy__TrustedProxies__0`
+- `App__ReverseProxy__TrustedNetworks__0`
 
-## Demarrage local (developpement)
+## Development
 
-Prerequis:
+### Requirements
+
 - .NET SDK 8.x
 - Node.js 18+
+
+### Run Locally
 
 Backend:
 
@@ -137,46 +165,11 @@ npm install
 npm run dev
 ```
 
-Le frontend proxifie `/api` vers `http://localhost:5003`.
-
-## Configuration
-
-Variables d'environnement utiles cote API:
-
-- `ASPNETCORE_URLS` (ex: `http://+:8080`)
-- `App__DataDir` (ex: `/app/data`)
-- `App__DbFileName` (default: `feedarr.db`)
-- `App__SyncIntervalMinutes`
-- `App__RssLimit`
-- `App__RssLimitPerCategory`
-- `App__RssLimitGlobalPerSource`
-- `App__Security__EnforceHttps`
-- `App__Security__EmitSecurityHeaders`
-- `App__RateLimit__Stats__PermitLimit` (default: `120`)
-- `App__RateLimit__Stats__WindowSeconds` (default: `60`)
-- `App__ReverseProxy__TrustedProxies__0`
-- `App__ReverseProxy__TrustedNetworks__0`
-
-Les cles externes (TMDB/Fanart/IGDB/TVmaze) se configurent dans l'UI (`Settings > External`).
-
-## Securite
-
-- Protection des cles API externes (Data Protection + chiffrement local).
-- Basic Auth disponible (configurable dans `Settings > Security`).
-- Headers de securite emis par l'API.
-- Validation des URLs entrantes pour limiter les abus.
-- Rate limiting sur les endpoints statistiques lourds (`429` en cas d'exces).
-
-Important:
-- Par defaut, l'authentification est desactivee (`authentication = none`).
-- Pour une exposition Internet, activer l'auth (`basic` + mot de passe fort) et placer Feedarr derriere un reverse proxy TLS.
-
-## Verification qualite
+### Validate Changes
 
 Backend:
 
 ```bash
-dotnet build src/Feedarr.Api/Feedarr.Api.csproj -c Release
 dotnet test src/Feedarr.Api.Tests/Feedarr.Api.Tests.csproj -c Release
 ```
 
@@ -184,31 +177,36 @@ Frontend:
 
 ```bash
 cd src/Feedarr.Web/feedarr-web
-npm run test
 npm run lint
+npm run test
 npm run build
 ```
 
-## Endpoints utiles
+## Security Notes
 
-- `GET /api/system/status`
-- `GET /api/system/storage`
-- `GET /api/system/stats/*`
-- `GET /api/system/backups`
-- `POST /api/system/backups`
-- `POST /api/system/backups/{name}/restore`
+- API keys are stored using encrypted data-protection keys.
+- Basic auth is available and configurable in the UI.
+- Heavy stats endpoints are rate-limited.
+- For WAN exposure, use TLS reverse proxy and enable auth.
 
-## Statut de maturite
+## Support
 
-Niveau recommande actuel: **beta auto-hebergee**.
+- Documentation and setup notes: `README.md` and `docker/`
+- Bug reports and feature requests: `https://github.com/Guizmos/Feedarr/issues`
+- Releases: `https://github.com/Guizmos/Feedarr/releases`
 
-Avant un lancement public large, prioriser:
+## Contributing
 
-- Pipeline CI avec build + tests automatiques avant publication Docker.
-- Politique de securite par defaut plus stricte (auth activee / guide hardening).
-- Clarification licence du projet.
-- Stabilisation tooling .NET (pin SDK via `global.json`).
+- Open an issue before large feature changes.
+- Keep pull requests focused and test-backed.
+- Run backend/frontend checks locally before submitting.
 
-## Licence
+## License
 
-Licence non definie pour le moment.
+Licenses
+- GNU GPL v3
+
+Copyright
+- Copyright 2026 Feedarr contributors
+
+See `LICENSE` for full text.
