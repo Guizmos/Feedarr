@@ -9,6 +9,10 @@
 </p>
 
 <p align="center">
+  English (default) | <a href="README.fr.md">Français</a>
+</p>
+
+<p align="center">
   <a href="https://github.com/Guizmos/Feedarr/actions/workflows/docker-publish.yml">
     <img src="https://github.com/Guizmos/Feedarr/actions/workflows/docker-publish.yml/badge.svg" alt="Build Status" />
   </a>
@@ -30,6 +34,7 @@
   <a href="#features">Features</a> |
   <a href="#screenshots">Screenshots</a> |
   <a href="#installation">Installation</a> |
+  <a href="#configuration">Configuration</a> |
   <a href="#development">Development</a> |
   <a href="#support">Support</a> |
   <a href="#license">License</a>
@@ -142,6 +147,17 @@ Common API environment variables:
 - `App__ReverseProxy__TrustedProxies__0`
 - `App__ReverseProxy__TrustedNetworks__0`
 
+## Configuration
+
+Feedarr includes a 6-step Setup Wizard (`/setup`) for first-run configuration.
+
+- Full step-by-step guides (with screenshots and API key instructions):
+  - English (default): `docs/configuration-wizard.md`
+  - Français: `docs/configuration-wizard.fr.md`
+- Includes:
+  - Wizard flow, required fields and what each step impacts.
+  - How to create/retrieve API keys for TMDB, Fanart, IGDB, TVmaze, Jackett, Prowlarr, Sonarr and Radarr.
+
 ## Development
 
 ### Requirements
@@ -191,7 +207,7 @@ npm run build
 
 ## Support
 
-- Documentation and setup notes: `README.md` and `docker/`
+- Documentation and setup notes: `README.md`, `README.fr.md`, `docker/`, `docs/configuration-wizard.md`, `docs/configuration-wizard.fr.md`
 - Bug reports and feature requests: `https://github.com/Guizmos/Feedarr/issues`
 - Releases: `https://github.com/Guizmos/Feedarr/releases`
 
