@@ -164,8 +164,8 @@ Feedarr includes a 6-step Setup Wizard (`/setup`) for first-run configuration.
   - Indexers: `http://localhost:8888/indexers`
 
 - Full step-by-step guides (with screenshots and API key instructions):
-  - English (default): `docs/configuration-wizard.md`
-  - Français: `docs/configuration-wizard.fr.md`
+  - [English (default)](docs/configuration-wizard.md)
+  - [Français](docs/configuration-wizard.fr.md)
 - Includes:
   - Wizard flow, required fields and what each step impacts.
   - How to create/retrieve API keys for TMDB, Fanart, IGDB, TVmaze, Jackett, Prowlarr, Sonarr and Radarr.

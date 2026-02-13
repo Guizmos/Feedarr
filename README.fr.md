@@ -164,9 +164,9 @@ Feedarr inclut un Setup Wizard en 6 étapes (`/setup`) pour la configuration ini
   - Indexeurs: `http://localhost:8888/indexers`
 
 - Guide complet en français (par défaut):
-  - `docs/configuration-wizard.fr.md`
+  - [Français (par défaut)](docs/configuration-wizard.fr.md)
 - Version anglaise:
-  - `docs/configuration-wizard.md`
+  - [English](docs/configuration-wizard.md)
 
 Le guide couvre:
 - les actions à réaliser à chaque étape,
