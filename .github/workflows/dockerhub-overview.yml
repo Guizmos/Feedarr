@@ -1,0 +1,25 @@
+name: Docker Hub Overview
+
+"on":
+  workflow_dispatch:
+  push:
+    branches: ["main", "master"]
+    paths:
+      - "README.dockerhub.md"
+      - ".github/workflows/dockerhub-overview.yml"
+
+jobs:
+  update-overview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Update Docker Hub repository description
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: guizmos/feedarr
+          short-description: Smart release dashboard for Torznab, Jackett and Prowlarr.
+          readme-filepath: ./README.dockerhub.md
