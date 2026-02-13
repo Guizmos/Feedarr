@@ -151,6 +151,18 @@ Variables d'environnement API les plus utiles:
 
 Feedarr inclut un Setup Wizard en 6 étapes (`/setup`) pour la configuration initiale.
 
+- Pages de configuration directes (Web UI):
+  - Wizard: `http://localhost:8888/setup`
+  - Réglages (général): `http://localhost:8888/settings`
+  - Interface (UI): `http://localhost:8888/settings/ui`
+  - Providers metadata: `http://localhost:8888/settings/providers`
+  - Services externes: `http://localhost:8888/settings/externals`
+  - Applications (Sonarr/Radarr): `http://localhost:8888/settings/applications`
+  - Utilisateurs & auth: `http://localhost:8888/settings/users`
+  - Maintenance: `http://localhost:8888/settings/maintenance`
+  - Sauvegarde/restauration: `http://localhost:8888/settings/backup`
+  - Indexeurs: `http://localhost:8888/indexers`
+
 - Guide complet en français (par défaut):
   - `docs/configuration-wizard.fr.md`
 - Version anglaise:
