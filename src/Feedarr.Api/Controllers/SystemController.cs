@@ -11,6 +11,8 @@ using Feedarr.Api.Services.Backup;
 using Feedarr.Api.Services.Diagnostics;
 using Feedarr.Api.Services.Security;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Data;
 
 namespace Feedarr.Api.Controllers;
 
@@ -18,6 +20,17 @@ namespace Feedarr.Api.Controllers;
 [Route("api/system")]
 public sealed class SystemController : ControllerBase
 {
+    private sealed class SourceStatsRow
+    {
+        public long Id { get; set; }
+        public string Name { get; set; } = "";
+        public int Enabled { get; set; }
+        public long? LastSyncAtTs { get; set; }
+        public string LastStatus { get; set; } = "";
+        public string? LastError { get; set; }
+        public int LastItemCount { get; set; }
+    }
+
     private static readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
     private static readonly TimeSpan StorageUsageCacheDuration = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan StatsCacheDuration = TimeSpan.FromSeconds(20);
@@ -291,6 +304,7 @@ public sealed class SystemController : ControllerBase
     }
 
     // GET /api/system/stats/summary - Lightweight data for dashboard tabs
+    [EnableRateLimiting("stats-heavy")]
     [HttpGet("stats/summary")]
     public IActionResult StatsSummary()
     {
@@ -340,6 +354,7 @@ public sealed class SystemController : ControllerBase
     }
 
     // GET /api/system/stats/feedarr - Feedarr overview tab
+    [EnableRateLimiting("stats-heavy")]
     [HttpGet("stats/feedarr")]
     public IActionResult StatsFeedarr([FromQuery] int days = 30)
     {
@@ -447,6 +462,7 @@ public sealed class SystemController : ControllerBase
     }
 
     // GET /api/system/stats/indexers - Indexers tab
+    [EnableRateLimiting("stats-heavy")]
     [HttpGet("stats/indexers")]
     public IActionResult StatsIndexers()
     {
@@ -460,14 +476,20 @@ public sealed class SystemController : ControllerBase
         var totalIndexers = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM sources;");
         var indexerStats = _providerStats.IndexerSnapshot();
 
-        var indexerStatsBySource = conn.Query<(long id, string name, int releaseCount, string lastStatus)>(
-            @"SELECT s.id, s.name,
-                     (SELECT COUNT(*) FROM releases r WHERE r.source_id = s.id) as releaseCount,
-                     COALESCE(s.last_status, '') as lastStatus
-              FROM sources s
-              WHERE s.enabled = 1
-              ORDER BY releaseCount DESC"
-        ).Select(r => new { id = r.id, name = r.name, releaseCount = r.releaseCount, lastStatus = r.lastStatus }).ToList();
+        var sourceRows = GetSourceStatsRows(conn);
+        var releaseCountsBySource = GetReleaseCountsBySource(conn);
+
+        var indexerStatsBySource = sourceRows
+            .Where(r => r.Enabled == 1)
+            .Select(r => new
+            {
+                id = r.Id,
+                name = r.Name,
+                releaseCount = ResolveReleaseCount(releaseCountsBySource, r.Id),
+                lastStatus = r.LastStatus
+            })
+            .OrderByDescending(r => r.releaseCount)
+            .ToList();
 
         var releasesByCategoryByIndexer = conn.Query<(long sourceId, string sourceName, int categoryId, int count)>(
             @"SELECT s.id as sourceId, s.name as sourceName, r.category_id as categoryId, COUNT(*) as count
@@ -478,21 +500,20 @@ public sealed class SystemController : ControllerBase
               ORDER BY s.name, count DESC"
         ).Select(r => new { sourceId = r.sourceId, sourceName = r.sourceName, categoryId = r.categoryId, count = r.count }).ToList();
 
-        var indexerDetails = conn.Query<(long id, string name, int enabled, int releaseCount, long? lastSyncAtTs, string lastStatus, string lastError, int lastItemCount)>(
-            @"SELECT s.id, s.name, s.enabled,
-                     (SELECT COUNT(*) FROM releases r WHERE r.source_id = s.id) as releaseCount,
-                     s.last_sync_at_ts as lastSyncAtTs,
-                     COALESCE(s.last_status, '') as lastStatus,
-                     s.last_error as lastError,
-                     COALESCE(s.last_item_count, 0) as lastItemCount
-              FROM sources s
-              ORDER BY releaseCount DESC"
-        ).Select(r => new
-        {
-            id = r.id, name = r.name, enabled = r.enabled == 1,
-            releaseCount = r.releaseCount, lastSyncAtTs = r.lastSyncAtTs,
-            lastStatus = r.lastStatus, lastError = r.lastError, lastItemCount = r.lastItemCount
-        }).ToList();
+        var indexerDetails = sourceRows
+            .Select(r => new
+            {
+                id = r.Id,
+                name = r.Name,
+                enabled = r.Enabled == 1,
+                releaseCount = ResolveReleaseCount(releaseCountsBySource, r.Id),
+                lastSyncAtTs = r.LastSyncAtTs,
+                lastStatus = r.LastStatus,
+                lastError = r.LastError,
+                lastItemCount = r.LastItemCount
+            })
+            .OrderByDescending(r => r.releaseCount)
+            .ToList();
 
         var payload = new
         {
@@ -507,6 +528,7 @@ public sealed class SystemController : ControllerBase
     }
 
     // GET /api/system/stats/providers - Providers tab
+    [EnableRateLimiting("stats-heavy")]
     [HttpGet("stats/providers")]
     public IActionResult StatsProviders()
     {
@@ -522,6 +544,7 @@ public sealed class SystemController : ControllerBase
     }
 
     // GET /api/system/stats/releases - Releases tab
+    [EnableRateLimiting("stats-heavy")]
     [HttpGet("stats/releases")]
     public IActionResult StatsReleases()
     {
@@ -599,6 +622,7 @@ public sealed class SystemController : ControllerBase
     }
 
     // GET /api/system/stats - Extended statistics for dashboard (legacy)
+    [EnableRateLimiting("stats-heavy")]
     [HttpGet("stats")]
     public IActionResult Stats()
     {
@@ -632,19 +656,19 @@ public sealed class SystemController : ControllerBase
         ).Select(r => new { categoryId = r.categoryId, count = r.count }).ToList();
 
         // Indexer stats by source (for charts)
-        var indexerStatsBySource = conn.Query<(long id, string name, int releaseCount, string lastStatus)>(
-            @"SELECT s.id, s.name,
-                     (SELECT COUNT(*) FROM releases r WHERE r.source_id = s.id) as releaseCount,
-                     COALESCE(s.last_status, '') as lastStatus
-              FROM sources s
-              WHERE s.enabled = 1
-              ORDER BY releaseCount DESC"
-        ).Select(r => new {
-            id = r.id,
-            name = r.name,
-            releaseCount = r.releaseCount,
-            lastStatus = r.lastStatus
-        }).ToList();
+        var sourceRows = GetSourceStatsRows(conn);
+        var releaseCountsBySource = GetReleaseCountsBySource(conn);
+        var indexerStatsBySource = sourceRows
+            .Where(r => r.Enabled == 1)
+            .Select(r => new
+            {
+                id = r.Id,
+                name = r.Name,
+                releaseCount = ResolveReleaseCount(releaseCountsBySource, r.Id),
+                lastStatus = r.LastStatus
+            })
+            .OrderByDescending(r => r.releaseCount)
+            .ToList();
 
         // Releases by category by indexer (for stacked bar chart)
         var releasesByCategoryByIndexer = conn.Query<(long sourceId, string sourceName, int categoryId, int count)>(
@@ -698,6 +722,40 @@ public sealed class SystemController : ControllerBase
 
         _cache.Set(cacheKey, payload, StatsCacheDuration);
         return Ok(payload);
+    }
+
+    private static List<SourceStatsRow> GetSourceStatsRows(IDbConnection conn)
+    {
+        return conn.Query<SourceStatsRow>(
+            """
+            SELECT s.id as Id,
+                   s.name as Name,
+                   s.enabled as Enabled,
+                   s.last_sync_at_ts as LastSyncAtTs,
+                   COALESCE(s.last_status, '') as LastStatus,
+                   s.last_error as LastError,
+                   COALESCE(s.last_item_count, 0) as LastItemCount
+            FROM sources s;
+            """
+        ).ToList();
+    }
+
+    private static Dictionary<long, int> GetReleaseCountsBySource(IDbConnection conn)
+    {
+        return conn.Query<(long SourceId, int ReleaseCount)>(
+            """
+            SELECT source_id as SourceId, COUNT(1) as ReleaseCount
+            FROM releases
+            GROUP BY source_id;
+            """
+        ).ToDictionary(row => row.SourceId, row => row.ReleaseCount);
+    }
+
+    private static int ResolveReleaseCount(IReadOnlyDictionary<long, int> releaseCountsBySource, long sourceId)
+    {
+        return releaseCountsBySource.TryGetValue(sourceId, out var count)
+            ? count
+            : 0;
     }
 
     // GET /api/system/storage

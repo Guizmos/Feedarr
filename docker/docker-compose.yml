@@ -10,8 +10,6 @@ services:
       App__DataDir: /app/data
     volumes:
       - /volume1/Docker/Feedarr/data:/app/data
-    networks:
-      - docker_net
     ports:
       - "9999:8080"
 
@@ -21,11 +19,5 @@ services:
     restart: unless-stopped
     depends_on:
       - api
-    networks:
-      - docker_net
     ports:
       - "8888:80"
-
-networks:
-  docker_net:
-    external: true

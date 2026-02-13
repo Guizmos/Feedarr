@@ -10,7 +10,6 @@ Thumbs.db
 *.suo
 *.userosscache
 *.sln.docstates
-Feedarr.sln
 *.ps1
 
 # Local-only folders (must not be tracked on GitHub)
@@ -18,7 +17,6 @@ Feedarr.sln
 /.tmp/
 /src/**/.tmp/
 /scripts/
-/src/Feedarr.Api.Tests/
 
 # .NET
 **/bin/

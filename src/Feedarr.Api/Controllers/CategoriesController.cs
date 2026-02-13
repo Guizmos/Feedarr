@@ -8,6 +8,7 @@ using Feedarr.Api.Dtos.Categories;
 using Feedarr.Api.Dtos.Providers;
 using Feedarr.Api.Services.Categories;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace Feedarr.Api.Controllers;
 
@@ -15,18 +16,6 @@ namespace Feedarr.Api.Controllers;
 [Route("api/categories")]
 public sealed class CategoriesController : ControllerBase
 {
-    private sealed class UnifiedCategoryCountRow
-    {
-        public string? UnifiedCategory { get; set; }
-        public int Count { get; set; }
-    }
-
-    private sealed class HeuristicCategoryCountRow
-    {
-        public string? CategoryName { get; set; }
-        public int Count { get; set; }
-    }
-
     private readonly Db _db;
     private readonly UnifiedCategoryService _unified;
     private readonly CategoryRecommendationService _caps;
@@ -153,6 +142,7 @@ public sealed class CategoriesController : ControllerBase
     }
 
     // GET /api/categories/stats
+    [EnableRateLimiting("stats-heavy")]
     [HttpGet("stats")]
     public IActionResult Stats()
     {
@@ -197,21 +187,21 @@ public sealed class CategoriesController : ControllerBase
                 counts[key] = (label, row.Count);
         }
 
-        var unresolvedUnifiedValues = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var unifiedRows = conn.Query<UnifiedCategoryCountRow>(
+        var unresolvedRows = conn.Query<(string? UnifiedCategory, string? CategoryName, int Count)>(
             """
             SELECT
               r.unified_category as UnifiedCategory,
+              sc.name as CategoryName,
               COUNT(1) as Count
             FROM releases r
             LEFT JOIN source_categories sc
               ON sc.source_id = r.source_id AND sc.cat_id = r.category_id
             WHERE (sc.unified_key IS NULL OR sc.unified_key = '')
-            GROUP BY r.unified_category;
+            GROUP BY r.unified_category, sc.name;
             """
         );
 
-        foreach (var row in unifiedRows)
+        foreach (var row in unresolvedRows)
         {
             if (UnifiedCategoryMappings.TryParse(row.UnifiedCategory, out var unifiedCategory) &&
                 unifiedCategory != UnifiedCategory.Autre)
@@ -222,45 +212,21 @@ public sealed class CategoriesController : ControllerBase
                     counts[key] = (current.label, current.count + row.Count);
                 else
                     counts[key] = (label, row.Count);
+                continue;
             }
-            else
-            {
-                if (!string.IsNullOrWhiteSpace(row.UnifiedCategory))
-                    unresolvedUnifiedValues.Add(row.UnifiedCategory);
-            }
-        }
 
-        var unresolvedRows = conn.Query<HeuristicCategoryCountRow>(
-            """
-            SELECT
-              sc.name as CategoryName,
-              COUNT(1) as Count
-            FROM releases r
-            LEFT JOIN source_categories sc
-              ON sc.source_id = r.source_id AND sc.cat_id = r.category_id
-            WHERE (sc.unified_key IS NULL OR sc.unified_key = '')
-              AND (
-                r.unified_category IS NULL OR
-                r.unified_category = '' OR
-                lower(r.unified_category) = 'autre' OR
-                r.unified_category IN @invalidUnified
-              )
-            GROUP BY sc.name;
-            """,
-            new { invalidUnified = unresolvedUnifiedValues.Count == 0 ? new[] { "__none__" } : unresolvedUnifiedValues.ToArray() }
-        );
+            if (string.IsNullOrWhiteSpace(row.CategoryName))
+                continue;
 
-        foreach (var row in unresolvedRows)
-        {
             var unified = _unified.Get(row.CategoryName, null);
             if (unified is null) continue;
-            var key = unified.Key;
-            var label = unified.Label;
+            var heuristicKey = unified.Key;
+            var heuristicLabel = unified.Label;
 
-            if (counts.TryGetValue(key, out var current))
-                counts[key] = (current.label, current.count + row.Count);
+            if (counts.TryGetValue(heuristicKey, out var heuristicCurrent))
+                counts[heuristicKey] = (heuristicCurrent.label, heuristicCurrent.count + row.Count);
             else
-                counts[key] = (label ?? key, row.Count);
+                counts[heuristicKey] = (heuristicLabel ?? heuristicKey, row.Count);
         }
 
         var stats = counts

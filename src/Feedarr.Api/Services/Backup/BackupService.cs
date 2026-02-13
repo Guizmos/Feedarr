@@ -140,7 +140,9 @@ public sealed class BackupService
             catch (Exception ex)
             {
                 TryDeleteFile(zipPath);
-                throw new BackupOperationException(ex.Message, ex);
+                throw new BackupOperationException(
+                    ErrorMessageSanitizer.ToOperationalMessage(ex, "backup creation failed"),
+                    ex);
             }
             finally
             {
@@ -245,7 +247,9 @@ public sealed class BackupService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Backup restore failed for {BackupName}", name);
-                throw new BackupOperationException(ex.Message, ex);
+                throw new BackupOperationException(
+                    ErrorMessageSanitizer.ToOperationalMessage(ex, "backup restore failed"),
+                    ex);
             }
             finally
             {

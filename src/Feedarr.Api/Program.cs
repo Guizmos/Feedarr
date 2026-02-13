@@ -21,15 +21,19 @@ using Feedarr.Api.Filters;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.XmlEncryption;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Data;
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 var enforceHttps = builder.Configuration.GetValue("App:Security:EnforceHttps", !builder.Environment.IsDevelopment());
 var emitSecurityHeaders = builder.Configuration.GetValue("App:Security:EmitSecurityHeaders", true);
+var statsRateLimitPermit = Math.Max(10, builder.Configuration.GetValue("App:RateLimit:Stats:PermitLimit", 120));
+var statsRateLimitWindowSeconds = Math.Clamp(builder.Configuration.GetValue("App:RateLimit:Stats:WindowSeconds", 60), 10, 3600);
 
 // Data Protection pour le chiffrement des clés API
 var configuredDataDir = builder.Configuration.GetValue<string>("App:DataDir") ?? "data";
@@ -224,6 +228,35 @@ builder.Services.AddCors(o =>
     );
 });
 
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = static async (context, token) =>
+    {
+        if (!context.HttpContext.Response.HasStarted)
+        {
+            context.HttpContext.Response.ContentType = "application/json";
+            await context.HttpContext.Response.WriteAsJsonAsync(
+                new { error = "too many requests" },
+                cancellationToken: token);
+        }
+    };
+
+    options.AddPolicy("stats-heavy", httpContext =>
+    {
+        var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            ip,
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = statsRateLimitPermit,
+                Window = TimeSpan.FromSeconds(statsRateLimitWindowSeconds),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            });
+    });
+});
+
 var app = builder.Build();
 
 app.UseForwardedHeaders();
@@ -259,6 +292,8 @@ if (emitSecurityHeaders)
 
 // CORS (optionnel)
 app.UseCors("dev");
+
+app.UseRateLimiter();
 
 // Security (Basic Auth)
 app.UseMiddleware<BasicAuthMiddleware>();

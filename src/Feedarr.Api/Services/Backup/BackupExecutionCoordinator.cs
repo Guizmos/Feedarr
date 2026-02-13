@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using Feedarr.Api.Services.Security;
 using System.Diagnostics;
 
 namespace Feedarr.Api.Services.Backup;
@@ -93,12 +94,12 @@ public sealed class BackupExecutionCoordinator
         }
         catch (BackupOperationException ex)
         {
-            MarkFailed(ex.Message);
+            MarkFailed(ex, "backup operation failed");
             throw;
         }
         catch (Exception ex)
         {
-            MarkFailed(ex.Message);
+            MarkFailed(ex, "backup operation failed");
             throw;
         }
         finally
@@ -130,8 +131,15 @@ public sealed class BackupExecutionCoordinator
         }
     }
 
+    private void MarkFailed(Exception ex, string fallback)
+    {
+        var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, fallback);
+        MarkFailed(safeError);
+    }
+
     private void MarkFailed(string error)
     {
+        var safeError = ErrorMessageSanitizer.Sanitize(error, "operation failed");
         lock (_stateLock)
         {
             _state.IsBusy = false;
@@ -141,7 +149,7 @@ public sealed class BackupExecutionCoordinator
             _state.StartedAtTs = null;
             _state.LastCompletedAtTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             _state.LastSuccess = false;
-            _state.LastError = string.IsNullOrWhiteSpace(error) ? "operation failed" : error;
+            _state.LastError = safeError;
             _syncBlocked = false;
         }
     }

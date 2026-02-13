@@ -665,7 +665,8 @@ public sealed class ArrController : ControllerBase
         }
         catch (BackupOperationException ex) when (ex.StatusCode == StatusCodes.Status409Conflict)
         {
-            return Problem(title: ex.Message, statusCode: StatusCodes.Status409Conflict);
+            var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "arr sync unavailable");
+            return Problem(title: safeError, statusCode: StatusCodes.Status409Conflict);
         }
     }
 
@@ -680,7 +681,8 @@ public sealed class ArrController : ControllerBase
         }
         catch (BackupOperationException ex) when (ex.StatusCode == StatusCodes.Status409Conflict)
         {
-            return Problem(title: ex.Message, statusCode: StatusCodes.Status409Conflict);
+            var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "arr sync unavailable");
+            return Problem(title: safeError, statusCode: StatusCodes.Status409Conflict);
         }
     }
 
@@ -695,7 +697,8 @@ public sealed class ArrController : ControllerBase
         }
         catch (BackupOperationException ex) when (ex.StatusCode == StatusCodes.Status409Conflict)
         {
-            return Problem(title: ex.Message, statusCode: StatusCodes.Status409Conflict);
+            var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "arr sync unavailable");
+            return Problem(title: safeError, statusCode: StatusCodes.Status409Conflict);
         }
         catch (Exception ex)
         {
