@@ -19,7 +19,7 @@ jobs:
         uses: peter-evans/dockerhub-description@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB2_TOKEN }}
-          repository: guizmos/feedarr
+          password: ${{ secrets.DOCKERHUB2_TOKEN || secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ secrets.DOCKERHUB_USERNAME }}/feedarr
           short-description: Smart release dashboard for Torznab, Jackett and Prowlarr.
           readme-filepath: ./README.dockerhub.md
