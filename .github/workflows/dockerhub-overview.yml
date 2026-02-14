@@ -49,14 +49,7 @@ jobs:
             exit 1
           fi
 
-          jwt_token="$(python - "$login_body" <<'PY'
-import json, sys
-path = sys.argv[1]
-with open(path, encoding="utf-8") as f:
-    data = json.load(f)
-print(data.get("token", ""))
-PY
-)"
+          jwt_token="$(jq -r '.token // ""' "$login_body")"
 
           if [[ -z "${jwt_token:-}" ]]; then
             echo "::error::Token JWT Docker Hub absent dans la réponse de login."
@@ -81,19 +74,9 @@ PY
             exit 1
           fi
 
-          current_short_description="$(python - "$repo_body" <<'PY'
-import json, sys
-with open(sys.argv[1], encoding="utf-8") as f:
-    data = json.load(f)
-print(data.get("short_description", ""))
-PY
-)"
+          current_short_description="$(jq -r '.short_description // ""' "$repo_body")"
 
-          patch_payload="$(python - "${current_short_description}" <<'PY'
-import json, sys
-print(json.dumps({"short_description": sys.argv[1]}))
-PY
-)"
+          patch_payload="$(jq -cn --arg short_description "$current_short_description" '{short_description:$short_description}')"
 
           patch_body="$(mktemp)"
           patch_code="$(curl -sS -o "$patch_body" -w "%{http_code}" \
