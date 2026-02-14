@@ -15,6 +15,108 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Preflight Docker Hub permissions
+        shell: bash
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB2_TOKEN || secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_REPOSITORY: ${{ secrets.DOCKERHUB_USERNAME }}/feedarr
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${DOCKERHUB_USERNAME:-}" ]]; then
+            echo "::error::Secret DOCKERHUB_USERNAME manquant."
+            exit 1
+          fi
+          if [[ -z "${DOCKERHUB_PASSWORD:-}" ]]; then
+            echo "::error::Token Docker Hub manquant (DOCKERHUB2_TOKEN/DOCKERHUB_TOKEN)."
+            exit 1
+          fi
+
+          namespace="${DOCKERHUB_REPOSITORY%%/*}"
+          repository="${DOCKERHUB_REPOSITORY#*/}"
+
+          login_body="$(mktemp)"
+          login_code="$(curl -sS -o "$login_body" -w "%{http_code}" \
+            -X POST "https://hub.docker.com/v2/users/login/" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"${DOCKERHUB_USERNAME}\",\"password\":\"${DOCKERHUB_PASSWORD}\"}")"
+
+          if [[ "$login_code" != "200" ]]; then
+            echo "::error::Authentification Docker Hub échouée (HTTP $login_code). Vérifie username/token."
+            echo "Réponse API:"
+            cat "$login_body"
+            exit 1
+          fi
+
+          jwt_token="$(python - "$login_body" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as f:
+    data = json.load(f)
+print(data.get("token", ""))
+PY
+)"
+
+          if [[ -z "${jwt_token:-}" ]]; then
+            echo "::error::Token JWT Docker Hub absent dans la réponse de login."
+            echo "Réponse API:"
+            cat "$login_body"
+            exit 1
+          fi
+
+          repo_body="$(mktemp)"
+          repo_code="$(curl -sS -o "$repo_body" -w "%{http_code}" \
+            -H "Authorization: JWT ${jwt_token}" \
+            "https://hub.docker.com/v2/repositories/${namespace}/${repository}/")"
+
+          if [[ "$repo_code" == "404" ]]; then
+            echo "::error::Repo Docker Hub introuvable: ${namespace}/${repository}"
+            exit 1
+          fi
+          if [[ "$repo_code" != "200" ]]; then
+            echo "::error::Lecture du repo Docker Hub impossible (HTTP $repo_code)."
+            echo "Réponse API:"
+            cat "$repo_body"
+            exit 1
+          fi
+
+          current_short_description="$(python - "$repo_body" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as f:
+    data = json.load(f)
+print(data.get("short_description", ""))
+PY
+)"
+
+          patch_payload="$(python - "${current_short_description}" <<'PY'
+import json, sys
+print(json.dumps({"short_description": sys.argv[1]}))
+PY
+)"
+
+          patch_body="$(mktemp)"
+          patch_code="$(curl -sS -o "$patch_body" -w "%{http_code}" \
+            -X PATCH "https://hub.docker.com/v2/repositories/${namespace}/${repository}/" \
+            -H "Authorization: JWT ${jwt_token}" \
+            -H "Content-Type: application/json" \
+            -d "${patch_payload}")"
+
+          if [[ "$patch_code" == "403" ]]; then
+            echo "::error::Accès refusé (HTTP 403) sur PATCH Docker Hub. Le token est valide mais n'a pas les droits d'écriture sur ${namespace}/${repository}."
+            echo "Réponse API:"
+            cat "$patch_body"
+            exit 1
+          fi
+          if [[ "$patch_code" != "200" ]]; then
+            echo "::error::Test de mise à jour Docker Hub échoué (HTTP $patch_code)."
+            echo "Réponse API:"
+            cat "$patch_body"
+            exit 1
+          fi
+
+          echo "Preflight Docker Hub OK: auth + lecture repo + droits d'écriture validés."
+
       - name: Update Docker Hub repository description
         uses: peter-evans/dockerhub-description@v4
         with:
