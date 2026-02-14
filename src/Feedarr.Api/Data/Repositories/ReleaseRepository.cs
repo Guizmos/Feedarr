@@ -439,6 +439,26 @@ public sealed class ReleaseRepository
         public string? PosterLastError { get; set; }
     }
 
+    public sealed class MissingExternalIdsSeedRow
+    {
+        public long ReleaseId { get; set; }
+        public long? EntityId { get; set; }
+        public int? TmdbId { get; set; }
+        public int? TvdbId { get; set; }
+    }
+
+    public sealed class RequestTmdbSeedRow
+    {
+        public long ReleaseId { get; set; }
+        public long? EntityId { get; set; }
+        public string? TitleClean { get; set; }
+        public int? Year { get; set; }
+        public string? MediaType { get; set; }
+        public int? RequestTmdbId { get; set; }
+        public int? TmdbId { get; set; }
+        public int? TvdbId { get; set; }
+    }
+
     public List<PosterStateRow> GetPosterStateByReleaseIds(IEnumerable<long> releaseIds)
     {
         if (releaseIds is null) return new List<PosterStateRow>();
@@ -461,6 +481,110 @@ public sealed class ReleaseRepository
             WHERE releases.id IN @ids;
             """,
             new { ids }
+        ).AsList();
+    }
+
+    public List<MissingExternalIdsSeedRow> GetSeriesMissingTmdbWithTvdb(int limit)
+    {
+        using var conn = _db.Open();
+        var lim = Math.Clamp(limit <= 0 ? 200 : limit, 1, 5000);
+        return conn.Query<MissingExternalIdsSeedRow>(
+            """
+            SELECT
+              r.id as ReleaseId,
+              r.entity_id as EntityId,
+              CAST(COALESCE(me.tmdb_id, r.tmdb_id) AS INTEGER) as TmdbId,
+              CAST(COALESCE(me.tvdb_id, r.tvdb_id) AS INTEGER) as TvdbId
+            FROM releases r
+            LEFT JOIN media_entities me
+              ON me.id = r.entity_id
+            WHERE lower(COALESCE(r.media_type, '')) = 'series'
+              AND IFNULL(COALESCE(me.tmdb_id, r.tmdb_id), 0) <= 0
+              AND IFNULL(COALESCE(me.tvdb_id, r.tvdb_id), 0) > 0
+            ORDER BY COALESCE(me.updated_at_ts, r.poster_updated_at_ts, r.id) DESC, r.id DESC
+            LIMIT @lim;
+            """,
+            new { lim }
+        ).AsList();
+    }
+
+    public RequestTmdbSeedRow? GetRequestTmdbSeed(long releaseId)
+    {
+        using var conn = _db.Open();
+        return conn.QueryFirstOrDefault<RequestTmdbSeedRow>(
+            """
+            SELECT
+              r.id as ReleaseId,
+              r.entity_id as EntityId,
+              r.title_clean as TitleClean,
+              r.year as Year,
+              lower(COALESCE(r.media_type, '')) as MediaType,
+              CAST(me.request_tmdb_id AS INTEGER) as RequestTmdbId,
+              CAST(COALESCE(me.tmdb_id, r.tmdb_id) AS INTEGER) as TmdbId,
+              CAST(COALESCE(me.tvdb_id, r.tvdb_id) AS INTEGER) as TvdbId
+            FROM releases r
+            LEFT JOIN media_entities me
+              ON me.id = r.entity_id
+            WHERE r.id = @releaseId
+            LIMIT 1;
+            """,
+            new { releaseId }
+        );
+    }
+
+    public List<RequestTmdbSeedRow> GetSeriesMissingRequestTmdb(int limit)
+    {
+        using var conn = _db.Open();
+        var lim = Math.Clamp(limit <= 0 ? 200 : limit, 1, 5000);
+        return conn.Query<RequestTmdbSeedRow>(
+            """
+            SELECT
+              r.id as ReleaseId,
+              r.entity_id as EntityId,
+              r.title_clean as TitleClean,
+              r.year as Year,
+              lower(COALESCE(r.media_type, '')) as MediaType,
+              CAST(me.request_tmdb_id AS INTEGER) as RequestTmdbId,
+              CAST(COALESCE(me.tmdb_id, r.tmdb_id) AS INTEGER) as TmdbId,
+              CAST(COALESCE(me.tvdb_id, r.tvdb_id) AS INTEGER) as TvdbId
+            FROM releases r
+            LEFT JOIN media_entities me
+              ON me.id = r.entity_id
+            WHERE lower(COALESCE(r.media_type, '')) = 'series'
+              AND IFNULL(me.request_tmdb_id, 0) <= 0
+              AND (
+                IFNULL(COALESCE(me.tmdb_id, r.tmdb_id), 0) > 0
+                OR IFNULL(COALESCE(me.tvdb_id, r.tvdb_id), 0) > 0
+                OR (r.title_clean IS NOT NULL AND r.title_clean <> '')
+              )
+            ORDER BY COALESCE(me.updated_at_ts, r.poster_updated_at_ts, r.id) DESC, r.id DESC
+            LIMIT @lim;
+            """,
+            new { lim }
+        ).AsList();
+    }
+
+    public List<MissingExternalIdsSeedRow> GetSeriesMissingTvdbWithTmdb(int limit)
+    {
+        using var conn = _db.Open();
+        var lim = Math.Clamp(limit <= 0 ? 200 : limit, 1, 5000);
+        return conn.Query<MissingExternalIdsSeedRow>(
+            """
+            SELECT
+              r.id as ReleaseId,
+              r.entity_id as EntityId,
+              CAST(COALESCE(me.tmdb_id, r.tmdb_id) AS INTEGER) as TmdbId,
+              CAST(COALESCE(me.tvdb_id, r.tvdb_id) AS INTEGER) as TvdbId
+            FROM releases r
+            LEFT JOIN media_entities me
+              ON me.id = r.entity_id
+            WHERE lower(COALESCE(r.media_type, '')) = 'series'
+              AND IFNULL(COALESCE(me.tvdb_id, r.tvdb_id), 0) <= 0
+              AND IFNULL(COALESCE(me.tmdb_id, r.tmdb_id), 0) > 0
+            ORDER BY COALESCE(me.updated_at_ts, r.poster_updated_at_ts, r.id) DESC, r.id DESC
+            LIMIT @lim;
+            """,
+            new { lim }
         ).AsList();
     }
 
@@ -1021,6 +1145,39 @@ LEFT JOIN media_entities me
         return result;
     }
 
+    public void SaveTmdbId(long id, int tmdbId)
+    {
+        if (tmdbId <= 0) return;
+
+        using var conn = _db.Open();
+        var entityId = conn.ExecuteScalar<long?>(
+            "SELECT entity_id FROM releases WHERE id = @id",
+            new { id }
+        );
+
+        if (entityId.HasValue && entityId.Value > 0)
+        {
+            conn.Execute(
+                """
+                UPDATE media_entities
+                SET tmdb_id = COALESCE(@tmdbId, tmdb_id),
+                    updated_at_ts = @ts
+                WHERE id = @entityId;
+                """,
+                new { entityId, tmdbId, ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds() }
+            );
+        }
+
+        conn.Execute(
+            """
+            UPDATE releases
+            SET tmdb_id = COALESCE(@tmdbId, tmdb_id)
+            WHERE id = @id;
+            """,
+            new { id, tmdbId }
+        );
+    }
+
     public void SaveTvdbId(long id, int tvdbId)
     {
         using var conn = _db.Open();
@@ -1045,6 +1202,42 @@ LEFT JOIN media_entities me
         conn.Execute(
             "UPDATE releases SET tvdb_id = @tvdbId WHERE id = @id;",
             new { id, tvdbId }
+        );
+    }
+
+    public void SaveRequestTmdbResolution(long releaseId, int? requestTmdbId, string status)
+    {
+        if (releaseId <= 0) return;
+
+        using var conn = _db.Open();
+        var entityId = conn.ExecuteScalar<long?>(
+            "SELECT entity_id FROM releases WHERE id = @releaseId",
+            new { releaseId }
+        );
+
+        if (!entityId.HasValue || entityId.Value <= 0)
+            return;
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var cleanStatus = string.IsNullOrWhiteSpace(status) ? "unknown" : status.Trim().ToLowerInvariant();
+        var value = requestTmdbId.HasValue && requestTmdbId.Value > 0 ? requestTmdbId.Value : (int?)null;
+
+        conn.Execute(
+            """
+            UPDATE media_entities
+            SET request_tmdb_id = COALESCE(@requestTmdbId, request_tmdb_id),
+                request_tmdb_status = @status,
+                request_tmdb_updated_at_ts = @now,
+                updated_at_ts = @now
+            WHERE id = @entityId;
+            """,
+            new
+            {
+                entityId,
+                requestTmdbId = value,
+                status = cleanStatus,
+                now
+            }
         );
     }
 

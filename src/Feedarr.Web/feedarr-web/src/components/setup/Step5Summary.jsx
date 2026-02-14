@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiGet } from "../../api/client.js";
 import { ArrowRight } from "lucide-react";
+import { getAppLabel } from "../../utils/appTypes.js";
 
 const STORAGE_PROVIDER_CONFIGURED = {
   jackett: "feedarr:jackettConfigured",
@@ -261,7 +262,7 @@ export default function Step5Summary({ onFinish, finishing }) {
               <ul>
                 {apps.map((a) => (
                   <li key={a.id}>
-                    <ScrollText>{a.name || (a.type === "sonarr" ? "Sonarr" : "Radarr")}</ScrollText>
+                    <ScrollText>{a.name || getAppLabel(a.type)}</ScrollText>
                     <span className="pill pill-ok">Configuré</span>
                   </li>
                 ))}

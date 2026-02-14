@@ -77,6 +77,7 @@ export default function useSettingsController(section = "general") {
   const handlePurgeDuplicatesRef = useRef(maintenance.handlePurgeDuplicates);
   const triggerArrSyncRef = useRef(applications.triggerArrSync);
   const saveArrSyncSettingsRef = useRef(applications.saveArrSyncSettings);
+  const saveArrRequestModeDraftRef = useRef(applications.saveArrRequestModeDraft);
   const confirmArrDeleteRef = useRef(applications.confirmArrDelete);
   const toggleArrEnabledRef = useRef(applications.toggleArrEnabled);
   const confirmDisableExternalRef = useRef(providers.confirmDisableExternal);
@@ -113,6 +114,7 @@ export default function useSettingsController(section = "general") {
   handlePurgeDuplicatesRef.current = maintenance.handlePurgeDuplicates;
   triggerArrSyncRef.current = applications.triggerArrSync;
   saveArrSyncSettingsRef.current = applications.saveArrSyncSettings;
+  saveArrRequestModeDraftRef.current = applications.saveArrRequestModeDraft;
   confirmArrDeleteRef.current = applications.confirmArrDelete;
   toggleArrEnabledRef.current = applications.toggleArrEnabled;
   confirmDisableExternalRef.current = providers.confirmDisableExternal;
@@ -122,6 +124,7 @@ export default function useSettingsController(section = "general") {
   const isDirty =
     uiSettings.isDirty ||
     security.isDirty ||
+    applications.isRequestModeDirty ||
     !!providers?.externalInput?.tmdbApiKey ||
     !!providers?.externalInput?.tvmazeApiKey ||
     !!providers?.externalInput?.fanartApiKey ||
@@ -163,6 +166,7 @@ export default function useSettingsController(section = "general") {
       await saveUiSettingsRef.current();
       await saveExternalKeysRef.current();
       await saveSecuritySettingsRef.current();
+      await saveArrRequestModeDraftRef.current();
 
       // Handle port change redirect
       if (typeof window !== "undefined") {
@@ -450,6 +454,7 @@ export default function useSettingsController(section = "general") {
     saveState,
     isDirty,
     openArrModalAdd: applications.openArrModalAdd,
+    canAddArrApp: applications.availableAddTypes.length > 0,
     triggerArrSync,
     arrSyncing: applications.arrSyncing,
     hasEnabledArrApps: applications.hasEnabledArrApps,
@@ -518,13 +523,18 @@ export default function useSettingsController(section = "general") {
       arrSyncSettings: applications.arrSyncSettings,
       arrSyncStatus: applications.arrSyncStatus,
       arrSyncSaving: applications.arrSyncSaving,
+      arrRequestModeDraft: applications.arrRequestModeDraft,
+      arrPulseKeys: applications.arrPulseKeys,
+      isRequestModeDirty: applications.isRequestModeDirty,
       hasEnabledArrApps: applications.hasEnabledArrApps,
+      availableAddTypes: applications.availableAddTypes,
       syncArrApp: applications.syncArrApp,
       testArrApp: applications.testArrApp,
       openArrModalEdit: applications.openArrModalEdit,
       openArrDelete: applications.openArrDelete,
       toggleArrEnabled,
       setArrSyncSettings: applications.setArrSyncSettings,
+      setArrRequestModeDraft: applications.setArrRequestModeDraft,
       saveArrSyncSettings,
       arrModalOpen: applications.arrModalOpen,
       arrModalMode: applications.arrModalMode,

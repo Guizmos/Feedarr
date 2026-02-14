@@ -125,6 +125,23 @@ public sealed class ArrLibraryRepository
     }
 
     /// <summary>
+    /// Record a successful sync for an app with count.
+    /// Useful for non-library apps (Overseerr/Jellyseerr requests).
+    /// </summary>
+    public void SetSyncSuccess(long appId, int count)
+    {
+        using var conn = _db.Open();
+        conn.Execute(@"
+            INSERT INTO arr_sync_status (app_id, last_sync_at, last_sync_count, last_error)
+            VALUES (@appId, datetime('now'), @count, NULL)
+            ON CONFLICT(app_id) DO UPDATE SET
+                last_sync_at = datetime('now'),
+                last_sync_count = @count,
+                last_error = NULL",
+            new { appId, count = Math.Max(0, count) });
+    }
+
+    /// <summary>
     /// Check if a movie exists in Radarr by tmdbId
     /// </summary>
     public LibraryMatchResult? FindMovieByTmdbId(int tmdbId)

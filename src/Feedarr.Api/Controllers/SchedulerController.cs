@@ -6,6 +6,7 @@ using Feedarr.Api.Options;
 using Feedarr.Api.Services;
 using Feedarr.Api.Services.Arr;
 using Feedarr.Api.Services.Backup;
+using Feedarr.Api.Services.Metadata;
 using Feedarr.Api.Services.Posters;
 using Feedarr.Api.Services.Security;
 using Feedarr.Api.Services.Torznab;
@@ -26,6 +27,8 @@ public sealed class SchedulerController : ControllerBase
     private readonly IPosterFetchQueue _posterQueue;
     private readonly PosterFetchJobFactory _posterJobs;
     private readonly MediaEntityArrStatusService _entityStatus;
+    private readonly ExternalIdBackfillService _externalIdBackfill;
+    private readonly RequestTmdbBackfillService _requestTmdbBackfill;
     private readonly BackupExecutionCoordinator _backupCoordinator;
     private readonly AppOptions _opts;
 
@@ -39,6 +42,8 @@ public sealed class SchedulerController : ControllerBase
         IPosterFetchQueue posterQueue,
         PosterFetchJobFactory posterJobs,
         MediaEntityArrStatusService entityStatus,
+        ExternalIdBackfillService externalIdBackfill,
+        RequestTmdbBackfillService requestTmdbBackfill,
         BackupExecutionCoordinator backupCoordinator,
         IOptions<AppOptions> opts)
     {
@@ -51,6 +56,8 @@ public sealed class SchedulerController : ControllerBase
         _posterQueue = posterQueue;
         _posterJobs = posterJobs;
         _entityStatus = entityStatus;
+        _externalIdBackfill = externalIdBackfill;
+        _requestTmdbBackfill = requestTmdbBackfill;
         _backupCoordinator = backupCoordinator;
         _opts = opts.Value;
     }
@@ -133,12 +140,73 @@ public sealed class SchedulerController : ControllerBase
         return Ok(new { ok = true });
     }
 
-    // POST /api/scheduler/media-entities/backfill?limit=200
+    // POST /api/scheduler/media-entities/backfill?limit=200&mode=posters|external-ids|request-ids|all
     [HttpPost("media-entities/backfill")]
-    public IActionResult BackfillMediaEntities([FromQuery] int? limit)
+    public async Task<IActionResult> BackfillMediaEntities([FromQuery] int? limit, [FromQuery] string? mode, CancellationToken ct)
     {
-        var updated = _releases.BackfillEntityPosters(limit ?? 200);
-        return Ok(new { ok = true, updated });
+        var lim = Math.Clamp(limit ?? 200, 1, 5000);
+        var normalizedMode = (mode ?? "posters").Trim().ToLowerInvariant();
+
+        if (normalizedMode is "posters")
+        {
+            var updated = _releases.BackfillEntityPosters(lim);
+            return Ok(new { ok = true, mode = normalizedMode, updated });
+        }
+
+        if (normalizedMode is "external-ids" or "ids")
+        {
+            var result = await _externalIdBackfill.BackfillSeriesExternalIdsAsync(lim, ct);
+            return Ok(new
+            {
+                ok = true,
+                mode = "external-ids",
+                missingTmdbCandidates = result.MissingTmdbCandidates,
+                resolvedTmdb = result.ResolvedTmdb,
+                missingTvdbCandidates = result.MissingTvdbCandidates,
+                resolvedTvdb = result.ResolvedTvdb,
+                propagatedToEntities = result.PropagatedToEntities
+            });
+        }
+
+        if (normalizedMode is "request-ids" or "request-tmdb")
+        {
+            var result = await _requestTmdbBackfill.BackfillSeriesRequestTmdbAsync(lim, ct);
+            return Ok(new
+            {
+                ok = true,
+                mode = "request-ids",
+                missingCandidates = result.MissingCandidates,
+                reusedExistingTmdb = result.ReusedExistingTmdb,
+                resolvedFromTvdbMap = result.ResolvedFromTvdbMap,
+                resolvedFromTitleSearch = result.ResolvedFromTitleSearch,
+                unresolved = result.Unresolved
+            });
+        }
+
+        if (normalizedMode is "all")
+        {
+            var postersUpdated = _releases.BackfillEntityPosters(lim);
+            var idsResult = await _externalIdBackfill.BackfillSeriesExternalIdsAsync(lim, ct);
+            var requestIdsResult = await _requestTmdbBackfill.BackfillSeriesRequestTmdbAsync(lim, ct);
+            return Ok(new
+            {
+                ok = true,
+                mode = "all",
+                postersUpdated,
+                missingTmdbCandidates = idsResult.MissingTmdbCandidates,
+                resolvedTmdb = idsResult.ResolvedTmdb,
+                missingTvdbCandidates = idsResult.MissingTvdbCandidates,
+                resolvedTvdb = idsResult.ResolvedTvdb,
+                propagatedToEntities = idsResult.PropagatedToEntities,
+                requestIdsMissingCandidates = requestIdsResult.MissingCandidates,
+                requestIdsReusedExistingTmdb = requestIdsResult.ReusedExistingTmdb,
+                requestIdsResolvedFromTvdbMap = requestIdsResult.ResolvedFromTvdbMap,
+                requestIdsResolvedFromTitleSearch = requestIdsResult.ResolvedFromTitleSearch,
+                requestIdsUnresolved = requestIdsResult.Unresolved
+            });
+        }
+
+        return BadRequest(new { ok = false, error = "mode must be posters, external-ids, ids, request-ids, request-tmdb, or all" });
     }
 
     // POST /api/scheduler/media-entities/arr-status/refresh?limit=500

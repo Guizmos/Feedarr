@@ -4,9 +4,11 @@ import ItemRow from "../../ui/ItemRow.jsx";
 import { fmtBytes } from "./settingsUtils.js";
 import AppIcon from "../../ui/AppIcon.jsx";
 import ToggleSwitch from "../../ui/ToggleSwitch.jsx";
+import { getAppLabel, isArrLibraryType, normalizeRequestMode } from "../../utils/appTypes.js";
 
 export default function SettingsApplications({
   arrApps,
+  availableAddTypes,
   arrAppsLoading,
   arrTestingId,
   arrTestStatusById,
@@ -16,6 +18,9 @@ export default function SettingsApplications({
   arrSyncSettings,
   arrSyncStatus,
   arrSyncSaving,
+  arrRequestModeDraft,
+  arrPulseKeys,
+  isRequestModeDirty,
   hasEnabledArrApps,
   syncArrApp,
   testArrApp,
@@ -23,6 +28,7 @@ export default function SettingsApplications({
   openArrDelete,
   toggleArrEnabled,
   setArrSyncSettings,
+  setArrRequestModeDraft,
   saveArrSyncSettings,
   arrModalOpen,
   arrModalMode,
@@ -74,6 +80,9 @@ export default function SettingsApplications({
   confirmArrDelete,
   closeArrDelete,
 }) {
+  const hasApps = (arrApps || []).length > 0;
+  const noAvailableAddTypes = (availableAddTypes || []).length === 0;
+
   return (
     <>
       <div className="indexer-list">
@@ -91,6 +100,7 @@ export default function SettingsApplications({
           </div>
         ) : (
           arrApps.map((app, idx) => {
+            const appLabel = getAppLabel(app.type);
             const testStatus = arrTestStatusById[app.id];
             const syncStatus = arrSyncStatusById[app.id];
             const isTesting = arrTestingId === app.id;
@@ -105,7 +115,7 @@ export default function SettingsApplications({
             ].filter(Boolean).join(" ");
 
             const badges = [
-              { label: app.type === "sonarr" ? "Sonarr" : "Radarr" },
+              { label: appLabel },
               {
                 label: app.hasApiKey ? "API OK" : "NO KEY",
                 className: app.hasApiKey ? "pill-ok" : "pill-warn",
@@ -119,7 +129,7 @@ export default function SettingsApplications({
               <ItemRow
                 key={app.id}
                 id={idx + 1}
-                title={app.name || (app.type === "sonarr" ? "Sonarr" : "Radarr")}
+                title={app.name || appLabel}
                 meta={app.baseUrl || ""}
                 enabled={app.isEnabled}
                 statusClass={statusClass}
@@ -162,7 +172,34 @@ export default function SettingsApplications({
         )}
       </div>
 
-      {arrApps.length > 0 && (
+      {hasApps && (
+        <div className="settings-card" id="request-integration">
+          <div className="settings-card__title">Mode d&apos;envoi</div>
+          <div className="indexer-list">
+            <div className={`indexer-card${arrPulseKeys?.has("arr.requestIntegrationMode") ? " pulse-ok" : ""}`}>
+              <div className="indexer-row indexer-row--settings">
+                <span className="indexer-title">Intégration active</span>
+                <div className="indexer-actions">
+                  {isRequestModeDirty && (
+                    <span className="indexer-status">À sauvegarder</span>
+                  )}
+                  <select
+                    value={arrRequestModeDraft}
+                    onChange={(e) => setArrRequestModeDraft(normalizeRequestMode(e.target.value))}
+                    disabled={arrSyncSaving}
+                  >
+                    <option value="arr">Sonarr/Radarr</option>
+                    <option value="overseerr">Overseerr</option>
+                    <option value="jellyseerr">Jellyseerr</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {hasApps && (
         <div className="settings-card" id="arr-sync">
           <div className="settings-card__title">Synchronisation</div>
           <div className="indexer-list">
@@ -238,7 +275,7 @@ export default function SettingsApplications({
                       <span className="indexer-title">
                         {status.appName || `App ${status.appId}`}
                         <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
-                          ({status.appType})
+                          ({getAppLabel(status.appType)})
                         </span>
                       </span>
                       <div className="indexer-actions">
@@ -247,7 +284,7 @@ export default function SettingsApplications({
                         </span>
                         {status.lastSyncCount > 0 && (
                           <span className="pill">
-                            {status.lastSyncCount} items
+                            {status.lastSyncCount} {(isArrLibraryType(status.appType) ? "items" : "demandes")}
                           </span>
                         )}
                         {hasError && (
@@ -289,8 +326,12 @@ export default function SettingsApplications({
                 }}
                 disabled={arrModalTesting || arrModalSaving}
               >
-                <option value="sonarr">Sonarr</option>
-                <option value="radarr">Radarr</option>
+                {noAvailableAddTypes && (
+                  <option value="">Aucun type disponible</option>
+                )}
+                {(availableAddTypes || []).map((type) => (
+                  <option key={type} value={type}>{getAppLabel(type)}</option>
+                ))}
               </select>
             </div>
           )}
@@ -301,7 +342,7 @@ export default function SettingsApplications({
               type="text"
               value={arrModalName}
               onChange={(e) => setArrModalName(e.target.value)}
-              placeholder={arrModalType === "sonarr" ? "Mon Sonarr" : "Mon Radarr"}
+              placeholder={`Mon ${getAppLabel(arrModalType)}`}
               disabled={arrModalTesting || arrModalSaving}
             />
           </div>
@@ -316,7 +357,7 @@ export default function SettingsApplications({
                 setArrModalTested(false);
                 setArrModalError("");
               }}
-              placeholder="http://localhost:8989"
+              placeholder={arrModalType === "sonarr" ? "http://localhost:8989" : arrModalType === "radarr" ? "http://localhost:7878" : "http://localhost:5055"}
               disabled={arrModalTesting || arrModalSaving}
             />
           </div>
@@ -355,7 +396,9 @@ export default function SettingsApplications({
 
           {arrModalMode === "add" && !arrModalTested && (
             <div className="muted" style={{ marginBottom: 12 }}>
-              Testez d'abord la connexion avant d'enregistrer.
+              {noAvailableAddTypes
+                ? "Toutes les applications sont déjà ajoutées."
+                : "Testez d'abord la connexion avant d'enregistrer."}
             </div>
           )}
 
@@ -365,7 +408,7 @@ export default function SettingsApplications({
                 className="btn btn-accent"
                 type="button"
                 onClick={testArrModal}
-                disabled={!arrModalBaseUrl.trim() || !arrModalApiKey.trim() || arrModalTesting}
+                disabled={noAvailableAddTypes || !arrModalBaseUrl.trim() || !arrModalApiKey.trim() || arrModalTesting}
               >
                 {arrModalTesting ? (
                   <>
@@ -376,32 +419,38 @@ export default function SettingsApplications({
               </button>
             ) : (
               <>
-                <button
-                  className="btn"
-                  type="button"
-                  onClick={() => {
-                    setArrModalAdvancedInitial({
-                      rootFolder: arrModalRootFolder,
-                      qualityProfile: arrModalQualityProfile,
-                      seriesType: arrModalSeriesType,
-                      seasonFolder: arrModalSeasonFolder,
-                      monitorMode: arrModalMonitorMode,
-                      searchMissing: arrModalSearchMissing,
-                      searchCutoff: arrModalSearchCutoff,
-                      minAvail: arrModalMinAvail,
-                      searchForMovie: arrModalSearchForMovie,
-                    });
-                    setArrModalAdvanced(true);
-                  }}
-                  disabled={arrModalSaving}
-                >
-                  Options avancées
-                </button>
+                {isArrLibraryType(arrModalType) && (
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => {
+                      setArrModalAdvancedInitial({
+                        rootFolder: arrModalRootFolder,
+                        qualityProfile: arrModalQualityProfile,
+                        seriesType: arrModalSeriesType,
+                        seasonFolder: arrModalSeasonFolder,
+                        monitorMode: arrModalMonitorMode,
+                        searchMissing: arrModalSearchMissing,
+                        searchCutoff: arrModalSearchCutoff,
+                        minAvail: arrModalMinAvail,
+                        searchForMovie: arrModalSearchForMovie,
+                      });
+                      setArrModalAdvanced(true);
+                    }}
+                    disabled={arrModalSaving}
+                  >
+                    Options avancées
+                  </button>
+                )}
                 <button
                   className="btn btn-accent"
                   type="button"
                   onClick={saveArrModal}
-                  disabled={arrModalSaving || (!arrModalBaseUrl.trim()) || (arrModalMode === "add" && !arrModalApiKey.trim())}
+                  disabled={
+                    arrModalSaving ||
+                    !arrModalBaseUrl.trim() ||
+                    (arrModalMode === "add" && (noAvailableAddTypes || !arrModalApiKey.trim()))
+                  }
                 >
                   {arrModalSaving ? (
                     <>

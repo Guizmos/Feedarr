@@ -3,7 +3,7 @@ namespace Feedarr.Api.Models.Arr;
 public sealed class ArrApplication
 {
     public long Id { get; set; }
-    public string Type { get; set; } = "";  // sonarr | radarr
+    public string Type { get; set; } = "";  // sonarr | radarr | overseerr | jellyseerr
     public string? Name { get; set; }
     public string BaseUrl { get; set; } = "";
     public string ApiKeyEncrypted { get; set; } = "";

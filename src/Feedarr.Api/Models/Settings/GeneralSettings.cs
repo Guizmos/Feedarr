@@ -12,4 +12,10 @@ public sealed class GeneralSettings
     // Arr applications (Sonarr/Radarr) sync settings
     public int ArrSyncIntervalMinutes { get; set; } = 60; // 1..1440
     public bool ArrAutoSyncEnabled { get; set; } = true;
+
+    // Request integration mode for release actions in UI
+    // arr: direct Sonarr/Radarr
+    // overseerr: create request via Overseerr
+    // jellyseerr: create request via Jellyseerr
+    public string RequestIntegrationMode { get; set; } = "arr";
 }

@@ -73,6 +73,7 @@ public sealed class CriticalFlowsAndPerfTests
         services.AddSingleton<ArrLibraryRepository>();
         services.AddSingleton(new SonarrClient(new HttpClient(new SonarrSeriesHandler())));
         services.AddSingleton(new RadarrClient(new HttpClient(new EmptyJsonHandler())));
+        services.AddSingleton(new EerrRequestClient(new HttpClient(new EmptyJsonHandler())));
         services.AddSingleton<BackupExecutionCoordinator>();
         services.AddSingleton<ArrLibrarySyncService>();
         services.AddLogging();

@@ -94,8 +94,9 @@ public sealed class RssSyncHostedService : BackgroundService
 
             return Math.Clamp(general.SyncIntervalMinutes, 1, 1440);
         }
-        catch
+        catch (Exception ex)
         {
+            _log.LogWarning(ex, "Failed to read sync interval from DB, using fallback {Fallback}min", fallback);
             return fallback;
         }
     }
@@ -114,8 +115,9 @@ public sealed class RssSyncHostedService : BackgroundService
             });
             return general.AutoSyncEnabled;
         }
-        catch
+        catch (Exception ex)
         {
+            _log.LogWarning(ex, "Failed to read auto-sync setting from DB, defaulting to enabled");
             return true;
         }
     }
@@ -165,9 +167,9 @@ public sealed class RssSyncHostedService : BackgroundService
                 defaultSeen = 1;
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // fallback opts
+            _log.LogWarning(ex, "Failed to read settings from DB for sync limits, using fallback values");
         }
 
         var list = sources.List().ToList();

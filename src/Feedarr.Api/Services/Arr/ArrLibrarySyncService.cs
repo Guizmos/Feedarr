@@ -6,7 +6,9 @@ using Feedarr.Api.Services.Security;
 namespace Feedarr.Api.Services.Arr;
 
 /// <summary>
-/// Background service that periodically syncs Sonarr/Radarr libraries to the database.
+/// Background service that periodically syncs apps to the database.
+/// - Sonarr/Radarr: library items
+/// - Overseerr/Jellyseerr: requests count
 /// Sync interval and auto-sync can be configured in Settings > General.
 /// </summary>
 public sealed class ArrLibrarySyncService : BackgroundService
@@ -15,6 +17,17 @@ public sealed class ArrLibrarySyncService : BackgroundService
     private readonly ILogger<ArrLibrarySyncService> _logger;
     private readonly BackupExecutionCoordinator _backupCoordinator;
     private const int DefaultSyncIntervalMinutes = 60;
+
+    private static bool IsLibrarySyncType(string? appType)
+        => string.Equals(appType, "sonarr", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(appType, "radarr", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsRequestSyncType(string? appType)
+        => string.Equals(appType, "overseerr", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(appType, "jellyseerr", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsSyncType(string? appType)
+        => IsLibrarySyncType(appType) || IsRequestSyncType(appType);
 
     public ArrLibrarySyncService(
         IServiceScopeFactory scopeFactory,
@@ -42,7 +55,10 @@ public sealed class ArrLibrarySyncService : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var appRepo = scope.ServiceProvider.GetRequiredService<ArrApplicationRepository>();
-        return appRepo.List().Any(a => a.IsEnabled && !string.IsNullOrWhiteSpace(a.ApiKeyEncrypted));
+        return appRepo.List().Any(a =>
+            IsSyncType(a.Type) &&
+            a.IsEnabled &&
+            !string.IsNullOrWhiteSpace(a.ApiKeyEncrypted));
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -107,7 +123,7 @@ public sealed class ArrLibrarySyncService : BackgroundService
     }
 
     /// <summary>
-    /// Sync all enabled Sonarr/Radarr apps
+    /// Sync all enabled apps
     /// </summary>
     public async Task SyncAllAppsAsync(CancellationToken ct, bool skipWhenBackupBusy = false)
     {
@@ -130,9 +146,14 @@ public sealed class ArrLibrarySyncService : BackgroundService
         var libraryRepo = scope.ServiceProvider.GetRequiredService<ArrLibraryRepository>();
         var sonarr = scope.ServiceProvider.GetRequiredService<SonarrClient>();
         var radarr = scope.ServiceProvider.GetRequiredService<RadarrClient>();
+        var eerr = scope.ServiceProvider.GetRequiredService<EerrRequestClient>();
 
         var apps = appRepo.List();
-        var enabledApps = apps.Where(a => a.IsEnabled && !string.IsNullOrWhiteSpace(a.ApiKeyEncrypted)).ToList();
+        var enabledApps = apps.Where(a =>
+                IsSyncType(a.Type) &&
+                a.IsEnabled &&
+                !string.IsNullOrWhiteSpace(a.ApiKeyEncrypted))
+            .ToList();
 
         if (enabledApps.Count == 0)
         {
@@ -153,6 +174,10 @@ public sealed class ArrLibrarySyncService : BackgroundService
                 else if (app.Type == "radarr")
                 {
                     await SyncRadarrLibraryAsync(app, radarr, libraryRepo, ct);
+                }
+                else if (app.Type == "overseerr" || app.Type == "jellyseerr")
+                {
+                    await SyncRequestAppAsync(app, eerr, libraryRepo, ct);
                 }
             }
             catch (Exception ex)
@@ -190,6 +215,7 @@ public sealed class ArrLibrarySyncService : BackgroundService
         var libraryRepo = scope.ServiceProvider.GetRequiredService<ArrLibraryRepository>();
         var sonarr = scope.ServiceProvider.GetRequiredService<SonarrClient>();
         var radarr = scope.ServiceProvider.GetRequiredService<RadarrClient>();
+        var eerr = scope.ServiceProvider.GetRequiredService<EerrRequestClient>();
 
         var app = appRepo.Get(appId);
         if (app is null)
@@ -213,6 +239,10 @@ public sealed class ArrLibrarySyncService : BackgroundService
             else if (app.Type == "radarr")
             {
                 await SyncRadarrLibraryAsync(app, radarr, libraryRepo, ct);
+            }
+            else if (app.Type == "overseerr" || app.Type == "jellyseerr")
+            {
+                await SyncRequestAppAsync(app, eerr, libraryRepo, ct);
             }
         }
         catch (Exception ex)
@@ -319,5 +349,24 @@ public sealed class ArrLibrarySyncService : BackgroundService
 
         libraryRepo.SyncAppLibrary(app.Id, "movie", items);
         _logger.LogInformation("Synced {Count} movies from Radarr '{Name}' to database (appId={AppId})", items.Count, app.Name, app.Id);
+    }
+
+    private async Task SyncRequestAppAsync(
+        Models.Arr.ArrApplication app,
+        EerrRequestClient eerr,
+        ArrLibraryRepository libraryRepo,
+        CancellationToken ct)
+    {
+        _logger.LogInformation("Syncing {Type} requests for '{Name}' ({Url})", app.Type, app.Name, app.BaseUrl);
+
+        var requests = await eerr.GetRequestsAsync(app.BaseUrl, app.ApiKeyEncrypted, ct);
+        libraryRepo.SetSyncSuccess(app.Id, requests.Count);
+
+        _logger.LogInformation(
+            "Synced {Count} requests from {Type} '{Name}' (appId={AppId})",
+            requests.Count,
+            app.Type,
+            app.Name,
+            app.Id);
     }
 }

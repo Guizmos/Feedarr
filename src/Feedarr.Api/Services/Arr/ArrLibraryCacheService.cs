@@ -344,4 +344,40 @@ public sealed class ArrLibraryCacheService
         _sonarrTitleCache.Clear();
         _radarrTitleCache.Clear();
     }
+
+    /// <summary>
+    /// Removes all entries whose TTL has expired.
+    /// Call periodically to prevent unbounded memory growth.
+    /// </summary>
+    public int EvictExpired()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var evicted = 0;
+
+        foreach (var kvp in _sonarrCache)
+        {
+            if (kvp.Value.expiresAt <= now && _sonarrCache.TryRemove(kvp.Key, out _))
+                evicted++;
+        }
+
+        foreach (var kvp in _radarrCache)
+        {
+            if (kvp.Value.expiresAt <= now && _radarrCache.TryRemove(kvp.Key, out _))
+                evicted++;
+        }
+
+        foreach (var kvp in _sonarrTitleCache)
+        {
+            if (kvp.Value.expiresAt <= now && _sonarrTitleCache.TryRemove(kvp.Key, out _))
+                evicted++;
+        }
+
+        foreach (var kvp in _radarrTitleCache)
+        {
+            if (kvp.Value.expiresAt <= now && _radarrTitleCache.TryRemove(kvp.Key, out _))
+                evicted++;
+        }
+
+        return evicted;
+    }
 }

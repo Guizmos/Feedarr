@@ -67,6 +67,18 @@ public sealed class SettingsRepository
                 : defaults.RssLimitGlobalPerSource;
             if (json.Contains("autoSyncEnabled", StringComparison.OrdinalIgnoreCase))
                 defaults.AutoSyncEnabled = loaded.AutoSyncEnabled;
+            if (json.Contains("arrSyncIntervalMinutes", StringComparison.OrdinalIgnoreCase) &&
+                loaded.ArrSyncIntervalMinutes > 0)
+            {
+                defaults.ArrSyncIntervalMinutes = loaded.ArrSyncIntervalMinutes;
+            }
+            if (json.Contains("arrAutoSyncEnabled", StringComparison.OrdinalIgnoreCase))
+                defaults.ArrAutoSyncEnabled = loaded.ArrAutoSyncEnabled;
+            if (json.Contains("requestIntegrationMode", StringComparison.OrdinalIgnoreCase))
+            {
+                var mode = (loaded.RequestIntegrationMode ?? "arr").Trim().ToLowerInvariant();
+                defaults.RequestIntegrationMode = mode is "overseerr" or "jellyseerr" ? mode : "arr";
+            }
             return defaults;
         }
         catch

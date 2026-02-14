@@ -15,6 +15,7 @@ public sealed class ArrAppsController : ControllerBase
     private readonly ArrApplicationRepository _repo;
     private readonly SonarrClient _sonarr;
     private readonly RadarrClient _radarr;
+    private readonly EerrRequestClient _eerr;
     private readonly ArrLibrarySyncService _syncService;
     private readonly ActivityRepository _activity;
     private readonly ILogger<ArrAppsController> _log;
@@ -23,6 +24,7 @@ public sealed class ArrAppsController : ControllerBase
         ArrApplicationRepository repo,
         SonarrClient sonarr,
         RadarrClient radarr,
+        EerrRequestClient eerr,
         ArrLibrarySyncService syncService,
         ActivityRepository activity,
         ILogger<ArrAppsController> log)
@@ -30,9 +32,15 @@ public sealed class ArrAppsController : ControllerBase
         _repo = repo;
         _sonarr = sonarr;
         _radarr = radarr;
+        _eerr = eerr;
         _syncService = syncService;
         _activity = activity;
         _log = log;
+    }
+
+    private static bool IsSupportedAppType(string type)
+    {
+        return type is "sonarr" or "radarr" or "overseerr" or "jellyseerr";
     }
 
     private static List<int> ParseTags(string? tagsJson)
@@ -101,8 +109,8 @@ public sealed class ArrAppsController : ControllerBase
     public async Task<IActionResult> Create([FromBody] ArrAppCreateDto dto, CancellationToken ct)
     {
         var type = (dto.Type ?? "").Trim().ToLowerInvariant();
-        if (type != "sonarr" && type != "radarr")
-            return BadRequest(new { error = "type must be 'sonarr' or 'radarr'" });
+        if (!IsSupportedAppType(type))
+            return BadRequest(new { error = "type must be one of: sonarr, radarr, overseerr, jellyseerr" });
 
         if (!OutboundUrlGuard.TryNormalizeArrBaseUrl(dto.BaseUrl, out var baseUrl, out var baseUrlError))
             return BadRequest(new { error = baseUrlError });
@@ -131,16 +139,19 @@ public sealed class ArrAppsController : ControllerBase
         _activity.Add(null, "info", "arr", $"Arr app added: {dto.Name ?? type} ({type})",
             dataJson: $"{{\"appId\":{id},\"type\":\"{type}\"}}");
 
-        // Trigger library sync for the new app
-        try
+        // Trigger initial sync for supported app types
+        if (IsSupportedAppType(type))
         {
-            await _syncService.SyncAppAsync(id, ct);
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Initial Arr sync failed after app creation for appId={AppId}", id);
-            _activity.Add(null, "warn", "arr", "Arr app created but initial sync failed",
-                dataJson: $"{{\"appId\":{id},\"type\":\"{type}\"}}");
+            try
+            {
+                await _syncService.SyncAppAsync(id, ct);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Initial Arr sync failed after app creation for appId={AppId}", id);
+                _activity.Add(null, "warn", "arr", "Arr app created but initial sync failed",
+                    dataJson: $"{{\"appId\":{id},\"type\":\"{type}\"}}");
+            }
         }
 
         var created = _repo.Get(id);
@@ -212,6 +223,9 @@ public sealed class ArrAppsController : ControllerBase
     [HttpPut("{id:long}/enabled")]
     public async Task<IActionResult> SetEnabled([FromRoute] long id, [FromBody] ArrAppEnabledDto dto, CancellationToken ct)
     {
+        var app = _repo.Get(id);
+        if (app is null) return NotFound(new { error = "app not found" });
+
         var ok = _repo.SetEnabled(id, dto.Enabled);
         if (!ok) return NotFound(new { error = "app not found" });
 
@@ -220,7 +234,7 @@ public sealed class ArrAppsController : ControllerBase
             dataJson: $"{{\"appId\":{id},\"enabled\":{(dto.Enabled ? "true" : "false")}}}");
 
         // Trigger sync when app is enabled
-        if (dto.Enabled)
+        if (dto.Enabled && IsSupportedAppType(app.Type))
         {
             try
             {
@@ -270,8 +284,8 @@ public sealed class ArrAppsController : ControllerBase
         CancellationToken ct)
     {
         var appType = (type ?? "").Trim().ToLowerInvariant();
-        if (appType != "sonarr" && appType != "radarr")
-            return BadRequest(new { error = "type query param must be 'sonarr' or 'radarr'" });
+        if (!IsSupportedAppType(appType))
+            return BadRequest(new { error = "type query param must be one of: sonarr, radarr, overseerr, jellyseerr" });
 
         if (!OutboundUrlGuard.TryNormalizeArrBaseUrl(dto.BaseUrl, out var baseUrl, out var baseUrlError))
             return BadRequest(new { error = baseUrlError });
@@ -304,9 +318,22 @@ public sealed class ArrAppsController : ControllerBase
                 AppName = appName
             });
         }
-        else
+        else if (type == "radarr")
         {
             var (ok, version, appName, error) = await _radarr.TestConnectionAsync(normalizedBaseUrl, apiKey, ct);
+            sw.Stop();
+            return Ok(new ArrAppTestResultDto
+            {
+                Ok = ok,
+                Error = error,
+                LatencyMs = sw.ElapsedMilliseconds,
+                Version = version,
+                AppName = appName
+            });
+        }
+        else
+        {
+            var (ok, version, appName, error) = await _eerr.TestConnectionAsync(normalizedBaseUrl, apiKey, type, ct);
             sw.Stop();
             return Ok(new ArrAppTestResultDto
             {
@@ -354,7 +381,7 @@ public sealed class ArrAppsController : ControllerBase
                     }).ToList()
                 });
             }
-            else
+            else if (app.Type == "radarr")
             {
                 var rootFolders = await _radarr.GetRootFoldersAsync(app.BaseUrl, app.ApiKeyEncrypted, ct);
                 var profiles = await _radarr.GetQualityProfilesAsync(app.BaseUrl, app.ApiKeyEncrypted, ct);
@@ -378,6 +405,16 @@ public sealed class ArrAppsController : ControllerBase
                         Id = t.Id,
                         Label = t.Label
                     }).ToList()
+                });
+            }
+            else
+            {
+                // Request apps (Overseerr/Jellyseerr) don't expose root folder / quality profile config.
+                return Ok(new ArrConfigResponseDto
+                {
+                    RootFolders = new List<ArrRootFolderDto>(),
+                    QualityProfiles = new List<ArrQualityProfileDto>(),
+                    Tags = new List<ArrTagDto>()
                 });
             }
         }

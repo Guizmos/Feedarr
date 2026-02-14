@@ -4,6 +4,7 @@ import { apiPost, resolveApiUrl } from "../api/client.js";
 import Modal from "./Modal.jsx";
 import { buildIndexerPillStyle } from "../utils/sourceColors.js";
 import AppIcon from "./AppIcon.jsx";
+import { getAppLabel, normalizeRequestMode } from "../utils/appTypes.js";
 
 /**
  * Determines if item should go to Sonarr (series/tv/anime/shows)
@@ -106,7 +107,10 @@ export default function ReleaseModal({
   // Arr integration props
   hasSonarr = false,
   hasRadarr = false,
-  arrStatus = null, // { inSonarr, inRadarr, sonarrId, radarrId, sonarrUrl, radarrUrl }
+  hasOverseerr = false,
+  hasJellyseerr = false,
+  integrationMode = "arr",
+  arrStatus = null, // { inSonarr, inRadarr, inOverseerr, inJellyseerr, sonarrUrl, radarrUrl, overseerrUrl, jellyseerrUrl }
   onArrStatusChange,
 }) {
   const [page, setPage] = useState("main");
@@ -172,71 +176,130 @@ export default function ReleaseModal({
     setArrResult(null);
   }, [open, item?.id]);
 
-  // Determine which arr button to show
+  const mode = normalizeRequestMode(integrationMode);
+
+  // Determine which action button to show
   const showSonarrBtn = hasSonarr && isSonarrItem(item);
   const showRadarrBtn = hasRadarr && isRadarrItem(item);
-  const arrType = showSonarrBtn ? "sonarr" : showRadarrBtn ? "radarr" : null;
+  const arrType = mode === "arr" ? (showSonarrBtn ? "sonarr" : showRadarrBtn ? "radarr" : null) : null;
 
-  // Check if already in arr from status
+  const requestType = mode === "overseerr" || mode === "jellyseerr" ? mode : null;
+  const hasRequestApp = requestType === "overseerr" ? hasOverseerr : requestType === "jellyseerr" ? hasJellyseerr : false;
+  const requestMediaType = isRadarrItem(item) ? "movie" : isSonarrItem(item) ? "tv" : null;
+  const showRequestBtn = !!requestType && !!requestMediaType;
+
+  const actionType = requestType || arrType;
+  const actionLabel = actionType ? getAppLabel(actionType) : "";
+
+  // Check if already in destination from status
   const alreadyInSonarr = arrStatus?.inSonarr || arrResult?.status === "exists" || arrResult?.status === "added";
   const alreadyInRadarr = arrStatus?.inRadarr || arrResult?.status === "exists" || arrResult?.status === "added";
+  const alreadyInOverseerr = arrStatus?.inOverseerr || arrResult?.status === "exists" || arrResult?.status === "added";
+  const alreadyInJellyseerr = arrStatus?.inJellyseerr || arrResult?.status === "exists" || arrResult?.status === "added";
   const isAlreadyInArr = (showSonarrBtn && alreadyInSonarr) || (showRadarrBtn && alreadyInRadarr);
-  const arrOpenUrl = arrResult?.openUrl || (showSonarrBtn ? arrStatus?.sonarrUrl : arrStatus?.radarrUrl);
+  const isAlreadyRequested = (requestType === "overseerr" && alreadyInOverseerr) || (requestType === "jellyseerr" && alreadyInJellyseerr);
+  const isAlreadyInTarget = mode === "arr" ? isAlreadyInArr : isAlreadyRequested;
+  const arrOpenUrl = arrResult?.openUrl || (
+    mode === "arr"
+      ? (showSonarrBtn ? arrStatus?.sonarrUrl : arrStatus?.radarrUrl)
+      : (requestType === "overseerr" ? arrStatus?.overseerrUrl : arrStatus?.jellyseerrUrl)
+  );
 
   async function handleAddToArr() {
-    if (!arrType || !item) return;
+    if (!actionType || !item) return;
     setArrAdding(true);
     setArrError("");
     setArrResult(null);
 
     try {
-      const endpoint = arrType === "sonarr" ? "/api/arr/sonarr/add" : "/api/arr/radarr/add";
+      if (mode === "arr") {
+        const endpoint = arrType === "sonarr" ? "/api/arr/sonarr/add" : "/api/arr/radarr/add";
 
-      // Build payload based on arr type
-      // Sonarr requires tvdbId, Radarr requires tmdbId
-      const payload = arrType === "sonarr"
-        ? {
-            tvdbId: item.tvdbId || 0,
-            title: item.titleClean || item.title,
-          }
-        : {
-            tmdbId: item.tmdbId || 0,
-            title: item.titleClean || item.title,
-            year: item.year || null,
-          };
+        // Build payload based on arr type
+        // Sonarr requires tvdbId, Radarr requires tmdbId
+        const payload = arrType === "sonarr"
+          ? {
+              tvdbId: item.tvdbId || 0,
+              title: item.titleClean || item.title,
+            }
+          : {
+              tmdbId: item.tmdbId || 0,
+              title: item.titleClean || item.title,
+              year: item.year || null,
+            };
 
-      // Check if we have the required ID
-      if (arrType === "sonarr" && !item.tvdbId) {
-        setArrError("ID TVDB manquant pour cet élément");
-        setArrAdding(false);
-        return;
-      }
-      if (arrType === "radarr" && !item.tmdbId) {
-        setArrError("ID TMDB manquant pour cet élément");
-        setArrAdding(false);
-        return;
-      }
+        // Check if we have the required ID
+        if (arrType === "sonarr" && !item.tvdbId) {
+          setArrError("ID TVDB manquant pour cet élément");
+          setArrAdding(false);
+          return;
+        }
+        if (arrType === "radarr" && !item.tmdbId) {
+          setArrError("ID TMDB manquant pour cet élément");
+          setArrAdding(false);
+          return;
+        }
 
-      const res = await apiPost(endpoint, payload);
+        const res = await apiPost(endpoint, payload);
 
-      if (res?.ok) {
-        setArrResult({
-          status: res.status, // "added" or "exists"
-          openUrl: res.openUrl,
-          appName: res.appName,
-        });
-        // Notify parent to update status
-        onArrStatusChange?.(item.id, arrType, {
-          inSonarr: arrType === "sonarr",
-          inRadarr: arrType === "radarr",
-          sonarrUrl: arrType === "sonarr" ? res.openUrl : arrStatus?.sonarrUrl,
-          radarrUrl: arrType === "radarr" ? res.openUrl : arrStatus?.radarrUrl,
-        });
+        if (res?.ok) {
+          setArrResult({
+            status: res.status, // "added" or "exists"
+            openUrl: res.openUrl,
+            appName: res.appName,
+          });
+          // Notify parent to update status
+          onArrStatusChange?.(item.id, arrType, {
+            inSonarr: arrType === "sonarr",
+            inRadarr: arrType === "radarr",
+            sonarrUrl: arrType === "sonarr" ? res.openUrl : arrStatus?.sonarrUrl,
+            radarrUrl: arrType === "radarr" ? res.openUrl : arrStatus?.radarrUrl,
+          });
+        } else {
+          setArrError(res?.message || "Erreur lors de l'ajout");
+        }
       } else {
-        setArrError(res?.message || "Erreur lors de l'ajout");
+        if (!requestType || !requestMediaType) return;
+        if (!hasRequestApp) {
+          setArrError(`${getAppLabel(requestType)} non configuré`);
+          setArrAdding(false);
+          return;
+        }
+        if (requestMediaType === "movie" && !item.tmdbId) {
+          setArrError("ID TMDB manquant pour créer une demande");
+          setArrAdding(false);
+          return;
+        }
+
+        const res = await apiPost("/api/arr/request/add", {
+          appType: requestType,
+          releaseId: item.id || null,
+          tmdbId: item.tmdbId || null,
+          tvdbId: item.tvdbId || null,
+          mediaType: requestMediaType,
+          title: item.titleClean || item.title,
+          year: item.year || null,
+        });
+
+        if (res?.ok) {
+          setArrResult({
+            status: res.status,
+            openUrl: res.openUrl,
+            appName: res.appName || getAppLabel(requestType),
+          });
+
+          onArrStatusChange?.(item.id, requestType, {
+            inOverseerr: requestType === "overseerr",
+            inJellyseerr: requestType === "jellyseerr",
+            overseerrUrl: requestType === "overseerr" ? res.openUrl : arrStatus?.overseerrUrl,
+            jellyseerrUrl: requestType === "jellyseerr" ? res.openUrl : arrStatus?.jellyseerrUrl,
+          });
+        } else {
+          setArrError(res?.message || "Erreur lors de la demande");
+        }
       }
     } catch (e) {
-      setArrError(e?.message || "Erreur lors de l'ajout");
+      setArrError(e?.message || "Erreur lors de l'action");
     } finally {
       setArrAdding(false);
     }
@@ -402,28 +465,28 @@ export default function ReleaseModal({
                     <Download size={18} strokeWidth={2.5} />
                   </button>
 
-                  {/* Sonarr/Radarr button - only show if app is available */}
-                  {(showSonarrBtn || showRadarrBtn) && (
-                    isAlreadyInArr ? (
+                  {/* Integration action button */}
+                  {(showSonarrBtn || showRadarrBtn || showRequestBtn) && (
+                    isAlreadyInTarget ? (
                       <div className="releaseModal__arrStatus">
                         {arrOpenUrl ? (
                           <a
                             href={arrOpenUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className={`releaseModal__arrBadge releaseModal__arrBadge--${arrType} releaseModal__arrBadge--link`}
+                            className={`releaseModal__arrBadge releaseModal__arrBadge--${actionType} releaseModal__arrBadge--link`}
                           >
                             <AppIcon name="check_circle" size={16} />
-                            {arrType === "sonarr" ? "Sonarr" : "Radarr"}
+                            {actionLabel}
                           </a>
                         ) : (
-                          <span className={`releaseModal__arrBadge releaseModal__arrBadge--${arrType}`}>
+                          <span className={`releaseModal__arrBadge releaseModal__arrBadge--${actionType}`}>
                             <AppIcon name="check_circle" size={16} />
-                            {arrType === "sonarr" ? "Sonarr" : "Radarr"}
+                            {actionLabel}
                           </span>
                         )}
                       </div>
-                    ) : arrResult?.status === "fallback" ? (
+                    ) : mode === "arr" && arrResult?.status === "fallback" ? (
                       <div className="releaseModal__arrStatus">
                         {arrResult.openUrl ? (
                           <a
@@ -433,7 +496,7 @@ export default function ReleaseModal({
                             className="releaseModal__arrBadge releaseModal__arrBadge--warn releaseModal__arrBadge--link"
                           >
                             <AppIcon name="warning" size={16} />
-                            Non trouvé - Ouvrir {arrResult.appName || (arrType === "sonarr" ? "Sonarr" : "Radarr")}
+                            Non trouvé - Ouvrir {arrResult.appName || actionLabel}
                           </a>
                         ) : (
                           <span className="releaseModal__arrBadge releaseModal__arrBadge--warn">
@@ -444,21 +507,21 @@ export default function ReleaseModal({
                       </div>
                     ) : (
                       <button
-                        className={`btn-soft btn-soft--${arrType}`}
+                        className={`btn-soft btn-soft--${actionType}`}
                         type="button"
                         onClick={handleAddToArr}
-                        aria-label={arrType === "sonarr" ? "Ajouter à Sonarr" : "Ajouter à Radarr"}
-                        disabled={arrAdding}
+                        aria-label={mode === "arr" ? `Ajouter à ${actionLabel}` : `Ajouter à ${actionLabel}`}
+                        disabled={arrAdding || (mode !== "arr" && !hasRequestApp)}
                       >
                         {arrAdding ? (
                           <>
                             <Loader2 size={15} strokeWidth={2.5} className="releaseModal__arrSpin" />
-                            Ajout...
+                            {mode === "arr" ? "Ajout..." : "Demande..."}
                           </>
                         ) : (
                           <>
                             <CirclePlus size={15} strokeWidth={2.5} />
-                            {arrType === "sonarr" ? "Sonarr" : "Radarr"}
+                            {mode === "arr" ? `Ajouter à ${actionLabel}` : `Ajouter à ${actionLabel}`}
                           </>
                         )}
                       </button>

@@ -3,6 +3,7 @@ import usePosterRetryOn404 from "../hooks/usePosterRetryOn404.js";
 import { CheckCircle, Image, ImageOff } from "lucide-react";
 import { buildIndexerPillStyle } from "../utils/sourceColors.js";
 import AppIcon from "./AppIcon.jsx";
+import { getAppLabel, normalizeRequestMode } from "../utils/appTypes.js";
 
 export default function PosterCard({
   item,
@@ -17,9 +18,11 @@ export default function PosterCard({
   indexerColor,
   showIndexerPill = false,
   indexerPillPosition = "left",
-  arrStatus = null, // { inSonarr, inRadarr }
+  integrationMode = "arr",
+  arrStatus = null, // { inSonarr, inRadarr, inOverseerr, inJellyseerr }
 }) {
   const seen = !!item.seen;
+  const mode = normalizeRequestMode(integrationMode);
 
   const displayTitle = useMemo(
     () => (item.titleClean?.trim() ? item.titleClean : item.title),
@@ -89,12 +92,25 @@ export default function PosterCard({
           </div>
         ) : null}
 
-        {/* Arr badge - shows if item is in Sonarr or Radarr */}
-        {(arrStatus?.inSonarr || arrStatus?.inRadarr) && !selectionMode && (() => {
-          const isSonarr = !!arrStatus.inSonarr;
-          const arrUrl = isSonarr ? arrStatus.sonarrUrl : arrStatus.radarrUrl;
-          const arrLabel = isSonarr ? "Sonarr" : "Radarr";
-          const arrType = isSonarr ? "sonarr" : "radarr";
+        {/* Integration badge - arr or request app depending on selected mode */}
+        {!selectionMode && (() => {
+          let arrType = null;
+          let arrUrl = null;
+
+          if (mode === "overseerr" && arrStatus?.inOverseerr) {
+            arrType = "overseerr";
+            arrUrl = arrStatus?.overseerrUrl || null;
+          } else if (mode === "jellyseerr" && arrStatus?.inJellyseerr) {
+            arrType = "jellyseerr";
+            arrUrl = arrStatus?.jellyseerrUrl || null;
+          } else if (mode === "arr" && (arrStatus?.inSonarr || arrStatus?.inRadarr)) {
+            const isSonarr = !!arrStatus.inSonarr;
+            arrType = isSonarr ? "sonarr" : "radarr";
+            arrUrl = isSonarr ? arrStatus?.sonarrUrl || null : arrStatus?.radarrUrl || null;
+          }
+
+          if (!arrType) return null;
+          const arrLabel = getAppLabel(arrType);
 
           const cls = `posterArrBadge posterArrBadge--${arrType}` + (arrUrl ? " posterArrBadge--link" : "");
 

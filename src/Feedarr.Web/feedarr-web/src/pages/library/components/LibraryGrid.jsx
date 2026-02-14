@@ -17,6 +17,7 @@ export default function LibraryGrid({
   sourceColorById,
   sourceId,
   arrStatusMap,
+  integrationMode,
 }) {
   return (
     <div className="grid">
@@ -35,6 +36,7 @@ export default function LibraryGrid({
           indexerColor={sourceColorById.get(Number(it.sourceId)) || null}
           showIndexerPill={!sourceId}
           indexerPillPosition="left"
+          integrationMode={integrationMode}
           arrStatus={arrStatusMap[it.id]}
         />
       ))}

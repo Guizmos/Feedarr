@@ -48,6 +48,74 @@ public sealed class BackupExecutionCoordinator
         }
     }
 
+    /// <summary>
+    /// Async version: acquires the gate and drains sync activities without blocking threads.
+    /// The action lambda itself may be synchronous (file I/O).
+    /// </summary>
+    public async Task<T> RunExclusiveAsync<T>(string operation, string? backupName, Func<T> action)
+    {
+        if (!await _operationGate.WaitAsync(AcquireTimeout))
+            throw new BackupOperationException("backup operation already running", StatusCodes.Status409Conflict);
+
+        var startedAt = DateTimeOffset.UtcNow;
+
+        try
+        {
+            lock (_stateLock)
+            {
+                _syncBlocked = true;
+                _state.IsBusy = true;
+                _state.Operation = operation;
+                _state.Phase = "waiting-sync";
+                _state.BackupName = backupName;
+                _state.StartedAtTs = startedAt.ToUnixTimeSeconds();
+                _state.LastError = null;
+            }
+
+            await WaitForSyncDrainAsync();
+
+            lock (_stateLock)
+            {
+                _state.Phase = "running";
+            }
+
+            var result = action();
+
+            lock (_stateLock)
+            {
+                _state.IsBusy = false;
+                _state.Operation = "idle";
+                _state.Phase = "idle";
+                _state.BackupName = null;
+                _state.StartedAtTs = null;
+                _state.LastCompletedAtTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                _state.LastSuccess = true;
+                _state.LastError = null;
+                _syncBlocked = false;
+            }
+
+            return result;
+        }
+        catch (BackupOperationException ex)
+        {
+            MarkFailed(ex, "backup operation failed");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            MarkFailed(ex, "backup operation failed");
+            throw;
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Synchronous wrapper kept for backward compatibility.
+    /// Prefer <see cref="RunExclusiveAsync{T}"/> in async controller actions.
+    /// </summary>
     public T RunExclusive<T>(string operation, string? backupName, Func<T> action)
     {
         if (!_operationGate.Wait(AcquireTimeout))
@@ -105,6 +173,29 @@ public sealed class BackupExecutionCoordinator
         finally
         {
             _operationGate.Release();
+        }
+    }
+
+    private async Task WaitForSyncDrainAsync()
+    {
+        var sw = Stopwatch.StartNew();
+        while (true)
+        {
+            int active;
+            lock (_stateLock)
+            {
+                active = _activeSyncActivities;
+            }
+
+            if (active <= 0)
+                return;
+
+            if (sw.Elapsed >= SyncDrainTimeout)
+                throw new BackupOperationException(
+                    "sync activities still running, retry in a moment",
+                    StatusCodes.Status409Conflict);
+
+            await Task.Delay(100);
         }
     }
 

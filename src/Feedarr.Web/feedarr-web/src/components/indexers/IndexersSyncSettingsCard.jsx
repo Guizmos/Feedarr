@@ -91,7 +91,9 @@ export default function IndexersSyncSettingsCard({ onStateChange }) {
     let ok = false;
     setSaveState("loading");
     try {
+      const current = await apiGet("/api/settings/general");
       await apiPut("/api/settings/general", {
+        ...current,
         syncIntervalMinutes: toInt(syncRaw, 60),
         rssLimit: toInt(perCatRaw, 50),
         rssLimitPerCategory: toInt(perCatRaw, 50),

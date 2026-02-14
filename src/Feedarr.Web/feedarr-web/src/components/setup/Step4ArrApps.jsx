@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { apiDelete, apiGet, apiPost, apiPut } from "../../api/client.js";
 import ItemRow from "../../ui/ItemRow.jsx";
 import Modal from "../../ui/Modal.jsx";
+import { getAppLabel, isArrLibraryType } from "../../utils/appTypes.js";
 
 export default function Step4ArrApps() {
   const [apps, setApps] = useState([]);
@@ -218,7 +219,7 @@ export default function Step4ArrApps() {
         payload.monitorMode = monitorMode;
         payload.searchMissing = searchMissing;
         payload.searchCutoff = searchCutoff;
-      } else {
+      } else if (modalType === "radarr") {
         payload.minimumAvailability = minAvail;
         payload.searchForMovie = searchForMovie;
       }
@@ -251,6 +252,7 @@ export default function Step4ArrApps() {
     () => (Array.isArray(config?.tags) ? config.tags : []),
     [config]
   );
+  const isLibraryType = isArrLibraryType(modalType);
   const canUseStoredKey = modalMode === "edit" && modalApp?.id && !modalApiKey.trim();
   const canTestModal = !!modalBaseUrl.trim() && (modalApiKey.trim() || canUseStoredKey) && !modalTesting && !modalSaving;
   const canSaveModal = !!modalBaseUrl.trim() && !modalSaving && !modalTesting;
@@ -260,7 +262,7 @@ export default function Step4ArrApps() {
     <div className="setup-step setup-arr">
       <div className="setup-arr__header">
         <div>
-          <h2>Applications (Sonarr / Radarr)</h2>
+          <h2>Applications (Sonarr / Radarr / Overseerr / Jellyseerr)</h2>
           <p>Optionnel — configure une ou plusieurs apps.</p>
         </div>
         <div className="setup-arr__add settings-row settings-row--ui-select">
@@ -279,6 +281,8 @@ export default function Step4ArrApps() {
             </option>
             <option value="sonarr">Sonarr</option>
             <option value="radarr">Radarr</option>
+            <option value="overseerr">Overseerr</option>
+            <option value="jellyseerr">Jellyseerr</option>
           </select>
         </div>
       </div>
@@ -303,8 +307,9 @@ export default function Step4ArrApps() {
         )}
 
         {!loading && apps.map((app, idx) => {
+          const appLabel = getAppLabel(app.type);
           const badges = [
-            { label: app.type === "sonarr" ? "Sonarr" : "Radarr" },
+            { label: appLabel },
             {
               label: app.hasApiKey ? "API OK" : "NO KEY",
               className: app.hasApiKey ? "pill-ok" : "pill-warn",
@@ -315,7 +320,7 @@ export default function Step4ArrApps() {
             <ItemRow
               key={app.id}
               id={idx + 1}
-              title={app.name || (app.type === "sonarr" ? "Sonarr" : "Radarr")}
+              title={app.name || appLabel}
               meta={app.baseUrl || ""}
               enabled={app.isEnabled}
               badges={badges}
@@ -351,6 +356,8 @@ export default function Step4ArrApps() {
               <select value={modalType} onChange={(e) => setModalType(e.target.value)}>
                 <option value="sonarr">Sonarr</option>
                 <option value="radarr">Radarr</option>
+                <option value="overseerr">Overseerr</option>
+                <option value="jellyseerr">Jellyseerr</option>
               </select>
             </div>
           )}
@@ -359,7 +366,7 @@ export default function Step4ArrApps() {
             <input
               value={modalName}
               onChange={(e) => setModalName(e.target.value)}
-              placeholder={modalType === "sonarr" ? "Mon Sonarr" : "Mon Radarr"}
+              placeholder={`Mon ${getAppLabel(modalType)}`}
               disabled={modalSaving || modalTesting}
             />
           </div>
@@ -368,7 +375,7 @@ export default function Step4ArrApps() {
             <input
               value={modalBaseUrl}
               onChange={(e) => setModalBaseUrl(e.target.value)}
-              placeholder="http://localhost:8989"
+              placeholder={modalType === "sonarr" ? "http://localhost:8989" : modalType === "radarr" ? "http://localhost:7878" : "http://localhost:5055"}
               disabled={modalSaving || modalTesting}
             />
           </div>
@@ -384,15 +391,17 @@ export default function Step4ArrApps() {
         </div>
 
         <div className="setup-arr__modal-actions">
-          <button className="btn" type="button" onClick={() => setAdvancedOpen((v) => !v)}>
-            {advancedOpen ? "Masquer options avancées" : "Options avancées"}
-          </button>
+          {isLibraryType && (
+            <button className="btn" type="button" onClick={() => setAdvancedOpen((v) => !v)}>
+              {advancedOpen ? "Masquer options avancées" : "Options avancées"}
+            </button>
+          )}
         </div>
 
         {modalError && <div className="onboarding__error">{modalError}</div>}
         {modalTestState === "ok" && <div className="onboarding__ok">Connexion OK</div>}
 
-        {advancedOpen && (
+        {advancedOpen && isLibraryType && (
           <div className="setup-arr__advanced">
             {modalMode === "edit" && modalApp?.hasApiKey && (
               <div className="setup-arr__config">
@@ -516,7 +525,7 @@ export default function Step4ArrApps() {
                   </select>
                 </div>
               </div>
-            ) : (
+            ) : modalType === "radarr" ? (
               <div className="formgrid">
                 <div className="field">
                   <label>Minimum availability</label>
@@ -534,7 +543,15 @@ export default function Step4ArrApps() {
                   </select>
                 </div>
               </div>
-            )}
+            ) : null}
+          </div>
+        )}
+
+        {advancedOpen && !isLibraryType && (
+          <div className="setup-arr__advanced">
+            <div className="muted">
+              Pas d&apos;options avancées pour {getAppLabel(modalType)}.
+            </div>
           </div>
         )}
 

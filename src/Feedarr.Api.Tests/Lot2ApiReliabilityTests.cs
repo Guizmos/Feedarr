@@ -205,6 +205,10 @@ public sealed class Lot2ApiReliabilityTests
             null!,
             null!,
             null!,
+            null!,
+            null!,
+            null!,
+            null!,
             NullLogger<ArrController>.Instance,
             null!);
     }

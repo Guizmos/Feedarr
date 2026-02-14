@@ -10,6 +10,8 @@ namespace Feedarr.Api.Services.Security;
 
 public sealed class BasicAuthMiddleware
 {
+    internal const string AuthPassedKey = "feedarr.auth.passed";
+
     private readonly RequestDelegate _next;
 
     public BasicAuthMiddleware(RequestDelegate next)
@@ -29,6 +31,7 @@ public sealed class BasicAuthMiddleware
 
         if (authMode != "basic")
         {
+            context.Items[AuthPassedKey] = true;
             await _next(context);
             return;
         }
@@ -36,6 +39,7 @@ public sealed class BasicAuthMiddleware
         var authRequired = Normalize(security.AuthenticationRequired, "local", new[] { "local", "all" });
         if (authRequired == "local" && IsLocalRequest(context))
         {
+            context.Items[AuthPassedKey] = true;
             await _next(context);
             return;
         }
@@ -52,6 +56,7 @@ public sealed class BasicAuthMiddleware
             return;
         }
 
+        context.Items[AuthPassedKey] = true;
         await _next(context);
     }
 

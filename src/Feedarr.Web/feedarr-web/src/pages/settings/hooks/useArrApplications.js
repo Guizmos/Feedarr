@@ -1,6 +1,9 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiDelete, apiGet, apiPost, apiPut } from "../../../api/client.js";
 import { sleep } from "../settingsUtils.js";
+import { normalizeRequestMode } from "../../../utils/appTypes.js";
+
+const ALL_APP_TYPES = ["sonarr", "radarr", "overseerr", "jellyseerr"];
 
 export default function useArrApplications() {
   const [arrApps, setArrApps] = useState([]);
@@ -52,13 +55,26 @@ export default function useArrApplications() {
   const [arrSyncSettings, setArrSyncSettings] = useState({
     arrSyncIntervalMinutes: 60,
     arrAutoSyncEnabled: true,
+    requestIntegrationMode: "arr",
   });
   const [arrSyncStatus, setArrSyncStatus] = useState([]);
   const [arrSyncStatusLoading, setArrSyncStatusLoading] = useState(false);
   const [arrSyncSaving, setArrSyncSaving] = useState(false);
   const [arrSyncing, setArrSyncing] = useState(false);
+  const [arrRequestModeDraft, setArrRequestModeDraft] = useState("arr");
+  const [arrPulseKeys, setArrPulseKeys] = useState(() => new Set());
+  const arrPulseTimerRef = useRef(null);
 
   const hasEnabledArrApps = arrApps.some((app) => app.isEnabled && app.hasApiKey);
+  const existingTypes = new Set(arrApps.map((app) => String(app.type || "").toLowerCase()));
+  const availableAddTypes = ALL_APP_TYPES.filter((type) => !existingTypes.has(type));
+  const isRequestModeDirty = arrRequestModeDraft !== normalizeRequestMode(arrSyncSettings?.requestIntegrationMode);
+
+  useEffect(() => {
+    return () => {
+      if (arrPulseTimerRef.current) clearTimeout(arrPulseTimerRef.current);
+    };
+  }, []);
 
   // Load functions
   const loadArrApps = useCallback(async () => {
@@ -76,12 +92,21 @@ export default function useArrApplications() {
   const loadArrSyncSettings = useCallback(async () => {
     try {
       const general = await apiGet("/api/settings/general");
-      setArrSyncSettings({
+      const next = {
         arrSyncIntervalMinutes: Number(general?.arrSyncIntervalMinutes ?? 60),
         arrAutoSyncEnabled: general?.arrAutoSyncEnabled !== false,
-      });
+        requestIntegrationMode: normalizeRequestMode(general?.requestIntegrationMode),
+      };
+      setArrSyncSettings(next);
+      setArrRequestModeDraft(next.requestIntegrationMode);
     } catch {
-      setArrSyncSettings({ arrSyncIntervalMinutes: 60, arrAutoSyncEnabled: true });
+      const fallback = {
+        arrSyncIntervalMinutes: 60,
+        arrAutoSyncEnabled: true,
+        requestIntegrationMode: "arr",
+      };
+      setArrSyncSettings(fallback);
+      setArrRequestModeDraft(fallback.requestIntegrationMode);
     }
   }, []);
 
@@ -113,23 +138,45 @@ export default function useArrApplications() {
   const saveArrSyncSettings = useCallback(async (settings) => {
     setArrSyncSaving(true);
     try {
+      const wasRequestModeDirty = arrRequestModeDraft !== normalizeRequestMode(arrSyncSettings?.requestIntegrationMode);
       const current = await apiGet("/api/settings/general");
       const payload = {
         ...current,
         arrSyncIntervalMinutes: settings.arrSyncIntervalMinutes,
         arrAutoSyncEnabled: settings.arrAutoSyncEnabled,
+        requestIntegrationMode: normalizeRequestMode(settings.requestIntegrationMode),
       };
       const saved = await apiPut("/api/settings/general", payload);
-      setArrSyncSettings({
+      const next = {
         arrSyncIntervalMinutes: Number(saved?.arrSyncIntervalMinutes ?? 60),
         arrAutoSyncEnabled: saved?.arrAutoSyncEnabled !== false,
-      });
+        requestIntegrationMode: normalizeRequestMode(saved?.requestIntegrationMode),
+      };
+      setArrSyncSettings(next);
+      if (!wasRequestModeDirty) {
+        setArrRequestModeDraft(next.requestIntegrationMode);
+      }
     } catch (e) {
       throw new Error(e?.message || "Erreur sauvegarde paramètres sync");
     } finally {
       setArrSyncSaving(false);
     }
-  }, []);
+  }, [arrRequestModeDraft, arrSyncSettings]);
+
+  const saveArrRequestModeDraft = useCallback(async () => {
+    if (!isRequestModeDirty) return;
+    const updated = {
+      ...arrSyncSettings,
+      requestIntegrationMode: arrRequestModeDraft,
+    };
+    await saveArrSyncSettings(updated);
+
+    if (arrPulseTimerRef.current) clearTimeout(arrPulseTimerRef.current);
+    setArrPulseKeys(new Set(["arr.requestIntegrationMode"]));
+    arrPulseTimerRef.current = setTimeout(() => {
+      setArrPulseKeys(new Set());
+    }, 1200);
+  }, [arrRequestModeDraft, arrSyncSettings, isRequestModeDirty, saveArrSyncSettings]);
 
   const triggerArrSync = useCallback(async () => {
     if (!hasEnabledArrApps) return;
@@ -175,6 +222,7 @@ export default function useArrApplications() {
   function openArrModalAdd() {
     resetArrModal();
     setArrModalMode("add");
+    setArrModalType(availableAddTypes[0] || "");
     setArrModalOpen(true);
   }
 
@@ -234,6 +282,10 @@ export default function useArrApplications() {
     setArrModalSaving(true);
     setArrModalError("");
     try {
+      if (arrModalMode === "add" && !arrModalType) {
+        throw new Error("Aucun type disponible à ajouter");
+      }
+
       const payload = {
         type: arrModalType,
         name: arrModalName.trim() || null,
@@ -253,7 +305,7 @@ export default function useArrApplications() {
         payload.monitorMode = arrModalMonitorMode;
         payload.searchMissing = arrModalSearchMissing;
         payload.searchCutoff = arrModalSearchCutoff;
-      } else {
+      } else if (arrModalType === "radarr") {
         payload.minimumAvailability = arrModalMinAvail;
         payload.searchForMovie = arrModalSearchForMovie;
       }
@@ -389,6 +441,7 @@ export default function useArrApplications() {
     arrApps,
     arrAppsLoading,
     hasEnabledArrApps,
+    availableAddTypes,
     loadArrApps,
     // Sync settings
     arrSyncSettings,
@@ -396,10 +449,15 @@ export default function useArrApplications() {
     arrSyncStatusLoading,
     arrSyncSaving,
     arrSyncing,
+    arrRequestModeDraft,
+    arrPulseKeys,
+    isRequestModeDirty,
     setArrSyncSettings,
+    setArrRequestModeDraft,
     loadArrSyncSettings,
     loadArrSyncStatus,
     saveArrSyncSettings,
+    saveArrRequestModeDraft,
     triggerArrSync,
     // Test status
     arrTestingId,

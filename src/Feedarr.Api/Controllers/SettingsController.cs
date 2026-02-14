@@ -60,7 +60,8 @@ public sealed class SettingsController : ControllerBase
             RssLimitGlobalPerSource = _app.RssLimitGlobalPerSource > 0 ? _app.RssLimitGlobalPerSource : 250,
             AutoSyncEnabled = true,
             ArrSyncIntervalMinutes = 60,
-            ArrAutoSyncEnabled = true
+            ArrAutoSyncEnabled = true,
+            RequestIntegrationMode = "arr"
         };
 
         return Ok(_repo.GetGeneral(defaults));
@@ -80,6 +81,9 @@ public sealed class SettingsController : ControllerBase
         if (globalRaw <= 0) globalRaw = 250;
         var globalLimit = Math.Clamp(globalRaw, 1, 2000);
         var arrInterval = Math.Clamp(dto.ArrSyncIntervalMinutes, 1, 1440);
+        var requestMode = (dto.RequestIntegrationMode ?? "arr").Trim().ToLowerInvariant();
+        if (requestMode is not ("arr" or "overseerr" or "jellyseerr"))
+            requestMode = "arr";
 
         var saved = new GeneralSettings
         {
@@ -89,7 +93,8 @@ public sealed class SettingsController : ControllerBase
             RssLimitGlobalPerSource = globalLimit,
             AutoSyncEnabled = dto.AutoSyncEnabled,
             ArrSyncIntervalMinutes = arrInterval,
-            ArrAutoSyncEnabled = dto.ArrAutoSyncEnabled
+            ArrAutoSyncEnabled = dto.ArrAutoSyncEnabled,
+            RequestIntegrationMode = requestMode
         };
 
         _repo.SaveGeneral(saved);

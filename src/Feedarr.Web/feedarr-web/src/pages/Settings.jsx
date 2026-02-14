@@ -35,6 +35,7 @@ export default function Settings() {
     saveState,
     isDirty,
     openArrModalAdd,
+    canAddArrApp,
     triggerArrSync,
     arrSyncing,
     hasEnabledArrApps,
@@ -70,7 +71,13 @@ export default function Settings() {
       <>
         <SubAction icon="refresh" label="Rafraîchir" onClick={handleRefresh} />
         {showApplications && (
-          <SubAction icon="add_circle" label="Ajouter" onClick={() => openArrModalAddRef.current?.()} />
+          <SubAction
+            icon="add_circle"
+            label="Ajouter"
+            onClick={() => openArrModalAddRef.current?.()}
+            disabled={!canAddArrApp}
+            title={!canAddArrApp ? "Toutes les applications sont déjà ajoutées" : "Ajouter"}
+          />
         )}
         {showBackup && (
           <SubAction
@@ -155,6 +162,7 @@ export default function Settings() {
     showExternals,
     saveState,
     isDirty,
+    canAddArrApp,
     triggerArrSync,
     arrSyncing,
     hasEnabledArrApps,

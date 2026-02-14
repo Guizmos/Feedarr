@@ -908,7 +908,13 @@ public sealed class PosterFetchService
             var cachedPath = Path.Combine(PostersDirAbs, cached.PosterFile);
             if (System.IO.File.Exists(cachedPath))
             {
-                _releases.SavePoster(id, cachedIds?.TmdbId, null, cached.PosterFile);
+                var tmdbIdResolved = cachedIds?.TmdbId;
+                if (!tmdbIdResolved.HasValue && cachedIds?.TvdbId is int cachedTvdbId)
+                    tmdbIdResolved = await TryResolveTmdbFromTvdbAsync(cachedTvdbId, ct);
+
+                _releases.SavePoster(id, tmdbIdResolved, null, cached.PosterFile);
+                if (tmdbIdResolved.HasValue)
+                    _releases.SaveTmdbId(id, tmdbIdResolved.Value);
                 if (cachedIds?.TvdbId is not null)
                     _releases.SaveTvdbId(id, cachedIds.TvdbId.Value);
 
@@ -957,15 +963,21 @@ public sealed class PosterFetchService
             var full = Path.Combine(PostersDirAbs, file);
             await System.IO.File.WriteAllBytesAsync(full, bytes, ct);
 
-            _releases.SavePoster(id, cachedIds.TmdbId, imageUrl, file);
+            var tmdbIdResolved = cachedIds.TmdbId;
             if (show.TvdbId.HasValue)
                 _releases.SaveTvdbId(id, show.TvdbId.Value);
+            if (!tmdbIdResolved.HasValue && show.TvdbId.HasValue)
+                tmdbIdResolved = await TryResolveTmdbFromTvdbAsync(show.TvdbId.Value, ct);
+            if (tmdbIdResolved.HasValue)
+                _releases.SaveTmdbId(id, tmdbIdResolved.Value);
+
+            _releases.SavePoster(id, tmdbIdResolved, imageUrl, file);
 
             var hash = ComputeSha256Hex(bytes);
             PosterAudit.UpdateAttemptSuccess(_releases, id, "tvmaze", show.Id.ToString(CultureInfo.InvariantCulture), null, size, hash);
 
             var mergedIds = new PosterMatchIds(
-                cachedIds.TmdbId,
+                tmdbIdResolved,
                 show.TvdbId ?? cachedIds.TvdbId,
                 show.Id,
                 cachedIds.IgdbId,
@@ -1074,14 +1086,20 @@ public sealed class PosterFetchService
         var full = Path.Combine(PostersDirAbs, file);
         await System.IO.File.WriteAllBytesAsync(full, bytes, ct);
 
-        _releases.SavePoster(id, null, imageUrl, file);
+        int? tmdbIdResolved = null;
         if (best.Candidate.TvdbId.HasValue)
             _releases.SaveTvdbId(id, best.Candidate.TvdbId.Value);
+        if (best.Candidate.TvdbId.HasValue)
+            tmdbIdResolved = await TryResolveTmdbFromTvdbAsync(best.Candidate.TvdbId.Value, ct);
+        if (tmdbIdResolved.HasValue)
+            _releases.SaveTmdbId(id, tmdbIdResolved.Value);
+
+        _releases.SavePoster(id, tmdbIdResolved, imageUrl, file);
 
         var hash = ComputeSha256Hex(bytes);
         PosterAudit.UpdateAttemptSuccess(_releases, id, "tvmaze", best.Candidate.Id.ToString(CultureInfo.InvariantCulture), null, size, hash);
 
-        var ids = new PosterMatchIds(null, best.Candidate.TvdbId, best.Candidate.Id, null, best.Candidate.ImdbId);
+        var ids = new PosterMatchIds(tmdbIdResolved, best.Candidate.TvdbId, best.Candidate.Id, null, best.Candidate.ImdbId);
         var confidence = AdjustConfidence(best.Score, ambiguity, category == UnifiedCategory.Emission);
         _matchCache.Upsert(new PosterMatch(
             fingerprint,
@@ -1119,11 +1137,25 @@ public sealed class PosterFetchService
         var result = new PosterFetchResult(true, 200, new
         {
             ok = true,
+            tmdbId = tmdbIdResolved,
             tvmazeId = best.Candidate.Id,
             posterFile = file,
             posterUrl = $"/api/posters/release/{id}"
         }, sourceId);
         return new TvMazeAttempt(result, true);
+    }
+
+    private async Task<int?> TryResolveTmdbFromTvdbAsync(int tvdbId, CancellationToken ct)
+    {
+        if (tvdbId <= 0) return null;
+        try
+        {
+            return await _tmdb.GetTvTmdbIdByTvdbIdAsync(tvdbId, ct);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static double AdjustConfidence(float score, TitleAmbiguityResult ambiguity, bool isEmission)

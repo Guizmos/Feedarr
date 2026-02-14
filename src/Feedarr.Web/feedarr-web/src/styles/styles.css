@@ -716,7 +716,7 @@ body{
 /* SONARR GRID (posters/cards) */
 .grid{
   display:grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 20px;
 }
 .top5-global-section{
@@ -760,7 +760,7 @@ body{
 .posterCard{
   background: var(--panel);
   border: 1px solid var(--panel-border);
-  border-radius: var(--radius);
+  border-radius: 18px;
   overflow: hidden;
   box-shadow: var(--poster-shadow, var(--panel-shadow));
   cursor: pointer;
@@ -912,6 +912,9 @@ body{
 }
 .page--top24h .statusline{
   display: none;
+}
+.page--top24h .grid.grid--compact:not(.grid--spotlight) .posterCard{
+  border-radius: 16px;
 }
 
 /* Optional: reduce hover lift so it feels less "big card" */
@@ -1161,6 +1164,16 @@ html, body {
   background: rgba(59, 130, 246, 0.90);
   border: 1px solid rgba(59, 130, 246, 0.95);
   color: #ffffff; 
+}
+.posterArrBadge--overseerr{
+  background: rgba(245, 158, 11, 0.92);
+  border: 1px solid rgba(245, 158, 11, 0.98);
+  color: #ffffff;
+}
+.posterArrBadge--jellyseerr{
+  background: rgba(20, 184, 166, 0.92);
+  border: 1px solid rgba(20, 184, 166, 0.98);
+  color: #ffffff;
 }
 .posterArrBadge__icon{
   width: 12px;
@@ -1953,7 +1966,7 @@ html, body {
 }
 .releaseModal__poster{
   background: #e6e9f2;
-  border-radius: 8px;
+  border-radius: 18px;
   overflow: hidden;
   min-height: 320px;
   display:flex;
@@ -2151,6 +2164,24 @@ html, body {
   background: rgba(59,130,246,0.25);
   border-color: rgba(59,130,246,0.5);
 }
+.releaseModal__arrBadge--overseerr{
+  background: rgba(245,158,11,0.15);
+  color: #f59e0b;
+  border-color: rgba(245,158,11,0.35);
+}
+.releaseModal__arrBadge--overseerr.releaseModal__arrBadge--link:hover{
+  background: rgba(245,158,11,0.25);
+  border-color: rgba(245,158,11,0.5);
+}
+.releaseModal__arrBadge--jellyseerr{
+  background: rgba(20,184,166,0.15);
+  color: #14b8a6;
+  border-color: rgba(20,184,166,0.35);
+}
+.releaseModal__arrBadge--jellyseerr.releaseModal__arrBadge--link:hover{
+  background: rgba(20,184,166,0.25);
+  border-color: rgba(20,184,166,0.5);
+}
 .releaseModal__arrBadge--warn{
   background: rgba(234,179,8,0.15);
   color: #eab308;
@@ -2187,6 +2218,22 @@ html, body {
 }
 .btn-soft--radarr:hover:not(:disabled){
   background: rgba(34,197,94,0.25);
+}
+.btn-soft--overseerr{
+  background: rgba(245,158,11,0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(245,158,11,0.35);
+}
+.btn-soft--overseerr:hover:not(:disabled){
+  background: rgba(245,158,11,0.25);
+}
+.btn-soft--jellyseerr{
+  background: rgba(20,184,166,0.15);
+  color: #14b8a6;
+  border: 1px solid rgba(20,184,166,0.35);
+}
+.btn-soft--jellyseerr:hover:not(:disabled){
+  background: rgba(20,184,166,0.25);
 }
 .btn-soft--small{
   height: 26px;
@@ -4165,7 +4212,7 @@ body.nav-open{ overflow: hidden; }
     .grid{ grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
     .poster{ height: 180px; }
     .posterTitle{ white-space: nowrap; text-overflow: ellipsis; font-size: 12px; height: 18px; overflow: hidden; }
-    .posterSub{ flex-wrap: wrap; max-height: 18px; overflow: hidden; font-size: 10px; gap: 6px; }
+    .posterSub{ flex-wrap: wrap; max-height: 18px; overflow: hidden; font-size: 9px; gap: 6px; }
     .posterSubAlt{ display: none; }
     .posterMeta{ padding: 6px 6px 4px; gap: 2px; }
     .posterCard:hover{ transform: none; }
@@ -4266,7 +4313,7 @@ body.nav-open{ overflow: hidden; }
   .grid{ grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
   .poster{ height: auto; aspect-ratio: 2 / 3; }
   .posterTitle{ font-size: 10px; line-height: 1.2; height: 14px; }
-  .posterSub{ font-size: 9px; max-height: 14px; gap: 4px; }
+  .posterSub{ font-size: 8px; max-height: 14px; gap: 4px; }
   .posterMeta{ padding: 4px 5px 3px; gap: 1px; }
   .grid.grid--compact{ grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
   .grid.grid--compact .poster{ height: auto; aspect-ratio: 2 / 3; }
@@ -4307,7 +4354,7 @@ body.nav-open{ overflow: hidden; }
   .content{ padding-bottom: calc(24px + var(--safe-bottom)); }
   .page{ padding: 10px 8px; padding-bottom: calc(24px + var(--safe-bottom)); }
   /* Poster card polish */
-  .posterCard{ border-radius: 6px; }
+  .posterCard{ border-radius: 12px; }
   .posterCard:hover{ transform: none; }
   .posterIndexerPill .banner-pill{ font-size: 8px; padding: 1px 3px; }
   .posterArrBadge{ font-size: 8px; padding: 1px 3px; bottom: 4px; left: 4px; }
@@ -4486,7 +4533,7 @@ body.library-select-mode .list-edit{ display: none; }
   width: 240px;
   height: 135px;
   flex: 0 0 auto;
-  border-radius: 6px;
+  border-radius: 12px;
   background: var(--poster-fallback, #c9c9c9);
   overflow: hidden;
   display:flex;
@@ -4736,7 +4783,7 @@ body.library-select-mode .list-edit{ display: none; }
   .banner-title{ font-size: 13px; }
   .banner-sub{ font-size: 10px; gap: 4px; }
   .banner-foot{ font-size: 9px; gap: 4px; }
-  .banner-poster{ width: 130px; height: 73px; border-radius: 4px; }
+  .banner-poster{ width: 130px; height: 73px; border-radius: 6px; align-self: center; }
   .banner-type{ font-size: 9px; padding: 2px 6px; }
   .banner-pill{ font-size: 10px; padding: 1px 6px; }
 }
@@ -5348,5 +5395,8 @@ body.library-select-mode .list-edit{ display: none; }
 @media (max-width: 900px) {
   .setup-jackett__columns {
     grid-template-columns: 1fr;
+  }
+  .page--top24h .grid.grid--compact:not(.grid--spotlight) .posterCard{
+    border-radius: 12px;
   }
 }

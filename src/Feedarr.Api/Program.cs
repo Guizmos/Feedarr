@@ -8,6 +8,7 @@ using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services.Fanart;
 using Feedarr.Api.Services.Igdb;
 using Feedarr.Api.Services.Jackett;
+using Feedarr.Api.Services.Metadata;
 using Feedarr.Api.Services.Prowlarr;
 using Feedarr.Api.Services.Posters;
 using Feedarr.Api.Services.Torznab;
@@ -27,7 +28,9 @@ using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Threading.RateLimiting;
+using Feedarr.Api.Services.Resilience;
 
 var builder = WebApplication.CreateBuilder(args);
 var enforceHttps = builder.Configuration.GetValue("App:Security:EnforceHttps", !builder.Environment.IsDevelopment());
@@ -89,6 +92,7 @@ else
 
 builder.Services.AddScoped<ApiRequestMetricsFilter>();
 builder.Services.AddScoped<ApiErrorNormalizationFilter>();
+builder.Services.AddScoped<RequireAuthFilter>();
 builder.Services.AddControllers(options =>
 {
     options.Filters.AddService<ApiRequestMetricsFilter>();
@@ -140,9 +144,15 @@ builder.Services.AddSingleton<RetroFetchLogService>();
 builder.Services.AddSingleton<IPosterFetchQueue, PosterFetchQueue>();
 builder.Services.AddHostedService<PosterFetchWorker>();
 builder.Services.AddSingleton<MediaEntityArrStatusService>();
+builder.Services.AddSingleton<ExternalIdBackfillService>();
+builder.Services.AddSingleton<RequestTmdbResolverService>();
+builder.Services.AddSingleton<RequestTmdbBackfillService>();
 builder.Services.AddSingleton<RetentionService>();
 
-// Torznab
+// Resilience: transient retry handler for external HTTP clients
+builder.Services.AddTransient<TransientHttpRetryHandler>();
+
+// Torznab (already has its own retry logic in TorznabClient)
 builder.Services.AddSingleton<TorznabRssParser>();
 builder.Services.AddHttpClient<TorznabClient>(c =>
 {
@@ -156,7 +166,7 @@ builder.Services.AddHttpClient<TmdbClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(30);
     c.BaseAddress = new Uri("https://api.themoviedb.org/3/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-});
+}).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Fanart
 builder.Services.AddHttpClient<FanartClient>(c =>
@@ -164,14 +174,14 @@ builder.Services.AddHttpClient<FanartClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(25);
     c.BaseAddress = new Uri("https://webservice.fanart.tv/v3/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-});
+}).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // IGDB
 builder.Services.AddHttpClient<IgdbClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(25);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-});
+}).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // TVmaze
 builder.Services.AddHttpClient<TvMazeClient>(c =>
@@ -179,35 +189,42 @@ builder.Services.AddHttpClient<TvMazeClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(20);
     c.BaseAddress = new Uri("https://api.tvmaze.com/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-});
+}).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Sonarr
 builder.Services.AddHttpClient<SonarrClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(30);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-});
+}).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Radarr
 builder.Services.AddHttpClient<RadarrClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(30);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-});
+}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+
+// Overseerr/Jellyseerr
+builder.Services.AddHttpClient<EerrRequestClient>(c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(30);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
+}).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Jackett
 builder.Services.AddHttpClient<JackettClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(20);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-});
+}).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Prowlarr
 builder.Services.AddHttpClient<ProwlarrClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(20);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-});
+}).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Arr Library Cache (in-memory, will be deprecated)
 builder.Services.AddSingleton<ArrLibraryCacheService>();
@@ -217,13 +234,13 @@ builder.Services.AddSingleton<ArrLibraryCacheService>();
 builder.Services.AddSingleton<ArrLibrarySyncService>();
 builder.Services.AddHostedService<ArrLibrarySyncService>(sp => sp.GetRequiredService<ArrLibrarySyncService>());
 
-// (OPTIONNEL mais conseillé si front Vite sur 5173)
+// CORS: restricted policy for development (Vite on port 5173)
 builder.Services.AddCors(o =>
 {
     o.AddPolicy("dev", p =>
         p.WithOrigins("http://localhost:5173")
-         .AllowAnyHeader()
-         .AllowAnyMethod()
+         .WithMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+         .WithHeaders("Content-Type", "Authorization", "X-Requested-With")
          .AllowCredentials()
     );
 });
@@ -290,8 +307,23 @@ if (emitSecurityHeaders)
     });
 }
 
-// CORS (optionnel)
-app.UseCors("dev");
+// CORS: only enable in development (Vite dev server)
+if (app.Environment.IsDevelopment())
+{
+    app.UseCors("dev");
+}
+
+// Global exception handler: catch unhandled exceptions and return ProblemDetails
+app.UseExceptionHandler(errApp =>
+{
+    errApp.Run(async context =>
+    {
+        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        context.Response.ContentType = "application/json";
+        var problem = new { type = "https://tools.ietf.org/html/rfc9110#section-15.6.1", title = "internal server error", status = 500 };
+        await context.Response.WriteAsJsonAsync(problem);
+    });
+});
 
 app.UseRateLimiter();
 

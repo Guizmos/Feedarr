@@ -279,6 +279,25 @@ public sealed class TmdbClient
         }
     }
 
+    public async Task<int?> GetTvTmdbIdByTvdbIdAsync(int tvdbId, CancellationToken ct)
+    {
+        var key = TryGetApiKey();
+        if (string.IsNullOrWhiteSpace(key)) return null;
+        if (tvdbId <= 0) return null;
+
+        var url = $"find/{tvdbId}?api_key={Uri.EscapeDataString(key)}&external_source=tvdb_id";
+        try
+        {
+            var r = await GetJsonAsync<FindResponse>(url, ct);
+            var tmdbId = r?.TvResults?.FirstOrDefault(x => x.Id > 0)?.Id;
+            return tmdbId > 0 ? tmdbId : null;
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+    }
+
     // --------- Details (Overview/Genres/etc) ----------
     public async Task<DetailsResult?> GetMovieDetailsAsync(int tmdbId, CancellationToken ct)
     {
@@ -374,6 +393,18 @@ public sealed class TmdbClient
     {
         [JsonPropertyName("tvdb_id")]
         public int? TvdbId { get; set; }
+    }
+
+    private sealed class FindResponse
+    {
+        [JsonPropertyName("tv_results")]
+        public List<FindItem>? TvResults { get; set; }
+    }
+
+    private sealed class FindItem
+    {
+        [JsonPropertyName("id")]
+        public int Id { get; set; }
     }
 
     private sealed class ImagesResponse
