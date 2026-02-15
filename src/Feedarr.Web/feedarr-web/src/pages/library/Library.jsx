@@ -218,10 +218,14 @@ export default function Library() {
 
   // Cleanup refs on unmount
   useEffect(() => {
+    const arrStatusFetched = arrStatusFetchedRef.current;
+    const gameDetailsFetch = gameDetailsFetchRef.current;
+    const posterRefresh = posterRefreshRef.current;
+
     return () => {
-      arrStatusFetchedRef.current.clear();
-      gameDetailsFetchRef.current.clear();
-      if (posterRefreshRef.current.timer) clearTimeout(posterRefreshRef.current.timer);
+      arrStatusFetched.clear();
+      gameDetailsFetch.clear();
+      if (posterRefresh.timer) clearTimeout(posterRefresh.timer);
     };
   }, []);
 

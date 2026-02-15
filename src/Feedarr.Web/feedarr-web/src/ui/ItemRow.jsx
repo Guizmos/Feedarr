@@ -126,7 +126,7 @@ export function IconBtn({ icon, title, label, onClick, disabled, className }) {
  * - className: Classes additionnelles pour la carte
  */
 export default function ItemRow({
-  id,
+  id: _id,
   title,
   meta,
   metaSub,
