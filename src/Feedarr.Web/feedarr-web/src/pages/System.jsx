@@ -22,7 +22,6 @@ export default function System() {
   const {
     systemTitle,
     showStorage,
-    showVolumes,
     showProviders,
     showOverview,
     showStatistics,
@@ -216,22 +215,6 @@ export default function System() {
             </>
           )}
 
-          {showVolumes && (
-            <div className="settings-card">
-              <div className="settings-card__title">Volumes</div>
-              <div className="card-row card-row-third">
-                <div className="card card-third">
-                  <div className="card-title">Sources</div>
-                  <div className="card-value">{status?.sourcesCount ?? 0}</div>
-                </div>
-                <div className="card card-third">
-                  <div className="card-title">Releases</div>
-                  <div className="card-value">{status?.releasesCount ?? 0}</div>
-                </div>
-              </div>
-            </div>
-          )}
-
           {showProviders && (
             <>
               <div className="card-row card-row-third" style={{ gridColumn: "1 / -1" }}>
@@ -251,7 +234,7 @@ export default function System() {
                   <div className="card-value">{missingPosterCount}</div>
                 </div>
               </div>
-              <div className="settings-card settings-card--half">
+              <div className="settings-card settings-card--full">
                 <div className="settings-card__title">Providers</div>
                 <div className="indexer-list">
                   <div className="indexer-card">

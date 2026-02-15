@@ -16,6 +16,7 @@ const state = {
 };
 
 function log(message, data) {
+  if (!import.meta.env?.DEV) return;
   try {
     if (data !== undefined) console.log(`[PosterPolling] ${message}`, data);
     else console.log(`[PosterPolling] ${message}`);
@@ -178,6 +179,11 @@ export function usePosterPollingService({
     };
 
     window.addEventListener(TRIGGER_EVENT, onTrigger);
-    return () => window.removeEventListener(TRIGGER_EVENT, onTrigger);
+    return () => {
+      window.removeEventListener(TRIGGER_EVENT, onTrigger);
+      clearTimer();
+      state.cycleRunning = false;
+      state.inFlight = false;
+    };
   }, [intervalMs, maxDurationMs, enabled]);
 }

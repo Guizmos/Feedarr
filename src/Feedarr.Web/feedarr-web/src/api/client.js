@@ -30,37 +30,64 @@ async function parseError(res) {
   return msg;
 }
 
-async function apiSend(method, path, body) {
-  const res = await fetch(resolveApiUrl(path), {
-    method,
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    credentials: "include",
-    body: body ? JSON.stringify(body) : null,
-  });
+const DEFAULT_TIMEOUT_MS = 30_000;
 
-  if (res.status === 204) return null;
-  if (!res.ok) throw new Error(await parseError(res));
+function withTimeout(externalSignal, timeoutMs) {
+  const ms = timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
 
-  const ct = res.headers.get("content-type") || "";
-  if (!ct.includes("application/json")) return null;
-  return res.json();
+  if (externalSignal) {
+    if (externalSignal.aborted) { clearTimeout(timer); controller.abort(); }
+    else externalSignal.addEventListener("abort", () => { clearTimeout(timer); controller.abort(); }, { once: true });
+  }
+
+  return { signal: controller.signal, clear: () => clearTimeout(timer) };
 }
 
-export async function apiGet(path) {
-  const res = await fetch(resolveApiUrl(path), {
-    headers: { Accept: "application/json" },
-    credentials: "include",
-  });
+async function apiSend(method, path, body, { signal, timeoutMs } = {}) {
+  const { signal: merged, clear } = withTimeout(signal, timeoutMs);
+  try {
+    const res = await fetch(resolveApiUrl(path), {
+      method,
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: body ? JSON.stringify(body) : null,
+      signal: merged,
+    });
 
-  if (!res.ok) throw new Error(await parseError(res));
-  const ct = res.headers.get("content-type") || "";
-  if (!ct.includes("application/json")) return null;
-  return res.json();
+    if (res.status === 204) return null;
+    if (!res.ok) throw new Error(await parseError(res));
+
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.includes("application/json")) return null;
+    return res.json();
+  } finally {
+    clear();
+  }
 }
 
-export const apiPost   = (path, body) => apiSend("POST", path, body);
-export const apiPut    = (path, body) => apiSend("PUT", path, body);
-export const apiDelete = (path)       => apiSend("DELETE", path);
+export async function apiGet(path, { signal, timeoutMs } = {}) {
+  const { signal: merged, clear } = withTimeout(signal, timeoutMs);
+  try {
+    const res = await fetch(resolveApiUrl(path), {
+      headers: { Accept: "application/json" },
+      credentials: "include",
+      signal: merged,
+    });
+
+    if (!res.ok) throw new Error(await parseError(res));
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.includes("application/json")) return null;
+    return res.json();
+  } finally {
+    clear();
+  }
+}
+
+export const apiPost   = (path, body, opts) => apiSend("POST", path, body, opts);
+export const apiPut    = (path, body, opts) => apiSend("PUT", path, body, opts);
+export const apiDelete = (path, opts)       => apiSend("DELETE", path, null, opts);

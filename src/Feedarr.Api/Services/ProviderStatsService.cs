@@ -40,7 +40,7 @@ public sealed class ProviderStatsService
     private long _indexerFailures;
     private long _syncJobs;
     private long _syncFailures;
-    private bool _loaded;
+    private volatile bool _loaded;
 
     public ProviderStatsService(StatsRepository repo)
     {
@@ -72,12 +72,13 @@ public sealed class ProviderStatsService
                 _indexerFailures = all.GetValueOrDefault("indexer_failures", 0);
                 _syncJobs = all.GetValueOrDefault("sync_jobs", 0);
                 _syncFailures = all.GetValueOrDefault("sync_failures", 0);
+                _loaded = true;
             }
             catch
             {
-                // DB not ready yet, use defaults
+                // DB not ready yet — use zero defaults, mark as loaded to avoid repeated failures
+                _loaded = true;
             }
-            _loaded = true;
         }
     }
 
@@ -190,10 +191,10 @@ public sealed class ProviderStatsService
         var igdbFailures = Interlocked.Read(ref _igdbFailures);
         var igdbTotalMs = Interlocked.Read(ref _igdbTotalMs);
 
-        var tmdbAvgMs = tmdbCalls > 0 ? tmdbTotalMs / tmdbCalls : 0;
-        var tvmazeAvgMs = tvmazeCalls > 0 ? tvmazeTotalMs / tvmazeCalls : 0;
-        var fanartAvgMs = fanartCalls > 0 ? fanartTotalMs / fanartCalls : 0;
-        var igdbAvgMs = igdbCalls > 0 ? igdbTotalMs / igdbCalls : 0;
+        var tmdbAvgMs = tmdbCalls > 0 ? (long)((double)tmdbTotalMs / tmdbCalls) : 0;
+        var tvmazeAvgMs = tvmazeCalls > 0 ? (long)((double)tvmazeTotalMs / tvmazeCalls) : 0;
+        var fanartAvgMs = fanartCalls > 0 ? (long)((double)fanartTotalMs / fanartCalls) : 0;
+        var igdbAvgMs = igdbCalls > 0 ? (long)((double)igdbTotalMs / igdbCalls) : 0;
 
         var tmdb = new ProviderStats(tmdbCalls, tmdbFailures, tmdbAvgMs);
         var tvmaze = new ProviderStats(tvmazeCalls, tvmazeFailures, tvmazeAvgMs);

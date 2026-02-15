@@ -19,6 +19,7 @@ using Feedarr.Api.Services.Security;
 using Feedarr.Api.Services.Backup;
 using Feedarr.Api.Services.Diagnostics;
 using Feedarr.Api.Filters;
+using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.XmlEncryption;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -37,6 +38,8 @@ var enforceHttps = builder.Configuration.GetValue("App:Security:EnforceHttps", !
 var emitSecurityHeaders = builder.Configuration.GetValue("App:Security:EmitSecurityHeaders", true);
 var statsRateLimitPermit = Math.Max(10, builder.Configuration.GetValue("App:RateLimit:Stats:PermitLimit", 120));
 var statsRateLimitWindowSeconds = Math.Clamp(builder.Configuration.GetValue("App:RateLimit:Stats:WindowSeconds", 60), 10, 3600);
+var globalRateLimitPermit = Math.Max(10, builder.Configuration.GetValue("App:RateLimit:Global:PermitLimit", 300));
+var globalRateLimitWindowSeconds = Math.Clamp(builder.Configuration.GetValue("App:RateLimit:Global:WindowSeconds", 60), 10, 3600);
 
 // Data Protection pour le chiffrement des clés API
 var configuredDataDir = builder.Configuration.GetValue<string>("App:DataDir") ?? "data";
@@ -97,6 +100,7 @@ builder.Services.AddControllers(options =>
 {
     options.Filters.AddService<ApiRequestMetricsFilter>();
     options.Filters.AddService<ApiErrorNormalizationFilter>();
+    options.Filters.AddService<RequireAuthFilter>();
 });
 
 SqlMapper.AddTypeHandler(new SqliteInt32Handler());
@@ -272,6 +276,20 @@ builder.Services.AddRateLimiter(options =>
                 AutoReplenishment = true
             });
     });
+
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
+    {
+        var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            ip,
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = globalRateLimitPermit,
+                Window = TimeSpan.FromSeconds(globalRateLimitWindowSeconds),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            });
+    });
 });
 
 var app = builder.Build();
@@ -318,6 +336,15 @@ app.UseExceptionHandler(errApp =>
 {
     errApp.Run(async context =>
     {
+        var exceptionFeature = context.Features.Get<IExceptionHandlerFeature>();
+        if (exceptionFeature?.Error is Exception ex)
+        {
+            var logger = context.RequestServices
+                .GetRequiredService<ILoggerFactory>()
+                .CreateLogger("Feedarr.GlobalExceptionHandler");
+            logger.LogError(ex, "Unhandled exception for {Method} {Path}", context.Request.Method, context.Request.Path);
+        }
+
         context.Response.StatusCode = StatusCodes.Status500InternalServerError;
         context.Response.ContentType = "application/json";
         var problem = new { type = "https://tools.ietf.org/html/rfc9110#section-15.6.1", title = "internal server error", status = 500 };

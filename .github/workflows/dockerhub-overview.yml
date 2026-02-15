@@ -21,6 +21,7 @@ jobs:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB2_TOKEN || secrets.DOCKERHUB_TOKEN }}
           DOCKERHUB_REPOSITORY: ${{ secrets.DOCKERHUB_USERNAME }}/feedarr
+          DOCKERHUB_TOKEN_SOURCE: ${{ secrets.DOCKERHUB2_TOKEN != '' && 'DOCKERHUB2_TOKEN' || 'DOCKERHUB_TOKEN' }}
         run: |
           set -euo pipefail
 
@@ -32,6 +33,8 @@ jobs:
             echo "::error::Token Docker Hub manquant (DOCKERHUB2_TOKEN/DOCKERHUB_TOKEN)."
             exit 1
           fi
+
+          echo "Token utilisé: ${DOCKERHUB_TOKEN_SOURCE}"
 
           namespace="${DOCKERHUB_REPOSITORY%%/*}"
           repository="${DOCKERHUB_REPOSITORY#*/}"
@@ -56,6 +59,15 @@ jobs:
             echo "Réponse API:"
             cat "$login_body"
             exit 1
+          fi
+
+          user_body="$(mktemp)"
+          user_code="$(curl -sS -o "$user_body" -w "%{http_code}" \
+            -H "Authorization: JWT ${jwt_token}" \
+            "https://hub.docker.com/v2/user/")"
+          auth_username=""
+          if [[ "$user_code" == "200" ]]; then
+            auth_username="$(jq -r '.username // ""' "$user_body")"
           fi
 
           repo_body="$(mktemp)"
@@ -86,7 +98,12 @@ jobs:
             -d "${patch_payload}")"
 
           if [[ "$patch_code" == "403" ]]; then
-            echo "::error::Accès refusé (HTTP 403) sur PATCH Docker Hub. Le token est valide mais n'a pas les droits d'écriture sur ${namespace}/${repository}."
+            echo "::error::Accès refusé (HTTP 403) sur PATCH Docker Hub pour ${namespace}/${repository}."
+            echo "::error::Causes probables: token sans scope Delete (requis par l'action), token lié à un autre compte, ou droits insuffisants sur le repo."
+            if [[ -n "${auth_username:-}" ]]; then
+              echo "Utilisateur Docker authentifié: ${auth_username}"
+            fi
+            echo "Attendu: PAT Docker Hub avec scopes read/write/delete."
             echo "Réponse API:"
             cat "$patch_body"
             exit 1
@@ -101,7 +118,7 @@ jobs:
           echo "Preflight Docker Hub OK: auth + lecture repo + droits d'écriture validés."
 
       - name: Update Docker Hub repository description
-        uses: peter-evans/dockerhub-description@v4
+        uses: peter-evans/dockerhub-description@v5
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB2_TOKEN || secrets.DOCKERHUB_TOKEN }}

@@ -36,14 +36,12 @@ function createDefaultStorageInfo() {
 
 export default function useSystemController(section = "overview") {
   const showStorage = section === "storage";
-  const showVolumes = section === "volumes";
   const showProviders = section === "providers" || section === "externals";
   const showOverview = section === "overview";
   const showStatistics = section === "statistics";
   const systemTitleBySection = {
     overview: "Système",
     storage: "Stockage",
-    volumes: "Volume",
     providers: "Providers",
     externals: "Providers",
     statistics: "Statistiques",
@@ -178,7 +176,6 @@ export default function useSystemController(section = "overview") {
   return {
     systemTitle,
     showStorage,
-    showVolumes,
     showProviders,
     showOverview,
     showStatistics,

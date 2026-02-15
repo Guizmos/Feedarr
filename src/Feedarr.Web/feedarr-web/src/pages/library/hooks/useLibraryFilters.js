@@ -2,6 +2,16 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { apiGet, apiPut } from "../../../api/client.js";
 
+function safeGetStorage(key) {
+  try { return window.localStorage.getItem(key); }
+  catch { return null; }
+}
+
+function safeSetStorage(key, value) {
+  try { window.localStorage.setItem(key, value); }
+  catch { /* quota exceeded or private browsing */ }
+}
+
 /**
  * Hook pour gérer les filtres et préférences de la bibliothèque
  */
@@ -20,7 +30,7 @@ export default function useLibraryFilters(sources, enabledSources) {
   const [sourceReady, setSourceReady] = useState(false);
 
   const [limit, setLimit] = useState(() => {
-    const stored = window.localStorage.getItem("feedarr.library.limit");
+    const stored = safeGetStorage("feedarr.library.limit");
     if (stored === "all") return "all";
     const n = Number(stored);
     return Number.isFinite(n) && n > 0 ? n : 100;
@@ -48,7 +58,7 @@ export default function useLibraryFilters(sources, enabledSources) {
   // Charger les sources depuis le localStorage
   useEffect(() => {
     if (!sources || sources.length === 0) return;
-    const stored = window.localStorage.getItem("feedarr.library.sourceId") || "";
+    const stored = safeGetStorage("feedarr.library.sourceId") || "";
     const isValid = (id) =>
       enabledSources.some((s) => String(s.id ?? s.sourceId) === String(id));
 
@@ -65,12 +75,12 @@ export default function useLibraryFilters(sources, enabledSources) {
   // Persister sourceId
   useEffect(() => {
     if (!sourceReady) return;
-    window.localStorage.setItem("feedarr.library.sourceId", String(sourceId || ""));
+    safeSetStorage("feedarr.library.sourceId", String(sourceId || ""));
   }, [sourceId, sourceReady]);
 
   // Persister limit
   useEffect(() => {
-    window.localStorage.setItem("feedarr.library.limit", String(limit || 100));
+    safeSetStorage("feedarr.library.limit", String(limit || 100));
   }, [limit]);
 
   // Charger les paramètres UI

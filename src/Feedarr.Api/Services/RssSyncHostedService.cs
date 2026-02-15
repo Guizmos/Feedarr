@@ -14,6 +14,22 @@ namespace Feedarr.Api.Services;
 
 public sealed class RssSyncHostedService : BackgroundService
 {
+    private static readonly HashSet<string> SensitiveQueryKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "apikey",
+        "api_key",
+        "token",
+        "access_token",
+        "refresh_token",
+        "key",
+        "password",
+        "pass",
+        "secret",
+        "client_secret",
+        "authorization",
+        "x-api-key"
+    };
+
     private readonly ILogger<RssSyncHostedService> _log;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly AppOptions _opts;
@@ -633,12 +649,33 @@ public sealed class RssSyncHostedService : BackgroundService
         {
             var kv = part.Split('=', 2);
             if (kv.Length == 0) continue;
-            if (string.Equals(kv[0], "apikey", StringComparison.OrdinalIgnoreCase))
+            var key = Uri.UnescapeDataString(kv[0] ?? string.Empty);
+            if (IsSensitiveQueryKey(key))
                 continue;
             kept.Add(part);
         }
 
         var ub = new UriBuilder(uri) { Query = string.Join("&", kept) };
         return ub.Uri.ToString();
+    }
+
+    private static bool IsSensitiveQueryKey(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            return false;
+
+        if (SensitiveQueryKeys.Contains(key))
+            return true;
+
+        var compact = key
+            .Replace("-", string.Empty, StringComparison.Ordinal)
+            .Replace("_", string.Empty, StringComparison.Ordinal)
+            .ToLowerInvariant();
+
+        return compact.Contains("token", StringComparison.Ordinal) ||
+               compact.Contains("secret", StringComparison.Ordinal) ||
+               compact.Contains("password", StringComparison.Ordinal) ||
+               compact.Contains("auth", StringComparison.Ordinal) ||
+               compact.EndsWith("key", StringComparison.Ordinal);
     }
 }

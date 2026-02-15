@@ -24,6 +24,9 @@ export async function executeAsync(action, options = {}) {
   try {
     return await action();
   } catch (error) {
+    // Silently ignore aborted requests
+    if (options.ignoreAbort && error?.name === "AbortError") return null;
+
     console.error(context, error);
     const message = getErrorMessage(error, fallbackMessage);
 

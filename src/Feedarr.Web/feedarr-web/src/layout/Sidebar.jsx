@@ -240,13 +240,6 @@ export default function Sidebar({ onNavigate }) {
             >
               Stockage
             </NavLink>
-            <NavLink
-              to="/system/volumes"
-              className={() => "snav__subitem" + (path === "/system/volumes" ? " is-active" : "")}
-              onClick={onNavigate}
-            >
-              Volume
-            </NavLink>
           </div>
         )}
 

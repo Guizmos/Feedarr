@@ -300,6 +300,9 @@ public sealed class SettingsController : ControllerBase
             if (!string.Equals(dto.Password, dto.PasswordConfirmation, StringComparison.Ordinal))
                 return Problem(title: "password confirmation mismatch", statusCode: StatusCodes.Status400BadRequest);
 
+            if (!TryValidatePasswordStrength(dto.Password, out var passwordError))
+                return Problem(title: passwordError, statusCode: StatusCodes.Status400BadRequest);
+
             var (hash, salt) = HashPassword(dto.Password);
             next.PasswordHash = hash;
             next.PasswordSalt = salt;
@@ -336,5 +339,30 @@ public sealed class SettingsController : ControllerBase
         using var pbkdf2 = new Rfc2898DeriveBytes(password, salt, 100_000, HashAlgorithmName.SHA256);
         var hash = pbkdf2.GetBytes(32);
         return (Convert.ToBase64String(hash), Convert.ToBase64String(salt));
+    }
+
+    private static bool TryValidatePasswordStrength(string password, out string error)
+    {
+        const int minLength = 12;
+        error = "";
+
+        if (password.Length < minLength)
+        {
+            error = $"password must contain at least {minLength} characters";
+            return false;
+        }
+
+        var hasLower = password.Any(char.IsLower);
+        var hasUpper = password.Any(char.IsUpper);
+        var hasDigit = password.Any(char.IsDigit);
+        var hasSymbol = password.Any(ch => !char.IsLetterOrDigit(ch));
+
+        if (!hasLower || !hasUpper || !hasDigit || !hasSymbol)
+        {
+            error = "password must include uppercase, lowercase, digit and symbol";
+            return false;
+        }
+
+        return true;
     }
 }

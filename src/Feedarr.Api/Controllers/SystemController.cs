@@ -29,12 +29,17 @@ public sealed class SystemController : ControllerBase
         public string LastStatus { get; set; } = "";
         public string? LastError { get; set; }
         public int LastItemCount { get; set; }
+        public int ReleaseCount { get; set; }
     }
 
     private static readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
     private static readonly TimeSpan StorageUsageCacheDuration = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan StatsCacheDuration = TimeSpan.FromSeconds(20);
     private const string StorageUsageCacheKey = "system:storage-usage:v1";
+    private static readonly object StorageRefreshLock = new();
+    private static Task? StorageRefreshTask;
+    private static StorageUsageSnapshot LastKnownStorageUsage = new(0, 0, 0, 0, 0, 0);
+    private static bool HasStorageSnapshot;
     private static readonly Regex _semVerRegex = new(
         @"(?<!\d)v?(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase
@@ -86,19 +91,25 @@ public sealed class SystemController : ControllerBase
     {
         using var conn = _db.Open();
 
-        var sourcesCount = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM sources;");
-        var releasesCount = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM releases;");
-        var releasesLatestTs = conn.ExecuteScalar<long?>("SELECT MAX(created_at_ts) FROM releases;");
         var safeSinceTs = Math.Max(0L, releasesSinceTs ?? 0L);
-        int? releasesNewSinceTsCount = safeSinceTs > 0
-            ? conn.ExecuteScalar<int>(
-                "SELECT COUNT(1) FROM releases WHERE created_at_ts > @sinceTs;",
-                new { sinceTs = safeSinceTs })
-            : null;
 
-        long? lastSyncAt = conn.ExecuteScalar<long?>(
-            "SELECT MAX(last_sync_at_ts) FROM sources;"
-        );
+        using var multi = conn.QueryMultiple(
+            """
+            SELECT COUNT(1) FROM sources;
+            SELECT COUNT(1) FROM releases;
+            SELECT MAX(created_at_ts) FROM releases;
+            SELECT COUNT(1) FROM releases WHERE created_at_ts > @sinceTs;
+            SELECT MAX(last_sync_at_ts) FROM sources;
+            """,
+            new { sinceTs = safeSinceTs });
+
+        var sourcesCount = multi.ReadSingle<int>();
+        var releasesCount = multi.ReadSingle<int>();
+        var releasesLatestTs = multi.ReadSingleOrDefault<long?>();
+        var sinceCount = multi.ReadSingle<int>();
+        int? releasesNewSinceTsCount = safeSinceTs > 0 ? sinceCount : null;
+
+        long? lastSyncAt = multi.ReadSingleOrDefault<long?>();
 
         var version = GetAppVersion();
         var dbSizeMb = 0.0;
@@ -477,7 +488,6 @@ public sealed class SystemController : ControllerBase
         var indexerStats = _providerStats.IndexerSnapshot();
 
         var sourceRows = GetSourceStatsRows(conn);
-        var releaseCountsBySource = GetReleaseCountsBySource(conn);
 
         var indexerStatsBySource = sourceRows
             .Where(r => r.Enabled == 1)
@@ -485,7 +495,7 @@ public sealed class SystemController : ControllerBase
             {
                 id = r.Id,
                 name = r.Name,
-                releaseCount = ResolveReleaseCount(releaseCountsBySource, r.Id),
+                releaseCount = r.ReleaseCount,
                 lastStatus = r.LastStatus
             })
             .OrderByDescending(r => r.releaseCount)
@@ -506,7 +516,7 @@ public sealed class SystemController : ControllerBase
                 id = r.Id,
                 name = r.Name,
                 enabled = r.Enabled == 1,
-                releaseCount = ResolveReleaseCount(releaseCountsBySource, r.Id),
+                releaseCount = r.ReleaseCount,
                 lastSyncAtTs = r.LastSyncAtTs,
                 lastStatus = r.LastStatus,
                 lastError = r.LastError,
@@ -657,14 +667,13 @@ public sealed class SystemController : ControllerBase
 
         // Indexer stats by source (for charts)
         var sourceRows = GetSourceStatsRows(conn);
-        var releaseCountsBySource = GetReleaseCountsBySource(conn);
         var indexerStatsBySource = sourceRows
             .Where(r => r.Enabled == 1)
             .Select(r => new
             {
                 id = r.Id,
                 name = r.Name,
-                releaseCount = ResolveReleaseCount(releaseCountsBySource, r.Id),
+                releaseCount = r.ReleaseCount,
                 lastStatus = r.LastStatus
             })
             .OrderByDescending(r => r.releaseCount)
@@ -734,28 +743,16 @@ public sealed class SystemController : ControllerBase
                    s.last_sync_at_ts as LastSyncAtTs,
                    COALESCE(s.last_status, '') as LastStatus,
                    s.last_error as LastError,
-                   COALESCE(s.last_item_count, 0) as LastItemCount
-            FROM sources s;
+                   COALESCE(s.last_item_count, 0) as LastItemCount,
+                   COALESCE(rc.cnt, 0) as ReleaseCount
+            FROM sources s
+            LEFT JOIN (
+                SELECT source_id, COUNT(1) as cnt
+                FROM releases
+                GROUP BY source_id
+            ) rc ON rc.source_id = s.id;
             """
         ).ToList();
-    }
-
-    private static Dictionary<long, int> GetReleaseCountsBySource(IDbConnection conn)
-    {
-        return conn.Query<(long SourceId, int ReleaseCount)>(
-            """
-            SELECT source_id as SourceId, COUNT(1) as ReleaseCount
-            FROM releases
-            GROUP BY source_id;
-            """
-        ).ToDictionary(row => row.SourceId, row => row.ReleaseCount);
-    }
-
-    private static int ResolveReleaseCount(IReadOnlyDictionary<long, int> releaseCountsBySource, long sourceId)
-    {
-        return releaseCountsBySource.TryGetValue(sourceId, out var count)
-            ? count
-            : 0;
     }
 
     // GET /api/system/storage
@@ -910,9 +907,49 @@ public sealed class SystemController : ControllerBase
         if (_cache.TryGetValue(StorageUsageCacheKey, out StorageUsageSnapshot? cached) && cached is not null)
             return cached;
 
-        var snapshot = ComputeStorageUsageSnapshot();
-        _cache.Set(StorageUsageCacheKey, snapshot, StorageUsageCacheDuration);
-        return snapshot;
+        StartStorageUsageRefresh();
+
+        lock (StorageRefreshLock)
+        {
+            if (HasStorageSnapshot)
+                return LastKnownStorageUsage;
+        }
+
+        var seeded = ComputeStorageUsageSnapshot();
+        lock (StorageRefreshLock)
+        {
+            LastKnownStorageUsage = seeded;
+            HasStorageSnapshot = true;
+        }
+        _cache.Set(StorageUsageCacheKey, seeded, StorageUsageCacheDuration);
+        return seeded;
+    }
+
+    private void StartStorageUsageRefresh()
+    {
+        lock (StorageRefreshLock)
+        {
+            if (StorageRefreshTask is not null && !StorageRefreshTask.IsCompleted)
+                return;
+
+            StorageRefreshTask = Task.Run(() =>
+            {
+                try
+                {
+                    var snapshot = ComputeStorageUsageSnapshot();
+                    lock (StorageRefreshLock)
+                    {
+                        LastKnownStorageUsage = snapshot;
+                        HasStorageSnapshot = true;
+                    }
+                    _cache.Set(StorageUsageCacheKey, snapshot, StorageUsageCacheDuration);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Background storage usage refresh failed");
+                }
+            });
+        }
     }
 
     private StorageUsageSnapshot ComputeStorageUsageSnapshot()

@@ -28,7 +28,7 @@ public sealed class IgdbClient
 
     private string? _token;
     private DateTimeOffset _tokenExpiresAt;
-    private readonly object _lock = new();
+    private readonly SemaphoreSlim _tokenSemaphore = new(1, 1);
 
     public IgdbClient(HttpClient http, SettingsRepository settings, ProviderStatsService stats)
     {
@@ -50,44 +50,58 @@ public sealed class IgdbClient
 
     private async Task<string?> GetTokenAsync(CancellationToken ct)
     {
-        lock (_lock)
-        {
-            if (!string.IsNullOrWhiteSpace(_token) && _tokenExpiresAt > DateTimeOffset.UtcNow.AddMinutes(2))
-                return _token;
-        }
+        // Fast path: check cached token without acquiring semaphore
+        var cachedToken = Volatile.Read(ref _token);
+        if (!string.IsNullOrWhiteSpace(cachedToken) && _tokenExpiresAt > DateTimeOffset.UtcNow.AddMinutes(2))
+            return cachedToken;
 
-        var creds = GetCreds();
-        if (creds is null) return null;
-
-        var url = $"https://id.twitch.tv/oauth2/token?client_id={Uri.EscapeDataString(creds.Value.ClientId)}&client_secret={Uri.EscapeDataString(creds.Value.ClientSecret)}&grant_type=client_credentials";
-        var recorded = false;
-        var sw = Stopwatch.StartNew();
-
+        await _tokenSemaphore.WaitAsync(ct);
         try
         {
-            using var resp = await _http.PostAsync(url, new StringContent(""), ct);
-            var ok = resp.IsSuccessStatusCode;
-            _stats.RecordIgdb(ok, sw.ElapsedMilliseconds);
-            recorded = true;
-            if (!ok) return null;
+            // Double-check after acquiring semaphore
+            if (!string.IsNullOrWhiteSpace(_token) && _tokenExpiresAt > DateTimeOffset.UtcNow.AddMinutes(2))
+                return _token;
 
-            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-            var data = await JsonSerializer.DeserializeAsync<TokenResponse>(stream, JsonOpts, ct);
-            if (data is null || string.IsNullOrWhiteSpace(data.AccessToken)) return null;
+            var creds = GetCreds();
+            if (creds is null) return null;
 
-        lock (_lock)
-        {
-            _token = data.AccessToken;
-            _tokenExpiresAt = DateTimeOffset.UtcNow.AddSeconds(Math.Max(60, data.ExpiresIn));
+            const string tokenUrl = "https://id.twitch.tv/oauth2/token";
+            using var tokenForm = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["client_id"] = creds.Value.ClientId,
+                ["client_secret"] = creds.Value.ClientSecret,
+                ["grant_type"] = "client_credentials"
+            });
+            var recorded = false;
+            var sw = Stopwatch.StartNew();
+
+            try
+            {
+                using var resp = await _http.PostAsync(tokenUrl, tokenForm, ct);
+                var ok = resp.IsSuccessStatusCode;
+                _stats.RecordIgdb(ok, sw.ElapsedMilliseconds);
+                recorded = true;
+                if (!ok) return null;
+
+                await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+                var data = await JsonSerializer.DeserializeAsync<TokenResponse>(stream, JsonOpts, ct);
+                if (data is null || string.IsNullOrWhiteSpace(data.AccessToken)) return null;
+
+                _token = data.AccessToken;
+                _tokenExpiresAt = DateTimeOffset.UtcNow.AddSeconds(Math.Max(60, data.ExpiresIn));
+
+                return _token;
+            }
+            catch
+            {
+                if (!recorded)
+                    _stats.RecordIgdb(false, sw.ElapsedMilliseconds);
+                throw;
+            }
         }
-
-            return _token;
-        }
-        catch
+        finally
         {
-            if (!recorded)
-                _stats.RecordIgdb(false, sw.ElapsedMilliseconds);
-            throw;
+            _tokenSemaphore.Release();
         }
     }
 

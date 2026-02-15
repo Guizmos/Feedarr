@@ -266,12 +266,13 @@ export default function History() {
       });
 
       if (categoryFetchIds.size > 0) {
+        const sourceIds = Array.from(categoryFetchIds);
         const categoryResults = await Promise.allSettled(
-          Array.from(categoryFetchIds).map((sourceId) =>
+          sourceIds.map((sourceId) =>
             apiGet(`/api/categories/${sourceId}`)
           )
         );
-        Array.from(categoryFetchIds).forEach((sourceId, idx) => {
+        sourceIds.forEach((sourceId, idx) => {
           const res = categoryResults[idx];
           if (res.status !== "fulfilled" || !Array.isArray(res.value)) return;
           const map = {};

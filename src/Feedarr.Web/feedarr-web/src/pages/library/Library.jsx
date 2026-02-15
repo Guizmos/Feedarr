@@ -184,6 +184,8 @@ export default function Library() {
   const requestMode = normalizeRequestMode(integrationMode);
   const [arrStatusMap, setArrStatusMap] = useState({});
   const arrStatusFetchedRef = useRef(new Map());
+  const arrAbortRef = useRef(null);
+  const arrRequestIdRef = useRef(0);
 
   // Items
   const [items, setItems] = useState([]);
@@ -358,6 +360,14 @@ export default function Library() {
 
     if (newItems.length === 0) return;
 
+    // Cancel any in-flight arr status request
+    if (arrAbortRef.current) arrAbortRef.current.abort();
+    const abortController = new AbortController();
+    arrAbortRef.current = abortController;
+
+    // Track request to ignore stale responses
+    const requestId = ++arrRequestIdRef.current;
+
     const batches = [];
     for (let i = 0; i < newItems.length; i += ARR_STATUS_BATCH_SIZE) {
       batches.push(newItems.slice(i, i + ARR_STATUS_BATCH_SIZE));
@@ -366,6 +376,9 @@ export default function Library() {
     await executeAsync(async () => {
       const newStatuses = {};
       for (const batch of batches) {
+        if (abortController.signal.aborted) return;
+        if (arrRequestIdRef.current !== requestId) return;
+
         const apiItems = batch.map((it) => ({
           releaseId: it.id,
           tvdbId: it.tvdbId || null,
@@ -374,7 +387,8 @@ export default function Library() {
           title: it.titleClean?.trim() || it.title?.trim() || null,
         }));
 
-        const res = await apiPost("/api/arr/status", { items: apiItems });
+        const res = await apiPost("/api/arr/status", { items: apiItems }, { signal: abortController.signal });
+        if (arrRequestIdRef.current !== requestId) return;
         if (res?.results && Array.isArray(res.results)) {
           const checkedAt = Date.now();
           batch.forEach((it) => arrStatusFetchedRef.current.set(it.id, checkedAt));
@@ -408,11 +422,13 @@ export default function Library() {
         }
       }
 
+      if (arrRequestIdRef.current !== requestId) return;
       if (Object.keys(newStatuses).length > 0) {
         setArrStatusMap((prev) => ({ ...prev, ...newStatuses }));
       }
     }, {
       context: "Failed to refresh Arr status batch in library",
+      ignoreAbort: true,
     });
   }, [hasSonarr, hasRadarr, hasOverseerr, hasJellyseerr, requestMode]);
 
@@ -423,6 +439,9 @@ export default function Library() {
     const canCheckJellyseerr = requestMode === "jellyseerr" && hasJellyseerr;
     if (!canCheckArr && !canCheckOverseerr && !canCheckJellyseerr) return;
     fetchArrStatus(items || []);
+    return () => {
+      if (arrAbortRef.current) arrAbortRef.current.abort();
+    };
   }, [items, loading, hasSonarr, hasRadarr, hasOverseerr, hasJellyseerr, requestMode, fetchArrStatus]);
 
   // Handler for arr status change
@@ -685,24 +704,28 @@ export default function Library() {
     selectionExitMode();
   }, [selectionSelectedIds, selectionExitMode]);
 
-  const searchManual = useCallback(async (query, mediaType) => {
+  const searchManualTimerRef = useRef(null);
+  const searchManual = useCallback((query, mediaType) => {
     const q = (query || "").trim();
     if (!q) {
       setManualResults([]);
       return;
     }
-    setManualLoading(true);
-    setManualErr("");
-    try {
-      const mt = (mediaType || "").trim();
-      const res = await apiGet(`/api/posters/search?q=${encodeURIComponent(q)}&mediaType=${encodeURIComponent(mt)}`);
-      const rows = Array.isArray(res?.results) ? res.results : [];
-      setManualResults(sortManualResultsBySize(rows));
-    } catch (e) {
-      setManualErr(e?.message || "Erreur recherche posters");
-    } finally {
-      setManualLoading(false);
-    }
+    clearTimeout(searchManualTimerRef.current);
+    searchManualTimerRef.current = setTimeout(async () => {
+      setManualLoading(true);
+      setManualErr("");
+      try {
+        const mt = (mediaType || "").trim();
+        const res = await apiGet(`/api/posters/search?q=${encodeURIComponent(q)}&mediaType=${encodeURIComponent(mt)}`);
+        const rows = Array.isArray(res?.results) ? res.results : [];
+        setManualResults(sortManualResultsBySize(rows));
+      } catch (e) {
+        setManualErr(e?.message || "Erreur recherche posters");
+      } finally {
+        setManualLoading(false);
+      }
+    }, 350);
   }, [setManualErr, setManualLoading, setManualResults]);
 
   // Manual poster
@@ -832,47 +855,15 @@ export default function Library() {
     bulkSetSeen(value);
   }, [bulkSetSeen]);
 
-  useEffect(() => {
-    setContent(
-      <LibrarySubbar
-        selectionMode={selectionMode}
-        selectedIds={selectedIds}
-        onToggleSelectionMode={toggleSelectionMode}
-        onSelectAll={handleSelectAllVisible}
-        posterAutoLoading={posterAutoLoading}
-        onBulkFetchPosters={handleBulkFetchPosters}
-        onOpenManualPoster={handleOpenManualPoster}
-        onBulkSetSeen={handleBulkSetSeen}
-        sortBy={sortBy}
-        maxAgeDays={maxAgeDays}
-        setMaxAgeDays={setMaxAgeDays}
-        sources={sources}
-        enabledSources={enabledSources}
-        sourceId={sourceId}
-        setSourceId={setSourceId}
-        uiSettings={uiSettings}
-        categoryId={categoryId}
-        setCategoryId={setCategoryId}
-        categoriesForDropdown={categoriesForDropdown}
-        setSortBy={setSortBy}
-        viewMode={viewMode}
-        setViewMode={setViewMode}
-        viewOptions={viewOptions}
-        limit={limit}
-        setLimit={setLimit}
-      />
-    );
-    return () => setContent(null);
-  }, [
-    setContent,
+  const subbarProps = useMemo(() => ({
     selectionMode,
     selectedIds,
-    toggleSelectionMode,
-    handleSelectAllVisible,
-    handleBulkFetchPosters,
-    handleOpenManualPoster,
-    handleBulkSetSeen,
+    onToggleSelectionMode: toggleSelectionMode,
+    onSelectAll: handleSelectAllVisible,
     posterAutoLoading,
+    onBulkFetchPosters: handleBulkFetchPosters,
+    onOpenManualPoster: handleOpenManualPoster,
+    onBulkSetSeen: handleBulkSetSeen,
     sortBy,
     maxAgeDays,
     setMaxAgeDays,
@@ -890,7 +881,19 @@ export default function Library() {
     viewOptions,
     limit,
     setLimit,
+  }), [
+    selectionMode, selectedIds, toggleSelectionMode, handleSelectAllVisible,
+    posterAutoLoading, handleBulkFetchPosters, handleOpenManualPoster,
+    handleBulkSetSeen, sortBy, maxAgeDays, setMaxAgeDays, sources,
+    enabledSources, sourceId, setSourceId, uiSettings, categoryId,
+    setCategoryId, categoriesForDropdown, setSortBy, viewMode, setViewMode,
+    viewOptions, limit, setLimit,
   ]);
+
+  useEffect(() => {
+    setContent(<LibrarySubbar {...subbarProps} />);
+    return () => setContent(null);
+  }, [setContent, subbarProps]);
 
   return (
     <div className="page">

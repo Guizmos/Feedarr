@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Linq;
 using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Services.Matching;
+using Microsoft.Extensions.Logging;
 
 namespace Feedarr.Api.Services.Arr;
 
@@ -10,6 +11,7 @@ public sealed class ArrLibraryCacheService
     private readonly ArrApplicationRepository _repo;
     private readonly SonarrClient _sonarr;
     private readonly RadarrClient _radarr;
+    private readonly ILogger<ArrLibraryCacheService> _log;
 
     // Cache: tvdbId -> (seriesId, titleSlug, baseUrl, expiresAt)
     private readonly ConcurrentDictionary<int, (int seriesId, string titleSlug, string baseUrl, DateTimeOffset expiresAt)> _sonarrCache = new();
@@ -22,6 +24,7 @@ public sealed class ArrLibraryCacheService
     private readonly ConcurrentDictionary<string, (int? tmdbId, int movieId, string baseUrl, DateTimeOffset expiresAt)> _radarrTitleCache = new();
 
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
+    private const int MaxTitleCacheEntries = 50_000;
 
     private static string NormalizeTitle(string? title)
     {
@@ -53,11 +56,13 @@ public sealed class ArrLibraryCacheService
     public ArrLibraryCacheService(
         ArrApplicationRepository repo,
         SonarrClient sonarr,
-        RadarrClient radarr)
+        RadarrClient radarr,
+        ILogger<ArrLibraryCacheService> log)
     {
         _repo = repo;
         _sonarr = sonarr;
         _radarr = radarr;
+        _log = log;
     }
 
     private void AddSonarrTitleKeys(string? title, (int? tvdbId, int seriesId, string titleSlug, string baseUrl, DateTimeOffset expiresAt) entry)
@@ -110,6 +115,9 @@ public sealed class ArrLibraryCacheService
 
     public async Task RefreshSonarrCacheAsync(CancellationToken ct)
     {
+        // Evict expired entries before refresh to bound memory
+        EvictExpired();
+
         var app = _repo.GetDefault("sonarr");
         if (app is null || string.IsNullOrWhiteSpace(app.ApiKeyEncrypted)) return;
 
@@ -128,6 +136,8 @@ public sealed class ArrLibraryCacheService
                     _sonarrCache[s.TvdbId] = (s.Id, s.TitleSlug, app.BaseUrl, expiresAt);
                 }
 
+                if (_sonarrTitleCache.Count >= MaxTitleCacheEntries) break;
+
                 var entry = (s.TvdbId > 0 ? (int?)s.TvdbId : null, s.Id, s.TitleSlug, app.BaseUrl, expiresAt);
 
                 // Add main title to cache
@@ -143,14 +153,17 @@ public sealed class ArrLibraryCacheService
                 }
             }
         }
-        catch
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Silently fail - cache will just be stale
+            _log.LogWarning(ex, "Failed to refresh Sonarr cache");
         }
     }
 
     public async Task RefreshRadarrCacheAsync(CancellationToken ct)
     {
+        // Evict expired entries before refresh to bound memory
+        EvictExpired();
+
         var app = _repo.GetDefault("radarr");
         if (app is null || string.IsNullOrWhiteSpace(app.ApiKeyEncrypted)) return;
 
@@ -168,6 +181,8 @@ public sealed class ArrLibraryCacheService
                 {
                     _radarrCache[m.TmdbId] = (m.Id, app.BaseUrl, expiresAt);
                 }
+
+                if (_radarrTitleCache.Count >= MaxTitleCacheEntries) break;
 
                 var entry = (m.TmdbId > 0 ? (int?)m.TmdbId : null, m.Id, app.BaseUrl, expiresAt);
 
@@ -190,9 +205,9 @@ public sealed class ArrLibraryCacheService
                 }
             }
         }
-        catch
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Silently fail - cache will just be stale
+            _log.LogWarning(ex, "Failed to refresh Radarr cache");
         }
     }
 

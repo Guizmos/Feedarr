@@ -103,16 +103,34 @@ public sealed class TorznabClient
     private async Task<HttpResponseMessage> SendWithRetryAsync(
         Func<HttpRequestMessage> requestFactory, CancellationToken ct)
     {
+        HttpResponseMessage? response = null;
         var req = requestFactory();
         try
         {
-            return await _http.SendAsync(req, ct);
+            response = await _http.SendAsync(req, ct);
+            return response;
         }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)
         {
             req.Dispose();
+            response?.Dispose();
             await Task.Delay(500, ct);
-            return await _http.SendAsync(requestFactory(), ct);
+            var retryReq = requestFactory();
+            try
+            {
+                return await _http.SendAsync(retryReq, ct);
+            }
+            catch
+            {
+                retryReq.Dispose();
+                throw;
+            }
+        }
+        catch
+        {
+            req.Dispose();
+            response?.Dispose();
+            throw;
         }
     }
 

@@ -1,8 +1,11 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Dapper;
 using Feedarr.Api.Data;
 using Feedarr.Api.Models;
 using Feedarr.Api.Services.Categories;
+using Microsoft.Extensions.Caching.Memory;
+using System.Text.RegularExpressions;
 
 namespace Feedarr.Api.Controllers;
 
@@ -12,13 +15,18 @@ public sealed class FeedController : ControllerBase
 {
     private readonly Db _db;
     private readonly UnifiedCategoryService _unified;
+    private readonly IMemoryCache _cache;
     private const string RawRatingExpr = "COALESCE(me.ext_rating, releases.ext_rating)";
     private const string NormalizedRatingExpr = "(CASE WHEN " + RawRatingExpr + " > 10 THEN " + RawRatingExpr + " / 10.0 ELSE " + RawRatingExpr + " END)";
+    private static readonly TimeSpan TopCacheDuration = TimeSpan.FromSeconds(20);
+    private static readonly Regex SearchTokenRegex = new(@"[a-zA-Z0-9_-]+", RegexOptions.Compiled);
+    private const int MaxFtsTokenLength = 64;
 
-    public FeedController(Db db, UnifiedCategoryService unified)
+    public FeedController(Db db, UnifiedCategoryService unified, IMemoryCache cache)
     {
         _db = db;
         _unified = unified;
+        _cache = cache;
     }
 
     private sealed class FeedRow
@@ -118,6 +126,28 @@ public sealed class FeedController : ControllerBase
         };
     }
 
+    private static string? BuildFtsQuery(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return null;
+
+        var tokens = SearchTokenRegex
+            .Matches(input.ToLowerInvariant())
+            .Select(m => m.Value.Trim())
+            .Where(t => t.Length >= 2 && t.Length <= MaxFtsTokenLength)
+            .Distinct()
+            .Take(8)
+            .ToList();
+
+        if (tokens.Count == 0)
+            return null;
+
+        return string.Join(" AND ", tokens.Select(t => $"\"{EscapeFtsToken(t)}\"*"));
+    }
+
+    private static string EscapeFtsToken(string token)
+        => token.Replace("\"", "\"\"", StringComparison.Ordinal);
+
     // GET /api/feed/{sourceId}?limit=50&q=foo&categoryId=102154&minSeeders=5&seen=0
     [HttpGet("{sourceId:long}")]
     public IActionResult Latest(
@@ -126,13 +156,18 @@ public sealed class FeedController : ControllerBase
         [FromQuery] string? q,
         [FromQuery] int? categoryId,
         [FromQuery] int? minSeeders,
-        [FromQuery] int? seen)
+        [FromQuery] int? seen,
+        CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         var lim = Math.Clamp(limit ?? 100, 1, 500);
 
         using var conn = _db.Open();
         var hasCategories = conn.ExecuteScalar<long>(
             "SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name='source_categories';"
+        ) > 0;
+        var hasFts = conn.ExecuteScalar<long>(
+            "SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name='releases_fts';"
         ) > 0;
 
         var where = new List<string> { "releases.source_id = @sid" };
@@ -142,8 +177,26 @@ public sealed class FeedController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(q))
         {
-            where.Add("title LIKE @q");
-            args.Add("q", $"%{q.Trim()}%");
+            var trimmedQuery = q.Trim();
+            if (hasFts)
+            {
+                var ftsQuery = BuildFtsQuery(trimmedQuery);
+                if (!string.IsNullOrWhiteSpace(ftsQuery))
+                {
+                    where.Add("releases.id IN (SELECT rowid FROM releases_fts WHERE releases_fts MATCH @qfts)");
+                    args.Add("qfts", ftsQuery);
+                }
+                else
+                {
+                    where.Add("(title LIKE @q OR releases.title_clean LIKE @q)");
+                    args.Add("q", $"%{trimmedQuery}%");
+                }
+            }
+            else
+            {
+                where.Add("(title LIKE @q OR releases.title_clean LIKE @q)");
+                args.Add("q", $"%{trimmedQuery}%");
+            }
         }
 
         if (categoryId is not null)
@@ -346,11 +399,17 @@ public sealed class FeedController : ControllerBase
     }
 
     // GET /api/feed/top?sourceId=1&limit=5&sortBy=seeders|rating|downloads|recent
+    [EnableRateLimiting("stats-heavy")]
     [HttpGet("top")]
-    public IActionResult Top([FromQuery] long? sourceId, [FromQuery] int? limit, [FromQuery] string? sortBy)
+    public IActionResult Top([FromQuery] long? sourceId, [FromQuery] int? limit, [FromQuery] string? sortBy, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         var lim = Math.Clamp(limit ?? 5, 1, 20);
         var topSort = NormalizeTopSort(sortBy);
+        var cacheKey = $"feed:top:v2:{sourceId?.ToString() ?? "all"}:{lim}:{topSort}";
+        if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
+            return Ok(cached);
+
         var topWhere = GetTopSortWhereClause(topSort);
         var topOrder = GetTopSortOrderClause(topSort);
 
@@ -598,6 +657,7 @@ public sealed class FeedController : ControllerBase
         }
         result["byCategory"] = byCategory;
 
+        _cache.Set(cacheKey, result, TopCacheDuration);
         return Ok(result);
     }
 }

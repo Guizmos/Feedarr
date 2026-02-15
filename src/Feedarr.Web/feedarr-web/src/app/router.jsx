@@ -3,6 +3,7 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 import Shell from "../layout/Shell.jsx";
 import SetupShell from "../layout/SetupShell.jsx";
 import RouteErrorBoundary from "../ui/RouteErrorBoundary.jsx";
+import ErrorBoundary from "../ui/ErrorBoundary.jsx";
 
 const Library = React.lazy(() => import("../pages/Library.jsx"));
 const TopReleases = React.lazy(() => import("../pages/TopReleases.jsx"));
@@ -16,18 +17,20 @@ const Settings = React.lazy(() => import("../pages/Settings.jsx"));
 const Providers = React.lazy(() => import("../pages/Providers.jsx"));
 const SetupWizard = React.lazy(() => import("../pages/SetupWizard.jsx"));
 
-function withSuspense(element) {
+function withSuspense(element, label) {
   return (
-    <React.Suspense
-      fallback={
-        <div className="loader">
-          <div className="spinner" />
-          <div className="muted">Chargement...</div>
-        </div>
-      }
-    >
-      {element}
-    </React.Suspense>
+    <ErrorBoundary label={label}>
+      <React.Suspense
+        fallback={
+          <div className="loader">
+            <div className="spinner" />
+            <div className="muted">Chargement...</div>
+          </div>
+        }
+      >
+        {element}
+      </React.Suspense>
+    </ErrorBoundary>
   );
 }
 
@@ -55,7 +58,6 @@ export const router = createBrowserRouter([
       { path: "system/statistics", element: withSuspense(<SystemStatisticsPage />) },
       { path: "system/indexers", element: withSuspense(<SystemIndexers />) },
       { path: "system/storage", element: withSuspense(<System />) },
-      { path: "system/volumes", element: withSuspense(<System />) },
       { path: "system/providers", element: withSuspense(<System />) },
       { path: "settings", element: withSuspense(<Settings />) },
       { path: "settings/ui", element: withSuspense(<Settings />) },

@@ -74,19 +74,31 @@ public sealed class ReleasesController : ControllerBase
         public bool Seen { get; set; } = true;
     }
 
+    private const int MaxBulkIds = 1000;
+
     [HttpPost("seen")]
     public IActionResult BulkSeen([FromBody] BulkSeenDto dto)
     {
         if (dto?.Ids == null || dto.Ids.Count == 0)
             return BadRequest(new { error = "ids missing" });
 
-        using var conn = _db.Open();
-        var rows = conn.Execute(
-            "UPDATE releases SET seen = @seen WHERE id IN @ids",
-            new { seen = dto.Seen ? 1 : 0, ids = dto.Ids.Distinct().ToArray() }
-        );
+        if (dto.Ids.Count > MaxBulkIds)
+            return BadRequest(new { error = $"maximum {MaxBulkIds} ids allowed" });
 
-        return Ok(new { ok = true, updated = rows });
+        using var conn = _db.Open();
+        var distinctIds = dto.Ids.Distinct().ToArray();
+        var totalUpdated = 0;
+
+        for (var i = 0; i < distinctIds.Length; i += 500)
+        {
+            var batch = distinctIds.Skip(i).Take(500).ToArray();
+            totalUpdated += conn.Execute(
+                "UPDATE releases SET seen = @seen WHERE id IN @ids",
+                new { seen = dto.Seen ? 1 : 0, ids = batch }
+            );
+        }
+
+        return Ok(new { ok = true, updated = totalUpdated });
     }
 
     public sealed class UpdateTitleDto

@@ -123,6 +123,14 @@ public sealed class FileMasterKeyProvider : IMasterKeyProvider
         }
 
         // Priorité 3: Génère une nouvelle clé et la sauvegarde
+        // En production, il est recommandé de définir FEEDARR_MASTER_KEY
+        var isDocker = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"));
+        if (isDocker)
+        {
+            Console.WriteLine("[WARN] FEEDARR_MASTER_KEY not set. A random key was generated and saved to disk.");
+            Console.WriteLine("[WARN] Set FEEDARR_MASTER_KEY env var to ensure encryption keys survive container recreation.");
+        }
+
         _key = RandomNumberGenerator.GetBytes(32);
         File.WriteAllBytes(keyFilePath, _key);
 

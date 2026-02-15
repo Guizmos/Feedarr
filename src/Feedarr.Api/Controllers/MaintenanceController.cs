@@ -262,6 +262,11 @@ public sealed class MaintenanceController : ControllerBase
         var deleted = 0;
         long freedBytes = 0;
 
+        // Pre-compute canonical root path with trailing separator for safe containment check
+        var canonicalRoot = Path.GetFullPath(postersDir);
+        if (!canonicalRoot.EndsWith(Path.DirectorySeparatorChar))
+            canonicalRoot += Path.DirectorySeparatorChar;
+
         foreach (var file in files)
         {
             var fileName = Path.GetFileName(file);
@@ -271,14 +276,23 @@ public sealed class MaintenanceController : ControllerBase
             if (referencedPosters.Contains(fileName))
                 continue;
 
+            // Validate file extension is an image type
+            var ext = Path.GetExtension(fileName);
+            if (string.IsNullOrEmpty(ext) ||
+                !ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase) &&
+                !ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) &&
+                !ext.Equals(".png", StringComparison.OrdinalIgnoreCase) &&
+                !ext.Equals(".webp", StringComparison.OrdinalIgnoreCase))
+                continue;
+
             orphaned++;
             try
             {
-                var size = new FileInfo(file).Length;
                 var full = Path.GetFullPath(file);
-                var root = Path.GetFullPath(postersDir);
-                if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                if (!full.StartsWith(canonicalRoot, StringComparison.OrdinalIgnoreCase))
                     continue;
+
+                var size = new FileInfo(file).Length;
 
                 System.IO.File.Delete(file);
                 if (System.IO.File.Exists(file))

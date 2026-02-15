@@ -14,6 +14,12 @@ ARG FEEDARR_VERSION
 ENV FEEDARR_VERSION=$FEEDARR_VERSION
 
 COPY --from=build /out ./
+RUN groupadd --gid 10001 feedarr \
+    && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin feedarr \
+    && mkdir -p /app/data \
+    && chown -R feedarr:feedarr /app
+
+USER feedarr:feedarr
 
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "Feedarr.Api.dll"]
