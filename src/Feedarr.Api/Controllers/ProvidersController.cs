@@ -120,7 +120,7 @@ public sealed class ProvidersController : ControllerBase
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "Provider test failed (inline)");
+            _log.LogWarning(ex, "Provider test failed (inline, type={ProviderType})", type);
             return Problem(title: "provider test failed", detail: "upstream provider unavailable", statusCode: StatusCodes.Status502BadGateway);
         }
     }
@@ -234,7 +234,7 @@ public sealed class ProvidersController : ControllerBase
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "Provider test failed: {Id}", id);
+            _log.LogWarning(ex, "Provider test failed: {Id} (type={ProviderType})", id, type);
             return Problem(title: "provider test failed", detail: "upstream provider unavailable", statusCode: StatusCodes.Status502BadGateway);
         }
     }
@@ -271,7 +271,7 @@ public sealed class ProvidersController : ControllerBase
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "Provider indexers fetch failed: {Id}", id);
+            _log.LogWarning(ex, "Provider indexers fetch failed: {Id} (type={ProviderType})", id, type);
             return Problem(title: "provider indexers fetch failed", detail: "upstream provider unavailable", statusCode: StatusCodes.Status502BadGateway);
         }
     }

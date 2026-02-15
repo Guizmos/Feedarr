@@ -8,13 +8,13 @@ const PROVIDERS = [
   {
     key: "jackett",
     label: "Jackett",
-    placeholder: "http://localhost:9117",
+    placeholder: "http://192.168.1.x:9117 ou https://jackett.domain.com",
     endpoint: "/api/jackett/indexers",
   },
   {
     key: "prowlarr",
     label: "Prowlarr",
-    placeholder: "http://localhost:9696",
+    placeholder: "http://192.168.1.x:9696 ou https://prowlarr.domain.com",
     endpoint: "/api/prowlarr/indexers",
   },
 ];
@@ -518,6 +518,7 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
               placeholder={providerMeta.placeholder}
               disabled={testState === "testing"}
             />
+            <span className="field-hint">IP, hostname ou URL reverse proxy (http/https)</span>
           </div>
           <div className="field">
             <label>API key</label>

@@ -282,21 +282,36 @@ public sealed class ReleasesController : ControllerBase
             igdbId = posterIgdbId;
         }
 
-        if (!igdbId.HasValue)
+        try
         {
-            var title = (string?)r.TitleClean ?? (string?)r.Title ?? "";
-            var year = r.Year is null ? (int?)null : Convert.ToInt32(r.Year);
-            if (string.IsNullOrWhiteSpace(title))
-                return BadRequest(new { error = "title missing" });
+            if (!igdbId.HasValue)
+            {
+                var title = (string?)r.TitleClean ?? (string?)r.Title ?? "";
+                var year = r.Year is null ? (int?)null : Convert.ToInt32(r.Year);
+                if (string.IsNullOrWhiteSpace(title))
+                    return BadRequest(new { error = "title missing" });
 
-            var match = await _igdb.SearchGameCoverAsync(title, year, ct);
-            if (match is null)
-                return NotFound(new { error = "igdb match not found" });
+                var match = await _igdb.SearchGameCoverAsync(title, year, ct);
+                if (match is null)
+                    return NotFound(new { error = "igdb match not found" });
 
-            igdbId = match.Value.igdbId;
+                igdbId = match.Value.igdbId;
+            }
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+        {
+            return StatusCode(429, new { error = "igdb rate limit exceeded, retry later" });
         }
 
-        var details = await _igdb.GetGameDetailsAsync(igdbId.Value, ct);
+        IgdbClient.DetailsResult? details;
+        try
+        {
+            details = await _igdb.GetGameDetailsAsync(igdbId.Value, ct);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+        {
+            return StatusCode(429, new { error = "igdb rate limit exceeded, retry later" });
+        }
         if (details is null)
             return StatusCode(502, new { error = "igdb details not available" });
 

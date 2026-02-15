@@ -17,5 +17,6 @@ public sealed class GeneralSettings
     // arr: direct Sonarr/Radarr
     // overseerr: create request via Overseerr
     // jellyseerr: create request via Jellyseerr
+    // seer: create request via Seer
     public string RequestIntegrationMode { get; set; } = "arr";
 }

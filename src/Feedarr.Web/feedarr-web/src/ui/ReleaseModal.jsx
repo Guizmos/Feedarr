@@ -109,8 +109,9 @@ export default function ReleaseModal({
   hasRadarr = false,
   hasOverseerr = false,
   hasJellyseerr = false,
+  hasSeer = false,
   integrationMode = "arr",
-  arrStatus = null, // { inSonarr, inRadarr, inOverseerr, inJellyseerr, sonarrUrl, radarrUrl, overseerrUrl, jellyseerrUrl }
+  arrStatus = null, // { inSonarr, inRadarr, inOverseerr, inJellyseerr, inSeer, sonarrUrl, radarrUrl, overseerrUrl, jellyseerrUrl, seerUrl }
   onArrStatusChange,
 }) {
   const [page, setPage] = useState("main");
@@ -183,8 +184,15 @@ export default function ReleaseModal({
   const showRadarrBtn = hasRadarr && isRadarrItem(item);
   const arrType = mode === "arr" ? (showSonarrBtn ? "sonarr" : showRadarrBtn ? "radarr" : null) : null;
 
-  const requestType = mode === "overseerr" || mode === "jellyseerr" ? mode : null;
-  const hasRequestApp = requestType === "overseerr" ? hasOverseerr : requestType === "jellyseerr" ? hasJellyseerr : false;
+  const requestType = mode === "overseerr" || mode === "jellyseerr" || mode === "seer" ? mode : null;
+  const hasRequestApp =
+    requestType === "overseerr"
+      ? hasOverseerr
+      : requestType === "jellyseerr"
+        ? hasJellyseerr
+        : requestType === "seer"
+          ? hasSeer
+          : false;
   const requestMediaType = isRadarrItem(item) ? "movie" : isSonarrItem(item) ? "tv" : null;
   const showRequestBtn = !!requestType && !!requestMediaType;
 
@@ -196,13 +204,21 @@ export default function ReleaseModal({
   const alreadyInRadarr = arrStatus?.inRadarr || arrResult?.status === "exists" || arrResult?.status === "added";
   const alreadyInOverseerr = arrStatus?.inOverseerr || arrResult?.status === "exists" || arrResult?.status === "added";
   const alreadyInJellyseerr = arrStatus?.inJellyseerr || arrResult?.status === "exists" || arrResult?.status === "added";
+  const alreadyInSeer = arrStatus?.inSeer || arrResult?.status === "exists" || arrResult?.status === "added";
   const isAlreadyInArr = (showSonarrBtn && alreadyInSonarr) || (showRadarrBtn && alreadyInRadarr);
-  const isAlreadyRequested = (requestType === "overseerr" && alreadyInOverseerr) || (requestType === "jellyseerr" && alreadyInJellyseerr);
+  const isAlreadyRequested =
+    (requestType === "overseerr" && alreadyInOverseerr) ||
+    (requestType === "jellyseerr" && alreadyInJellyseerr) ||
+    (requestType === "seer" && alreadyInSeer);
   const isAlreadyInTarget = mode === "arr" ? isAlreadyInArr : isAlreadyRequested;
   const arrOpenUrl = arrResult?.openUrl || (
     mode === "arr"
       ? (showSonarrBtn ? arrStatus?.sonarrUrl : arrStatus?.radarrUrl)
-      : (requestType === "overseerr" ? arrStatus?.overseerrUrl : arrStatus?.jellyseerrUrl)
+      : requestType === "overseerr"
+        ? arrStatus?.overseerrUrl
+        : requestType === "jellyseerr"
+          ? arrStatus?.jellyseerrUrl
+          : arrStatus?.seerUrl
   );
 
   async function handleAddToArr() {
@@ -291,8 +307,10 @@ export default function ReleaseModal({
           onArrStatusChange?.(item.id, requestType, {
             inOverseerr: requestType === "overseerr",
             inJellyseerr: requestType === "jellyseerr",
+            inSeer: requestType === "seer",
             overseerrUrl: requestType === "overseerr" ? res.openUrl : arrStatus?.overseerrUrl,
             jellyseerrUrl: requestType === "jellyseerr" ? res.openUrl : arrStatus?.jellyseerrUrl,
+            seerUrl: requestType === "seer" ? res.openUrl : arrStatus?.seerUrl,
           });
         } else {
           setArrError(res?.message || "Erreur lors de la demande");

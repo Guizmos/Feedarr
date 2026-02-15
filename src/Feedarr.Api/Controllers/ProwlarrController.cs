@@ -65,10 +65,24 @@ public sealed class ProwlarrController : ControllerBase
             }).ToList();
             return Ok(result);
         }
+        catch (HttpRequestException ex)
+        {
+            _log.LogWarning(ex, "Prowlarr upstream error for sourceId={SourceId}", dto?.SourceId);
+            return StatusCode(502, new { error = ex.Message ?? "upstream provider unavailable" });
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("redirect", StringComparison.OrdinalIgnoreCase))
+        {
+            _log.LogWarning(ex, "Prowlarr redirect loop for sourceId={SourceId}", dto?.SourceId);
+            return StatusCode(502, new { error = "Trop de redirections — vérifiez l'URL et la clé API" });
+        }
+        catch (TaskCanceledException)
+        {
+            return StatusCode(504, new { error = "upstream provider timeout" });
+        }
         catch (Exception ex)
         {
             _log.LogError(ex, "Prowlarr indexers listing failed for sourceId={SourceId}", dto?.SourceId);
-            return StatusCode(500, new { error = "internal server error" });
+            return StatusCode(500, new { error = ex.Message ?? "internal server error" });
         }
     }
 

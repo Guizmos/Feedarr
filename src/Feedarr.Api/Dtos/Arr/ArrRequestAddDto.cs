@@ -2,7 +2,7 @@ namespace Feedarr.Api.Dtos.Arr;
 
 public sealed class ArrRequestAddRequestDto
 {
-    public string AppType { get; set; } = ""; // overseerr | jellyseerr
+    public string AppType { get; set; } = ""; // overseerr | jellyseerr | seer
     public long? AppId { get; set; } // optional specific app
     public long? ReleaseId { get; set; } // optional release context for id resolution/persistence
     public int? TmdbId { get; set; }

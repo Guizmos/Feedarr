@@ -40,7 +40,7 @@ export default function SettingsProviders({
   return (
     <>
       <div id="externals">
-        <div className="indexer-list">
+        <div className="indexer-list itemrow-grid">
           {[
             {
               key: "tmdb",

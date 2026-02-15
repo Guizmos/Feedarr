@@ -40,6 +40,7 @@ public sealed class EerrRequestClient
         {
             using var request = CreateRequest(HttpMethod.Get, baseUrl, "status", apiKey);
             using var response = await _http.SendAsync(request, ct);
+
             if (!response.IsSuccessStatusCode)
                 return (false, null, null, $"HTTP {(int)response.StatusCode}");
 
@@ -203,6 +204,7 @@ public sealed class EerrRequestClient
     public static string GetAppLabel(string appType)
     {
         var type = (appType ?? string.Empty).Trim().ToLowerInvariant();
+        if (type == "seer") return "Seer";
         return type == "jellyseerr" ? "Jellyseerr" : "Overseerr";
     }
 

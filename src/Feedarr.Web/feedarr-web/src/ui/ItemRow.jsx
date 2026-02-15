@@ -2,18 +2,109 @@ import React from "react";
 import AppIcon from "./AppIcon.jsx";
 import ToggleSwitch from "./ToggleSwitch.jsx";
 
+function AutoScrollLine({ className = "", title, children }) {
+  const outerRef = React.useRef(null);
+  const innerRef = React.useRef(null);
+  const rafRef = React.useRef(0);
+  const hoveredRef = React.useRef(false);
+
+  const stop = React.useCallback(() => {
+    hoveredRef.current = false;
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+    }
+    if (innerRef.current) {
+      innerRef.current.style.transform = "translateX(0px)";
+    }
+  }, []);
+
+  const start = React.useCallback(() => {
+    const outer = outerRef.current;
+    const inner = innerRef.current;
+    if (!outer || !inner) return;
+
+    const reduceMotion = typeof window !== "undefined"
+      && window.matchMedia
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) return;
+
+    const max = Math.max(inner.scrollWidth - outer.clientWidth, 0);
+    if (max <= 0) return;
+
+    hoveredRef.current = true;
+    let offset = 0;
+    let direction = 1;
+    let last = performance.now();
+    let pauseUntil = last + 400;
+    const speedPxPerSec = 45;
+
+    const step = (now) => {
+      if (!hoveredRef.current) return;
+      const currentOuter = outerRef.current;
+      const currentInner = innerRef.current;
+      if (!currentOuter || !currentInner) return;
+
+      const currentMax = Math.max(currentInner.scrollWidth - currentOuter.clientWidth, 0);
+      if (currentMax <= 0) {
+        currentInner.style.transform = "translateX(0px)";
+        return;
+      }
+
+      if (now >= pauseUntil) {
+        const dt = Math.max(0, (now - last) / 1000);
+        offset += direction * speedPxPerSec * dt;
+        if (offset >= currentMax) {
+          offset = currentMax;
+          direction = -1;
+          pauseUntil = now + 700;
+        } else if (offset <= 0) {
+          offset = 0;
+          direction = 1;
+          pauseUntil = now + 500;
+        }
+        currentInner.style.transform = `translateX(${-offset}px)`;
+      }
+      last = now;
+      rafRef.current = requestAnimationFrame(step);
+    };
+
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(step);
+  }, []);
+
+  React.useEffect(() => stop, [stop]);
+
+  return (
+    <span
+      ref={outerRef}
+      className={`line-scroll ${className}`.trim()}
+      title={title}
+      onMouseEnter={start}
+      onMouseLeave={stop}
+    >
+      <span ref={innerRef} className="line-scroll__content">
+        {children}
+      </span>
+    </span>
+  );
+}
+
 /**
  * IconBtn - Bouton avec icône lucide-react
  */
-export function IconBtn({ icon, title, onClick, disabled, className }) {
+export function IconBtn({ icon, title, label, onClick, disabled, className }) {
+  const actionLabel = className?.includes("itemrow__action") ? label : "";
   return (
     <button
       className={`iconbtn${className ? ` ${className}` : ""}`}
       onClick={onClick}
       disabled={disabled}
       title={title}
+      type="button"
     >
       <AppIcon name={icon} />
+      {actionLabel && <span className="itemrow__action-label">{actionLabel}</span>}
     </button>
   );
 }
@@ -38,6 +129,7 @@ export default function ItemRow({
   id,
   title,
   meta,
+  metaSub,
   enabled = true,
   badges,
   actions = [],
@@ -47,8 +139,16 @@ export default function ItemRow({
   statusClass = "",
   className = "",
 }) {
+  const actionLabelByIcon = {
+    sync: "Sync",
+    science: "Tester",
+    edit: "Modifier",
+    delete: "Supprimer",
+  };
+
   const cardClasses = [
     "indexer-card",
+    "itemrow",
     !enabled && "is-disabled",
     statusClass,
     className,
@@ -56,22 +156,35 @@ export default function ItemRow({
 
   return (
     <div className={cardClasses}>
-      <div className="indexer-row">
-        {/* Dot indicator */}
-        <span className={`dot ${enabled ? "ok" : "off"}`} />
-
-        {/* ID */}
-        <span className="indexer-id">{id}</span>
-
-        {/* Title */}
-        <span className="indexer-title">{title}</span>
-
-        {/* Meta / URL */}
-        {meta && <span className="indexer-url">{meta}</span>}
-
-        {/* Badges / Categories */}
+      <div className="itemrow__body">
+        <div className="itemrow__head">
+          <span className={`itemrow__statusdot ${enabled ? "ok" : "off"}`} />
+          <AutoScrollLine className="itemrow__title" title={title}>
+            {title}
+          </AutoScrollLine>
+          {showToggle && (
+            <div className="itemrow__toggle itemrow__toggle--head" title={enabled ? "Actif" : "Inactif"}>
+              <ToggleSwitch
+                checked={enabled}
+                onIonChange={onToggle}
+                disabled={toggleDisabled}
+                title={enabled ? "Désactiver" : "Activer"}
+              />
+            </div>
+          )}
+        </div>
+        {meta && (
+          <AutoScrollLine className="itemrow__meta" title={meta}>
+            {meta}
+          </AutoScrollLine>
+        )}
+        {metaSub && (
+          <AutoScrollLine className="itemrow__meta-sub" title={metaSub}>
+            {metaSub}
+          </AutoScrollLine>
+        )}
         {badges && badges.length > 0 && (
-          <div className="indexer-categories">
+          <AutoScrollLine className="itemrow__badges" title="Badges">
             {badges.map((badge, idx) =>
               React.isValidElement(badge) ? (
                 <React.Fragment key={idx}>{badge}</React.Fragment>
@@ -85,34 +198,29 @@ export default function ItemRow({
                 </span>
               )
             )}
-          </div>
+          </AutoScrollLine>
         )}
-
-        {/* Actions */}
-        <div className="indexer-actions">
-          {actions.map((action, idx) => (
+      </div>
+      <div className="itemrow__footer">
+        {actions.map((action, idx) => {
+          const label = action.label || actionLabelByIcon[action.icon] || "Action";
+          return (
             <IconBtn
               key={idx}
               icon={action.spinning ? "progress_activity" : action.icon}
-              title={action.title}
+              title={action.title || label}
+              label={label}
               onClick={action.onClick}
               disabled={action.disabled}
               className={[
+                "itemrow__action",
+                `itemrow__action--${String(action.icon || "").toLowerCase()}`,
                 action.className,
                 action.spinning && "iconbtn--spin",
               ].filter(Boolean).join(" ")}
             />
-          ))}
-
-          {showToggle && (
-            <ToggleSwitch
-              checked={enabled}
-              onIonChange={onToggle}
-              disabled={toggleDisabled}
-              title={enabled ? "Désactiver" : "Activer"}
-            />
-          )}
-        </div>
+          );
+        })}
       </div>
     </div>
   );

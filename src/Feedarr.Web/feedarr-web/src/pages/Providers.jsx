@@ -12,6 +12,8 @@ import {
   normalizeProviderBaseUrl,
 } from "./providersListModel.js";
 
+const PROVIDER_TYPES = ["jackett", "prowlarr"];
+
 function shouldRetryJackett(error) {
   const msg = String(error?.message || "");
   return /invalid start of a value|unexpected token\s*</i.test(msg);
@@ -71,10 +73,26 @@ export default function Providers() {
     load();
   }, [load]);
 
-  function openAdd() {
+  const availableProviderTypes = useMemo(() => {
+    const usedTypes = new Set(
+      (Array.isArray(items) ? items : [])
+        .map((p) => String(p?.type || "").toLowerCase())
+        .filter(Boolean)
+    );
+    return PROVIDER_TYPES.filter((providerType) => !usedTypes.has(providerType));
+  }, [items]);
+
+  const hasAddableProviderType = availableProviderTypes.length > 0;
+
+  const openAdd = useCallback(() => {
+    if (!hasAddableProviderType) {
+      setNotice("Tous les fournisseurs disponibles sont déjà ajoutés.");
+      return;
+    }
+
     setEditing(null);
     setInitialEdit(null);
-    setType("jackett");
+    setType(availableProviderTypes[0] || "");
     setName("");
     setBaseUrl("");
     setApiKey("");
@@ -83,7 +101,7 @@ export default function Providers() {
     setModalTestStatus("idle");
     setModalTestMsg("");
     setModalOpen(true);
-  }
+  }, [availableProviderTypes, hasAddableProviderType]);
 
   function openEdit(p) {
     setEditing(p);
@@ -338,15 +356,30 @@ export default function Providers() {
     ? !!type && !!normalizedBaseUrl && !!apiKey.trim()
     : !!type && !!normalizedBaseUrl && isDirty;
 
+  const typeOptions = useMemo(() => {
+    if (isAdding) return availableProviderTypes;
+    return type ? [type] : [];
+  }, [availableProviderTypes, isAdding, type]);
+
   useEffect(() => {
     setContent(
       <>
         <SubAction icon="refresh" label="Refresh" onClick={load} />
-        <SubAction icon="add_circle" label="Ajouter" onClick={openAdd} />
+        <SubAction
+          icon="add_circle"
+          label="Ajouter"
+          onClick={openAdd}
+          disabled={!hasAddableProviderType}
+          title={
+            hasAddableProviderType
+              ? "Ajouter"
+              : "Tous les fournisseurs disponibles sont déjà ajoutés"
+          }
+        />
       </>
     );
     return () => setContent(null);
-  }, [setContent, load]);
+  }, [setContent, load, openAdd, hasAddableProviderType]);
 
   return (
     <div className="page page--providers">
@@ -373,14 +406,17 @@ export default function Providers() {
       {loading ? (
         <Loader label="Chargement des fournisseurs…" />
       ) : (
-        <div className="indexer-list">
+        <div className="indexer-list itemrow-grid">
           {rows.map((p) => {
             const isTesting = testingId === p.id;
             const statusClass = [
               testStatusById[p.id] === "ok" && "test-ok",
               testStatusById[p.id] === "error" && "test-err",
             ].filter(Boolean).join(" ");
-            const meta = p._lastTest ? `${p._url} • Dernier test: ${p._lastTest}` : p._url;
+            const meta = p._url;
+            const metaSub = p._lastTest
+              ? `Derniere synchro: ${p._lastTest}`
+              : "Derniere synchro...";
 
             return (
               <ItemRow
@@ -388,6 +424,7 @@ export default function Providers() {
                 id={p.id}
                 title={p._name}
                 meta={meta}
+                metaSub={metaSub}
                 enabled={p.enabled}
                 statusClass={statusClass}
                 badges={[
@@ -476,8 +513,11 @@ export default function Providers() {
           <div className="field">
             <label className="muted">Type</label>
             <select value={type} onChange={(e) => setType(e.target.value)} disabled={!isAdding}>
-              <option value="jackett">Jackett</option>
-              <option value="prowlarr">Prowlarr</option>
+              {typeOptions.map((optionType) => (
+                <option key={optionType} value={optionType}>
+                  {labelForProviderType(optionType)}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -495,9 +535,10 @@ export default function Providers() {
             <input
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder={type === "prowlarr" ? "http://localhost:9696" : "http://localhost:9117"}
+              placeholder={type === "prowlarr" ? "http://192.168.1.x:9696 ou https://prowlarr.domain.com" : "http://192.168.1.x:9117 ou https://jackett.domain.com"}
               disabled={modalTestStatus === "pending"}
             />
+            <span className="field-hint">IP, hostname ou URL reverse proxy (http/https)</span>
           </div>
 
           <div className="field">

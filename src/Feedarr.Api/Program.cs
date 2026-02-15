@@ -162,6 +162,11 @@ builder.Services.AddHttpClient<TorznabClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(45);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AllowAutoRedirect = true,
+    MaxAutomaticRedirections = 5,
+    ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
 });
 
 // TMDB
@@ -200,6 +205,11 @@ builder.Services.AddHttpClient<SonarrClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(30);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AllowAutoRedirect = true,
+    MaxAutomaticRedirections = 5,
+    ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
 }).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Radarr
@@ -207,27 +217,47 @@ builder.Services.AddHttpClient<RadarrClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(30);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AllowAutoRedirect = true,
+    MaxAutomaticRedirections = 5,
+    ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
 }).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
-// Overseerr/Jellyseerr
+// Overseerr/Jellyseerr/Seer
 builder.Services.AddHttpClient<EerrRequestClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(30);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AllowAutoRedirect = true,
+    MaxAutomaticRedirections = 5,
+    ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
 }).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Jackett
 builder.Services.AddHttpClient<JackettClient>(c =>
 {
-    c.Timeout = TimeSpan.FromSeconds(20);
+    c.Timeout = TimeSpan.FromSeconds(30);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AllowAutoRedirect = true,
+    MaxAutomaticRedirections = 5,
+    ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
 }).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Prowlarr
 builder.Services.AddHttpClient<ProwlarrClient>(c =>
 {
-    c.Timeout = TimeSpan.FromSeconds(20);
+    c.Timeout = TimeSpan.FromSeconds(30);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AllowAutoRedirect = true,
+    MaxAutomaticRedirections = 5,
+    ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
 }).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Arr Library Cache (in-memory, will be deprecated)

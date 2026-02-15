@@ -25,7 +25,8 @@ public sealed class ActivityController : ControllerBase
         [FromQuery] string? eventType,
         [FromQuery] string? level)
     {
-        return Ok(_repo.List(limit ?? 100, sourceId, eventType, level));
+        var safeLimit = Math.Clamp(limit ?? 100, 1, 500);
+        return Ok(_repo.List(safeLimit, sourceId, eventType, level));
     }
 
     // POST /api/activity/purge

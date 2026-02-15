@@ -82,7 +82,7 @@ public sealed class SettingsController : ControllerBase
         var globalLimit = Math.Clamp(globalRaw, 1, 2000);
         var arrInterval = Math.Clamp(dto.ArrSyncIntervalMinutes, 1, 1440);
         var requestMode = (dto.RequestIntegrationMode ?? "arr").Trim().ToLowerInvariant();
-        if (requestMode is not ("arr" or "overseerr" or "jellyseerr"))
+        if (requestMode is not ("arr" or "overseerr" or "jellyseerr" or "seer"))
             requestMode = "arr";
 
         var saved = new GeneralSettings

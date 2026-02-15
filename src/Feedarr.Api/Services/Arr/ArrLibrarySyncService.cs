@@ -8,7 +8,7 @@ namespace Feedarr.Api.Services.Arr;
 /// <summary>
 /// Background service that periodically syncs apps to the database.
 /// - Sonarr/Radarr: library items
-/// - Overseerr/Jellyseerr: requests count
+/// - Overseerr/Jellyseerr/Seer: requests count
 /// Sync interval and auto-sync can be configured in Settings > General.
 /// </summary>
 public sealed class ArrLibrarySyncService : BackgroundService
@@ -24,7 +24,8 @@ public sealed class ArrLibrarySyncService : BackgroundService
 
     private static bool IsRequestSyncType(string? appType)
         => string.Equals(appType, "overseerr", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(appType, "jellyseerr", StringComparison.OrdinalIgnoreCase);
+            || string.Equals(appType, "jellyseerr", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(appType, "seer", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsSyncType(string? appType)
         => IsLibrarySyncType(appType) || IsRequestSyncType(appType);
@@ -175,7 +176,7 @@ public sealed class ArrLibrarySyncService : BackgroundService
                 {
                     await SyncRadarrLibraryAsync(app, radarr, libraryRepo, ct);
                 }
-                else if (app.Type == "overseerr" || app.Type == "jellyseerr")
+                else if (app.Type == "overseerr" || app.Type == "jellyseerr" || app.Type == "seer")
                 {
                     await SyncRequestAppAsync(app, eerr, libraryRepo, ct);
                 }
@@ -240,7 +241,7 @@ public sealed class ArrLibrarySyncService : BackgroundService
             {
                 await SyncRadarrLibraryAsync(app, radarr, libraryRepo, ct);
             }
-            else if (app.Type == "overseerr" || app.Type == "jellyseerr")
+            else if (app.Type == "overseerr" || app.Type == "jellyseerr" || app.Type == "seer")
             {
                 await SyncRequestAppAsync(app, eerr, libraryRepo, ct);
             }

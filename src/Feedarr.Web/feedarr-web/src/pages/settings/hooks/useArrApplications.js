@@ -3,7 +3,7 @@ import { apiDelete, apiGet, apiPost, apiPut } from "../../../api/client.js";
 import { sleep } from "../settingsUtils.js";
 import { normalizeRequestMode } from "../../../utils/appTypes.js";
 
-const ALL_APP_TYPES = ["sonarr", "radarr", "overseerr", "jellyseerr"];
+const ALL_APP_TYPES = ["sonarr", "radarr", "overseerr", "jellyseerr", "seer"];
 
 export default function useArrApplications() {
   const [arrApps, setArrApps] = useState([]);

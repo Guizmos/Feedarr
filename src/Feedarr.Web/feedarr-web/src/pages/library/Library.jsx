@@ -179,6 +179,7 @@ export default function Library() {
     hasRadarr,
     hasOverseerr,
     hasJellyseerr,
+    hasSeer,
     integrationMode,
   } = useArrApps({ pollMs: 120000 });
   const requestMode = normalizeRequestMode(integrationMode);
@@ -215,6 +216,15 @@ export default function Library() {
     return map;
   }, [sources]);
 
+  // Cleanup refs on unmount
+  useEffect(() => {
+    return () => {
+      arrStatusFetchedRef.current.clear();
+      gameDetailsFetchRef.current.clear();
+      if (posterRefreshRef.current.timer) clearTimeout(posterRefreshRef.current.timer);
+    };
+  }, []);
+
   // Load sources
   useEffect(() => {
     (async () => {
@@ -229,7 +239,7 @@ export default function Library() {
   // Build arr status map
   const buildArrStatusMap = useCallback(
     (sourceItems, prevMap) => {
-      if (!hasSonarr && !hasRadarr && !hasOverseerr && !hasJellyseerr) return {};
+      if (!hasSonarr && !hasRadarr && !hasOverseerr && !hasJellyseerr && !hasSeer) return {};
       const next = {};
       (sourceItems || []).forEach((it) => {
         const prev = prevMap?.[it.id];
@@ -237,21 +247,24 @@ export default function Library() {
         const inRadarr = hasRadarr && (prev?.inRadarr || it?.isInRadarr);
         const inOverseerr = hasOverseerr && !!prev?.inOverseerr;
         const inJellyseerr = hasJellyseerr && !!prev?.inJellyseerr;
-        if (!inSonarr && !inRadarr && !inOverseerr && !inJellyseerr) return;
+        const inSeer = hasSeer && !!prev?.inSeer;
+        if (!inSonarr && !inRadarr && !inOverseerr && !inJellyseerr && !inSeer) return;
         next[it.id] = {
           inSonarr,
           inRadarr,
           inOverseerr,
           inJellyseerr,
+          inSeer,
           sonarrUrl: inSonarr ? (prev?.sonarrUrl || it?.sonarrUrl || null) : null,
           radarrUrl: inRadarr ? (prev?.radarrUrl || it?.radarrUrl || null) : null,
           overseerrUrl: inOverseerr ? (prev?.overseerrUrl || null) : null,
           jellyseerrUrl: inJellyseerr ? (prev?.jellyseerrUrl || null) : null,
+          seerUrl: inSeer ? (prev?.seerUrl || null) : null,
         };
       });
       return next;
     },
-    [hasSonarr, hasRadarr, hasOverseerr, hasJellyseerr]
+    [hasSonarr, hasRadarr, hasOverseerr, hasJellyseerr, hasSeer]
   );
 
   // Load items
@@ -335,14 +348,15 @@ export default function Library() {
       return;
     }
     setArrStatusMap((prev) => buildArrStatusMap(items, prev));
-  }, [items, hasSonarr, hasRadarr, hasOverseerr, hasJellyseerr, buildArrStatusMap]);
+  }, [items, hasSonarr, hasRadarr, hasOverseerr, hasJellyseerr, hasSeer, buildArrStatusMap]);
 
   // Fetch arr status
   const fetchArrStatus = useCallback(async (itemsToCheck) => {
     const canCheckArr = requestMode === "arr" && (hasSonarr || hasRadarr);
     const canCheckOverseerr = requestMode === "overseerr" && hasOverseerr;
     const canCheckJellyseerr = requestMode === "jellyseerr" && hasJellyseerr;
-    if (!canCheckArr && !canCheckOverseerr && !canCheckJellyseerr) return;
+    const canCheckSeer = requestMode === "seer" && hasSeer;
+    if (!canCheckArr && !canCheckOverseerr && !canCheckJellyseerr && !canCheckSeer) return;
     if (!itemsToCheck || itemsToCheck.length === 0) return;
 
     const now = Date.now();
@@ -406,16 +420,19 @@ export default function Library() {
             const inRadarr = hasRadarr && !!result.inRadarr;
             const inOverseerr = hasOverseerr && !!result.inOverseerr;
             const inJellyseerr = hasJellyseerr && !!result.inJellyseerr;
-            if (result.exists || inSonarr || inRadarr || inOverseerr || inJellyseerr) {
+            const inSeer = hasSeer && !!result.inSeer;
+            if (result.exists || inSonarr || inRadarr || inOverseerr || inJellyseerr || inSeer) {
               newStatuses[originalItem.id] = {
                 inSonarr,
                 inRadarr,
                 inOverseerr,
                 inJellyseerr,
+                inSeer,
                 sonarrUrl: inSonarr ? (result.sonarrUrl || null) : null,
                 radarrUrl: inRadarr ? (result.radarrUrl || null) : null,
                 overseerrUrl: inOverseerr ? (result.overseerrUrl || null) : null,
                 jellyseerrUrl: inJellyseerr ? (result.jellyseerrUrl || null) : null,
+                seerUrl: inSeer ? (result.seerUrl || null) : null,
               };
             }
           });
@@ -430,23 +447,24 @@ export default function Library() {
       context: "Failed to refresh Arr status batch in library",
       ignoreAbort: true,
     });
-  }, [hasSonarr, hasRadarr, hasOverseerr, hasJellyseerr, requestMode]);
+  }, [hasSonarr, hasRadarr, hasOverseerr, hasJellyseerr, hasSeer, requestMode]);
 
   useEffect(() => {
     if (loading) return;
     const canCheckArr = requestMode === "arr" && (hasSonarr || hasRadarr);
     const canCheckOverseerr = requestMode === "overseerr" && hasOverseerr;
     const canCheckJellyseerr = requestMode === "jellyseerr" && hasJellyseerr;
-    if (!canCheckArr && !canCheckOverseerr && !canCheckJellyseerr) return;
+    const canCheckSeer = requestMode === "seer" && hasSeer;
+    if (!canCheckArr && !canCheckOverseerr && !canCheckJellyseerr && !canCheckSeer) return;
     fetchArrStatus(items || []);
     return () => {
       if (arrAbortRef.current) arrAbortRef.current.abort();
     };
-  }, [items, loading, hasSonarr, hasRadarr, hasOverseerr, hasJellyseerr, requestMode, fetchArrStatus]);
+  }, [items, loading, hasSonarr, hasRadarr, hasOverseerr, hasJellyseerr, hasSeer, requestMode, fetchArrStatus]);
 
   // Handler for arr status change
   const handleArrStatusChange = useCallback(async (itemId, arrType, newStatus) => {
-    const isRequestType = arrType === "overseerr" || arrType === "jellyseerr";
+    const isRequestType = arrType === "overseerr" || arrType === "jellyseerr" || arrType === "seer";
     const previousStatus = arrStatusMap[itemId];
     setArrStatusMap((prev) => ({ ...prev, [itemId]: { ...prev[itemId], ...newStatus } }));
 
@@ -974,6 +992,7 @@ export default function Library() {
         hasRadarr={hasRadarr}
         hasOverseerr={hasOverseerr}
         hasJellyseerr={hasJellyseerr}
+        hasSeer={hasSeer}
         integrationMode={requestMode}
         arrStatus={selectedItem ? arrStatusMap[selectedItem.id] : null}
         onArrStatusChange={handleArrStatusChange}

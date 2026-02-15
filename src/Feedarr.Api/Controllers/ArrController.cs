@@ -85,6 +85,7 @@ public sealed class ArrController : ControllerBase
     private static string NormalizeRequestAppType(string? rawType)
     {
         var type = (rawType ?? string.Empty).Trim().ToLowerInvariant();
+        if (type is "seer") return "seer";
         return type is "jellyseerr" ? "jellyseerr" : "overseerr";
     }
 
@@ -384,8 +385,8 @@ public sealed class ArrController : ControllerBase
         try
         {
             var appTypeRaw = (dto.AppType ?? string.Empty).Trim().ToLowerInvariant();
-            if (appTypeRaw is not ("overseerr" or "jellyseerr"))
-                return BadRequest(new ArrAddResponseDto { Ok = false, Status = "error", Message = "appType must be overseerr or jellyseerr" });
+            if (appTypeRaw is not ("overseerr" or "jellyseerr" or "seer"))
+                return BadRequest(new ArrAddResponseDto { Ok = false, Status = "error", Message = "appType must be overseerr, jellyseerr or seer" });
 
             var appType = NormalizeRequestAppType(appTypeRaw);
             var mediaType = NormalizeRequestMediaType(dto.MediaType);
@@ -544,6 +545,11 @@ public sealed class ArrController : ControllerBase
         Dictionary<int, EerrRequestEntry>? jellyseerrTvByTmdb = null;
         Dictionary<int, EerrRequestEntry>? jellyseerrTvByTvdb = null;
 
+        string? seerBaseUrl = null;
+        Dictionary<int, EerrRequestEntry>? seerMovieByTmdb = null;
+        Dictionary<int, EerrRequestEntry>? seerTvByTmdb = null;
+        Dictionary<int, EerrRequestEntry>? seerTvByTvdb = null;
+
         if (requestMode == "overseerr")
         {
             var app = _repo.GetDefault("overseerr");
@@ -584,6 +590,26 @@ public sealed class ArrController : ControllerBase
                 }
             }
         }
+        else if (requestMode == "seer")
+        {
+            var app = _repo.GetDefault("seer");
+            if (app is not null && app.IsEnabled && !string.IsNullOrWhiteSpace(app.ApiKeyEncrypted))
+            {
+                try
+                {
+                    var requests = await _eerr.GetRequestsAsync(app.BaseUrl, app.ApiKeyEncrypted, ct);
+                    var lookups = BuildRequestLookups(requests);
+                    seerBaseUrl = app.BaseUrl;
+                    seerMovieByTmdb = lookups.movieByTmdb;
+                    seerTvByTmdb = lookups.tvByTmdb;
+                    seerTvByTvdb = lookups.tvByTvdb;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to load Seer requests for status check");
+                }
+            }
+        }
 
         _logger.LogInformation("Arr status check started: {Count} items", items.Count);
         var seriesCount = _library.GetTotalCountByType("series");
@@ -603,6 +629,7 @@ public sealed class ArrController : ControllerBase
             {
                 var cachedResult = new ArrStatusResultDto
                 {
+                    ReleaseId = item.ReleaseId,
                     TvdbId = entityStatus.TvdbId ?? item.TvdbId,
                     TmdbId = entityStatus.TmdbId ?? item.TmdbId,
                     InSonarr = entityStatus.InSonarr,
@@ -625,11 +652,15 @@ public sealed class ArrController : ControllerBase
                     jellyseerrBaseUrl,
                     jellyseerrMovieByTmdb,
                     jellyseerrTvByTmdb,
-                    jellyseerrTvByTvdb);
+                    jellyseerrTvByTvdb,
+                    seerBaseUrl,
+                    seerMovieByTmdb,
+                    seerTvByTmdb,
+                    seerTvByTvdb);
 
-                cachedResult.Exists = cachedResult.InSonarr || cachedResult.InRadarr || cachedResult.InOverseerr || cachedResult.InJellyseerr;
-                cachedResult.ExternalId = cachedResult.SonarrSeriesId ?? cachedResult.RadarrMovieId ?? cachedResult.OverseerrRequestId ?? cachedResult.JellyseerrRequestId;
-                cachedResult.OpenUrl = cachedResult.SonarrUrl ?? cachedResult.RadarrUrl ?? cachedResult.OverseerrUrl ?? cachedResult.JellyseerrUrl;
+                cachedResult.Exists = cachedResult.InSonarr || cachedResult.InRadarr || cachedResult.InOverseerr || cachedResult.InJellyseerr || cachedResult.InSeer;
+                cachedResult.ExternalId = cachedResult.SonarrSeriesId ?? cachedResult.RadarrMovieId ?? cachedResult.OverseerrRequestId ?? cachedResult.JellyseerrRequestId ?? cachedResult.SeerRequestId;
+                cachedResult.OpenUrl = cachedResult.SonarrUrl ?? cachedResult.RadarrUrl ?? cachedResult.OverseerrUrl ?? cachedResult.JellyseerrUrl ?? cachedResult.SeerUrl;
 
                 statusRows.Add(new ReleaseArrStatusRow
                 {
@@ -647,6 +678,7 @@ public sealed class ArrController : ControllerBase
 
             var result = new ArrStatusResultDto
             {
+                ReleaseId = item.ReleaseId,
                 TvdbId = item.TvdbId,
                 TmdbId = item.TmdbId
             };
@@ -869,7 +901,11 @@ public sealed class ArrController : ControllerBase
                 jellyseerrBaseUrl,
                 jellyseerrMovieByTmdb,
                 jellyseerrTvByTmdb,
-                jellyseerrTvByTvdb);
+                jellyseerrTvByTvdb,
+                seerBaseUrl,
+                seerMovieByTmdb,
+                seerTvByTmdb,
+                seerTvByTvdb);
 
             if (item.ReleaseId.HasValue)
             {
@@ -898,14 +934,16 @@ public sealed class ArrController : ControllerBase
         var radarrCount = response.Results.Count(r => r.InRadarr);
         var overseerrCount = response.Results.Count(r => r.InOverseerr);
         var jellyseerrCount = response.Results.Count(r => r.InJellyseerr);
+        var seerCount = response.Results.Count(r => r.InSeer);
         _logger.LogInformation(
-            "Arr status check completed: {Matched}/{Total} (sonarr={SonarrCount}, radarr={RadarrCount}, overseerr={OverseerrCount}, jellyseerr={JellyseerrCount}) in {ElapsedMs}ms",
+            "Arr status check completed: {Matched}/{Total} (sonarr={SonarrCount}, radarr={RadarrCount}, overseerr={OverseerrCount}, jellyseerr={JellyseerrCount}, seer={SeerCount}) in {ElapsedMs}ms",
             matchedCount,
             items.Count,
             sonarrCount,
             radarrCount,
             overseerrCount,
             jellyseerrCount,
+            seerCount,
             sw.ElapsedMilliseconds);
 
         return Ok(response);
@@ -923,7 +961,11 @@ public sealed class ArrController : ControllerBase
         string? jellyseerrBaseUrl,
         IReadOnlyDictionary<int, EerrRequestEntry>? jellyseerrMovieByTmdb,
         IReadOnlyDictionary<int, EerrRequestEntry>? jellyseerrTvByTmdb,
-        IReadOnlyDictionary<int, EerrRequestEntry>? jellyseerrTvByTvdb)
+        IReadOnlyDictionary<int, EerrRequestEntry>? jellyseerrTvByTvdb,
+        string? seerBaseUrl,
+        IReadOnlyDictionary<int, EerrRequestEntry>? seerMovieByTmdb,
+        IReadOnlyDictionary<int, EerrRequestEntry>? seerTvByTmdb,
+        IReadOnlyDictionary<int, EerrRequestEntry>? seerTvByTvdb)
     {
         if (!string.IsNullOrWhiteSpace(overseerrBaseUrl) &&
             TryMatchRequest(item, isSeries, isMovie, overseerrMovieByTmdb, overseerrTvByTmdb, overseerrTvByTvdb, out var overseerrMatch) &&
@@ -943,11 +985,20 @@ public sealed class ArrController : ControllerBase
             result.JellyseerrUrl = _eerr.BuildRequestUrl(jellyseerrBaseUrl, jellyseerrMatch.RequestId);
         }
 
-        if (result.InOverseerr || result.InJellyseerr)
+        if (!string.IsNullOrWhiteSpace(seerBaseUrl) &&
+            TryMatchRequest(item, isSeries, isMovie, seerMovieByTmdb, seerTvByTmdb, seerTvByTvdb, out var seerMatch) &&
+            seerMatch is not null)
+        {
+            result.InSeer = true;
+            result.SeerRequestId = seerMatch.RequestId;
+            result.SeerUrl = _eerr.BuildRequestUrl(seerBaseUrl, seerMatch.RequestId);
+        }
+
+        if (result.InOverseerr || result.InJellyseerr || result.InSeer)
         {
             result.Exists = true;
-            result.ExternalId ??= result.OverseerrRequestId ?? result.JellyseerrRequestId;
-            result.OpenUrl ??= result.OverseerrUrl ?? result.JellyseerrUrl;
+            result.ExternalId ??= result.OverseerrRequestId ?? result.JellyseerrRequestId ?? result.SeerRequestId;
+            result.OpenUrl ??= result.OverseerrUrl ?? result.JellyseerrUrl ?? result.SeerUrl;
         }
     }
 

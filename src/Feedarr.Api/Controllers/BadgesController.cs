@@ -14,6 +14,8 @@ public sealed class BadgesController : ControllerBase
         _signal = signal;
     }
 
+    private static readonly TimeSpan SseTimeout = TimeSpan.FromMinutes(30);
+
     [HttpGet("stream")]
     public async Task Stream(CancellationToken ct)
     {
@@ -21,13 +23,24 @@ public sealed class BadgesController : ControllerBase
         Response.Headers.CacheControl = "no-cache";
         Response.Headers.Connection = "keep-alive";
 
-        await Response.WriteAsync("event: ready\ndata: ok\n\n", ct);
-        await Response.Body.FlushAsync(ct);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(SseTimeout);
+        var linked = cts.Token;
 
-        await foreach (var type in _signal.Subscribe(ct))
+        await Response.WriteAsync("event: ready\ndata: ok\n\n", linked);
+        await Response.Body.FlushAsync(linked);
+
+        try
         {
-            await Response.WriteAsync($"event: badge\ndata: {type}\n\n", ct);
-            await Response.Body.FlushAsync(ct);
+            await foreach (var type in _signal.Subscribe(linked))
+            {
+                await Response.WriteAsync($"event: badge\ndata: {type}\n\n", linked);
+                await Response.Body.FlushAsync(linked);
+            }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // SSE timeout reached — client will reconnect
         }
     }
 }

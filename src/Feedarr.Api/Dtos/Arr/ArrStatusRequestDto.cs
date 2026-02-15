@@ -21,6 +21,7 @@ public sealed class ArrStatusResponseDto
 
 public sealed class ArrStatusResultDto
 {
+    public long? ReleaseId { get; set; }
     public int? TvdbId { get; set; }
     public int? TmdbId { get; set; }
     public bool Exists { get; set; }
@@ -28,14 +29,17 @@ public sealed class ArrStatusResultDto
     public bool InRadarr { get; set; }
     public bool InOverseerr { get; set; }
     public bool InJellyseerr { get; set; }
+    public bool InSeer { get; set; }
     public int? SonarrSeriesId { get; set; }
     public int? RadarrMovieId { get; set; }
     public int? OverseerrRequestId { get; set; }
     public int? JellyseerrRequestId { get; set; }
+    public int? SeerRequestId { get; set; }
     public string? SonarrUrl { get; set; }
     public string? RadarrUrl { get; set; }
     public string? OverseerrUrl { get; set; }
     public string? JellyseerrUrl { get; set; }
+    public string? SeerUrl { get; set; }
     // Legacy fields for backwards compatibility
     public int? ExternalId { get; set; }
     public string? OpenUrl { get; set; }

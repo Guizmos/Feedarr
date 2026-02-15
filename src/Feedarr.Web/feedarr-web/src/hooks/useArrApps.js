@@ -59,6 +59,9 @@ export default function useArrApps({ pollMs = 60000 } = {}) {
   const jellyseerrApps = apps.filter(
     (a) => a.type === "jellyseerr" && a.isEnabled && a.hasApiKey
   );
+  const seerApps = apps.filter(
+    (a) => a.type === "seer" && a.isEnabled && a.hasApiKey
+  );
 
   // Get default app or first available
   const getDefaultSonarr = () =>
@@ -69,6 +72,8 @@ export default function useArrApps({ pollMs = 60000 } = {}) {
     overseerrApps.find((a) => a.isDefault) || overseerrApps[0] || null;
   const getDefaultJellyseerr = () =>
     jellyseerrApps.find((a) => a.isDefault) || jellyseerrApps[0] || null;
+  const getDefaultSeer = () =>
+    seerApps.find((a) => a.isDefault) || seerApps[0] || null;
 
   return {
     apps,
@@ -79,13 +84,16 @@ export default function useArrApps({ pollMs = 60000 } = {}) {
     radarrApps,
     overseerrApps,
     jellyseerrApps,
+    seerApps,
     hasSonarr: sonarrApps.length > 0,
     hasRadarr: radarrApps.length > 0,
     hasOverseerr: overseerrApps.length > 0,
     hasJellyseerr: jellyseerrApps.length > 0,
+    hasSeer: seerApps.length > 0,
     getDefaultSonarr,
     getDefaultRadarr,
     getDefaultOverseerr,
     getDefaultJellyseerr,
+    getDefaultSeer,
   };
 }

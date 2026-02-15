@@ -85,7 +85,7 @@ export default function SettingsApplications({
 
   return (
     <>
-      <div className="indexer-list">
+      <div className="indexer-list itemrow-grid">
         {arrAppsLoading ? (
           <div className="indexer-card">
             <div className="indexer-row">
@@ -191,6 +191,7 @@ export default function SettingsApplications({
                     <option value="arr">Sonarr/Radarr</option>
                     <option value="overseerr">Overseerr</option>
                     <option value="jellyseerr">Jellyseerr</option>
+                    <option value="seer">Seer</option>
                   </select>
                 </div>
               </div>
@@ -357,9 +358,10 @@ export default function SettingsApplications({
                 setArrModalTested(false);
                 setArrModalError("");
               }}
-              placeholder={arrModalType === "sonarr" ? "http://localhost:8989" : arrModalType === "radarr" ? "http://localhost:7878" : "http://localhost:5055"}
+              placeholder={arrModalType === "sonarr" ? "http://192.168.1.x:8989 ou https://sonarr.domain.com" : arrModalType === "radarr" ? "http://192.168.1.x:7878 ou https://radarr.domain.com" : "http://192.168.1.x:5055 ou https://overseerr.domain.com"}
               disabled={arrModalTesting || arrModalSaving}
             />
+            <span className="field-hint">IP, hostname ou URL reverse proxy (http/https)</span>
           </div>
 
           <div className="field" style={{ marginBottom: 12 }}>

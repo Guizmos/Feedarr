@@ -40,7 +40,7 @@ public sealed class ArrAppsController : ControllerBase
 
     private static bool IsSupportedAppType(string type)
     {
-        return type is "sonarr" or "radarr" or "overseerr" or "jellyseerr";
+        return type is "sonarr" or "radarr" or "overseerr" or "jellyseerr" or "seer";
     }
 
     private static List<int> ParseTags(string? tagsJson)
@@ -110,7 +110,7 @@ public sealed class ArrAppsController : ControllerBase
     {
         var type = (dto.Type ?? "").Trim().ToLowerInvariant();
         if (!IsSupportedAppType(type))
-            return BadRequest(new { error = "type must be one of: sonarr, radarr, overseerr, jellyseerr" });
+            return BadRequest(new { error = "type must be one of: sonarr, radarr, overseerr, jellyseerr, seer" });
 
         if (!OutboundUrlGuard.TryNormalizeArrBaseUrl(dto.BaseUrl, out var baseUrl, out var baseUrlError))
             return BadRequest(new { error = baseUrlError });
@@ -285,7 +285,7 @@ public sealed class ArrAppsController : ControllerBase
     {
         var appType = (type ?? "").Trim().ToLowerInvariant();
         if (!IsSupportedAppType(appType))
-            return BadRequest(new { error = "type query param must be one of: sonarr, radarr, overseerr, jellyseerr" });
+            return BadRequest(new { error = "type query param must be one of: sonarr, radarr, overseerr, jellyseerr, seer" });
 
         if (!OutboundUrlGuard.TryNormalizeArrBaseUrl(dto.BaseUrl, out var baseUrl, out var baseUrlError))
             return BadRequest(new { error = baseUrlError });
@@ -409,7 +409,7 @@ public sealed class ArrAppsController : ControllerBase
             }
             else
             {
-                // Request apps (Overseerr/Jellyseerr) don't expose root folder / quality profile config.
+                // Request apps (Overseerr/Jellyseerr/Seer) don't expose root folder / quality profile config.
                 return Ok(new ArrConfigResponseDto
                 {
                     RootFolders = new List<ArrRootFolderDto>(),
@@ -435,7 +435,7 @@ public sealed class ArrAppsController : ControllerBase
         }
         catch (OperationCanceledException ex) when (ct.IsCancellationRequested)
         {
-            _log.LogInformation(ex, "Arr app config request canceled for appId={AppId}", id);
+            _log.LogDebug(ex, "Arr app config request canceled for appId={AppId}", id);
             return BadRequest(new { error = "request canceled" });
         }
         catch (Exception ex)

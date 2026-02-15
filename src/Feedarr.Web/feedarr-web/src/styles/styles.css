@@ -1175,6 +1175,11 @@ html, body {
   border: 1px solid rgba(20, 184, 166, 0.98);
   color: #ffffff;
 }
+.posterArrBadge--seer{
+  background: rgba(244, 63, 94, 0.92);
+  border: 1px solid rgba(244, 63, 94, 0.98);
+  color: #ffffff;
+}
 .posterArrBadge__icon{
   width: 12px;
   height: 12px;
@@ -2182,6 +2187,15 @@ html, body {
   background: rgba(20,184,166,0.25);
   border-color: rgba(20,184,166,0.5);
 }
+.releaseModal__arrBadge--seer{
+  background: rgba(244,63,94,0.15);
+  color: #f43f5e;
+  border-color: rgba(244,63,94,0.35);
+}
+.releaseModal__arrBadge--seer.releaseModal__arrBadge--link:hover{
+  background: rgba(244,63,94,0.25);
+  border-color: rgba(244,63,94,0.5);
+}
 .releaseModal__arrBadge--warn{
   background: rgba(234,179,8,0.15);
   color: #eab308;
@@ -2234,6 +2248,14 @@ html, body {
 }
 .btn-soft--jellyseerr:hover:not(:disabled){
   background: rgba(20,184,166,0.25);
+}
+.btn-soft--seer{
+  background: rgba(244,63,94,0.15);
+  color: #f43f5e;
+  border: 1px solid rgba(244,63,94,0.35);
+}
+.btn-soft--seer:hover:not(:disabled){
+  background: rgba(244,63,94,0.25);
 }
 .btn-soft--small{
   height: 26px;
@@ -2795,6 +2817,346 @@ html, body {
 
 .indexer-card + .indexer-card{
   margin-top: 8px;
+}
+
+/* Management cards (Indexeurs / Fournisseurs / Providers / Applications) */
+.page--indexers .indexer-list:not(.itemrow-grid),
+.page--providers .indexer-list:not(.itemrow-grid),
+.page--settings .indexer-list:not(.itemrow-grid),
+.setup-shell .indexer-list:not(.itemrow-grid){
+  align-items: stretch;
+}
+
+.page--indexers .indexer-list.itemrow-grid,
+.page--providers .indexer-list.itemrow-grid,
+.page--settings .indexer-list.itemrow-grid,
+.setup-shell .indexer-list.itemrow-grid{
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(405px, 405px));
+  grid-auto-rows: 236px;
+  gap: 12px;
+  justify-content: flex-start;
+}
+
+.page--indexers .indexer-list.itemrow-grid > .indexer-card.itemrow,
+.page--providers .indexer-list.itemrow-grid > .indexer-card.itemrow,
+.page--settings .indexer-list.itemrow-grid > .indexer-card.itemrow,
+.setup-shell .indexer-list.itemrow-grid > .indexer-card.itemrow{
+  height: 100%;
+  width: 100%;
+  max-width: none;
+}
+
+.page--indexers .indexer-list.itemrow-grid > .indexer-card + .indexer-card,
+.page--providers .indexer-list.itemrow-grid > .indexer-card + .indexer-card,
+.page--settings .indexer-list.itemrow-grid > .indexer-card + .indexer-card,
+.setup-shell .indexer-list.itemrow-grid > .indexer-card + .indexer-card{
+  margin-top: 0;
+}
+
+.page--indexers .indexer-card.itemrow,
+.page--providers .indexer-card.itemrow,
+.page--settings .indexer-card.itemrow,
+.setup-shell .indexer-card.itemrow{
+  width: min(594px, 100%);
+  max-width: 594px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.page--indexers .itemrow__body,
+.page--providers .itemrow__body,
+.page--settings .itemrow__body,
+.setup-shell .itemrow__body{
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 10px;
+  padding: 16px 14px 14px;
+}
+
+.page--indexers .line-scroll,
+.page--providers .line-scroll,
+.page--settings .line-scroll,
+.setup-shell .line-scroll{
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.page--indexers .line-scroll__content,
+.page--providers .line-scroll__content,
+.page--settings .line-scroll__content,
+.setup-shell .line-scroll__content{
+  display: inline-flex;
+  min-width: max-content;
+  transform: translateX(0);
+  will-change: transform;
+}
+
+.page--indexers .itemrow__head,
+.page--providers .itemrow__head,
+.page--settings .itemrow__head,
+.setup-shell .itemrow__head{
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.page--indexers .itemrow__statusdot,
+.page--providers .itemrow__statusdot,
+.page--settings .itemrow__statusdot,
+.setup-shell .itemrow__statusdot{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  padding: 0;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 0;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.page--indexers .itemrow__statusdot.ok,
+.page--providers .itemrow__statusdot.ok,
+.page--settings .itemrow__statusdot.ok,
+.setup-shell .itemrow__statusdot.ok{
+  background: #22c55e;
+}
+
+.page--indexers .itemrow__statusdot.off,
+.page--providers .itemrow__statusdot.off,
+.page--settings .itemrow__statusdot.off,
+.setup-shell .itemrow__statusdot.off{
+  background: #ef4444;
+}
+
+.page--indexers .itemrow__title,
+.page--providers .itemrow__title,
+.page--settings .itemrow__title,
+.setup-shell .itemrow__title{
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: 22px;
+  font-weight: 750;
+  line-height: 1.28;
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.page--indexers .itemrow__meta,
+.page--providers .itemrow__meta,
+.page--settings .itemrow__meta,
+.setup-shell .itemrow__meta{
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.35;
+  margin-top: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.page--indexers .itemrow__meta-sub,
+.page--providers .itemrow__meta-sub,
+.page--settings .itemrow__meta-sub,
+.setup-shell .itemrow__meta-sub{
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.25;
+  margin-top: 1px;
+  opacity: 0.9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.page--indexers .itemrow__badges,
+.page--providers .itemrow__badges,
+.page--settings .itemrow__badges,
+.setup-shell .itemrow__badges{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  margin-top: auto;
+  margin-bottom: 4px;
+}
+
+.page--indexers .itemrow__badges .line-scroll__content,
+.page--providers .itemrow__badges .line-scroll__content,
+.page--settings .itemrow__badges .line-scroll__content,
+.setup-shell .itemrow__badges .line-scroll__content{
+  gap: 8px;
+}
+
+.page--indexers .itemrow__footer,
+.page--providers .itemrow__footer,
+.page--settings .itemrow__footer,
+.setup-shell .itemrow__footer{
+  display: flex;
+  align-items: stretch;
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(148, 163, 184, 0.04);
+}
+
+.page--indexers .itemrow__footer > *,
+.page--providers .itemrow__footer > *,
+.page--settings .itemrow__footer > *,
+.setup-shell .itemrow__footer > *{
+  border-right: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.page--indexers .itemrow__footer > :last-child,
+.page--providers .itemrow__footer > :last-child,
+.page--settings .itemrow__footer > :last-child,
+.setup-shell .itemrow__footer > :last-child{
+  border-right: 0;
+}
+
+.page--indexers .itemrow__footer .iconbtn.itemrow__action,
+.page--providers .itemrow__footer .iconbtn.itemrow__action,
+.page--settings .itemrow__footer .iconbtn.itemrow__action,
+.setup-shell .itemrow__footer .iconbtn.itemrow__action{
+  flex: 1 1 100%;
+  width: 100%;
+  height: 52px;
+  border: 0.15px solid rgba(148, 163, 184, 0.16);
+  box-shadow: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0 10px;
+  gap: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.page--indexers .itemrow__footer .iconbtn.itemrow__action.itemrow__action--sync,
+.page--providers .itemrow__footer .iconbtn.itemrow__action.itemrow__action--sync,
+.page--settings .itemrow__footer .iconbtn.itemrow__action.itemrow__action--sync,
+.setup-shell .itemrow__footer .iconbtn.itemrow__action.itemrow__action--sync,
+.page--indexers .itemrow__footer .iconbtn.itemrow__action.itemrow__action--science,
+.page--providers .itemrow__footer .iconbtn.itemrow__action.itemrow__action--science,
+.page--settings .itemrow__footer .iconbtn.itemrow__action.itemrow__action--science,
+.setup-shell .itemrow__footer .iconbtn.itemrow__action.itemrow__action--science{
+  flex: 0.84 1 100%;
+}
+
+.page--indexers .itemrow__footer .iconbtn.itemrow__action:hover:not(:disabled),
+.page--providers .itemrow__footer .iconbtn.itemrow__action:hover:not(:disabled),
+.page--settings .itemrow__footer .iconbtn.itemrow__action:hover:not(:disabled),
+.setup-shell .itemrow__footer .iconbtn.itemrow__action:hover:not(:disabled){
+  background: rgba(59, 130, 246, 0.11);
+}
+
+.page--indexers .itemrow__footer .iconbtn.itemrow__action.iconbtn--danger:hover:not(:disabled),
+.page--providers .itemrow__footer .iconbtn.itemrow__action.iconbtn--danger:hover:not(:disabled),
+.page--settings .itemrow__footer .iconbtn.itemrow__action.iconbtn--danger:hover:not(:disabled),
+.setup-shell .itemrow__footer .iconbtn.itemrow__action.iconbtn--danger:hover:not(:disabled){
+  background: rgba(239, 68, 68, 0.13);
+}
+
+.page--indexers .itemrow__footer .itemrow__action-label,
+.page--providers .itemrow__footer .itemrow__action-label,
+.page--settings .itemrow__footer .itemrow__action-label,
+.setup-shell .itemrow__footer .itemrow__action-label{
+  white-space: nowrap;
+  line-height: 1;
+  font-size: 12px;
+}
+
+.page--indexers .itemrow__footer .iconbtn .app-icon,
+.page--providers .itemrow__footer .iconbtn .app-icon,
+.page--settings .itemrow__footer .iconbtn .app-icon,
+.setup-shell .itemrow__footer .iconbtn .app-icon{
+  font-size: 19px;
+}
+
+.page--indexers .itemrow__toggle,
+.page--providers .itemrow__toggle,
+.page--settings .itemrow__toggle,
+.setup-shell .itemrow__toggle{
+  flex: 0 0 auto;
+  min-height: 0;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+}
+
+.page--indexers .itemrow__toggle--head,
+.page--providers .itemrow__toggle--head,
+.page--settings .itemrow__toggle--head,
+.setup-shell .itemrow__toggle--head{
+  margin-left: auto;
+  margin-top: 1px;
+}
+
+@media (max-width: 760px){
+  .page--indexers .indexer-list.itemrow-grid,
+  .page--providers .indexer-list.itemrow-grid,
+  .page--settings .indexer-list.itemrow-grid,
+  .setup-shell .indexer-list.itemrow-grid{
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page--indexers .itemrow__title,
+  .page--providers .itemrow__title,
+  .page--settings .itemrow__title,
+  .setup-shell .itemrow__title{
+    font-size: 19px;
+  }
+
+  .page--indexers .itemrow__meta,
+  .page--providers .itemrow__meta,
+  .page--settings .itemrow__meta,
+  .setup-shell .itemrow__meta{
+    font-size: 13px;
+  }
+
+  .page--indexers .itemrow__footer,
+  .page--providers .itemrow__footer,
+  .page--settings .itemrow__footer,
+  .setup-shell .itemrow__footer{
+    flex-wrap: wrap;
+  }
+
+  .page--indexers .itemrow__footer .iconbtn.itemrow__action,
+  .page--providers .itemrow__footer .iconbtn.itemrow__action,
+  .page--settings .itemrow__footer .iconbtn.itemrow__action,
+  .setup-shell .itemrow__footer .iconbtn.itemrow__action{
+    flex: 1 1 50%;
+  }
+
+  .page--indexers .itemrow__footer > :nth-child(2n),
+  .page--providers .itemrow__footer > :nth-child(2n),
+  .page--settings .itemrow__footer > :nth-child(2n),
+  .setup-shell .itemrow__footer > :nth-child(2n){
+    border-right: 0;
+  }
 }
 
 /* Settings row cards (Providers + Applications) */
@@ -3646,6 +4008,7 @@ html, body {
   grid-template-columns: 1fr;
 }
 .field{ display:flex; flex-direction:column; gap:6px; }
+.field-hint{ font-size:11px; color:var(--color-muted); margin-top:2px; }
 .field--inline{ display:flex; align-items:center; gap:10px; }
 .field--inline ion-toggle{ flex-shrink:0; }
 .field input, .field select{
@@ -4944,6 +5307,41 @@ body.library-select-mode .list-edit{ display: none; }
 .setup-providers .indexer-list {
   margin-top: 8px;
 }
+
+/* Wizard only: show management cards in 2 columns when space allows */
+.setup-shell .setup-providers__list > .indexer-list,
+.setup-shell .setup-arr > .indexer-list{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.setup-shell .setup-providers__list > .indexer-list > *,
+.setup-shell .setup-arr > .indexer-list > *{
+  min-height: 0;
+  display: flex;
+}
+
+.setup-shell .setup-providers__list > .indexer-list > .setup-provider-block > .itemrow,
+.setup-shell .setup-arr > .indexer-list > .itemrow{
+  flex: 1 1 auto;
+  height: 100%;
+}
+
+.setup-shell .setup-providers__list > .indexer-list > * + *,
+.setup-shell .setup-arr > .indexer-list > * + *{
+  margin-top: 0;
+}
+
+@media (max-width: 980px){
+  .setup-shell .setup-providers__list > .indexer-list,
+  .setup-shell .setup-arr > .indexer-list{
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .setup-provider-block {
   display: flex;
   flex-direction: column;

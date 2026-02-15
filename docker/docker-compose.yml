@@ -8,6 +8,14 @@ services:
     environment:
       ASPNETCORE_URLS: http://+:8080
       App__DataDir: /app/data
+
+      # OPTIONNEL : si tu veux que les fichiers sur le NAS appartiennent à Guizmos
+      # PUID: "1026"
+      # PGID: "100"
+
+      # OPTIONNEL : clé stable (sinon l'app en génère une et la stocke dans /app/data/keys)
+      # FEEDARR_MASTER_KEY: "met-une-valeur-unique-ici"
+      
     volumes:
       - /volume1/Docker/Feedarr/data:/app/data
     ports:

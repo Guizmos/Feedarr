@@ -131,6 +131,10 @@ function parseDataJson(raw) {
   }
 }
 
+const RE_FETCHED = /fetched=(\d+)/i;
+const RE_ITEMS = /\((\d+)\s*items/i;
+const RE_MS = /(\d+)\s*ms/i;
+
 function extractItemsCount(entry, data) {
   const directRaw = data?.itemsCount ?? data?.items;
   if (directRaw !== null && directRaw !== undefined) {
@@ -138,9 +142,9 @@ function extractItemsCount(entry, data) {
     if (Number.isFinite(direct)) return direct;
   }
   const message = String(entry?.message ?? "");
-  const fetchedMatch = message.match(/fetched=(\d+)/i);
+  const fetchedMatch = message.match(RE_FETCHED);
   if (fetchedMatch) return Number(fetchedMatch[1]);
-  const itemsMatch = message.match(/\((\d+)\s*items/i);
+  const itemsMatch = message.match(RE_ITEMS);
   if (itemsMatch) return Number(itemsMatch[1]);
   return null;
 }
@@ -152,7 +156,7 @@ function extractResponseMs(entry, data) {
     if (Number.isFinite(direct)) return direct;
   }
   const message = String(entry?.message ?? "");
-  const msMatch = message.match(/(\d+)\s*ms/i);
+  const msMatch = message.match(RE_MS);
   if (msMatch) return Number(msMatch[1]);
   return null;
 }

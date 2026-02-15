@@ -77,7 +77,7 @@ public sealed class SettingsRepository
             if (json.Contains("requestIntegrationMode", StringComparison.OrdinalIgnoreCase))
             {
                 var mode = (loaded.RequestIntegrationMode ?? "arr").Trim().ToLowerInvariant();
-                defaults.RequestIntegrationMode = mode is "overseerr" or "jellyseerr" ? mode : "arr";
+                defaults.RequestIntegrationMode = mode is "overseerr" or "jellyseerr" or "seer" ? mode : "arr";
             }
             return defaults;
         }

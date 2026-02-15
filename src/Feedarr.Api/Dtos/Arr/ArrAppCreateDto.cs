@@ -2,7 +2,7 @@ namespace Feedarr.Api.Dtos.Arr;
 
 public sealed class ArrAppCreateDto
 {
-    public string Type { get; set; } = "";  // sonarr | radarr | overseerr | jellyseerr
+    public string Type { get; set; } = "";  // sonarr | radarr | overseerr | jellyseerr | seer
     public string? Name { get; set; }
     public string BaseUrl { get; set; } = "";
     public string ApiKey { get; set; } = "";

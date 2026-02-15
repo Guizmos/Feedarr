@@ -126,7 +126,7 @@ public sealed class ArrLibraryRepository
 
     /// <summary>
     /// Record a successful sync for an app with count.
-    /// Useful for non-library apps (Overseerr/Jellyseerr requests).
+    /// Useful for non-library apps (Overseerr/Jellyseerr/Seer requests).
     /// </summary>
     public void SetSyncSuccess(long appId, int count)
     {

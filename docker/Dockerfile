@@ -13,13 +13,23 @@ ENV ASPNETCORE_URLS=http://+:8080
 ARG FEEDARR_VERSION
 ENV FEEDARR_VERSION=$FEEDARR_VERSION
 
+# gosu pour drop privileges proprement
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends gosu ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /out ./
+
 RUN groupadd --gid 10001 feedarr \
-    && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin feedarr \
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin feedarr \
     && mkdir -p /app/data \
     && chown -R feedarr:feedarr /app
 
-USER feedarr:feedarr
+# entrypoint qui prépare le volume puis lance en feedarr
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 EXPOSE 8080
-ENTRYPOINT ["dotnet", "Feedarr.Api.dll"]
+
+USER root
+ENTRYPOINT ["/entrypoint.sh"]

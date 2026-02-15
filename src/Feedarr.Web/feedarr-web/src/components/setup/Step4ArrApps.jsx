@@ -262,7 +262,7 @@ export default function Step4ArrApps() {
     <div className="setup-step setup-arr">
       <div className="setup-arr__header">
         <div>
-          <h2>Applications (Sonarr / Radarr / Overseerr / Jellyseerr)</h2>
+          <h2>Applications (Sonarr / Radarr / Overseerr / Jellyseerr / Seer)</h2>
           <p>Optionnel — configure une ou plusieurs apps.</p>
         </div>
         <div className="setup-arr__add settings-row settings-row--ui-select">
@@ -283,6 +283,7 @@ export default function Step4ArrApps() {
             <option value="radarr">Radarr</option>
             <option value="overseerr">Overseerr</option>
             <option value="jellyseerr">Jellyseerr</option>
+            <option value="seer">Seer</option>
           </select>
         </div>
       </div>
@@ -358,6 +359,7 @@ export default function Step4ArrApps() {
                 <option value="radarr">Radarr</option>
                 <option value="overseerr">Overseerr</option>
                 <option value="jellyseerr">Jellyseerr</option>
+                <option value="seer">Seer</option>
               </select>
             </div>
           )}
@@ -375,9 +377,10 @@ export default function Step4ArrApps() {
             <input
               value={modalBaseUrl}
               onChange={(e) => setModalBaseUrl(e.target.value)}
-              placeholder={modalType === "sonarr" ? "http://localhost:8989" : modalType === "radarr" ? "http://localhost:7878" : "http://localhost:5055"}
+              placeholder={modalType === "sonarr" ? "http://192.168.1.x:8989 ou https://sonarr.domain.com" : modalType === "radarr" ? "http://192.168.1.x:7878 ou https://radarr.domain.com" : "http://192.168.1.x:5055 ou https://overseerr.domain.com"}
               disabled={modalSaving || modalTesting}
             />
+            <span className="field-hint">IP, hostname ou URL reverse proxy (http/https)</span>
           </div>
           <div className="field">
             <label>Clé API</label>

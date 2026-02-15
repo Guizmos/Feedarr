@@ -19,7 +19,7 @@ export default function PosterCard({
   showIndexerPill = false,
   indexerPillPosition = "left",
   integrationMode = "arr",
-  arrStatus = null, // { inSonarr, inRadarr, inOverseerr, inJellyseerr }
+  arrStatus = null, // { inSonarr, inRadarr, inOverseerr, inJellyseerr, inSeer }
 }) {
   const seen = !!item.seen;
   const mode = normalizeRequestMode(integrationMode);
@@ -103,6 +103,9 @@ export default function PosterCard({
           } else if (mode === "jellyseerr" && arrStatus?.inJellyseerr) {
             arrType = "jellyseerr";
             arrUrl = arrStatus?.jellyseerrUrl || null;
+          } else if (mode === "seer" && arrStatus?.inSeer) {
+            arrType = "seer";
+            arrUrl = arrStatus?.seerUrl || null;
           } else if (mode === "arr" && (arrStatus?.inSonarr || arrStatus?.inRadarr)) {
             const isSonarr = !!arrStatus.inSonarr;
             arrType = isSonarr ? "sonarr" : "radarr";

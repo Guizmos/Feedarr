@@ -679,7 +679,7 @@ export default function Indexers() {
       {loading ? (
         <Loader label="Chargement des sources…" />
       ) : (
-        <div className="indexer-list">
+        <div className="indexer-list itemrow-grid">
           {rows.map((s) => {
             const isSyncing = syncingId === s.id || syncStatusById[s.id] === "pending";
             const isTesting = testingId === s.id;

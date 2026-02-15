@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -17,6 +18,13 @@ public sealed class IgdbClient
         double? Rating,
         int? Votes,
         string? Genres);
+
+    private static void ThrowIfRateLimited(HttpResponseMessage resp)
+    {
+        if (resp.StatusCode == HttpStatusCode.TooManyRequests)
+            throw new HttpRequestException("IGDB rate limit exceeded", null, HttpStatusCode.TooManyRequests);
+    }
+
     private readonly HttpClient _http;
     private readonly SettingsRepository _settings;
     private readonly ProviderStatsService _stats;
@@ -143,7 +151,7 @@ public sealed class IgdbClient
         using var resp = await _http.SendAsync(req, ct);
         var ok = resp.IsSuccessStatusCode;
         _stats.RecordIgdb(ok, sw.ElapsedMilliseconds);
-        if (!ok) return null;
+        if (!ok) { ThrowIfRateLimited(resp); return null; }
 
         await using var stream = await resp.Content.ReadAsStreamAsync(ct);
         var data = await JsonSerializer.DeserializeAsync<List<GameItem>>(stream, JsonOpts, ct);
@@ -241,7 +249,7 @@ public sealed class IgdbClient
         using var resp = await _http.SendAsync(req, ct);
         var ok = resp.IsSuccessStatusCode;
         _stats.RecordIgdb(ok, sw.ElapsedMilliseconds);
-        if (!ok) return null;
+        if (!ok) { ThrowIfRateLimited(resp); return null; }
 
         await using var stream = await resp.Content.ReadAsStreamAsync(ct);
         var data = await JsonSerializer.DeserializeAsync<List<GameDetailsItem>>(stream, JsonOpts, ct);
