@@ -68,7 +68,7 @@ public sealed class JackettController : ControllerBase
         catch (HttpRequestException ex)
         {
             _log.LogWarning(ex, "Jackett upstream error for sourceId={SourceId}", dto?.SourceId);
-            return StatusCode(502, new { error = ex.Message ?? "upstream provider unavailable" });
+            return StatusCode(502, new { error = "upstream provider unavailable" });
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("redirect", StringComparison.OrdinalIgnoreCase))
         {
@@ -82,7 +82,7 @@ public sealed class JackettController : ControllerBase
         catch (Exception ex)
         {
             _log.LogError(ex, "Jackett indexers listing failed for sourceId={SourceId}", dto?.SourceId);
-            return StatusCode(500, new { error = ex.Message ?? "internal server error" });
+            return StatusCode(500, new { error = "internal server error" });
         }
     }
 

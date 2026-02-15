@@ -68,7 +68,7 @@ public sealed class ProwlarrController : ControllerBase
         catch (HttpRequestException ex)
         {
             _log.LogWarning(ex, "Prowlarr upstream error for sourceId={SourceId}", dto?.SourceId);
-            return StatusCode(502, new { error = ex.Message ?? "upstream provider unavailable" });
+            return StatusCode(502, new { error = "upstream provider unavailable" });
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("redirect", StringComparison.OrdinalIgnoreCase))
         {
@@ -82,7 +82,7 @@ public sealed class ProwlarrController : ControllerBase
         catch (Exception ex)
         {
             _log.LogError(ex, "Prowlarr indexers listing failed for sourceId={SourceId}", dto?.SourceId);
-            return StatusCode(500, new { error = ex.Message ?? "internal server error" });
+            return StatusCode(500, new { error = "internal server error" });
         }
     }
 
