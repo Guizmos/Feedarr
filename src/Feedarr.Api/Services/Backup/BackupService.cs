@@ -431,8 +431,9 @@ public sealed class BackupService
             cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
             cmd.ExecuteScalar();
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogWarning(ex, "Database WAL checkpoint failed, backup will use current DB state");
         }
     }
 
@@ -491,13 +492,25 @@ public sealed class BackupService
         TryDeleteFile(destinationPath);
         try
         {
-            using var conn = _db.Open();
-            var safePath = destinationPath.Replace("'", "''");
-            conn.Execute($"VACUUM INTO '{safePath}';");
+            // Build a dedicated connection to use parameterized VACUUM INTO
+            var cs = new SqliteConnectionStringBuilder
+            {
+                DataSource = DbPathAbs,
+                Mode = SqliteOpenMode.ReadOnly,
+                Pooling = false
+            }.ToString();
+
+            using var conn = new SqliteConnection(cs);
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "VACUUM INTO $path;";
+            cmd.Parameters.AddWithValue("$path", destinationPath);
+            cmd.ExecuteNonQuery();
             return;
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogWarning(ex, "VACUUM INTO failed for snapshot, falling back to checkpoint+copy");
         }
 
         CheckpointCurrentDatabase();

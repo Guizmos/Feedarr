@@ -164,7 +164,7 @@ export default function TopReleases() {
   }, [load]);
 
   useEffect(() => {
-    if (viewMode !== "grid" || globalTop.length === 0) return;
+    if ((viewMode !== "grid" && viewMode !== "poster") || globalTop.length === 0) return;
     const timer = setTimeout(() => setTop5AnimKey((prev) => prev + 1), 140);
     return () => clearTimeout(timer);
   }, [viewMode, globalTop.length]);
@@ -373,6 +373,26 @@ export default function TopReleases() {
     loadSources();
   }, []);
 
+  // Appliquer la vue par defaut configuree dans l'UI (meme comportement que Library)
+  useEffect(() => {
+    let cancelled = false;
+    apiGet("/api/settings/ui")
+      .then((ui) => {
+        if (cancelled) return;
+        const def = String(ui?.defaultView || "grid").toLowerCase();
+        const normalized = def === "cards" ? "grid" : def;
+        if (viewOptions.some((opt) => opt.value === normalized)) {
+          setViewMode(normalized);
+        }
+      })
+      .catch((error) => {
+        console.error("Failed to load UI default view for TopReleases", error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Subbar avec Source, Tri et Vue
   useEffect(() => {
     setContent(
@@ -506,6 +526,8 @@ export default function TopReleases() {
             sectionTitle={`🏆 Top 5 Global (${sortLabel})`}
             showRank={true}
             rankColor="#ffd700"
+            isGlobalTop={true}
+            top5AnimKey={top5AnimKey}
             onOpen={openDetails}
           />
           {Object.entries(CATEGORY_LABELS).map(([key, label]) => {
@@ -517,6 +539,8 @@ export default function TopReleases() {
                 sectionTitle={`📊 Top 5 - ${label}${sourceLabelSuffix} (${sortLabel})`}
                 showRank={true}
                 rankColor="#fff"
+                isGlobalTop={false}
+                top5AnimKey={top5AnimKey}
                 onOpen={openDetails}
               />
             );

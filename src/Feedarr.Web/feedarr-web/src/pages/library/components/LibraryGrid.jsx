@@ -18,9 +18,17 @@ export default function LibraryGrid({
   sourceId,
   arrStatusMap,
   integrationMode,
+  cardSize,
 }) {
+  const gridStyle = cardSize
+    ? {
+        gridTemplateColumns: `repeat(auto-fill, minmax(${Math.round(cardSize)}px, 1fr))`,
+        '--card-scale': cardSize / 190,
+      }
+    : undefined;
+
   return (
-    <div className="grid">
+    <div className="grid" style={gridStyle}>
       {items.map((it) => (
         <PosterCard
           key={it.id}

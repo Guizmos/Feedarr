@@ -9,6 +9,7 @@ import { useSubbarSetter } from "@layout/useSubbar.js";
 import useArrApps from "@hooks/useArrApps.js";
 import { triggerPosterPolling } from "@hooks/usePosterPollingService.js";
 import { normalizeRequestMode } from "@utils/appTypes.js";
+import { LayoutGrid } from "lucide-react";
 
 // Local imports
 import { fmtBytes, fmtDateFromTs } from "./utils/formatters.js";
@@ -160,6 +161,35 @@ export default function Library() {
   }, []);
 
   const setContent = useSubbarSetter();
+
+  // Card size slider (20-100, default 50 = current size)
+  const SLIDER_MIN = 20;
+  const GRID_MIN = 95, GRID_MAX = 285;   // grid: 95px → 190px → 285px
+  const POSTER_MIN = 90, POSTER_MAX = 270; // poster: 90px → 180px → 270px
+
+  const [gridCardSlider, setGridCardSlider] = useState(() => {
+    const v = Number(localStorage.getItem("feedarr.library.cardSize.grid"));
+    return Number.isFinite(v) && v >= SLIDER_MIN && v <= 100 ? v : 50;
+  });
+  const [posterCardSlider, setPosterCardSlider] = useState(() => {
+    const v = Number(localStorage.getItem("feedarr.library.cardSize.poster"));
+    return Number.isFinite(v) && v >= SLIDER_MIN && v <= 100 ? v : 50;
+  });
+
+  const gridCardSize = GRID_MIN + (gridCardSlider / 100) * (GRID_MAX - GRID_MIN);
+  const posterCardSize = POSTER_MIN + (posterCardSlider / 100) * (POSTER_MAX - POSTER_MIN);
+
+  const handleGridSlider = useCallback((e) => {
+    const v = Number(e.target.value);
+    setGridCardSlider(v);
+    localStorage.setItem("feedarr.library.cardSize.grid", String(v));
+  }, []);
+
+  const handlePosterSlider = useCallback((e) => {
+    const v = Number(e.target.value);
+    setPosterCardSlider(v);
+    localStorage.setItem("feedarr.library.cardSize.poster", String(v));
+  }, []);
 
   // Sources
   const [sources, setSources] = useState([]);
@@ -925,7 +955,7 @@ export default function Library() {
   }, [setContent, subbarProps]);
 
   return (
-    <div className="page">
+    <div className="page page--library">
       <div className="pagehead">
         <div>
           <h1>{selectedSourceName}</h1>
@@ -933,6 +963,19 @@ export default function Library() {
             {err ? "—" : `Résultats: ${visibleItems.length}`}
           </div>
         </div>
+        {(viewMode === "grid" || viewMode === "missing" || viewMode === "poster") && (
+          <div className="library-size-slider">
+            <LayoutGrid className="library-size-slider__icon" />
+            <input
+              type="range"
+              min={SLIDER_MIN}
+              max={100}
+              value={viewMode === "poster" ? posterCardSlider : gridCardSlider}
+              onChange={viewMode === "poster" ? handlePosterSlider : handleGridSlider}
+            />
+            <LayoutGrid className="library-size-slider__icon library-size-slider__icon--lg" />
+          </div>
+        )}
       </div>
 
       {loading && <Loader label="Chargement du feed…" />}
@@ -959,6 +1002,7 @@ export default function Library() {
           sourceId={sourceId}
           arrStatusMap={arrStatusMap}
           integrationMode={requestMode}
+          cardSize={gridCardSize}
         />
       )}
 
@@ -975,6 +1019,7 @@ export default function Library() {
           sourceId={sourceId}
           arrStatusMap={arrStatusMap}
           integrationMode={requestMode}
+          cardSize={posterCardSize}
         />
       )}
 

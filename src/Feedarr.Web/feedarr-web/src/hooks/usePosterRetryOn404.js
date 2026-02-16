@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiPost, resolveApiUrl } from "../api/client.js";
 
-const retriedByItemId = new Map();
 const RETRY_DELAYS_MS = [2000, 4000, 8000, 15000, 30000, 60000, 120000, 180000, 300000, 600000];
 const LOADER_MAX_MS = 20000;
 
@@ -34,6 +33,7 @@ export default function usePosterRetryOn404(itemId, posterUrl) {
   const refreshInFlightRef = useRef(false);
   const retryCountRef = useRef(0);
   const loaderTimerRef = useRef(null);
+  const hasRefreshedRef = useRef(false);
 
   const basePosterUrl = useMemo(() => {
     if (posterUrl) return posterUrl;
@@ -64,6 +64,7 @@ export default function usePosterRetryOn404(itemId, posterUrl) {
     setCacheBust(0);
     refreshInFlightRef.current = false;
     retryCountRef.current = 0;
+    hasRefreshedRef.current = false;
   }, [basePosterUrl, clearTimers]);
 
   useEffect(() => () => clearTimers(), [clearTimers]);
@@ -91,9 +92,7 @@ export default function usePosterRetryOn404(itemId, posterUrl) {
       setRefreshing(true);
     }
 
-    const alreadyRefreshed = retriedByItemId.has(itemId);
-
-    if (!alreadyRefreshed && !refreshInFlightRef.current) {
+    if (!hasRefreshedRef.current && !refreshInFlightRef.current) {
       refreshInFlightRef.current = true;
 
       let shouldRefresh = false;
@@ -109,7 +108,7 @@ export default function usePosterRetryOn404(itemId, posterUrl) {
       }
 
       if (shouldRefresh) {
-        retriedByItemId.set(itemId, true);
+        hasRefreshedRef.current = true;
         try {
           await apiPost(`/api/posters/${itemId}/refresh`);
         } catch {

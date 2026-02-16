@@ -41,6 +41,8 @@ public sealed class ProviderStatsService
     private long _syncJobs;
     private long _syncFailures;
     private volatile bool _loaded;
+    private long _lastLoadFailureTicks;
+    private const int LoadRetryDebounceMs = 30_000;
 
     public ProviderStatsService(StatsRepository repo)
     {
@@ -50,6 +52,12 @@ public sealed class ProviderStatsService
     private void EnsureLoaded()
     {
         if (_loaded) return;
+
+        // If a previous load failed, wait before retrying
+        if (_lastLoadFailureTicks > 0
+            && Environment.TickCount64 - _lastLoadFailureTicks < LoadRetryDebounceMs)
+            return;
+
         lock (_lock)
         {
             if (_loaded) return;
@@ -73,11 +81,12 @@ public sealed class ProviderStatsService
                 _syncJobs = all.GetValueOrDefault("sync_jobs", 0);
                 _syncFailures = all.GetValueOrDefault("sync_failures", 0);
                 _loaded = true;
+                _lastLoadFailureTicks = 0;
             }
             catch
             {
-                // DB not ready yet — use zero defaults, mark as loaded to avoid repeated failures
-                _loaded = true;
+                // DB not ready yet — keep _loaded false so we retry after debounce
+                _lastLoadFailureTicks = Environment.TickCount64;
             }
         }
     }

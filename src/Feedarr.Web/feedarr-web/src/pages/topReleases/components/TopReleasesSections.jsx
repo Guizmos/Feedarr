@@ -321,8 +321,7 @@ function TopReleasesPosterCard({ item, onOpen, showRank, rankColor, rankIdx, sec
         <div className="posterViewOverlay__title">{displayTitle}</div>
         <div className="posterViewOverlay__meta">
           <span>{item.date || "-"}</span>
-          <span className="posterViewOverlay__sep">&middot;</span>
-          <span>{item.grabs ?? 0} DL</span>
+          <span>Download: {item.grabs ?? 0}</span>
         </div>
       </div>
     </div>
@@ -334,23 +333,46 @@ export function TopReleasesPosterSection({
   sectionTitle,
   showRank = true,
   rankColor = "#fff",
+  isGlobalTop = false,
+  top5AnimKey = 0,
   onOpen,
 }) {
   if (items.length === 0) return null;
   return (
-    <section key={sectionTitle} style={{ marginBottom: 40 }}>
-      <h2 style={{ marginBottom: 16, fontSize: 18 }}>{sectionTitle}</h2>
-      <div className="grid grid--poster">
+    <section
+      key={sectionTitle}
+      className={isGlobalTop ? "top5-global-section" : ""}
+      style={{ marginBottom: 40 }}
+    >
+      <h2
+        className={isGlobalTop ? "top5-global-title" : ""}
+        style={{ marginBottom: 16, fontSize: 18 }}
+      >
+        {sectionTitle}
+      </h2>
+      <div className={`grid grid--poster${isGlobalTop ? " grid--spotlight" : ""}`}>
         {items.map((item, idx) => (
-          <TopReleasesPosterCard
-            key={item.id}
-            item={item}
-            onOpen={onOpen}
-            showRank={showRank}
-            rankColor={rankColor}
-            rankIdx={idx}
-            sectionTitle={sectionTitle}
-          />
+          <div
+            key={
+              isGlobalTop
+                ? `${item.id ?? idx}-${top5AnimKey}`
+                : (item.id ?? `${sectionTitle}-${idx}`)
+            }
+            className={isGlobalTop ? "top5-anim-item" : ""}
+            style={{
+              position: "relative",
+              "--top5-delay": `${0.16 + idx * 0.06}s`,
+            }}
+          >
+            <TopReleasesPosterCard
+              item={item}
+              onOpen={onOpen}
+              showRank={showRank}
+              rankColor={rankColor}
+              rankIdx={idx}
+              sectionTitle={sectionTitle}
+            />
+          </div>
         ))}
       </div>
     </section>

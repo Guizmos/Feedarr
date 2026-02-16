@@ -713,11 +713,208 @@ body{
 }
 .muted{ color: var(--muted); font-size: 12px; }
 
+/* Library size slider */
+.library-size-slider{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 6px;
+}
+.library-size-slider__icon{
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.library-size-slider__icon--lg{
+  width: 18px;
+  height: 18px;
+}
+.library-size-slider input[type="range"]{
+  -webkit-appearance: none;
+  appearance: none;
+  width: 110px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--panel-border, #d6dbe6);
+  outline: none;
+  cursor: pointer;
+}
+.library-size-slider input[type="range"]::-webkit-slider-thumb{
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--topbar, #2493b5);
+  border: none;
+  cursor: pointer;
+}
+.library-size-slider input[type="range"]::-moz-range-thumb{
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--topbar, #2493b5);
+  border: none;
+  cursor: pointer;
+}
+
+/* ── Card-size scaling (driven by --card-scale set via JS) ── */
+
+/* Grid (Cartes) view — PosterCard scaling */
+.page--library .grid:not(.grid--poster) .posterCard{
+  border-radius: calc(18px * var(--card-scale, 1));
+}
+.page--library .grid:not(.grid--poster) .poster{
+  height: calc(240px * var(--card-scale, 1));
+}
+.page--library .grid:not(.grid--poster) .posterMeta{
+  padding: calc(10px * var(--card-scale, 1)) calc(10px * var(--card-scale, 1)) calc(12px * var(--card-scale, 1));
+}
+.page--library .grid:not(.grid--poster) .posterTitle{
+  font-size: calc(12px * var(--card-scale, 1));
+  height: calc(30px * var(--card-scale, 1));
+}
+.page--library .grid:not(.grid--poster) .posterSub{
+  margin-top: calc(6px * var(--card-scale, 1));
+  gap: calc(10px * var(--card-scale, 1));
+  font-size: calc(11px * var(--card-scale, 1));
+}
+.page--library .grid:not(.grid--poster) .statusline{
+  height: calc(5px * var(--card-scale, 1));
+}
+.page--library .grid:not(.grid--poster) .posterFallback__icon{
+  width: calc(40px * var(--card-scale, 1));
+  height: calc(40px * var(--card-scale, 1));
+}
+.page--library .grid:not(.grid--poster) .posterLoader{
+  width: calc(28px * var(--card-scale, 1));
+  height: calc(28px * var(--card-scale, 1));
+}
+.page--library .grid:not(.grid--poster) .posterIndexerPill{
+  top: calc(8px * var(--card-scale, 1));
+  left: calc(8px * var(--card-scale, 1));
+}
+.page--library .grid:not(.grid--poster) .posterIndexerPill--right{
+  left: auto;
+  right: calc(8px * var(--card-scale, 1));
+}
+.page--library .grid:not(.grid--poster) .posterIndexerPill .banner-pill{
+  font-size: calc(10px * var(--card-scale, 1));
+  padding: calc(1.5px * var(--card-scale, 1)) calc(4px * var(--card-scale, 1));
+}
+.page--library .grid:not(.grid--poster) .posterArrBadge{
+  font-size: calc(10px * var(--card-scale, 1));
+  padding: calc(2px * var(--card-scale, 1)) calc(4px * var(--card-scale, 1));
+  bottom: calc(8px * var(--card-scale, 1));
+  left: calc(8px * var(--card-scale, 1));
+  gap: calc(3px * var(--card-scale, 1));
+  border-radius: calc(8px * var(--card-scale, 1));
+}
+.page--library .grid:not(.grid--poster) .posterArrBadge__icon{
+  width: calc(12px * var(--card-scale, 1));
+  height: calc(12px * var(--card-scale, 1));
+}
+.page--library .grid:not(.grid--poster) .posterRenameBtn{
+  width: calc(22px * var(--card-scale, 1));
+  height: calc(22px * var(--card-scale, 1));
+  right: calc(6px * var(--card-scale, 1));
+  top: calc(6px * var(--card-scale, 1));
+}
+.page--library .grid:not(.grid--poster) .posterRenameBtn .app-icon{
+  font-size: calc(14px * var(--card-scale, 1));
+}
+.page--library .grid:not(.grid--poster) .selectBadge{
+  width: calc(20px * var(--card-scale, 1));
+  height: calc(20px * var(--card-scale, 1));
+  top: calc(10px * var(--card-scale, 1));
+  right: calc(10px * var(--card-scale, 1));
+}
+.page--library .grid:not(.grid--poster) .selectBadge .app-icon{
+  font-size: calc(12px * var(--card-scale, 1));
+}
+
+/* Poster view — PosterViewCard scaling */
+.page--library .grid.grid--poster .posterViewCard{
+  border-radius: calc(14px * var(--card-scale, 1));
+}
+.page--library .grid.grid--poster .posterViewOverlay{
+  padding: calc(14px * var(--card-scale, 1)) calc(12px * var(--card-scale, 1));
+}
+.page--library .grid.grid--poster .posterViewOverlay--has-badge{
+  padding-bottom: calc(34px * var(--card-scale, 1));
+}
+.page--library .grid.grid--poster .posterViewOverlay__title{
+  font-size: calc(15px * var(--card-scale, 1));
+}
+.page--library .grid.grid--poster .posterViewOverlay__meta{
+  margin-top: calc(4px * var(--card-scale, 1));
+  font-size: calc(11px * var(--card-scale, 1));
+  gap: calc(2px * var(--card-scale, 1));
+}
+.page--library .grid.grid--poster .posterFallback__icon{
+  width: calc(40px * var(--card-scale, 1));
+  height: calc(40px * var(--card-scale, 1));
+}
+.page--library .grid.grid--poster .posterLoader{
+  width: calc(28px * var(--card-scale, 1));
+  height: calc(28px * var(--card-scale, 1));
+}
+.page--library .grid.grid--poster .posterIndexerPill{
+  top: calc(8px * var(--card-scale, 1));
+  left: calc(8px * var(--card-scale, 1));
+}
+.page--library .grid.grid--poster .posterIndexerPill--right{
+  left: auto;
+  right: calc(8px * var(--card-scale, 1));
+}
+.page--library .grid.grid--poster .posterIndexerPill .banner-pill{
+  font-size: calc(10px * var(--card-scale, 1));
+  padding: calc(1.5px * var(--card-scale, 1)) calc(4px * var(--card-scale, 1));
+}
+.page--library .grid.grid--poster .posterArrBadge{
+  font-size: calc(10px * var(--card-scale, 1));
+  padding: calc(2px * var(--card-scale, 1)) calc(4px * var(--card-scale, 1));
+  bottom: calc(8px * var(--card-scale, 1));
+  left: calc(8px * var(--card-scale, 1));
+  gap: calc(3px * var(--card-scale, 1));
+  border-radius: calc(8px * var(--card-scale, 1));
+}
+.page--library .grid.grid--poster .posterArrBadge__icon{
+  width: calc(12px * var(--card-scale, 1));
+  height: calc(12px * var(--card-scale, 1));
+}
+.page--library .grid.grid--poster .posterRenameBtn{
+  width: calc(22px * var(--card-scale, 1));
+  height: calc(22px * var(--card-scale, 1));
+  right: calc(6px * var(--card-scale, 1));
+  top: calc(6px * var(--card-scale, 1));
+}
+.page--library .grid.grid--poster .posterRenameBtn .app-icon{
+  font-size: calc(14px * var(--card-scale, 1));
+}
+.page--library .grid.grid--poster .selectBadge{
+  width: calc(20px * var(--card-scale, 1));
+  height: calc(20px * var(--card-scale, 1));
+  top: calc(10px * var(--card-scale, 1));
+  right: calc(10px * var(--card-scale, 1));
+}
+.page--library .grid.grid--poster .selectBadge .app-icon{
+  font-size: calc(12px * var(--card-scale, 1));
+}
+
 /* SONARR GRID (posters/cards) */
 .grid{
   display:grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 20px;
+}
+.page--library .grid:not(.grid--poster){
+  gap: 9px;
+}
+.page--top24h .grid:not(.grid--poster){
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
 }
 .top5-global-section{
   position: relative;
@@ -734,15 +931,28 @@ body{
 .grid.grid--spotlight{
   max-width: 1020px;
   margin: 0 auto;
-  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  grid-template-columns: repeat(5, minmax(200px, 1fr));
+  gap: 12px;
+}
+.page--top24h .grid.grid--spotlight:not(.grid--poster){
+  max-width: 1240px;
+  margin: 0 auto;
+  grid-template-columns: repeat(5, minmax(180px, 1fr));
+  gap: 12px;
 }
 @media (max-width: 1200px){
   .grid.grid--spotlight{
     grid-template-columns: repeat(4, minmax(150px, 1fr));
   }
+  .page--top24h .grid.grid--spotlight:not(.grid--poster){
+    grid-template-columns: repeat(4, minmax(170px, 1fr));
+  }
 }
 @media (max-width: 980px){
   .grid.grid--spotlight{
+    grid-template-columns: repeat(3, minmax(150px, 1fr));
+  }
+  .page--top24h .grid.grid--spotlight:not(.grid--poster){
     grid-template-columns: repeat(3, minmax(150px, 1fr));
   }
 }
@@ -750,9 +960,15 @@ body{
   .grid.grid--spotlight{
     grid-template-columns: repeat(3, minmax(120px, 1fr));
   }
+  .page--top24h .grid.grid--spotlight:not(.grid--poster){
+    grid-template-columns: repeat(3, minmax(120px, 1fr));
+  }
 }
 @media (max-width: 480px){
   .grid.grid--spotlight{
+    grid-template-columns: repeat(3, minmax(110px, 1fr));
+  }
+  .page--top24h .grid.grid--spotlight:not(.grid--poster){
     grid-template-columns: repeat(3, minmax(110px, 1fr));
   }
 }
@@ -871,6 +1087,10 @@ body{
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 10px;
 }
+.page--top24h .grid.grid--compact:not(.grid--poster){
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
 
 /* Make each poster card smaller */
 .grid.grid--compact .posterCard {
@@ -910,11 +1130,26 @@ body{
 .page--top24h .grid.grid--compact .posterSub{
   margin-top: 0;
 }
+.page--top24h .grid:not(.grid--poster) .poster{
+  height: auto;
+  aspect-ratio: 2 / 3;
+}
+.page--top24h .grid.grid--compact:not(.grid--poster) .posterMeta{
+  padding: 10px 10px 12px;
+}
+.page--top24h .grid.grid--compact:not(.grid--poster) .posterTitle{
+  font-size: 12px;
+  height: 30px;
+}
+.page--top24h .grid.grid--compact:not(.grid--poster) .posterSub{
+  gap: 10px;
+  font-size: 11px;
+}
 .page--top24h .statusline{
   display: none;
 }
-.page--top24h .grid.grid--compact:not(.grid--spotlight) .posterCard{
-  border-radius: 16px;
+.page--top24h .grid.grid--compact:not(.grid--poster) .posterCard{
+  border-radius: 18px;
 }
 
 /* Optional: reduce hover lift so it feels less "big card" */
@@ -1091,9 +1326,35 @@ html, body {
 }
 
 /* ── Poster view (Seer-style) ── */
-.grid.grid--poster{
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+.grid.grid--poster:not(.grid--spotlight){
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 10px;
+}
+.page--top24h .grid.grid--poster.grid--spotlight{
+  max-width: 1240px;
+  margin: 0 auto;
+  grid-template-columns: repeat(5, minmax(180px, 1fr));
+  gap: 12px;
+}
+@media (max-width: 1200px){
+  .page--top24h .grid.grid--poster.grid--spotlight{
+    grid-template-columns: repeat(4, minmax(170px, 1fr));
+  }
+}
+@media (max-width: 980px){
+  .page--top24h .grid.grid--poster.grid--spotlight{
+    grid-template-columns: repeat(3, minmax(150px, 1fr));
+  }
+}
+@media (max-width: 720px){
+  .page--top24h .grid.grid--poster.grid--spotlight{
+    grid-template-columns: repeat(3, minmax(120px, 1fr));
+  }
+}
+@media (max-width: 480px){
+  .page--top24h .grid.grid--poster.grid--spotlight{
+    grid-template-columns: repeat(3, minmax(110px, 1fr));
+  }
 }
 .posterViewCard{
   position: relative;
@@ -1158,11 +1419,9 @@ html, body {
   font-size: 11px;
   color: rgba(255,255,255,.75);
   display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.posterViewOverlay__sep{
-  opacity: .6;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
 }
 .posterViewOverlay--has-badge{
   padding-bottom: 34px;
@@ -4735,6 +4994,14 @@ body.nav-open{ overflow: hidden; }
       top: 12px; bottom: 12px; left: -1px;
     }
     .subbar .subdivider{ margin: 8px 2px; }
+    /* Hide card-size slider on mobile & force 3 cols */
+    .library-size-slider{ display: none; }
+    .page--library .grid:not(.grid--poster){
+      grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    }
+    .page--library .grid.grid--poster{
+      grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    }
   }
 
 @media (max-width: 480px){

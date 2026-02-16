@@ -188,7 +188,7 @@ public sealed class RssSyncHostedService : BackgroundService
             _log.LogWarning(ex, "Failed to read settings from DB for sync limits, using fallback values");
         }
 
-        var list = sources.List().ToList();
+        var list = sources.ListEnabledForSync();
 
         if (list.Count == 0)
         {
@@ -202,19 +202,10 @@ public sealed class RssSyncHostedService : BackgroundService
 
             long id = src.Id;
             string name = src.Name ?? "";
-            bool enabled = src.Enabled;
-
-            if (!enabled) continue;
 
             string url = src.TorznabUrl ?? "";
             string mode = src.AuthMode ?? "query";
-
-
-            // apiKey pas dans List() -> Get(id)
-            var full = sources.Get(id);
-            if (full is null) continue;
-
-            string apiKey = full.ApiKey ?? "";
+            string apiKey = src.ApiKey ?? "";
 
             try
             {

@@ -86,7 +86,7 @@ export default function SettingsUI({
       </div>
 
       <div className="settings-card" id="defaults">
-        <div className="settings-card__title">Défaut</div>
+        <div className="settings-card__title">Bibliothèque</div>
         <div className="indexer-list">
           <div className={`indexer-card${pulseKeys.has("ui.defaultMaxAgeDays") ? " pulse-ok" : ""}`}>
             <div className="indexer-row indexer-row--settings">

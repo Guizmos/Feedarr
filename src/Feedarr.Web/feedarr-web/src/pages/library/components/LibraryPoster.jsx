@@ -195,9 +195,17 @@ export default function LibraryPoster({
   sourceId,
   arrStatusMap,
   integrationMode,
+  cardSize,
 }) {
+  const gridStyle = cardSize
+    ? {
+        gridTemplateColumns: `repeat(auto-fill, minmax(${Math.round(cardSize)}px, 1fr))`,
+        '--card-scale': cardSize / 180,
+      }
+    : undefined;
+
   return (
-    <div className="grid grid--poster">
+    <div className="grid grid--poster" style={gridStyle}>
       {items.map((it) => (
         <PosterViewCard
           key={it.id}

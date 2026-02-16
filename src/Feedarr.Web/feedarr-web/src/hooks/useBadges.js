@@ -94,6 +94,7 @@ export default function useBadges({
   }, []);
 
   const refreshInFlight = useRef(false);
+  const refreshRef = useRef(null);
 
   const refresh = useCallback(async () => {
     if (refreshInFlight.current) return;
@@ -253,6 +254,8 @@ export default function useBadges({
     }
   }, [activityLimit, activityMode, lastSeenActivityTs, lastSeenReleasesCount, lastSeenReleasesTs]);
 
+  refreshRef.current = refresh;
+
   const effectivePollMs = useMemo(() => {
     const base = Math.max(60000, Number(pollMs) || 60000);
     if (sseConnected) return Math.max(base, 300000);
@@ -272,9 +275,9 @@ export default function useBadges({
 
     const onReady = () => {
       setSseConnected(true);
-      refresh();
+      refreshRef.current?.();
     };
-    const onBadge = () => refresh();
+    const onBadge = () => refreshRef.current?.();
     const onError = () => setSseConnected(false);
     const onOpen = () => setSseConnected(true);
     es.addEventListener("ready", onReady);
@@ -290,7 +293,7 @@ export default function useBadges({
       es.removeEventListener("open", onOpen);
       es.close();
     };
-  }, [refresh]);
+  }, []); // stable: EventSource connection created once, never recreated
 
   return {
     ...badges,

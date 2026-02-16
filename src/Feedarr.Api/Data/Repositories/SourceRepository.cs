@@ -64,6 +64,40 @@ public sealed class SourceRepository
         );
     }
 
+    /// <summary>
+    /// Returns all enabled sources with decrypted API keys in a single query (for sync operations).
+    /// </summary>
+    public IList<Source> ListEnabledForSync()
+    {
+        using var conn = _db.Open();
+        var sources = conn.Query<Source>(
+            """
+            SELECT
+                id as Id,
+                name as Name,
+                enabled as Enabled,
+                torznab_url as TorznabUrl,
+                api_key as ApiKey,
+                auth_mode as AuthMode,
+                rss_mode as RssMode,
+                last_sync_at_ts as LastSyncAt,
+                provider_id as ProviderId,
+                color as Color
+            FROM sources
+            WHERE enabled = 1
+            ORDER BY id DESC;
+            """
+        ).ToList();
+
+        foreach (var s in sources)
+        {
+            if (!string.IsNullOrEmpty(s.ApiKey))
+                s.ApiKey = _keyProtection.Unprotect(s.ApiKey);
+        }
+
+        return sources;
+    }
+
     public Source? Get(long id)
     {
         using var conn = _db.Open();

@@ -39,7 +39,6 @@ public sealed class SystemController : ControllerBase
     private static readonly object StorageRefreshLock = new();
     private static Task? StorageRefreshTask;
     private static StorageUsageSnapshot LastKnownStorageUsage = new(0, 0, 0, 0, 0, 0);
-    private static bool HasStorageSnapshot;
     private static readonly Regex _semVerRegex = new(
         @"(?<!\d)v?(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase
@@ -927,20 +926,12 @@ public sealed class SystemController : ControllerBase
 
         StartStorageUsageRefresh();
 
+        // Return last known snapshot (or zeros) while background refresh runs.
+        // This avoids multiple concurrent requests each doing an expensive disk scan.
         lock (StorageRefreshLock)
         {
-            if (HasStorageSnapshot)
-                return LastKnownStorageUsage;
+            return LastKnownStorageUsage;
         }
-
-        var seeded = ComputeStorageUsageSnapshot();
-        lock (StorageRefreshLock)
-        {
-            LastKnownStorageUsage = seeded;
-            HasStorageSnapshot = true;
-        }
-        _cache.Set(StorageUsageCacheKey, seeded, StorageUsageCacheDuration);
-        return seeded;
     }
 
     private void StartStorageUsageRefresh()
@@ -958,7 +949,7 @@ public sealed class SystemController : ControllerBase
                     lock (StorageRefreshLock)
                     {
                         LastKnownStorageUsage = snapshot;
-                        HasStorageSnapshot = true;
+                        // snapshot available for subsequent requests
                     }
                     _cache.Set(StorageUsageCacheKey, snapshot, StorageUsageCacheDuration);
                 }
