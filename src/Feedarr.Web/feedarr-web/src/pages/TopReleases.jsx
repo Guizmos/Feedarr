@@ -506,7 +506,6 @@ export default function TopReleases() {
             sectionTitle={`🏆 Top 5 Global (${sortLabel})`}
             showRank={true}
             rankColor="#ffd700"
-            sourceNameById={sourceNameById}
             onOpen={openDetails}
           />
           {Object.entries(CATEGORY_LABELS).map(([key, label]) => {
@@ -518,7 +517,6 @@ export default function TopReleases() {
                 sectionTitle={`📊 Top 5 - ${label}${sourceLabelSuffix} (${sortLabel})`}
                 showRank={true}
                 rankColor="#fff"
-                sourceNameById={sourceNameById}
                 onOpen={openDetails}
               />
             );
