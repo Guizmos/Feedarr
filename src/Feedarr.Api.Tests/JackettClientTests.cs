@@ -1,6 +1,5 @@
 using System.Net;
 using System.Text;
-using System.Text.Json;
 using Feedarr.Api.Services.Jackett;
 
 namespace Feedarr.Api.Tests;
@@ -21,27 +20,26 @@ public sealed class JackettClientTests
     }
 
     [Fact]
-    public async Task ListIndexersAsync_WhenIndexersEndpointReturnsLoginHtml_UsesCapsFallback()
+    public async Task ListIndexersAsync_WhenIndexersEndpointReturnsLoginHtml_UsesTorznabFallback()
     {
-        var client = new JackettClient(new HttpClient(new LoginHtmlThenCapsOkHandler()));
+        var client = new JackettClient(new HttpClient(new LoginHtmlThenTorznabOkHandler()));
 
         var list = await client.ListIndexersAsync("https://jackett.example.com/jackett", "abc", CancellationToken.None);
 
         var row = Assert.Single(list);
-        Assert.Equal("all", row.id);
-        Assert.Equal("All Indexers", row.name);
-        Assert.Equal(
-            "https://jackett.example.com/jackett/api/v2.0/indexers/all/results/torznab/api",
-            row.torznabUrl);
+        Assert.Equal("beta", row.id);
+        Assert.Equal("Beta", row.name);
+        Assert.Contains("/api/v2.0/indexers/beta/results/torznab/", row.torznabUrl);
     }
 
     [Fact]
-    public async Task ListIndexersAsync_WhenIndexersAndCapsFail_Throws()
+    public async Task ListIndexersAsync_WhenBothStrategiesFail_ReturnsEmpty()
     {
-        var client = new JackettClient(new HttpClient(new LoginHtmlAndCapsHtmlHandler()));
+        var client = new JackettClient(new HttpClient(new LoginHtmlBothHandler()));
 
-        await Assert.ThrowsAsync<JsonException>(async () =>
-            await client.ListIndexersAsync("https://jackett.example.com", "abc", CancellationToken.None));
+        var list = await client.ListIndexersAsync("https://jackett.example.com", "abc", CancellationToken.None);
+
+        Assert.Empty(list);
     }
 
     private sealed class JsonIndexersHandler : HttpMessageHandler
@@ -65,7 +63,7 @@ public sealed class JackettClientTests
         }
     }
 
-    private sealed class LoginHtmlThenCapsOkHandler : HttpMessageHandler
+    private sealed class LoginHtmlThenTorznabOkHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -80,28 +78,25 @@ public sealed class JackettClientTests
 
             if (path.EndsWith("/api/v2.0/indexers/all/results/torznab/api", StringComparison.OrdinalIgnoreCase))
             {
-                var query = request.RequestUri?.Query ?? "";
-                if (query.Contains("t=caps", StringComparison.OrdinalIgnoreCase) &&
-                    query.Contains("apikey=abc", StringComparison.OrdinalIgnoreCase))
+                var xml = """
+                    <?xml version="1.0" encoding="UTF-8"?>
+                    <indexers>
+                      <indexer id="beta" configured="true">
+                        <title>Beta</title>
+                      </indexer>
+                    </indexers>
+                    """;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    var xml = """
-                        <?xml version="1.0" encoding="UTF-8"?>
-                        <caps>
-                          <server title="Jackett" />
-                        </caps>
-                        """;
-                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-                    {
-                        Content = new StringContent(xml, Encoding.UTF8, "application/xml")
-                    });
-                }
+                    Content = new StringContent(xml, Encoding.UTF8, "application/xml")
+                });
             }
 
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
         }
     }
 
-    private sealed class LoginHtmlAndCapsHtmlHandler : HttpMessageHandler
+    private sealed class LoginHtmlBothHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {

@@ -121,7 +121,7 @@ public sealed class ProvidersController : ControllerBase
         catch (HttpRequestException ex)
         {
             _log.LogWarning(ex, "Provider test failed (inline, type={ProviderType}): {Message}", type, ex.Message);
-            return Problem(title: "provider test failed", detail: ex.Message, statusCode: StatusCodes.Status502BadGateway);
+            return Problem(title: "provider test failed", detail: "upstream provider unreachable", statusCode: StatusCodes.Status502BadGateway);
         }
         catch (TaskCanceledException)
         {
@@ -130,7 +130,7 @@ public sealed class ProvidersController : ControllerBase
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Provider test failed (inline, type={ProviderType}): {Message}", type, ex.Message);
-            return Problem(title: "provider test failed", detail: ex.Message, statusCode: StatusCodes.Status502BadGateway);
+            return Problem(title: "provider test failed", detail: "unexpected error", statusCode: StatusCodes.Status502BadGateway);
         }
     }
 
@@ -244,7 +244,7 @@ public sealed class ProvidersController : ControllerBase
         catch (HttpRequestException ex)
         {
             _log.LogWarning(ex, "Provider test failed: {Id} (type={ProviderType}): {Message}", id, type, ex.Message);
-            return Problem(title: "provider test failed", detail: ex.Message, statusCode: StatusCodes.Status502BadGateway);
+            return Problem(title: "provider test failed", detail: "upstream provider unreachable", statusCode: StatusCodes.Status502BadGateway);
         }
         catch (TaskCanceledException)
         {
@@ -253,7 +253,7 @@ public sealed class ProvidersController : ControllerBase
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Provider test failed: {Id} (type={ProviderType}): {Message}", id, type, ex.Message);
-            return Problem(title: "provider test failed", detail: ex.Message, statusCode: StatusCodes.Status502BadGateway);
+            return Problem(title: "provider test failed", detail: "unexpected error", statusCode: StatusCodes.Status502BadGateway);
         }
     }
 
