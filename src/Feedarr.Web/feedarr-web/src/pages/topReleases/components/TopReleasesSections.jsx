@@ -334,7 +334,6 @@ export function TopReleasesPosterSection({
   sectionTitle,
   showRank = true,
   rankColor = "#fff",
-  sourceNameById,
   onOpen,
 }) {
   if (items.length === 0) return null;
