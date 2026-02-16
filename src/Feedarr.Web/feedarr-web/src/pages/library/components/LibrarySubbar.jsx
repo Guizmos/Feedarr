@@ -61,6 +61,10 @@ export default function LibrarySubbar({
   // Limit
   limit,
   setLimit,
+  // Defaults (from settings)
+  defaultSort = "date",
+  defaultMaxAgeDays = "",
+  defaultLimit = 100,
 }) {
   return (
     <>
@@ -79,7 +83,7 @@ export default function LibrarySubbar({
             icon="event"
             label="Date"
             value={maxAgeDays}
-            active={!!maxAgeDays}
+            active={maxAgeDays !== defaultMaxAgeDays}
             onChange={(e) => setMaxAgeDays(e.target.value)}
             title="Date"
           >
@@ -197,7 +201,7 @@ export default function LibrarySubbar({
         icon="sort"
         label="Tri"
         value={sortBy}
-        active={sortBy !== "date"}
+        active={sortBy !== defaultSort}
         onChange={(e) => setSortBy(e.target.value)}
         title="Tri"
       >
@@ -226,7 +230,7 @@ export default function LibrarySubbar({
         icon="format_list_numbered"
         label="Limit"
         value={limit}
-        active={String(limit) !== "100"}
+        active={String(limit) !== String(defaultLimit)}
         onChange={(e) => {
           const next = e.target.value;
           setLimit(next === "all" ? "all" : Number(next));

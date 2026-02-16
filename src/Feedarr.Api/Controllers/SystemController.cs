@@ -370,7 +370,7 @@ public sealed class SystemController : ControllerBase
     public IActionResult StatsFeedarr([FromQuery] int days = 30)
     {
         days = days switch { 7 => 7, 90 => 90, _ => 30 };
-        var cacheKey = $"system:stats:feedarr:v1:{days}";
+        var cacheKey = $"system:stats:feedarr:v2:{days}";
         if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
             return Ok(cached);
 
@@ -413,6 +413,12 @@ public sealed class SystemController : ControllerBase
             new { sinceTs }
         ).Select(r => new { date = r.date, count = r.count }).ToList();
 
+        // Global arr match counts from the item list status cache
+        var sonarrMatchCount = conn.ExecuteScalar<int>(
+            "SELECT COUNT(1) FROM release_arr_status WHERE in_sonarr = 1;");
+        var radarrMatchCount = conn.ExecuteScalar<int>(
+            "SELECT COUNT(1) FROM release_arr_status WHERE in_radarr = 1;");
+
         // Storage breakdown (cached)
         var databaseBytes = storage.DatabaseBytes;
         var postersBytes = storage.PostersBytes;
@@ -448,7 +454,17 @@ public sealed class SystemController : ControllerBase
             libraryCount = row.LibraryCount,
             lastSyncAt = row.LastSyncAt,
             lastSyncCount = row.LastSyncCount,
-            lastError = row.LastError
+            lastError = row.LastError,
+            displayCount = row.Type switch
+            {
+                "sonarr" => sonarrMatchCount,
+                "radarr" => radarrMatchCount,
+                "overseerr" => Math.Max(0, row.LastSyncCount),
+                "jellyseerr" => Math.Max(0, row.LastSyncCount),
+                "seer" => Math.Max(0, row.LastSyncCount),
+                _ => 0
+            },
+            countMode = row.Type is "sonarr" or "radarr" ? "matches" : "requests"
         }).ToList();
 
         var payload = new
@@ -464,6 +480,8 @@ public sealed class SystemController : ControllerBase
             distinctPosterFiles,
             posterReuseRatio,
             releasesPerDay,
+            sonarrMatchedCount = sonarrMatchCount,
+            radarrMatchedCount = radarrMatchCount,
             storage = new { databaseBytes, postersBytes, backupsBytes },
             arrApps
         };

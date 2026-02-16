@@ -39,6 +39,7 @@ export default function useLibraryFilters(sources, enabledSources) {
   const viewOptions = useMemo(() => {
     const options = [
       { value: "grid", label: "Cartes" },
+      { value: "poster", label: "Poster" },
       { value: "banner", label: "Banner" },
       { value: "list", label: "Liste" },
     ];
@@ -89,9 +90,33 @@ export default function useLibraryFilters(sources, enabledSources) {
       .then((ui) => {
         const def = String(ui?.defaultView || "grid").toLowerCase();
         const normalized = def === "cards" ? "grid" : def;
-        if (["grid", "list", "banner"].includes(normalized)) {
+        if (["grid", "list", "banner", "poster"].includes(normalized)) {
           setViewMode(normalized);
         }
+
+        // Apply default sort
+        const defSort = String(ui?.defaultSort || "date").toLowerCase();
+        if (["date", "seeders", "downloads"].includes(defSort)) {
+          setSortBy(defSort);
+        }
+
+        // Apply default maxAgeDays
+        const defMaxAge = String(ui?.defaultMaxAgeDays ?? "");
+        if (["", "1", "2", "3", "7", "15", "30"].includes(defMaxAge)) {
+          setMaxAgeDays(defMaxAge);
+        }
+
+        // Apply default limit (only if no localStorage override)
+        const storedLimit = safeGetStorage("feedarr.library.limit");
+        if (!storedLimit) {
+          const defLimit = Number(ui?.defaultLimit ?? 100);
+          if (defLimit === 0) {
+            setLimit("all");
+          } else if ([50, 100, 200, 500].includes(defLimit)) {
+            setLimit(defLimit);
+          }
+        }
+
         setUiSettings(ui || null);
       })
       .catch((error) => {
@@ -105,7 +130,7 @@ export default function useLibraryFilters(sources, enabledSources) {
     if (viewMode !== "missing") return;
     const def = String(uiSettings?.defaultView || "grid").toLowerCase();
     const normalized = def === "cards" ? "grid" : def;
-    setViewMode(["grid", "list", "banner"].includes(normalized) ? normalized : "grid");
+    setViewMode(["grid", "list", "banner", "poster"].includes(normalized) ? normalized : "grid");
   }, [uiSettings?.enableMissingPosterView, uiSettings?.defaultView, viewMode]);
 
   // Synchroniser q avec searchParams
@@ -136,7 +161,7 @@ export default function useLibraryFilters(sources, enabledSources) {
       setViewMode("missing");
       return;
     }
-    if (!["grid", "list", "banner"].includes(value)) return;
+    if (!["grid", "list", "banner", "poster"].includes(value)) return;
     setViewMode(value);
     try {
       let current = uiSettings;
@@ -150,6 +175,11 @@ export default function useLibraryFilters(sources, enabledSources) {
       console.error("Failed to persist library default view", error);
     }
   }, [uiSettings]);
+
+  // Computed defaults from uiSettings
+  const defaultSort = uiSettings?.defaultSort || "date";
+  const defaultMaxAgeDays = uiSettings?.defaultMaxAgeDays ?? "";
+  const defaultLimit = uiSettings?.defaultLimit === 0 ? "all" : (uiSettings?.defaultLimit || 100);
 
   return {
     sourceId,
@@ -175,5 +205,8 @@ export default function useLibraryFilters(sources, enabledSources) {
     viewOptions,
     selectedSourceName,
     sourceReady,
+    defaultSort,
+    defaultMaxAgeDays,
+    defaultLimit,
   };
 }

@@ -236,27 +236,27 @@ builder.Services.AddHttpClient<EerrRequestClient>(c =>
     ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
 }).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
-// Jackett
+// Jackett — AllowAutoRedirect=false : Jackett derrière un reverse proxy HTTPS
+// renvoie des 302 vers HTTP (downgrade) que .NET refuse de suivre.
+// On gère les redirections manuellement dans JackettClient.
 builder.Services.AddHttpClient<JackettClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(30);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
 {
-    AllowAutoRedirect = true,
-    MaxAutomaticRedirections = 5,
+    AllowAutoRedirect = false,
     ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
 }).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
-// Prowlarr
+// Prowlarr — même traitement que Jackett
 builder.Services.AddHttpClient<ProwlarrClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(30);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
 {
-    AllowAutoRedirect = true,
-    MaxAutomaticRedirections = 5,
+    AllowAutoRedirect = false,
     ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
 }).AddHttpMessageHandler<TransientHttpRetryHandler>();
 

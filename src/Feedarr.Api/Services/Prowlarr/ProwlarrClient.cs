@@ -58,6 +58,16 @@ public sealed class ProwlarrClient
         request.Headers.Add("X-Api-Key", apiKey);
 
         using var resp = await _http.SendAsync(request, ct);
+
+        // AllowAutoRedirect=false : gérer les 3xx explicitement
+        var sc = (int)resp.StatusCode;
+        if (sc >= 300 && sc < 400)
+        {
+            var location = resp.Headers.Location?.ToString() ?? "";
+            throw new HttpRequestException(
+                $"Redirect {sc} → {location}");
+        }
+
         resp.EnsureSuccessStatusCode();
 
         var contentType = resp.Content.Headers.ContentType?.MediaType ?? "";

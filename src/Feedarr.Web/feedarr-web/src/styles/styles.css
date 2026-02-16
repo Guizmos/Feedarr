@@ -1090,6 +1090,84 @@ html, body {
   box-shadow: 0 0 0 2px rgba(36,147,181,.18), 0 10px 24px rgba(0,0,0,.28);
 }
 
+/* ── Poster view (Seer-style) ── */
+.grid.grid--poster{
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+}
+.posterViewCard{
+  position: relative;
+  aspect-ratio: 2 / 3;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--poster-fallback, #c9c9c9);
+  box-shadow: var(--poster-shadow);
+  cursor: pointer;
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+.posterViewCard:hover{
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0,0,0,.45), 0 12px 26px rgba(0,0,0,.5);
+}
+.posterViewCard--selected{
+  outline: 3px solid var(--topbar);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px rgba(36,147,181,.18), 0 10px 24px rgba(0,0,0,.28);
+}
+.posterViewCard > img{
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.posterViewCard > .posterFallback{
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.posterViewOverlay{
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 14px 12px;
+  background: linear-gradient(0deg, rgba(0,0,0,.82) 0%, rgba(0,0,0,.45) 40%, transparent 70%);
+  opacity: 0;
+  transition: opacity .2s ease;
+  pointer-events: none;
+}
+.posterViewCard:hover .posterViewOverlay{
+  opacity: 1;
+}
+.posterViewOverlay__title{
+  font-weight: 800;
+  font-size: 15px;
+  line-height: 1.2;
+  color: #fff;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.posterViewOverlay__meta{
+  margin-top: 4px;
+  font-size: 11px;
+  color: rgba(255,255,255,.75);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.posterViewOverlay__sep{
+  opacity: .6;
+}
+.posterViewCard:hover .posterRenameBtn{
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .selectBadge{
   position:absolute;
   top: 10px;

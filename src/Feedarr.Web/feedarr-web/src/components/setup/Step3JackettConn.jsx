@@ -8,13 +8,13 @@ const PROVIDERS = [
   {
     key: "jackett",
     label: "Jackett",
-    placeholder: "http://192.168.1.x:9117 ou https://jackett.domain.com",
+    placeholder: "http://192.168.1.x:9117 ou https://domaine.tld/jackett",
     endpoint: "/api/jackett/indexers",
   },
   {
     key: "prowlarr",
     label: "Prowlarr",
-    placeholder: "http://192.168.1.x:9696 ou https://prowlarr.domain.com",
+    placeholder: "http://192.168.1.x:9696 ou https://domaine.tld/prowlarr",
     endpoint: "/api/prowlarr/indexers",
   },
 ];
@@ -24,15 +24,17 @@ const STORAGE_KEYS = {
     apiKey: "feedarr:jackettApiKey",
     indexers: "feedarr:jackettIndexersCache",
     configured: "feedarr:jackettConfigured",
+    manualOnly: "feedarr:jackettManualOnly",
   },
   prowlarr: {
     baseUrl: "feedarr:prowlarrBaseUrl",
     apiKey: "feedarr:prowlarrApiKey",
     indexers: "feedarr:prowlarrIndexersCache",
     configured: "feedarr:prowlarrConfigured",
+    manualOnly: "feedarr:prowlarrManualOnly",
   },
 };
-const EMPTY_CONFIG = { baseUrl: "", indexers: [], configured: false };
+const EMPTY_CONFIG = { baseUrl: "", indexers: [], configured: false, manualOnly: false };
 
 function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -49,10 +51,12 @@ function readConfigFromStorage(providerKey) {
   const configured = window.localStorage.getItem(keys.configured) === "true";
   const cached = window.localStorage.getItem(keys.indexers) || "";
   const cachedList = cached ? (JSON.parse(cached) || []) : [];
+  const manualOnly = window.localStorage.getItem(keys.manualOnly) === "true";
   return {
     baseUrl,
     configured: configured && !!baseUrl,
     indexers: Array.isArray(cachedList) ? cachedList : [],
+    manualOnly,
   };
 }
 
@@ -63,7 +67,7 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
-  const [testState, setTestState] = useState("idle"); // idle | testing | ok | error
+  const [testState, setTestState] = useState("idle"); // idle | testing | ok | manual | error
   const [testMsg, setTestMsg] = useState("");
   const [testCount, setTestCount] = useState(0);
   const [testPulse, setTestPulse] = useState("");
@@ -121,14 +125,19 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
       setApiKey("");
       setIndexers(Array.isArray(activeConfig.indexers) ? activeConfig.indexers : []);
       setTestCount(Array.isArray(activeConfig.indexers) ? activeConfig.indexers.length : 0);
-      setTestState("ok");
-      setTestMsg("Clés déjà enregistrées.");
+      setTestState(activeConfig.manualOnly ? "manual" : "ok");
+      setTestMsg(
+        activeConfig.manualOnly
+          ? "Configuration enregistrée. Ajoute les indexeurs manuellement à l'étape suivante."
+          : "Clés déjà enregistrées."
+      );
       setSaved(true);
       onStatusChange?.({
         provider: activeProvider,
         ready: true,
         baseUrl: activeConfig.baseUrl,
         indexers: Array.isArray(activeConfig.indexers) ? activeConfig.indexers : [],
+        manualOnly: !!activeConfig.manualOnly,
       });
     }
     setDidLoad(true);
@@ -147,8 +156,12 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
     setBaseUrl(nextBase);
     setApiKey("");
     setIndexers(Array.isArray(initialStatus.indexers) ? initialStatus.indexers : []);
-    setTestState("ok");
-    setTestMsg("Clés déjà enregistrées.");
+    setTestState(initialStatus?.manualOnly ? "manual" : "ok");
+    setTestMsg(
+      initialStatus?.manualOnly
+        ? "Configuration enregistrée. Ajoute les indexeurs manuellement à l'étape suivante."
+        : "Clés déjà enregistrées."
+    );
     setTestCount(Array.isArray(initialStatus.indexers) ? initialStatus.indexers.length : 0);
     setSaved(true);
     setConfigs((prev) => ({
@@ -157,6 +170,7 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
         baseUrl: nextBase,
         indexers: Array.isArray(initialStatus.indexers) ? initialStatus.indexers : [],
         configured: true,
+        manualOnly: !!initialStatus?.manualOnly,
       },
     }));
   }, [initialStatus]);
@@ -169,6 +183,7 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
         window.localStorage.removeItem(keys.apiKey);
         window.localStorage.removeItem(keys.indexers);
         window.localStorage.removeItem(keys.configured);
+        window.localStorage.removeItem(keys.manualOnly);
       });
       window.localStorage.removeItem(STORAGE_PROVIDER);
     }
@@ -186,7 +201,7 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
     setTestCount(0);
     setTestPulse("");
     setIndexers([]);
-    onStatusChange?.({ provider: "", ready: false, baseUrl: "", indexers: [] });
+    onStatusChange?.({ provider: "", ready: false, baseUrl: "", indexers: [], manualOnly: false });
     setModalOpen(false);
   }, [resetToken, onStatusChange]);
 
@@ -209,7 +224,7 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
   );
   const isTesting = testState === "testing";
   const canPrimary =
-    testState === "ok"
+    (testState === "ok" || testState === "manual")
       ? !!baseUrl.trim() && !!apiKey.trim() && !isTesting
       : canTest;
   const configuredProviders = useMemo(
@@ -232,8 +247,12 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
     setIndexers(Array.isArray(cfg.indexers) ? cfg.indexers : []);
     setTestCount(Array.isArray(cfg.indexers) ? cfg.indexers.length : 0);
     if (cfg.configured) {
-      setTestState("ok");
-      setTestMsg("Clés déjà enregistrées.");
+      setTestState(cfg.manualOnly ? "manual" : "ok");
+      setTestMsg(
+        cfg.manualOnly
+          ? "Configuration enregistrée. Ajoute les indexeurs manuellement à l'étape suivante."
+          : "Clés déjà enregistrées."
+      );
       setSaved(true);
     } else {
       setTestState("idle");
@@ -285,8 +304,9 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
           nextCount = count;
           nextIndexers = Array.isArray(list) ? list : [];
         } else {
-          nextState = "error";
-          nextMsg = "Connexion OK mais aucun indexeur détecté.";
+          nextState = "manual";
+          nextMsg =
+            "Connexion OK, mais aucun indexeur récupéré automatiquement. Tu pourras les ajouter manuellement à l'étape suivante (Copy Torznab Feed + clé API).";
         }
         break;
       } catch (e) {
@@ -295,11 +315,11 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
           await new Promise((r) => setTimeout(r, 350));
           continue;
         }
-        nextState = "error";
+        nextState = "manual";
         nextMsg =
           /invalid start of a value|unexpected token\s*</i.test(rawMsg)
-            ? `Réponse ${providerName} invalide. Vérifie l'URL et la clé API.`
-            : rawMsg;
+            ? `Récupération auto des indexeurs ${providerName} impossible. Enregistre la config puis ajoute les indexeurs manuellement à l'étape suivante (Copy Torznab Feed + clé API).`
+            : `${rawMsg} Tu peux quand même enregistrer et ajouter les indexeurs manuellement à l'étape suivante.`;
         break;
       }
     }
@@ -312,7 +332,7 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
     setTestState(nextState);
     setTestMsg(nextMsg);
     setTestCount(nextCount);
-    if (nextState === "ok") {
+    if (nextState === "ok" || nextState === "manual") {
       setIndexers(nextIndexers);
       if (typeof window !== "undefined") {
         const keys = STORAGE_KEYS[provider];
@@ -331,11 +351,11 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
         });
       }
     }
-    triggerPulse(nextState === "ok" ? "ok" : "error");
+    triggerPulse(nextState === "error" ? "error" : "ok");
   }
 
   async function saveConfig() {
-    if (testState !== "ok") return;
+    if (testState !== "ok" && testState !== "manual") return;
     const normalized = normalizeBaseUrl(baseUrl);
     const key = apiKey.trim();
     if (!normalized || !key) return;
@@ -360,10 +380,9 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
     window.localStorage.setItem(keys.baseUrl, normalized);
     window.localStorage.removeItem(keys.apiKey);
     window.localStorage.setItem(keys.configured, "true");
+    window.localStorage.setItem(keys.manualOnly, testState === "manual" ? "true" : "false");
     window.localStorage.setItem(STORAGE_PROVIDER, provider);
-    if (indexers?.length) {
-      window.localStorage.setItem(keys.indexers, JSON.stringify(indexers));
-    }
+    window.localStorage.setItem(keys.indexers, JSON.stringify(indexers || []));
     skipResetRef.current = true;
     setBaseUrl(normalized);
     setSaved(true);
@@ -374,6 +393,7 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
         baseUrl: normalized,
         indexers: Array.isArray(indexers) ? indexers : [],
         configured: true,
+        manualOnly: testState === "manual",
       },
     }));
     onStatusChange?.({
@@ -381,6 +401,7 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
       ready: true,
       baseUrl: normalized,
       indexers: Array.isArray(indexers) ? indexers : [],
+      manualOnly: testState === "manual",
     });
   }
 
@@ -391,6 +412,7 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
       window.localStorage.removeItem(keys.apiKey);
       window.localStorage.removeItem(keys.indexers);
       window.localStorage.removeItem(keys.configured);
+      window.localStorage.removeItem(keys.manualOnly);
     }
     const nextConfigs = {
       ...configs,
@@ -424,12 +446,13 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
         ready: cfg.configured,
         baseUrl: cfg.baseUrl,
         indexers: Array.isArray(cfg.indexers) ? cfg.indexers : [],
+        manualOnly: !!cfg.manualOnly,
       });
     } else {
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(STORAGE_PROVIDER);
       }
-      onStatusChange?.({ provider: "", ready: false, baseUrl: "", indexers: [] });
+      onStatusChange?.({ provider: "", ready: false, baseUrl: "", indexers: [], manualOnly: false });
     }
   }
 
@@ -472,6 +495,10 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
           <div className="indexer-list">
             {configuredProviders.map((cfg, idx) => {
               const meta = configs[cfg.key]?.baseUrl || "";
+              const badges = [{ label: "Configuré", className: "pill-ok" }];
+              if (configs[cfg.key]?.manualOnly) {
+                badges.push({ label: "Ajout manuel", className: "pill-warn" });
+              }
               return (
                 <ItemRow
                   key={cfg.key}
@@ -479,7 +506,7 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
                   title={cfg.label}
                   meta={meta}
                   enabled
-                  badges={[{ label: "Configuré", className: "pill-ok" }]}
+                  badges={badges}
                   actions={[
                     {
                       icon: "edit",
@@ -552,12 +579,17 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
             {testMsg} {saved ? "— enregistré" : ""}
           </div>
         )}
+        {testState === "manual" && (
+          <div className="onboarding__warn">
+            {testMsg} {saved ? "— enregistré" : ""}
+          </div>
+        )}
 
         <div className="setup-jackett-footer">
           <button
             className={`btn btn-accent btn-test${testPulse === "ok" ? " btn-pulse-ok" : ""}${testPulse === "error" ? " btn-pulse-err" : ""}`}
             type="button"
-            onClick={testState === "ok" ? saveConfig : () => testConnection()}
+            onClick={testState === "ok" || testState === "manual" ? saveConfig : () => testConnection()}
             disabled={!canPrimary}
           >
             {isTesting ? (
@@ -571,6 +603,8 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
               "Invalide"
             ) : testState === "ok" ? (
               "Sauvegarder"
+            ) : testState === "manual" ? (
+              "Sauvegarder (manuel)"
             ) : (
               "Tester"
             )}

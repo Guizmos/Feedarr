@@ -115,7 +115,16 @@ public sealed class SettingsController : ControllerBase
     public IActionResult PutUi([FromBody] UiSettings dto)
     {
         var view = (dto.DefaultView ?? "grid").Trim().ToLowerInvariant();
-        if (view is not ("grid" or "list" or "banner")) view = "grid";
+        if (view is not ("grid" or "list" or "banner" or "poster")) view = "grid";
+
+        var sort = (dto.DefaultSort ?? "date").Trim().ToLowerInvariant();
+        if (sort is not ("date" or "seeders" or "downloads")) sort = "date";
+
+        var maxAge = (dto.DefaultMaxAgeDays ?? "").Trim();
+        if (maxAge is not ("" or "1" or "2" or "3" or "7" or "15" or "30")) maxAge = "";
+
+        var limit = dto.DefaultLimit;
+        if (limit != 0 && limit != 50 && limit != 100 && limit != 200 && limit != 500) limit = 100;
 
         var theme = (dto.Theme ?? "light").Trim().ToLowerInvariant();
         if (theme is not ("light" or "dark" or "system")) theme = "light";
@@ -126,6 +135,9 @@ public sealed class SettingsController : ControllerBase
             ShowCategories = dto.ShowCategories,
             EnableMissingPosterView = dto.EnableMissingPosterView,
             DefaultView = view,
+            DefaultSort = sort,
+            DefaultMaxAgeDays = maxAge,
+            DefaultLimit = limit,
             BadgeInfo = dto.BadgeInfo,
             BadgeWarn = dto.BadgeWarn,
             BadgeError = dto.BadgeError,

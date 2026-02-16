@@ -6,6 +6,9 @@ const defaultUi = {
   hideSeenByDefault: false,
   showCategories: true,
   defaultView: "grid",
+  defaultSort: "date",
+  defaultMaxAgeDays: "",
+  defaultLimit: 100,
   badgeInfo: false,
   badgeWarn: true,
   badgeError: true,
@@ -21,6 +24,9 @@ export function buildUiPayload(source, overrides = {}) {
     hideSeenByDefault: !!merged.hideSeenByDefault,
     showCategories: !!merged.showCategories,
     defaultView: merged.defaultView || "grid",
+    defaultSort: merged.defaultSort || "date",
+    defaultMaxAgeDays: merged.defaultMaxAgeDays ?? "",
+    defaultLimit: merged.defaultLimit ?? 100,
     badgeInfo: !!merged.badgeInfo,
     badgeWarn: !!merged.badgeWarn,
     badgeError: !!merged.badgeError,
@@ -46,6 +52,9 @@ export default function useUiSettings() {
       if (u) {
         const normalizedUi = {
           ...u,
+          defaultSort: u.defaultSort || "date",
+          defaultMaxAgeDays: u.defaultMaxAgeDays ?? "",
+          defaultLimit: u.defaultLimit ?? 100,
           theme: u.theme || "light",
           enableMissingPosterView: !!u.enableMissingPosterView,
           animationsEnabled: u.animationsEnabled !== false,
@@ -64,6 +73,9 @@ export default function useUiSettings() {
     if (ui.hideSeenByDefault !== initialUi.hideSeenByDefault) changed.add("ui.hideSeen");
     if (ui.showCategories !== initialUi.showCategories) changed.add("ui.showCategories");
     if (ui.defaultView !== initialUi.defaultView) changed.add("ui.defaultView");
+    if (ui.defaultSort !== initialUi.defaultSort) changed.add("ui.defaultSort");
+    if (ui.defaultMaxAgeDays !== initialUi.defaultMaxAgeDays) changed.add("ui.defaultMaxAgeDays");
+    if (ui.defaultLimit !== initialUi.defaultLimit) changed.add("ui.defaultLimit");
     if (ui.theme !== initialUi.theme) changed.add("ui.theme");
     if (ui.enableMissingPosterView !== initialUi.enableMissingPosterView) changed.add("ui.missingPosterView");
     if (ui.animationsEnabled !== initialUi.animationsEnabled) changed.add("ui.animations");

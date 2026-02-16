@@ -1,7 +1,9 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { resolveApiUrl } from "../../../api/client.js";
 import PosterCard from "../../../ui/PosterCard.jsx";
 import AppIcon from "../../../ui/AppIcon.jsx";
+import usePosterRetryOn404 from "../../../hooks/usePosterRetryOn404.js";
+import { Image, ImageOff } from "lucide-react";
 import {
   fmtSizeGo,
   formatSeasonEpisode,
@@ -269,6 +271,87 @@ export function TopReleasesListSection({
               </button>
             </div>
           </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function TopReleasesPosterCard({ item, onOpen, showRank, rankColor, rankIdx, sectionTitle }) {
+  const displayTitle = useMemo(
+    () => (item.titleClean?.trim() ? item.titleClean : item.title),
+    [item.titleClean, item.title]
+  );
+  const basePosterUrl = item.posterUrl || (item.id ? `/api/posters/release/${item.id}` : "");
+  const { posterSrc, imgError, handleImageError, handleImageLoad } = usePosterRetryOn404(item.id, basePosterUrl);
+  const lastError = String(item?.posterLastError || "").toLowerCase();
+  const hadError = !!lastError && lastError !== "pending";
+  const hasPoster = !!item?.posterUrl && !!posterSrc && !imgError;
+  const isPending = !hasPoster && lastError === "pending";
+  const isFailed = !hasPoster && hadError;
+  const isEmpty = !hasPoster && !isPending && !isFailed;
+
+  return (
+    <div
+      className="posterViewCard"
+      onClick={() => onOpen?.(item)}
+      style={{ cursor: "pointer" }}
+      title={displayTitle || ""}
+    >
+      {hasPoster ? (
+        <img src={posterSrc} alt={displayTitle || ""} loading="lazy" onError={handleImageError} onLoad={handleImageLoad} />
+      ) : (
+        <div className="posterFallback">
+          {isPending ? <div className="posterLoader" /> : isFailed ? <ImageOff className="posterFallback__icon" /> : isEmpty ? <Image className="posterFallback__icon" /> : null}
+        </div>
+      )}
+      {showRank ? (
+        <div
+          style={{
+            position: "absolute", top: 8, left: 8,
+            background: "rgba(0,0,0,0.8)", color: rankColor,
+            padding: "4px 8px", borderRadius: 4, fontWeight: "bold",
+            fontSize: sectionTitle?.includes("Global") ? 14 : 12, zIndex: 10,
+          }}
+        >
+          #{rankIdx + 1}
+        </div>
+      ) : null}
+      <div className="posterViewOverlay">
+        <div className="posterViewOverlay__title">{displayTitle}</div>
+        <div className="posterViewOverlay__meta">
+          <span>{item.date || "-"}</span>
+          <span className="posterViewOverlay__sep">&middot;</span>
+          <span>{item.grabs ?? 0} DL</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function TopReleasesPosterSection({
+  items,
+  sectionTitle,
+  showRank = true,
+  rankColor = "#fff",
+  sourceNameById,
+  onOpen,
+}) {
+  if (items.length === 0) return null;
+  return (
+    <section key={sectionTitle} style={{ marginBottom: 40 }}>
+      <h2 style={{ marginBottom: 16, fontSize: 18 }}>{sectionTitle}</h2>
+      <div className="grid grid--poster">
+        {items.map((item, idx) => (
+          <TopReleasesPosterCard
+            key={item.id}
+            item={item}
+            onOpen={onOpen}
+            showRank={showRank}
+            rankColor={rankColor}
+            rankIdx={idx}
+            sectionTitle={sectionTitle}
+          />
         ))}
       </div>
     </section>

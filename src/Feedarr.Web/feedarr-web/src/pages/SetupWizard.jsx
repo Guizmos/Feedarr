@@ -17,10 +17,12 @@ const JACKETT_STORAGE_KEYS = [
   "feedarr:jackettProvider",
   "feedarr:jackettIndexersCache",
   "feedarr:jackettConfigured",
+  "feedarr:jackettManualOnly",
   "feedarr:prowlarrBaseUrl",
   "feedarr:prowlarrApiKey",
   "feedarr:prowlarrIndexersCache",
   "feedarr:prowlarrConfigured",
+  "feedarr:prowlarrManualOnly",
 ];
 const MIN_STEP = 1;
 const MAX_STEP = 6;
@@ -53,6 +55,7 @@ export default function SetupWizard() {
     provider: "",
     ready: false,
     baseUrl: "",
+    manualOnly: false,
   });
   const [jackettHasSources, setJackettHasSources] = useState(false);
   const [jackettResetToken, setJackettResetToken] = useState(0);
@@ -110,7 +113,7 @@ export default function SetupWizard() {
         if (shouldClear) {
           JACKETT_STORAGE_KEYS.forEach((key) => window.localStorage.removeItem(key));
           window.localStorage.removeItem(STORAGE_KEY);
-          setJackettStatus({ provider: "", ready: false, baseUrl: "" });
+          setJackettStatus({ provider: "", ready: false, baseUrl: "", manualOnly: false });
           setJackettHasSources(false);
           setStep(MIN_STEP);
           setMaxStep(MIN_STEP);

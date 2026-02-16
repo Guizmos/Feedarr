@@ -19,6 +19,7 @@ import {
 } from "../utils/sourceColors.js";
 
 const UNIFIED_PRIORITY = ["series", "anime", "films", "games", "spectacle", "shows"];
+const MANUAL_INDEXER_VALUE = "__manual__";
 
 function dedupeCategoriesById(categories) {
   if (!Array.isArray(categories)) return [];
@@ -355,7 +356,7 @@ export default function Indexers() {
           providerId: Number(selectedProviderId),
           torznabUrl: payload.torznabUrl,
           indexerName: payload.indexerName,
-          indexerId: selectedIndexerId || null,
+          indexerId: isManualIndexer ? null : (selectedIndexerId || null),
         });
 
       const cats = Array.isArray(res?.categories) ? res.categories : [];
@@ -592,6 +593,7 @@ export default function Indexers() {
   const isAdding = !editing;
   const selectedColor = normalizeHexColor(color) || SOURCE_COLOR_PALETTE[0];
   const colorPickerDisabled = isEditing && modalStep === 2;
+  const isManualIndexer = isAdding && selectedIndexerId === MANUAL_INDEXER_VALUE;
   const canTest = isAdding
     ? selectedProviderId && torznabUrl.trim()
     : torznabUrl.trim();
@@ -852,6 +854,13 @@ export default function Indexers() {
                     onChange={(e) => {
                       const nextId = e.target.value;
                       setSelectedIndexerId(nextId);
+                      if (nextId === MANUAL_INDEXER_VALUE) {
+                        setName("");
+                        setTorznabUrl("");
+                        setTestPassed(false);
+                        setTestSourceId(null);
+                        return;
+                      }
                       const match = availableIndexerOptions.find(
                         (opt) => String(opt?.id) === String(nextId)
                       );
@@ -862,7 +871,7 @@ export default function Indexers() {
                       setTestPassed(false);
                       setTestSourceId(null);
                     }}
-                    disabled={!selectedProviderId || indexerOptionsLoading || availableIndexerOptions.length === 0}
+                    disabled={!selectedProviderId || indexerOptionsLoading}
                   >
                     <option value="" disabled>
                       Choisir un indexeur...
@@ -872,6 +881,7 @@ export default function Indexers() {
                         {opt.name}
                       </option>
                     ))}
+                    <option value={MANUAL_INDEXER_VALUE}>Ajouter manuellement...</option>
                   </select>
                   {indexerOptionsWarning && (
                     <div className="muted" style={{ marginTop: 6 }}>{indexerOptionsWarning}</div>
@@ -896,6 +906,31 @@ export default function Indexers() {
                       </button>
                     </div>
                   )}
+                </div>
+              )}
+
+              {isAdding && isManualIndexer && (
+                <div className="field">
+                  <label className="muted">Torznab URL</label>
+                  <input
+                    value={torznabUrl}
+                    onChange={(e) => setTorznabUrl(e.target.value)}
+                    placeholder="Colle l'URL Copy Torznab Feed"
+                  />
+                  <span className="field-hint">
+                    Depuis Jackett/Prowlarr, utilise "Copy Torznab Feed", puis colle l'URL complète.
+                  </span>
+                </div>
+              )}
+
+              {isAdding && isManualIndexer && (
+                <div className="field">
+                  <label className="muted">Clé API (optionnel)</label>
+                  <input
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="Laisse vide pour utiliser la clé du fournisseur"
+                  />
                 </div>
               )}
 

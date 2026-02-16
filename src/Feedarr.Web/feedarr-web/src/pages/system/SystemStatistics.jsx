@@ -485,6 +485,40 @@ function FeedarrPanel({ refreshKey }) {
     value: d.count
   }));
 
+  const appTypeMeta = {
+    sonarr: { color: "#5cb3ff", label: "Sonarr" },
+    radarr: { color: "#f59e0b", label: "Radarr" },
+    overseerr: { color: "#ef4444", label: "Overseerr" },
+    jellyseerr: { color: "#14b8a6", label: "Jellyseerr" },
+    seer: { color: "#a855f7", label: "Seer" }
+  };
+
+  const appStats = (Array.isArray(data.arrApps) ? data.arrApps : []).map((app) => {
+    const type = String(app?.type || "").toLowerCase();
+    const isRequestType = type === "overseerr" || type === "jellyseerr" || type === "seer";
+    const sonarrMatchedCount = Math.max(0, Math.trunc(Number(data?.sonarrMatchedCount || 0)));
+    const radarrMatchedCount = Math.max(0, Math.trunc(Number(data?.radarrMatchedCount || 0)));
+    const displayCount = type === "sonarr"
+      ? sonarrMatchedCount
+      : type === "radarr"
+        ? radarrMatchedCount
+        : Number.isFinite(Number(app?.displayCount))
+          ? Number(app.displayCount)
+          : Number(app?.lastSyncCount || 0);
+    const countMode = app?.countMode || (isRequestType ? "requests" : "matches");
+    const meta = appTypeMeta[type] || { color: "var(--accent)", label: type || "Application" };
+    const isEnabled = !!app?.enabled;
+    return {
+      id: app?.id ?? `${type}-${app?.name || "app"}`,
+      name: String(app?.name || meta.label),
+      typeLabel: meta.label,
+      color: meta.color,
+      enabled: isEnabled,
+      displayCount: Math.max(0, Math.trunc(displayCount)),
+      metricLabel: countMode === "requests" ? "demandes" : "items matchés"
+    };
+  });
+
   return (
     <>
       {/* Metric cards */}
@@ -575,29 +609,33 @@ function FeedarrPanel({ refreshKey }) {
 
         {/* Arr Apps */}
         <div className="card card-half" style={{ padding: "12px 16px" }}>
-          <div className="card-title" style={{ marginBottom: 16 }}>Applications *arr</div>
-          {(data.arrApps && data.arrApps.length > 0) ? (
+          <div className="card-title" style={{ marginBottom: 16 }}>Applications</div>
+          {appStats.length > 0 ? (
             <>
               <HorizontalBarChart
-                data={data.arrApps.filter(a => a.enabled).map(a => ({
-                  name: a.name,
-                  count: a.libraryCount,
-                  color: a.type === "sonarr" ? "#5cb3ff" : "#f59e0b"
+                data={appStats.map((app) => ({
+                  name: app.name,
+                  count: app.displayCount,
+                  color: app.enabled ? app.color : "var(--panel-border)"
                 }))}
                 labelKey="name"
                 valueKey="count"
-                height={200}
+                height={180}
                 stretchBars
               />
-              <div style={{ marginTop: 12, display: "flex", gap: 16, justifyContent: "center", fontSize: 11, color: "var(--muted)" }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#5cb3ff", display: "inline-block" }} />
-                  Sonarr
-                </span>
-                <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#f59e0b", display: "inline-block" }} />
-                  Radarr
-                </span>
+              <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center" }}>
+                {appStats.map((app) => (
+                  <div key={app.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--muted)", padding: "4px 8px", background: "var(--page-bg)", borderRadius: 999 }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: app.enabled ? app.color : "var(--panel-border)", display: "inline-block" }} />
+                      <span style={{ color: "var(--text)" }}>{app.name}</span>
+                      {!app.enabled && <span>(désactivée)</span>}
+                    </span>
+                    <span style={{ fontWeight: 700, color: "var(--text)" }}>
+                      {formatNumber(app.displayCount)} {app.metricLabel}
+                    </span>
+                  </div>
+                ))}
               </div>
             </>
           ) : (

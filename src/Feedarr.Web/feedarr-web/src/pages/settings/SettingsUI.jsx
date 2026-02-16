@@ -85,6 +85,85 @@ export default function SettingsUI({
         </div>
       </div>
 
+      <div className="settings-card" id="defaults">
+        <div className="settings-card__title">Défaut</div>
+        <div className="indexer-list">
+          <div className={`indexer-card${pulseKeys.has("ui.defaultMaxAgeDays") ? " pulse-ok" : ""}`}>
+            <div className="indexer-row indexer-row--settings">
+              <span className="indexer-title">Date</span>
+              <div className="indexer-actions">
+                <select
+                  value={ui.defaultMaxAgeDays ?? ""}
+                  onChange={(e) => setUi((u) => ({ ...u, defaultMaxAgeDays: e.target.value }))}
+                >
+                  <option value="">Tous</option>
+                  <option value="1">1 jour</option>
+                  <option value="2">2 jours</option>
+                  <option value="3">3 jours</option>
+                  <option value="7">7 jours</option>
+                  <option value="15">15 jours</option>
+                  <option value="30">30 jours</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className={`indexer-card${pulseKeys.has("ui.defaultSort") ? " pulse-ok" : ""}`}>
+            <div className="indexer-row indexer-row--settings">
+              <span className="indexer-title">Tri</span>
+              <div className="indexer-actions">
+                <select
+                  value={ui.defaultSort || "date"}
+                  onChange={(e) => setUi((u) => ({ ...u, defaultSort: e.target.value }))}
+                >
+                  <option value="date">Date</option>
+                  <option value="seeders">Seeders</option>
+                  <option value="downloads">Téléchargé</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className={`indexer-card${pulseKeys.has("ui.defaultView") ? " pulse-ok" : ""}`}>
+            <div className="indexer-row indexer-row--settings">
+              <span className="indexer-title">Vue</span>
+              <div className="indexer-actions">
+                <select
+                  value={ui.defaultView || "grid"}
+                  onChange={(e) => setUi((u) => ({ ...u, defaultView: e.target.value }))}
+                >
+                  <option value="grid">Cartes</option>
+                  <option value="poster">Poster</option>
+                  <option value="banner">Banner</option>
+                  <option value="list">Liste</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className={`indexer-card${pulseKeys.has("ui.defaultLimit") ? " pulse-ok" : ""}`}>
+            <div className="indexer-row indexer-row--settings">
+              <span className="indexer-title">Limite</span>
+              <div className="indexer-actions">
+                <select
+                  value={ui.defaultLimit ?? 100}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setUi((u) => ({ ...u, defaultLimit: v === "0" ? 0 : Number(v) }));
+                  }}
+                >
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                  <option value="200">200</option>
+                  <option value="500">500</option>
+                  <option value="0">Tous</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="settings-card" id="theme">
         <div className="settings-card__title">Thème</div>
         <div className={`indexer-card${pulseKeys.has("ui.theme") ? " pulse-ok" : ""}`}>

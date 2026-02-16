@@ -29,6 +29,7 @@ import useLibraryDerivedData from "./hooks/useLibraryDerivedData.js";
 import LibraryGrid from "./components/LibraryGrid.jsx";
 import LibraryList from "./components/LibraryList.jsx";
 import LibraryBanner from "./components/LibraryBanner.jsx";
+import LibraryPoster from "./components/LibraryPoster.jsx";
 import LibrarySubbar from "./components/LibrarySubbar.jsx";
 import RenameModal from "./components/RenameModal.jsx";
 import ManualPosterModal from "./components/ManualPosterModal.jsx";
@@ -862,6 +863,9 @@ export default function Library() {
     listSortDir,
     toggleListSort,
     selectedSourceName,
+    defaultSort,
+    defaultMaxAgeDays,
+    defaultLimit,
   } = filters;
 
   const handleSelectAllVisible = useCallback(() => {
@@ -903,13 +907,16 @@ export default function Library() {
     viewOptions,
     limit,
     setLimit,
+    defaultSort,
+    defaultMaxAgeDays,
+    defaultLimit,
   }), [
     selectionMode, selectedIds, toggleSelectionMode, handleSelectAllVisible,
     posterAutoLoading, handleBulkFetchPosters, handleOpenManualPoster,
     handleBulkSetSeen, sortBy, maxAgeDays, setMaxAgeDays, sources,
     enabledSources, sourceId, setSourceId, uiSettings, categoryId,
     setCategoryId, categoriesForDropdown, setSortBy, viewMode, setViewMode,
-    viewOptions, limit, setLimit,
+    viewOptions, limit, setLimit, defaultSort, defaultMaxAgeDays, defaultLimit,
   ]);
 
   useEffect(() => {
@@ -947,6 +954,22 @@ export default function Library() {
           onToggleSelect={toggleSelect}
           onRename={renameRelease}
           sortBy={sortBy}
+          sourceNameById={sourceNameById}
+          sourceColorById={sourceColorById}
+          sourceId={sourceId}
+          arrStatusMap={arrStatusMap}
+          integrationMode={requestMode}
+        />
+      )}
+
+      {!loading && !err && viewMode === "poster" && (
+        <LibraryPoster
+          items={visibleItems}
+          onOpen={openDetails}
+          selectionMode={selectionMode}
+          selectedIds={selectedIds}
+          onToggleSelect={toggleSelect}
+          onRename={renameRelease}
           sourceNameById={sourceNameById}
           sourceColorById={sourceColorById}
           sourceId={sourceId}

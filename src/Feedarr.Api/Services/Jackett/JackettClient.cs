@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Xml.Linq;
 using Feedarr.Api.Services.Security;
 
 namespace Feedarr.Api.Services.Jackett;
@@ -35,6 +36,27 @@ public sealed class JackettClient
         return uri.ToString();
     }
 
+    private static string BuildAllTorznabUrl(string baseUrl)
+    {
+        var baseTrim = NormalizeBaseUrl(baseUrl);
+        return $"{baseTrim}/api/v2.0/indexers/all/results/torznab/api";
+    }
+
+    private static string BuildAllCapsUrl(string baseUrl, string apiKey)
+    {
+        var url = BuildAllTorznabUrl(baseUrl);
+        var uri = new UriBuilder(url);
+        var query = $"t=caps&apikey={Uri.EscapeDataString(apiKey ?? "")}";
+        if (!string.IsNullOrWhiteSpace(uri.Query))
+        {
+            var existing = uri.Query.TrimStart('?');
+            if (!string.IsNullOrWhiteSpace(existing))
+                query = $"{existing}&{query}";
+        }
+        uri.Query = query;
+        return uri.ToString();
+    }
+
     private static bool? GetBool(JsonElement element, string prop)
     {
         if (!element.TryGetProperty(prop, out var val)) return null;
@@ -57,6 +79,18 @@ public sealed class JackettClient
     {
         var url = BuildIndexersUrl(baseUrl, apiKey);
         using var resp = await _http.GetAsync(url, ct);
+
+        // AllowAutoRedirect=false : on reçoit les 3xx directement.
+        // Un 302 vers /UI/Login signifie que l'API key n'est pas acceptée
+        // par cette route (fréquent derrière un reverse proxy HTTPS).
+        var sc = (int)resp.StatusCode;
+        if (sc >= 300 && sc < 400)
+        {
+            var location = resp.Headers.Location?.ToString() ?? "";
+            throw new HttpRequestException(
+                $"Redirect {sc} → {location} (tentative fallback torznab)");
+        }
+
         resp.EnsureSuccessStatusCode();
 
         var contentType = resp.Content.Headers.ContentType?.MediaType ?? "";
@@ -102,6 +136,37 @@ public sealed class JackettClient
         return results;
     }
 
+    private async Task<bool> ValidateAllCapsAsync(string baseUrl, string apiKey, CancellationToken ct)
+    {
+        var url = BuildAllCapsUrl(baseUrl, apiKey);
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        using var resp = await _http.SendAsync(req, ct);
+        if (!resp.IsSuccessStatusCode)
+            return false;
+
+        var payload = await resp.Content.ReadAsStringAsync(ct);
+        if (string.IsNullOrWhiteSpace(payload))
+            return false;
+
+        try
+        {
+            var doc = XDocument.Parse(payload);
+            return doc.Descendants().Any(x => x.Name.LocalName.Equals("caps", StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static List<(string id, string name, string torznabUrl)> BuildAllFallbackIndexer(string baseUrl)
+    {
+        return new List<(string id, string name, string torznabUrl)>
+        {
+            ("all", "All Indexers", BuildAllTorznabUrl(baseUrl))
+        };
+    }
+
     public async Task<List<(string id, string name, string torznabUrl)>> ListIndexersAsync(
         string baseUrl, string apiKey, CancellationToken ct)
     {
@@ -112,8 +177,31 @@ public sealed class JackettClient
         catch (JsonException ex) when (ShouldRetryJson(ex))
         {
             await Task.Delay(350, ct);
-            return await ListIndexersCoreAsync(baseUrl, apiKey, ct);
+            try
+            {
+                return await ListIndexersCoreAsync(baseUrl, apiKey, ct);
+            }
+            catch (Exception secondEx) when (CanFallbackToCaps(secondEx))
+            {
+                if (await ValidateAllCapsAsync(baseUrl, apiKey, ct))
+                    return BuildAllFallbackIndexer(baseUrl);
+                throw;
+            }
         }
+        catch (Exception ex) when (CanFallbackToCaps(ex))
+        {
+            if (await ValidateAllCapsAsync(baseUrl, apiKey, ct))
+                return BuildAllFallbackIndexer(baseUrl);
+            throw;
+        }
+    }
+
+    private static bool CanFallbackToCaps(Exception ex)
+    {
+        return ex is JsonException ||
+               ex is HttpRequestException ||
+               ex is TaskCanceledException ||
+               ex is InvalidOperationException;
     }
 
     private static bool ShouldRetryJson(Exception ex)

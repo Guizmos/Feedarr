@@ -120,6 +120,12 @@ public sealed class SettingsRepository
                 defaults.AnimationsEnabled = loaded.AnimationsEnabled;
             if (json.Contains("onboardingDone", StringComparison.OrdinalIgnoreCase))
                 defaults.OnboardingDone = loaded.OnboardingDone;
+            if (json.Contains("defaultSort", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(loaded.DefaultSort))
+                defaults.DefaultSort = loaded.DefaultSort;
+            if (json.Contains("defaultMaxAgeDays", StringComparison.OrdinalIgnoreCase))
+                defaults.DefaultMaxAgeDays = loaded.DefaultMaxAgeDays;
+            if (json.Contains("defaultLimit", StringComparison.OrdinalIgnoreCase))
+                defaults.DefaultLimit = loaded.DefaultLimit;
             return defaults;
         }
         catch

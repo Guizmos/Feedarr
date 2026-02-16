@@ -10,19 +10,22 @@ const STORAGE_KEYS = {
     apiKey: "feedarr:jackettApiKey",
     indexers: "feedarr:jackettIndexersCache",
     configured: "feedarr:jackettConfigured",
+    manualOnly: "feedarr:jackettManualOnly",
   },
   prowlarr: {
     baseUrl: "feedarr:prowlarrBaseUrl",
     apiKey: "feedarr:prowlarrApiKey",
     indexers: "feedarr:prowlarrIndexersCache",
     configured: "feedarr:prowlarrConfigured",
+    manualOnly: "feedarr:prowlarrManualOnly",
   },
 };
 const PROVIDERS = [
   { key: "jackett", label: "Jackett" },
   { key: "prowlarr", label: "Prowlarr" },
 ];
-const EMPTY_CONFIG = { baseUrl: "", providerId: null, indexers: [], configured: false };
+const EMPTY_CONFIG = { baseUrl: "", providerId: null, indexers: [], configured: false, manualOnly: false };
+const MANUAL_INDEXER_VALUE = "__manual__";
 
 function normalizeUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -35,11 +38,13 @@ function readProviderConfig(providerKey) {
   const configured = window.localStorage.getItem(keys.configured) === "true";
   const cached = window.localStorage.getItem(keys.indexers) || "";
   const list = cached ? (JSON.parse(cached) || []) : [];
+  const manualOnly = window.localStorage.getItem(keys.manualOnly) === "true";
   return {
     baseUrl,
     providerId: null,
     configured: configured && !!baseUrl,
     indexers: Array.isArray(list) ? list : [],
+    manualOnly,
   };
 }
 
@@ -52,11 +57,18 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
     jackett: { ...EMPTY_CONFIG },
     prowlarr: { ...EMPTY_CONFIG },
   });
+  const [providerIndexerWarnings, setProviderIndexerWarnings] = useState({
+    jackett: "",
+    prowlarr: "",
+  });
   const [sources, setSources] = useState([]);
   const [addIds, setAddIds] = useState({ jackett: "", prowlarr: "" });
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedIndexer, setSelectedIndexer] = useState(null);
   const [selectedProviderKey, setSelectedProviderKey] = useState("");
+  const [manualMode, setManualMode] = useState(false);
+  const [manualName, setManualName] = useState("");
+  const [manualTorznabUrl, setManualTorznabUrl] = useState("");
   const [editingSource, setEditingSource] = useState(null);
   const [capsLoading, setCapsLoading] = useState(false);
   const [capsError, setCapsError] = useState("");
@@ -72,6 +84,10 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
     const nextConfigs = {
       jackett: readProviderConfig("jackett"),
       prowlarr: readProviderConfig("prowlarr"),
+    };
+    const nextWarnings = {
+      jackett: "",
+      prowlarr: "",
     };
 
     try {
@@ -94,6 +110,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
           providerId: Number.isFinite(providerId) && providerId > 0 ? providerId : null,
           baseUrl,
           configured,
+          manualOnly: nextConfigs[provider.key]?.manualOnly || false,
         };
 
         if (typeof window !== "undefined") {
@@ -101,6 +118,10 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
           window.localStorage.setItem(keys.baseUrl, baseUrl || "");
           window.localStorage.setItem(keys.configured, configured ? "true" : "false");
           window.localStorage.removeItem(keys.apiKey);
+          if (!configured) {
+            window.localStorage.setItem(keys.indexers, JSON.stringify([]));
+            window.localStorage.setItem(keys.manualOnly, "false");
+          }
         }
       }
 
@@ -115,6 +136,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
             nextConfigs[provider.key] = {
               ...nextConfigs[provider.key],
               indexers,
+              manualOnly: indexers.length === 0,
             };
 
             if (typeof window !== "undefined") {
@@ -122,9 +144,29 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
                 STORAGE_KEYS[provider.key].indexers,
                 JSON.stringify(indexers)
               );
+              window.localStorage.setItem(
+                STORAGE_KEYS[provider.key].manualOnly,
+                indexers.length === 0 ? "true" : "false"
+              );
+            }
+
+            if (indexers.length === 0) {
+              nextWarnings[provider.key] =
+                `Récupération automatique indisponible pour ${provider.label}. Ajoute les indexeurs manuellement via "Copy Torznab Feed".`;
             }
           } catch {
-            // Keep cached list from storage.
+            const cached = Array.isArray(nextConfigs[provider.key]?.indexers)
+              ? nextConfigs[provider.key].indexers
+              : [];
+            const manualOnly = cached.length === 0 || !!nextConfigs[provider.key]?.manualOnly;
+            nextConfigs[provider.key] = {
+              ...nextConfigs[provider.key],
+              manualOnly,
+            };
+            if (manualOnly) {
+              nextWarnings[provider.key] =
+                `Impossible de récupérer la liste auto pour ${provider.label}. Ajoute les indexeurs manuellement via "Copy Torznab Feed".`;
+            }
           }
         })
       );
@@ -133,6 +175,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
     }
 
     setProviderConfigs(nextConfigs);
+    setProviderIndexerWarnings(nextWarnings);
   }, []);
 
   const loadSources = useCallback(async () => {
@@ -214,6 +257,9 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
     setSelectedCategoryIds(new Set());
     setSelectedIndexer(null);
     setEditingSource(null);
+    setManualMode(false);
+    setManualName("");
+    setManualTorznabUrl("");
   }
 
   function closeModal() {
@@ -225,10 +271,18 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
 
   function openAddModal(providerKey, indexer) {
     resetModalState();
+    setManualMode(false);
     setSelectedProviderKey(providerKey);
     setSelectedIndexer(indexer);
     setModalOpen(true);
     testCapsForIndexer(providerKey, indexer);
+  }
+
+  function openManualModal(providerKey) {
+    resetModalState();
+    setManualMode(true);
+    setSelectedProviderKey(providerKey);
+    setModalOpen(true);
   }
 
   function resolveProviderKey(source) {
@@ -306,13 +360,43 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
     }
   }
 
+  async function testCapsManual() {
+    const providerKey = selectedProviderKey;
+    if (!providerKey) {
+      setCapsError("Fournisseur non sélectionné.");
+      return;
+    }
+
+    const torznabUrl = normalizeUrl(manualTorznabUrl);
+    if (!torznabUrl) {
+      setCapsError("URL Torznab requise.");
+      return;
+    }
+
+    const providerLabel = getProviderLabel(providerKey);
+    await testCapsForIndexer(providerKey, {
+      id: "manual",
+      name: manualName.trim() || `${providerLabel} manuel`,
+      torznabUrl,
+    });
+  }
+
   async function addSource() {
     setCapsError("");
     setCapsOk("");
-    const indexer = selectedIndexer;
+    const providerKey = selectedProviderKey;
+    const providerLabel = getProviderLabel(providerKey);
+    const indexer = manualMode
+      ? {
+          id: "manual",
+          name: manualName.trim() || `${providerLabel} manuel`,
+          torznabUrl: normalizeUrl(manualTorznabUrl),
+        }
+      : selectedIndexer;
+
     const selected = allCategories.filter((c) => selectedCategoryIds.has(c.id));
-    if (!indexer?.torznabUrl) {
-      setCapsError("Indexeur invalide.");
+    if (!indexer?.torznabUrl || !normalizeUrl(indexer?.torznabUrl)) {
+      setCapsError(manualMode ? "URL Torznab requise." : "Indexeur invalide.");
       return;
     }
     if (allCategories.length > 0 && selected.length === 0) {
@@ -328,8 +412,6 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
       return;
     }
 
-    const providerKey = selectedProviderKey;
-    const providerLabel = getProviderLabel(providerKey);
     const providerId = Number(providerConfigs[providerKey]?.providerId || 0);
     if (!providerId) {
       setCapsError("Fournisseur non configuré côté API.");
@@ -340,7 +422,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
     try {
       const res = await apiPost("/api/sources", {
         name: indexer.name || providerLabel,
-        torznabUrl: indexer.torznabUrl,
+        torznabUrl: normalizeUrl(indexer.torznabUrl),
         authMode: "query",
         providerId,
         categories: selected.length > 0 ? selected.map((c) => ({
@@ -369,6 +451,9 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
     const providerKey = resolveProviderKey(source);
     setSelectedProviderKey(providerKey);
     setEditingSource(source);
+    setManualMode(false);
+    setManualName("");
+    setManualTorznabUrl("");
     setModalOpen(true);
     setCapsError("");
     setCapsOk("");
@@ -486,7 +571,10 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
     });
     return hidden;
   }, [selectedCategoryIds, visibleIds]);
-  const canSubmitAdd = allCategories.length === 0 ? true : selectedCount > 0;
+  const canSubmitAdd = useMemo(() => {
+    if (manualMode && !normalizeUrl(manualTorznabUrl)) return false;
+    return allCategories.length === 0 ? true : selectedCount > 0;
+  }, [manualMode, manualTorznabUrl, allCategories.length, selectedCount]);
   const canSubmitEdit = selectedCount > 0;
 
   useEffect(() => {
@@ -503,7 +591,9 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
   const modalProviderLabel = hasSelectedProvider ? getProviderLabel(selectedProviderKey) : "";
   const modalTitle = editingSource
     ? `Modifier : ${editingSource.name}${hasSelectedProvider ? ` (${modalProviderLabel})` : ""}`
-    : `Ajouter : ${selectedIndexer?.name || "Indexeur"}${hasSelectedProvider ? ` (${modalProviderLabel})` : ""}`;
+    : manualMode
+      ? `Ajouter manuellement${hasSelectedProvider ? ` (${modalProviderLabel})` : ""}`
+      : `Ajouter : ${selectedIndexer?.name || "Indexeur"}${hasSelectedProvider ? ` (${modalProviderLabel})` : ""}`;
 
   return (
     <div className="setup-step setup-jackett">
@@ -537,6 +627,11 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
                     onChange={(e) => {
                       const id = e.target.value;
                       setAddIds((prev) => ({ ...prev, [provider.key]: id }));
+                      if (id === MANUAL_INDEXER_VALUE) {
+                        openManualModal(provider.key);
+                        setAddIds((prev) => ({ ...prev, [provider.key]: "" }));
+                        return;
+                      }
                       const idx = availableIndexers.find((i) => String(i.id) === String(id));
                       if (idx) openAddModal(provider.key, idx);
                       setAddIds((prev) => ({ ...prev, [provider.key]: "" }));
@@ -550,9 +645,23 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
                         {idx.name}
                       </option>
                     ))}
+                    <option value={MANUAL_INDEXER_VALUE}>
+                      Ajouter manuellement...
+                    </option>
                   </select>
-                  {availableIndexers.length === 0 && (
-                    <div className="muted">Aucun indexeur disponible.</div>
+                  {availableIndexers.length === 0 && providerConfigs[provider.key]?.indexers?.length > 0 && (
+                    <div className="muted">Tous les indexeurs détectés sont déjà ajoutés.</div>
+                  )}
+                  {availableIndexers.length === 0 && providerConfigs[provider.key]?.indexers?.length === 0 && (
+                    <div className="onboarding__warn">
+                      {providerIndexerWarnings[provider.key] ||
+                        `Aucun indexeur détecté automatiquement pour ${provider.label}.`}
+                    </div>
+                  )}
+                  {providerConfigs[provider.key]?.manualOnly && (
+                    <div className="muted">
+                      Dans {provider.label}, utilise "Copy Torznab Feed" puis colle l'URL ici. La clé API du fournisseur configurée à l'étape 3 sera utilisée.
+                    </div>
                   )}
                 </div>
 
@@ -602,8 +711,51 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
         onClose={closeModal}
         width={720}
       >
+        {manualMode && !editingSource && (
+          <div className="formgrid formgrid--edit" style={{ marginBottom: 12 }}>
+            <div className="field">
+              <label>Nom (optionnel)</label>
+              <input
+                value={manualName}
+                onChange={(e) => setManualName(e.target.value)}
+                placeholder={`Nom ${modalProviderLabel || "indexeur"}`}
+                disabled={saving || capsLoading}
+              />
+            </div>
+            <div className="field">
+              <label>Torznab Feed URL</label>
+              <input
+                value={manualTorznabUrl}
+                onChange={(e) => {
+                  setManualTorznabUrl(e.target.value);
+                  setCapsError("");
+                  setCapsOk("");
+                  setCapsWarning("");
+                  setCapsCategories([]);
+                  setSelectedCategoryIds(new Set());
+                }}
+                placeholder="Colle l'URL Copy Torznab Feed"
+                disabled={saving || capsLoading}
+              />
+              <span className="field-hint">
+                Depuis {modalProviderLabel || "le fournisseur"}, clique "Copy Torznab Feed", puis colle l'URL complète.
+              </span>
+            </div>
+            <div className="setup-jackett__actions" style={{ gridColumn: "1 / -1" }}>
+              <button
+                className="btn"
+                type="button"
+                onClick={testCapsManual}
+                disabled={saving || capsLoading || !normalizeUrl(manualTorznabUrl)}
+              >
+                {capsLoading ? "Test..." : "Tester les catégories (caps)"}
+              </button>
+            </div>
+          </div>
+        )}
+
         {capsError && <div className="onboarding__error">{capsError}</div>}
-        {capsWarning && <div className="onboarding__error">{capsWarning}</div>}
+        {capsWarning && <div className="onboarding__warn">{capsWarning}</div>}
         {capsOk && <div className="onboarding__ok">{capsOk}</div>}
         {capsLoading && <div className="muted">Chargement des catégories...</div>}
 
@@ -666,7 +818,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
               onClick={addSource}
               disabled={saving || !canSubmitAdd}
             >
-              {saving ? "Enregistrement..." : "Ajouter l'indexeur"}
+              {saving ? "Enregistrement..." : manualMode ? "Ajouter manuellement" : "Ajouter l'indexeur"}
             </button>
           )}
         </div>

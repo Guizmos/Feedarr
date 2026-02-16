@@ -6,8 +6,17 @@ public sealed class UiSettings
     public bool ShowCategories { get; set; } = true;
     public bool EnableMissingPosterView { get; set; } = false;
 
-    // "grid" / "list" / "banner" (tu verras ça dans l’étape E)
+    // "grid" / "list" / "banner" / "poster"
     public string DefaultView { get; set; } = "grid";
+
+    // "date" / "seeders" / "downloads"
+    public string DefaultSort { get; set; } = "date";
+
+    // "" / "1" / "2" / "3" / "7" / "15" / "30"
+    public string DefaultMaxAgeDays { get; set; } = "";
+
+    // 50 / 100 / 200 / 500 / 0 (0 = all)
+    public int DefaultLimit { get; set; } = 100;
 
     // Badges logs (par niveau)
     public bool BadgeInfo { get; set; } = false;

@@ -535,7 +535,7 @@ export default function Providers() {
             <input
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder={type === "prowlarr" ? "http://192.168.1.x:9696 ou https://prowlarr.domain.com" : "http://192.168.1.x:9117 ou https://jackett.domain.com"}
+              placeholder={type === "prowlarr" ? "http://192.168.1.x:9696 ou https://domaine.tld/prowlarr" : "http://192.168.1.x:9117 ou https://domaine.tld/jackett"}
               disabled={modalTestStatus === "pending"}
             />
             <span className="field-hint">IP, hostname ou URL reverse proxy (http/https)</span>
