@@ -157,12 +157,13 @@ function PosterViewCard({
       )}
 
       {/* Hover overlay */}
-      <div className="posterViewOverlay">
+      <div className={`posterViewOverlay${arrType ? " posterViewOverlay--has-badge" : ""}`}>
         <div className="posterViewOverlay__title">{displayTitle}</div>
         <div className="posterViewOverlay__meta">
           <span>{item.date || "-"}</span>
-          <span className="posterViewOverlay__sep">&middot;</span>
-          <span>{item.grabs ?? 0} DL</span>
+        </div>
+        <div className="posterViewOverlay__meta">
+          <span>Download: {item.grabs ?? 0}</span>
         </div>
       </div>
     </div>

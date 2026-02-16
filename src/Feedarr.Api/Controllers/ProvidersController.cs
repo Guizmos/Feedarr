@@ -118,10 +118,19 @@ public sealed class ProvidersController : ControllerBase
             }
             return Ok(new { ok = true, count = list.Count });
         }
+        catch (HttpRequestException ex)
+        {
+            _log.LogWarning(ex, "Provider test failed (inline, type={ProviderType}): {Message}", type, ex.Message);
+            return Problem(title: "provider test failed", detail: ex.Message, statusCode: StatusCodes.Status502BadGateway);
+        }
+        catch (TaskCanceledException)
+        {
+            return Problem(title: "provider test failed", detail: "timeout", statusCode: StatusCodes.Status504GatewayTimeout);
+        }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "Provider test failed (inline, type={ProviderType})", type);
-            return Problem(title: "provider test failed", detail: "upstream provider unavailable", statusCode: StatusCodes.Status502BadGateway);
+            _log.LogWarning(ex, "Provider test failed (inline, type={ProviderType}): {Message}", type, ex.Message);
+            return Problem(title: "provider test failed", detail: ex.Message, statusCode: StatusCodes.Status502BadGateway);
         }
     }
 
@@ -232,10 +241,19 @@ public sealed class ProvidersController : ControllerBase
             _providers.UpdateLastTestOk(id);
             return Ok(new { ok = true, count = list.Count });
         }
+        catch (HttpRequestException ex)
+        {
+            _log.LogWarning(ex, "Provider test failed: {Id} (type={ProviderType}): {Message}", id, type, ex.Message);
+            return Problem(title: "provider test failed", detail: ex.Message, statusCode: StatusCodes.Status502BadGateway);
+        }
+        catch (TaskCanceledException)
+        {
+            return Problem(title: "provider test failed", detail: "timeout", statusCode: StatusCodes.Status504GatewayTimeout);
+        }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "Provider test failed: {Id} (type={ProviderType})", id, type);
-            return Problem(title: "provider test failed", detail: "upstream provider unavailable", statusCode: StatusCodes.Status502BadGateway);
+            _log.LogWarning(ex, "Provider test failed: {Id} (type={ProviderType}): {Message}", id, type, ex.Message);
+            return Problem(title: "provider test failed", detail: ex.Message, statusCode: StatusCodes.Status502BadGateway);
         }
     }
 

@@ -70,7 +70,7 @@ export default function SettingsMaintenance({
 
         {/* 1. Vider cache posters */}
         <ActionRow
-          label="Vider cache posters"
+          label="Supprimer tous les posters en cache"
           description="Supprime tous les posters téléchargés localement"
           loading={clearCacheLoading}
           loadingLabel="Suppression..."
@@ -228,11 +228,12 @@ export default function SettingsMaintenance({
       </div>
 
       {/* MODAL: CLEAR CACHE */}
-      <Modal open={clearCacheOpen} title="Vider le cache posters" onClose={() => setClearCacheOpen(false)} width={520}>
+      <Modal open={clearCacheOpen} title="Supprimer tous les posters en cache" onClose={() => setClearCacheOpen(false)} width={520}>
         <div style={{ padding: 12 }}>
           <div style={{ fontWeight: 700, marginBottom: 8 }}>Confirmer la suppression ?</div>
           <div className="muted" style={{ marginBottom: 12 }}>
             Cette action va supprimer tous les posters téléchargés localement.
+            Elle ne nettoie pas uniquement les orphelins.
             Ils seront re-téléchargés automatiquement lors du prochain affichage.
           </div>
           <div className="formactions">

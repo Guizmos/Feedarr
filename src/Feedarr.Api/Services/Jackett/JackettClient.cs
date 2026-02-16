@@ -20,6 +20,8 @@ public sealed class JackettClient
         return normalizedBaseUrl;
     }
 
+    // ── URL builders ────────────────────────────────────────────────
+
     private static string BuildIndexersUrl(string baseUrl, string apiKey)
     {
         var baseTrim = NormalizeBaseUrl(baseUrl);
@@ -36,26 +38,13 @@ public sealed class JackettClient
         return uri.ToString();
     }
 
-    private static string BuildAllTorznabUrl(string baseUrl)
+    private static string BuildTorznabIndexersUrl(string baseUrl, string apiKey)
     {
         var baseTrim = NormalizeBaseUrl(baseUrl);
-        return $"{baseTrim}/api/v2.0/indexers/all/results/torznab/api";
+        return $"{baseTrim}/api/v2.0/indexers/all/results/torznab/api?t=indexers&apikey={Uri.EscapeDataString(apiKey ?? "")}";
     }
 
-    private static string BuildAllCapsUrl(string baseUrl, string apiKey)
-    {
-        var url = BuildAllTorznabUrl(baseUrl);
-        var uri = new UriBuilder(url);
-        var query = $"t=caps&apikey={Uri.EscapeDataString(apiKey ?? "")}";
-        if (!string.IsNullOrWhiteSpace(uri.Query))
-        {
-            var existing = uri.Query.TrimStart('?');
-            if (!string.IsNullOrWhiteSpace(existing))
-                query = $"{existing}&{query}";
-        }
-        uri.Query = query;
-        return uri.ToString();
-    }
+    // ── JSON helpers ────────────────────────────────────────────────
 
     private static bool? GetBool(JsonElement element, string prop)
     {
@@ -74,41 +63,32 @@ public sealed class JackettClient
         return null;
     }
 
-    private async Task<List<(string id, string name, string torznabUrl)>> ListIndexersCoreAsync(
+    // ── Strategy 1: Management API (JSON) ───────────────────────────
+
+    private async Task<List<(string id, string name, string torznabUrl)>> ListViaManagementApiAsync(
         string baseUrl, string apiKey, CancellationToken ct)
     {
         var url = BuildIndexersUrl(baseUrl, apiKey);
         using var resp = await _http.GetAsync(url, ct);
 
-        // AllowAutoRedirect=false : on reçoit les 3xx directement.
-        // Un 302 vers /UI/Login signifie que l'API key n'est pas acceptée
-        // par cette route (fréquent derrière un reverse proxy HTTPS).
-        var sc = (int)resp.StatusCode;
-        if (sc >= 300 && sc < 400)
-        {
-            var location = resp.Headers.Location?.ToString() ?? "";
-            throw new HttpRequestException(
-                $"Redirect {sc} → {location} (tentative fallback torznab)");
-        }
-
+        // If Jackett redirects to login (302) or returns error, let it throw
         resp.EnsureSuccessStatusCode();
 
         var contentType = resp.Content.Headers.ContentType?.MediaType ?? "";
-        var json = await resp.Content.ReadAsStringAsync(ct);
+        var body = await resp.Content.ReadAsStringAsync(ct);
+
         if (!string.IsNullOrWhiteSpace(contentType) &&
             !contentType.Contains("json", StringComparison.OrdinalIgnoreCase))
         {
-            throw new JsonException($"Invalid JSON response (content-type={contentType})");
+            throw new JsonException($"Not JSON (content-type={contentType})");
         }
 
-        using var doc = JsonDocument.Parse(json);
-
+        using var doc = JsonDocument.Parse(body);
         if (doc.RootElement.ValueKind != JsonValueKind.Array)
             return new List<(string id, string name, string torznabUrl)>();
 
         var baseTrim = NormalizeBaseUrl(baseUrl);
         var results = new List<(string id, string name, string torznabUrl)>();
-        var configuredFlagsSeen = 0;
 
         foreach (var el in doc.RootElement.EnumerateArray())
         {
@@ -116,99 +96,70 @@ public sealed class JackettClient
                 ?? GetBool(el, "isConfigured")
                 ?? GetBool(el, "enabled")
                 ?? GetBool(el, "isEnabled");
-            if (configured.HasValue)
-                configuredFlagsSeen++;
             if (configured.HasValue && configured.Value == false)
                 continue;
 
             var id = GetString(el, "id") ?? GetString(el, "identifier") ?? GetString(el, "name");
             if (string.IsNullOrWhiteSpace(id)) continue;
+            if (id.Equals("all", StringComparison.OrdinalIgnoreCase)) continue;
+
             var name = GetString(el, "name") ?? GetString(el, "title") ?? id;
             var torznabUrl = $"{baseTrim}/api/v2.0/indexers/{id}/results/torznab/";
             results.Add((id, name ?? id, torznabUrl));
         }
 
-        if (configuredFlagsSeen == 0)
+        return results;
+    }
+
+    // ── Strategy 2: Torznab t=indexers (XML) ────────────────────────
+    // Works behind reverse proxies where the management API is blocked.
+
+    private async Task<List<(string id, string name, string torznabUrl)>> ListViaTorznabAsync(
+        string baseUrl, string apiKey, CancellationToken ct)
+    {
+        var url = BuildTorznabIndexersUrl(baseUrl, apiKey);
+        using var resp = await _http.GetAsync(url, ct);
+        resp.EnsureSuccessStatusCode();
+
+        var xml = await resp.Content.ReadAsStringAsync(ct);
+        var doc = XDocument.Parse(xml);
+        var baseTrim = NormalizeBaseUrl(baseUrl);
+        var results = new List<(string id, string name, string torznabUrl)>();
+
+        foreach (var el in doc.Descendants("indexer"))
         {
-            return results;
+            var configured = el.Attribute("configured")?.Value;
+            if (!string.Equals(configured, "true", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var id = el.Attribute("id")?.Value;
+            if (string.IsNullOrWhiteSpace(id)) continue;
+            if (id.Equals("all", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var name = el.Element("title")?.Value ?? id;
+            var torznabUrl = $"{baseTrim}/api/v2.0/indexers/{id}/results/torznab/";
+            results.Add((id, name, torznabUrl));
         }
 
         return results;
     }
 
-    private async Task<bool> ValidateAllCapsAsync(string baseUrl, string apiKey, CancellationToken ct)
-    {
-        var url = BuildAllCapsUrl(baseUrl, apiKey);
-        using var req = new HttpRequestMessage(HttpMethod.Get, url);
-        using var resp = await _http.SendAsync(req, ct);
-        if (!resp.IsSuccessStatusCode)
-            return false;
-
-        var payload = await resp.Content.ReadAsStringAsync(ct);
-        if (string.IsNullOrWhiteSpace(payload))
-            return false;
-
-        try
-        {
-            var doc = XDocument.Parse(payload);
-            return doc.Descendants().Any(x => x.Name.LocalName.Equals("caps", StringComparison.OrdinalIgnoreCase));
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static List<(string id, string name, string torznabUrl)> BuildAllFallbackIndexer(string baseUrl)
-    {
-        return new List<(string id, string name, string torznabUrl)>
-        {
-            ("all", "All Indexers", BuildAllTorznabUrl(baseUrl))
-        };
-    }
+    // ── Public entry point ──────────────────────────────────────────
 
     public async Task<List<(string id, string name, string torznabUrl)>> ListIndexersAsync(
         string baseUrl, string apiKey, CancellationToken ct)
     {
+        // Try management API first (works for direct HTTP access)
         try
         {
-            return await ListIndexersCoreAsync(baseUrl, apiKey, ct);
+            return await ListViaManagementApiAsync(baseUrl, apiKey, ct);
         }
-        catch (JsonException ex) when (ShouldRetryJson(ex))
+        catch
         {
-            await Task.Delay(350, ct);
-            try
-            {
-                return await ListIndexersCoreAsync(baseUrl, apiKey, ct);
-            }
-            catch (Exception secondEx) when (CanFallbackToCaps(secondEx))
-            {
-                if (await ValidateAllCapsAsync(baseUrl, apiKey, ct))
-                    return BuildAllFallbackIndexer(baseUrl);
-                throw;
-            }
+            // Management API failed (redirect to login, 404, non-JSON, etc.)
+            // Fall back to torznab t=indexers which works behind reverse proxies
         }
-        catch (Exception ex) when (CanFallbackToCaps(ex))
-        {
-            if (await ValidateAllCapsAsync(baseUrl, apiKey, ct))
-                return BuildAllFallbackIndexer(baseUrl);
-            throw;
-        }
-    }
 
-    private static bool CanFallbackToCaps(Exception ex)
-    {
-        return ex is JsonException ||
-               ex is HttpRequestException ||
-               ex is TaskCanceledException ||
-               ex is InvalidOperationException;
-    }
-
-    private static bool ShouldRetryJson(Exception ex)
-    {
-        var msg = ex.Message ?? "";
-        return msg.Contains("invalid start of a value", StringComparison.OrdinalIgnoreCase) ||
-               msg.Contains("unexpected token", StringComparison.OrdinalIgnoreCase) ||
-               msg.Contains("invalid json response", StringComparison.OrdinalIgnoreCase);
+        return await ListViaTorznabAsync(baseUrl, apiKey, ct);
     }
 }

@@ -1635,7 +1635,22 @@ LEFT JOIN media_entities me
 
     public void ClearPosterFileReferences(string posterFile)
     {
+        if (string.IsNullOrWhiteSpace(posterFile))
+            return;
+
         using var conn = _db.Open();
+        var nowTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        conn.Execute(
+            """
+            UPDATE releases
+            SET poster_file = NULL,
+                poster_updated_at_ts = NULL
+            WHERE poster_file = @file;
+            """,
+            new { file = posterFile }
+        );
+
         conn.Execute(
             """
             UPDATE media_entities
@@ -1644,13 +1659,83 @@ LEFT JOIN media_entities me
                 updated_at_ts = @now
             WHERE poster_file = @file;
             """,
-            new { file = posterFile, now = DateTimeOffset.UtcNow.ToUnixTimeSeconds() }
+            new { file = posterFile, now = nowTs }
         );
 
         conn.Execute(
             "DELETE FROM poster_matches WHERE poster_file = @file;",
             new { file = posterFile }
         );
+    }
+
+    public void ClearPosterFileReferences(IEnumerable<string> posterFiles)
+    {
+        var files = posterFiles
+            .Where(f => !string.IsNullOrWhiteSpace(f))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (files.Count == 0)
+            return;
+
+        using var conn = _db.Open();
+        var nowTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        conn.Execute(
+            """
+            UPDATE releases
+            SET poster_file = NULL,
+                poster_updated_at_ts = NULL
+            WHERE poster_file IN @files;
+            """,
+            new { files }
+        );
+
+        conn.Execute(
+            """
+            UPDATE media_entities
+            SET poster_file = NULL,
+                poster_updated_at_ts = NULL,
+                updated_at_ts = @now
+            WHERE poster_file IN @files;
+            """,
+            new { files, now = nowTs }
+        );
+
+        conn.Execute(
+            "DELETE FROM poster_matches WHERE poster_file IN @files;",
+            new { files }
+        );
+    }
+
+    public void ClearAllPosterReferences()
+    {
+        using var conn = _db.Open();
+        var nowTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        conn.Execute(
+            """
+            UPDATE releases
+            SET poster_file = NULL,
+                poster_updated_at_ts = NULL
+            WHERE poster_file IS NOT NULL
+              AND poster_file <> '';
+            """
+        );
+
+        conn.Execute(
+            """
+            UPDATE media_entities
+            SET poster_file = NULL,
+                poster_updated_at_ts = NULL,
+                updated_at_ts = @now
+            WHERE poster_file IS NOT NULL
+              AND poster_file <> '';
+            """,
+            new { now = nowTs }
+        );
+
+        conn.Execute("DELETE FROM poster_matches;");
     }
 
     private static Dictionary<string, int> GetPerKeyCounts(IDbConnection conn, IDbTransaction tx, long sourceId)

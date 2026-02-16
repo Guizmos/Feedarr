@@ -154,7 +154,8 @@ public sealed class FanartClient
     }
 
     /// <summary>
-    /// Sélectionne le meilleur poster selon la priorité: FR > langue originale > EN > plus de likes.
+    /// Sélectionne le meilleur poster selon la priorité:
+    /// FR > EN > ES > IT > langue originale > plus de likes.
     /// </summary>
     private static string? PickPosterUrl(List<FanartPoster>? posters, string? originalLanguage = null)
     {
@@ -170,20 +171,26 @@ public sealed class FanartClient
         var fr = sorted.FirstOrDefault(x => string.Equals(x.Lang, "fr", StringComparison.OrdinalIgnoreCase));
         if (!string.IsNullOrWhiteSpace(fr?.Url)) return fr.Url;
 
-        // 2. Langue originale du contenu (si fournie et différente de FR/EN)
-        if (!string.IsNullOrWhiteSpace(originalLanguage) &&
-            !string.Equals(originalLanguage, "fr", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(originalLanguage, "en", StringComparison.OrdinalIgnoreCase))
+        // 2. Anglais
+        var en = sorted.FirstOrDefault(x => string.Equals(x.Lang, "en", StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(en?.Url)) return en.Url;
+
+        // 3. Espagnol
+        var es = sorted.FirstOrDefault(x => string.Equals(x.Lang, "es", StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(es?.Url)) return es.Url;
+
+        // 4. Italien
+        var it = sorted.FirstOrDefault(x => string.Equals(x.Lang, "it", StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(it?.Url)) return it.Url;
+
+        // 5. Langue originale du contenu (si fournie)
+        if (!string.IsNullOrWhiteSpace(originalLanguage))
         {
             var orig = sorted.FirstOrDefault(x => string.Equals(x.Lang, originalLanguage, StringComparison.OrdinalIgnoreCase));
             if (!string.IsNullOrWhiteSpace(orig?.Url)) return orig.Url;
         }
 
-        // 3. Anglais
-        var en = sorted.FirstOrDefault(x => string.Equals(x.Lang, "en", StringComparison.OrdinalIgnoreCase));
-        if (!string.IsNullOrWhiteSpace(en?.Url)) return en.Url;
-
-        // 4. N'importe quel poster avec le plus de likes
+        // 6. N'importe quel poster avec le plus de likes
         return sorted.FirstOrDefault()?.Url;
     }
 

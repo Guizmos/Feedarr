@@ -1150,6 +1150,7 @@ html, body {
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 3;
+  line-clamp: 3;
   -webkit-box-orient: vertical;
 }
 .posterViewOverlay__meta{
@@ -1162,6 +1163,9 @@ html, body {
 }
 .posterViewOverlay__sep{
   opacity: .6;
+}
+.posterViewOverlay--has-badge{
+  padding-bottom: 34px;
 }
 .posterViewCard:hover .posterRenameBtn{
   opacity: 1;
@@ -2971,7 +2975,8 @@ html, body {
 .page--providers .line-scroll__content,
 .page--settings .line-scroll__content,
 .setup-shell .line-scroll__content{
-  display: inline-flex;
+  display: inline-block;
+  white-space: nowrap;
   min-width: max-content;
   transform: translateX(0);
   will-change: transform;
@@ -3082,6 +3087,7 @@ html, body {
 .page--providers .itemrow__badges .line-scroll__content,
 .page--settings .itemrow__badges .line-scroll__content,
 .setup-shell .itemrow__badges .line-scroll__content{
+  display: inline-flex;
   gap: 8px;
 }
 

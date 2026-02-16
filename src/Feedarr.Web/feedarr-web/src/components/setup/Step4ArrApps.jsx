@@ -4,6 +4,8 @@ import ItemRow from "../../ui/ItemRow.jsx";
 import Modal from "../../ui/Modal.jsx";
 import { getAppLabel, isArrLibraryType } from "../../utils/appTypes.js";
 
+const ALL_APP_TYPES = ["sonarr", "radarr", "overseerr", "jellyseerr", "seer"];
+
 export default function Step4ArrApps() {
   const [apps, setApps] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -42,6 +44,14 @@ export default function Step4ArrApps() {
   const [minAvail, setMinAvail] = useState("released");
   const [searchForMovie, setSearchForMovie] = useState(true);
 
+  const availableAddTypes = useMemo(() => {
+    const existingTypes = new Set(
+      (apps || []).map((app) => String(app?.type || "").toLowerCase())
+    );
+    return ALL_APP_TYPES.filter((type) => !existingTypes.has(type));
+  }, [apps]);
+  const noAvailableAddTypes = availableAddTypes.length === 0;
+
   const loadApps = useCallback(async () => {
     setLoading(true);
     setErr("");
@@ -66,6 +76,17 @@ export default function Step4ArrApps() {
     setModalPulse("");
     setModalError("");
   }, [modalBaseUrl, modalApiKey, modalType, modalOpen]);
+
+  useEffect(() => {
+    if (!modalOpen || modalMode !== "add") return;
+    if (availableAddTypes.length === 0) {
+      setModalType("");
+      return;
+    }
+    if (!availableAddTypes.includes(modalType)) {
+      setModalType(availableAddTypes[0]);
+    }
+  }, [modalMode, modalOpen, modalType, availableAddTypes]);
 
   function resetModal() {
     setModalMode("add");
@@ -95,6 +116,7 @@ export default function Step4ArrApps() {
   }
 
   function openAddForType(type) {
+    if (!type) return;
     resetModal();
     setModalMode("add");
     setModalType(type);
@@ -200,6 +222,10 @@ export default function Step4ArrApps() {
     setModalSaving(true);
     setModalError("");
     try {
+      if (modalMode === "add" && !modalType) {
+        throw new Error("Toutes les applications sont déjà ajoutées.");
+      }
+
       const payload = {
         type: modalType,
         name: modalName.trim() || null,
@@ -253,9 +279,10 @@ export default function Step4ArrApps() {
     [config]
   );
   const isLibraryType = isArrLibraryType(modalType);
+  const hasValidModalType = modalMode !== "add" || !!modalType;
   const canUseStoredKey = modalMode === "edit" && modalApp?.id && !modalApiKey.trim();
-  const canTestModal = !!modalBaseUrl.trim() && (modalApiKey.trim() || canUseStoredKey) && !modalTesting && !modalSaving;
-  const canSaveModal = !!modalBaseUrl.trim() && !modalSaving && !modalTesting;
+  const canTestModal = hasValidModalType && !!modalBaseUrl.trim() && (modalApiKey.trim() || canUseStoredKey) && !modalTesting && !modalSaving;
+  const canSaveModal = hasValidModalType && !!modalBaseUrl.trim() && !modalSaving && !modalTesting;
   const canPrimaryModal = modalTestState === "ok" ? canSaveModal : canTestModal;
 
   return (
@@ -270,6 +297,7 @@ export default function Step4ArrApps() {
           <select
             className="settings-field"
             value={addType}
+            disabled={noAvailableAddTypes}
             onChange={(e) => {
               const next = e.target.value;
               setAddType("");
@@ -277,13 +305,13 @@ export default function Step4ArrApps() {
             }}
           >
             <option value="" disabled>
-              Sélectionner...
+              {noAvailableAddTypes ? "Toutes les applications sont déjà ajoutées" : "Sélectionner..."}
             </option>
-            <option value="sonarr">Sonarr</option>
-            <option value="radarr">Radarr</option>
-            <option value="overseerr">Overseerr</option>
-            <option value="jellyseerr">Jellyseerr</option>
-            <option value="seer">Seer</option>
+            {availableAddTypes.map((type) => (
+              <option key={type} value={type}>
+                {getAppLabel(type)}
+              </option>
+            ))}
           </select>
         </div>
       </div>
@@ -355,11 +383,12 @@ export default function Step4ArrApps() {
             <div className="field">
               <label>Type</label>
               <select value={modalType} onChange={(e) => setModalType(e.target.value)}>
-                <option value="sonarr">Sonarr</option>
-                <option value="radarr">Radarr</option>
-                <option value="overseerr">Overseerr</option>
-                <option value="jellyseerr">Jellyseerr</option>
-                <option value="seer">Seer</option>
+                {noAvailableAddTypes && <option value="">Aucun type disponible</option>}
+                {availableAddTypes.map((type) => (
+                  <option key={type} value={type}>
+                    {getAppLabel(type)}
+                  </option>
+                ))}
               </select>
             </div>
           )}

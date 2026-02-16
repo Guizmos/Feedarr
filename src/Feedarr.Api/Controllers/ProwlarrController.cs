@@ -70,11 +70,6 @@ public sealed class ProwlarrController : ControllerBase
             _log.LogWarning(ex, "Prowlarr upstream error for sourceId={SourceId}", dto?.SourceId);
             return StatusCode(502, new { error = "upstream provider unavailable" });
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("redirect", StringComparison.OrdinalIgnoreCase))
-        {
-            _log.LogWarning(ex, "Prowlarr redirect loop for sourceId={SourceId}", dto?.SourceId);
-            return StatusCode(502, new { error = "Trop de redirections — vérifiez l'URL et la clé API" });
-        }
         catch (TaskCanceledException)
         {
             return StatusCode(504, new { error = "upstream provider timeout" });

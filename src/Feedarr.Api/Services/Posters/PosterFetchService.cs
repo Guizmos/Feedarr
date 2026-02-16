@@ -94,20 +94,25 @@ public sealed class PosterFetchService
         var cleared = 0;
         try
         {
-            if (!Directory.Exists(PostersDirAbs)) return 0;
-            var files = Directory.EnumerateFiles(PostersDirAbs, "*.*", SearchOption.TopDirectoryOnly).ToList();
-            foreach (var file in files)
+            if (Directory.Exists(PostersDirAbs))
             {
-                try
+                var files = Directory.EnumerateFiles(PostersDirAbs, "*.*", SearchOption.TopDirectoryOnly).ToList();
+                foreach (var file in files)
                 {
-                    System.IO.File.Delete(file);
-                    cleared++;
-                }
-                catch
-                {
-                    // Ignore individual file deletion errors
+                    try
+                    {
+                        System.IO.File.Delete(file);
+                        cleared++;
+                    }
+                    catch
+                    {
+                        // Ignore individual file deletion errors
+                    }
                 }
             }
+
+            // Cache clear is intentionally global: remove all local references in DB.
+            _releases.ClearAllPosterReferences();
         }
         catch
         {
@@ -625,13 +630,28 @@ public sealed class PosterFetchService
 
         if (tmdbMatch.Candidate is not null && !string.IsNullOrWhiteSpace(tmdbMatch.Candidate.PosterPath))
         {
-            var bytesTmdb = await _tmdb.DownloadPosterW500Async(tmdbMatch.Candidate.PosterPath!, ct);
+            var selectedPosterPath = tmdbMatch.Candidate.PosterPath!;
+            var mediaTypeForImages = string.Equals(tmdbMatch.Candidate.MediaType, "series", StringComparison.OrdinalIgnoreCase)
+                ? "series"
+                : "movie";
+            try
+            {
+                var preferredPosterPath = await _tmdb.GetPreferredPosterPathAsync(tmdbMatch.Candidate.TmdbId, mediaTypeForImages, ct);
+                if (!string.IsNullOrWhiteSpace(preferredPosterPath))
+                    selectedPosterPath = preferredPosterPath;
+            }
+            catch
+            {
+                // Keep the matched search poster path as fallback if TMDB images lookup fails.
+            }
+
+            var bytesTmdb = await _tmdb.DownloadPosterW500Async(selectedPosterPath, ct);
             if (bytesTmdb is not null && bytesTmdb.Length > 0)
             {
                 var file = $"tmdb-{tmdbMatch.Candidate.TmdbId}-w500.jpg";
                 var full = Path.Combine(PostersDirAbs, file);
                 await System.IO.File.WriteAllBytesAsync(full, bytesTmdb, ct);
-                _releases.SavePoster(id, tmdbMatch.Candidate.TmdbId, tmdbMatch.Candidate.PosterPath!, file);
+                _releases.SavePoster(id, tmdbMatch.Candidate.TmdbId, selectedPosterPath, file);
                 await UpdateExternalDetailsFromTmdbAsync(id, tmdbMatch.Candidate.TmdbId, mediaType, ct);
                 var hash = ComputeSha256Hex(bytesTmdb);
                 PosterAudit.UpdateAttemptSuccess(_releases, id, "tmdb", tmdbMatch.Candidate.TmdbId.ToString(CultureInfo.InvariantCulture), null, "w500", hash);
@@ -666,7 +686,7 @@ public sealed class PosterFetchService
                         year,
                         mediaType,
                         tmdbId = tmdbMatch.Candidate.TmdbId,
-                        posterPath = tmdbMatch.Candidate.PosterPath,
+                        posterPath = selectedPosterPath,
                         score = tmdbMatch.Score,
                         posterFile = file
                     });
@@ -676,7 +696,7 @@ public sealed class PosterFetchService
                 {
                     ok = true,
                     tmdbId = tmdbMatch.Candidate.TmdbId,
-                    posterPath = tmdbMatch.Candidate.PosterPath,
+                    posterPath = selectedPosterPath,
                     posterFile = file,
                     posterUrl = $"/api/posters/release/{id}"
                 }, sourceId);

@@ -67,7 +67,11 @@ public sealed class PostersController : ControllerBase
         if (!full.StartsWith(postersDir, StringComparison.OrdinalIgnoreCase))
             return BadRequest(new { error = "invalid poster path" });
 
-        if (!System.IO.File.Exists(full)) return NotFound();
+        if (!System.IO.File.Exists(full))
+        {
+            _releases.ClearPosterFileReferences(file);
+            return NotFound();
+        }
 
         var ext = Path.GetExtension(full).ToLowerInvariant();
         var ct = ext switch
@@ -98,7 +102,11 @@ public sealed class PostersController : ControllerBase
         if (!full.StartsWith(postersDir, StringComparison.OrdinalIgnoreCase))
             return BadRequest(new { error = "invalid poster path" });
 
-        if (!System.IO.File.Exists(full)) return NotFound();
+        if (!System.IO.File.Exists(full))
+        {
+            _releases.ClearPosterFileReferences(file);
+            return NotFound();
+        }
 
         var ext = Path.GetExtension(full).ToLowerInvariant();
         var ct = ext switch

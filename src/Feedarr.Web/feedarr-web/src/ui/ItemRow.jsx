@@ -8,6 +8,17 @@ function AutoScrollLine({ className = "", title, children }) {
   const rafRef = React.useRef(0);
   const hoveredRef = React.useRef(false);
 
+  const getMaxOffset = React.useCallback(() => {
+    const outer = outerRef.current;
+    const inner = innerRef.current;
+    if (!outer || !inner) return 0;
+
+    // Use both layout and rendered widths to avoid sub-pixel false negatives.
+    const outerWidth = outer.getBoundingClientRect().width || outer.clientWidth || 0;
+    const innerWidth = Math.max(inner.scrollWidth || 0, inner.getBoundingClientRect().width || 0);
+    return Math.max(Math.ceil(innerWidth - outerWidth), 0);
+  }, []);
+
   const stop = React.useCallback(() => {
     hoveredRef.current = false;
     if (rafRef.current) {
@@ -29,7 +40,7 @@ function AutoScrollLine({ className = "", title, children }) {
       && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (reduceMotion) return;
 
-    const max = Math.max(inner.scrollWidth - outer.clientWidth, 0);
+    const max = getMaxOffset();
     if (max <= 0) return;
 
     hoveredRef.current = true;
@@ -45,7 +56,7 @@ function AutoScrollLine({ className = "", title, children }) {
       const currentInner = innerRef.current;
       if (!currentOuter || !currentInner) return;
 
-      const currentMax = Math.max(currentInner.scrollWidth - currentOuter.clientWidth, 0);
+      const currentMax = getMaxOffset();
       if (currentMax <= 0) {
         currentInner.style.transform = "translateX(0px)";
         return;
@@ -71,7 +82,7 @@ function AutoScrollLine({ className = "", title, children }) {
 
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(step);
-  }, []);
+  }, [getMaxOffset]);
 
   React.useEffect(() => stop, [stop]);
 
@@ -82,6 +93,8 @@ function AutoScrollLine({ className = "", title, children }) {
       title={title}
       onMouseEnter={start}
       onMouseLeave={stop}
+      onPointerEnter={start}
+      onPointerLeave={stop}
     >
       <span ref={innerRef} className="line-scroll__content">
         {children}

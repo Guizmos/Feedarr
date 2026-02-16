@@ -219,6 +219,51 @@ public sealed class TmdbClient
         }
     }
 
+    /// <summary>
+    /// Picks a poster path with language priority: fr, en, es, it, null.
+    /// Returns null when no poster is available for the title.
+    /// </summary>
+    public async Task<string?> GetPreferredPosterPathAsync(int tmdbId, string mediaType, CancellationToken ct)
+    {
+        var key = TryGetApiKey();
+        if (string.IsNullOrWhiteSpace(key)) return null;
+        if (tmdbId <= 0) return null;
+
+        var kind = mediaType == "series" ? "tv" : "movie";
+        var url = $"{kind}/{tmdbId}/images?api_key={Uri.EscapeDataString(key)}&include_image_language=fr,en,es,it,null";
+        var data = await GetJsonAsync<ImagesResponse>(url, ct);
+        var posters = data?.Posters?
+            .Where(x => !string.IsNullOrWhiteSpace(x.FilePath))
+            .OrderByDescending(x => x.VoteCount)
+            .ThenByDescending(x => x.VoteAverage)
+            .ThenByDescending(x => x.Width * x.Height)
+            .ToList();
+        if (posters is null || posters.Count == 0) return null;
+
+        static bool IsLang(ImageItem item, string lang)
+            => string.Equals((item.Iso639_1 ?? "").Trim(), lang, StringComparison.OrdinalIgnoreCase);
+
+        static bool IsNoLang(ImageItem item)
+            => string.IsNullOrWhiteSpace(item.Iso639_1) || string.Equals(item.Iso639_1, "null", StringComparison.OrdinalIgnoreCase);
+
+        var fr = posters.FirstOrDefault(x => IsLang(x, "fr"));
+        if (!string.IsNullOrWhiteSpace(fr?.FilePath)) return fr.FilePath;
+
+        var en = posters.FirstOrDefault(x => IsLang(x, "en"));
+        if (!string.IsNullOrWhiteSpace(en?.FilePath)) return en.FilePath;
+
+        var es = posters.FirstOrDefault(x => IsLang(x, "es"));
+        if (!string.IsNullOrWhiteSpace(es?.FilePath)) return es.FilePath;
+
+        var it = posters.FirstOrDefault(x => IsLang(x, "it"));
+        if (!string.IsNullOrWhiteSpace(it?.FilePath)) return it.FilePath;
+
+        var noLang = posters.FirstOrDefault(IsNoLang);
+        if (!string.IsNullOrWhiteSpace(noLang?.FilePath)) return noLang.FilePath;
+
+        return posters.FirstOrDefault()?.FilePath;
+    }
+
     // --------- Backdrops (banner) ----------
     public async Task<string?> GetBackdropPathAsync(int tmdbId, string mediaType, CancellationToken ct)
     {
@@ -411,12 +456,30 @@ public sealed class TmdbClient
     {
         [JsonPropertyName("backdrops")]
         public List<ImageItem>? Backdrops { get; set; }
+
+        [JsonPropertyName("posters")]
+        public List<ImageItem>? Posters { get; set; }
     }
 
     private sealed class ImageItem
     {
         [JsonPropertyName("file_path")]
         public string? FilePath { get; set; }
+
+        [JsonPropertyName("iso_639_1")]
+        public string? Iso639_1 { get; set; }
+
+        [JsonPropertyName("vote_average")]
+        public double VoteAverage { get; set; }
+
+        [JsonPropertyName("vote_count")]
+        public int VoteCount { get; set; }
+
+        [JsonPropertyName("width")]
+        public int Width { get; set; }
+
+        [JsonPropertyName("height")]
+        public int Height { get; set; }
     }
 
     private sealed class MovieDetailsResponse

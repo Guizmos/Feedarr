@@ -155,6 +155,7 @@ builder.Services.AddSingleton<RetentionService>();
 
 // Resilience: transient retry handler for external HTTP clients
 builder.Services.AddTransient<TransientHttpRetryHandler>();
+builder.Services.AddTransient<ProtocolDowngradeRedirectHandler>();
 
 // Torznab (already has its own retry logic in TorznabClient)
 builder.Services.AddSingleton<TorznabRssParser>();
@@ -236,9 +237,8 @@ builder.Services.AddHttpClient<EerrRequestClient>(c =>
     ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
 }).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
-// Jackett — AllowAutoRedirect=false : Jackett derrière un reverse proxy HTTPS
-// renvoie des 302 vers HTTP (downgrade) que .NET refuse de suivre.
-// On gère les redirections manuellement dans JackettClient.
+// Jackett — AllowAutoRedirect=false + ProtocolDowngradeRedirectHandler
+// pour suivre les redirections HTTPS → HTTP (reverse proxy)
 builder.Services.AddHttpClient<JackettClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(30);
@@ -247,9 +247,10 @@ builder.Services.AddHttpClient<JackettClient>(c =>
 {
     AllowAutoRedirect = false,
     ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+}).AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
+  .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
-// Prowlarr — même traitement que Jackett
+// Prowlarr — même traitement
 builder.Services.AddHttpClient<ProwlarrClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(30);
@@ -258,7 +259,8 @@ builder.Services.AddHttpClient<ProwlarrClient>(c =>
 {
     AllowAutoRedirect = false,
     ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+}).AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
+  .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Arr Library Cache (in-memory, will be deprecated)
 builder.Services.AddSingleton<ArrLibraryCacheService>();
@@ -309,6 +311,13 @@ builder.Services.AddRateLimiter(options =>
 
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
     {
+        if (httpContext.Request.Path.StartsWithSegments("/api/posters", StringComparison.OrdinalIgnoreCase))
+        {
+            // Poster endpoints can spike heavily during retro-fetch and image retries.
+            // Excluding them from the global limiter prevents app-wide 429 lockups.
+            return RateLimitPartition.GetNoLimiter("posters");
+        }
+
         var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         return RateLimitPartition.GetFixedWindowLimiter(
             ip,

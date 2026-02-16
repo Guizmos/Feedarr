@@ -70,11 +70,6 @@ public sealed class JackettController : ControllerBase
             _log.LogWarning(ex, "Jackett upstream error for sourceId={SourceId}", dto?.SourceId);
             return StatusCode(502, new { error = "upstream provider unavailable" });
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("redirect", StringComparison.OrdinalIgnoreCase))
-        {
-            _log.LogWarning(ex, "Jackett redirect loop for sourceId={SourceId}", dto?.SourceId);
-            return StatusCode(502, new { error = "Trop de redirections — vérifiez l'URL et la clé API" });
-        }
         catch (TaskCanceledException)
         {
             return StatusCode(504, new { error = "upstream provider timeout" });
