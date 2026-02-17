@@ -11,9 +11,15 @@ ReactDOM.createRoot(document.getElementById("root")).render(
 );
 
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  const baseUrl = import.meta.env.BASE_URL || "/";
+  const normalizedBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+  const swUrl = `${normalizedBase}service-worker.js`;
+
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/service-worker.js").catch((error) => {
-      console.error("Failed to register service worker", error);
-    });
+    navigator.serviceWorker
+      .register(swUrl, { scope: normalizedBase })
+      .catch((error) => {
+        console.error("Failed to register service worker", error);
+      });
   });
 }

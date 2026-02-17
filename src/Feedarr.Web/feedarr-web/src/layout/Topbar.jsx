@@ -3,6 +3,7 @@ import { useLocation, useSearchParams } from "react-router-dom";
 import AppIcon from "../ui/AppIcon.jsx";
 
 export default function Topbar({ onToggleNav }) {
+  const logoSrc = `${import.meta.env.BASE_URL}favicon-ios.png`;
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const isLibrary = location.pathname === "/library";
@@ -70,7 +71,7 @@ export default function Topbar({ onToggleNav }) {
         <div className="brand">
           <img
             className="brand-logo"
-            src="/favicon-ios.png"
+            src={logoSrc}
             alt="Feedarr"
           />
         </div>

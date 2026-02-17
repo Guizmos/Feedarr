@@ -214,7 +214,7 @@ export default function ItemRow({
           </AutoScrollLine>
         )}
       </div>
-      <div className="itemrow__footer">
+      <div className={`itemrow__footer itemrow__footer--count-${actions.length}`}>
         {actions.map((action, idx) => {
           const label = action.label || actionLabelByIcon[action.icon] || "Action";
           return (

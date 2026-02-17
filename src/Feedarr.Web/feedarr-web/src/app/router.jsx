@@ -34,6 +34,11 @@ function withSuspense(element, label) {
   );
 }
 
+const rawBasename = import.meta.env.BASE_URL || "/";
+const basename = rawBasename !== "/" && rawBasename.endsWith("/")
+  ? rawBasename.slice(0, -1)
+  : rawBasename;
+
 export const router = createBrowserRouter([
   {
     path: "/setup",
@@ -70,4 +75,4 @@ export const router = createBrowserRouter([
       { path: "settings/backup", element: withSuspense(<Settings />) },
     ],
   },
-]);
+], { basename });

@@ -430,7 +430,7 @@ function StatTab({ id, label, value, sub, active, onClick }) {
     >
       <div className="card-title" style={{ fontSize: 13 }}>{label}</div>
       <div className="card-value" style={{ fontSize: 22 }}>{value ?? '-'}</div>
-      {sub && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{sub}</div>}
+      {sub && <div className="stat-tab__sub" style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{sub}</div>}
     </button>
   );
 }
@@ -523,8 +523,7 @@ function FeedarrPanel({ refreshKey }) {
     <>
       {/* Metric cards */}
       <div className="card" style={{ padding: 20, marginBottom: 20 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
-          <MetricCard title="Version" value={data.version || "-"} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
           <MetricCard title="Uptime" value={fmtUptime(data.uptimeSeconds)} />
           <MetricCard title="Taille Base" value={`${data.dbSizeMB || 0} Mo`} />
           <MetricCard title="Posters Locaux" value={formatNumber(data.localPosters || 0)} />
@@ -592,9 +591,9 @@ function FeedarrPanel({ refreshKey }) {
       </div>
 
       {/* Storage + Arr Apps row */}
-      <div className="card-row card-row-half" style={{ marginBottom: 20 }}>
+      <div className="card-row card-row-half system-feedarr-wide" style={{ marginBottom: 20 }}>
         {/* Storage */}
-        <div className="card card-half" style={{ padding: "12px 16px" }}>
+        <div className="card card-half system-feedarr-wide-card" style={{ padding: "12px 16px" }}>
           <div className="card-title" style={{ marginBottom: 16 }}>Répartition stockage</div>
           {storageData.length > 0 ? (
             <DonutChart
@@ -608,7 +607,7 @@ function FeedarrPanel({ refreshKey }) {
         </div>
 
         {/* Arr Apps */}
-        <div className="card card-half" style={{ padding: "12px 16px" }}>
+        <div className="card card-half system-feedarr-wide-card" style={{ padding: "12px 16px" }}>
           <div className="card-title" style={{ marginBottom: 16 }}>Applications</div>
           {appStats.length > 0 ? (
             <>
@@ -696,12 +695,12 @@ function IndexersPanel({ refreshKey }) {
 
       {/* Charts */}
       {indexerChartData.length > 0 && (
-        <div className="card-row card-row-half" style={{ marginBottom: 20 }}>
-          <div className="card card-half" style={{ padding: "12px 16px" }}>
+        <div className="card-row card-row-half system-mobile-full-row" style={{ marginBottom: 20 }}>
+          <div className="card card-half system-mobile-full-card" style={{ padding: "12px 16px" }}>
             <div className="card-title" style={{ marginBottom: 12 }}>Releases par Indexeur</div>
             <HorizontalBarChart data={indexerChartData} valueKey="releases" labelKey="name" color="#5cb3ff" height={260} barGap={24} barMaxWidth={110} />
           </div>
-          <div className="card card-half" style={{ padding: "12px 12px 12px 8px" }}>
+          <div className="card card-half system-mobile-full-card" style={{ padding: "12px 12px 12px 8px" }}>
             <div className="card-title" style={{ marginBottom: 8 }}>Catégories par Indexeur</div>
             <StackedHorizontalBarChart data={stackedByIndexer} height={260} barGap={8} />
           </div>
@@ -793,16 +792,16 @@ function ProvidersPanel({ refreshKey }) {
       </div>
 
       {/* Charts row */}
-      <div className="card-row card-row-third" style={{ marginBottom: 20 }}>
-        <div className="card card-third" style={{ padding: "12px 16px" }}>
+      <div className="card-row card-row-third system-mobile-full-row" style={{ marginBottom: 20 }}>
+        <div className="card card-third system-mobile-full-card" style={{ padding: "12px 16px" }}>
           <div className="card-title" style={{ marginBottom: 12 }}>Appels API</div>
           <HorizontalBarChart data={providerData} valueKey="calls" labelKey="provider" color="#5cb3ff" height={200} barGap={8} stretchBars />
         </div>
-        <div className="card card-third" style={{ padding: "12px 16px" }}>
+        <div className="card card-third system-mobile-full-card" style={{ padding: "12px 16px" }}>
           <div className="card-title" style={{ marginBottom: 12 }}>Taux d'échec</div>
           <FailureBarChart data={failureData} valueKey="rate" labelKey="provider" height={200} />
         </div>
-        <div className="card card-third" style={{ padding: "12px 16px" }}>
+        <div className="card card-third system-mobile-full-card" style={{ padding: "12px 16px" }}>
           <div className="card-title" style={{ marginBottom: 12 }}>Temps de réponse moyen</div>
           <HorizontalBarChart data={providerData} valueKey="avgMs" labelKey="provider" color="#22c55e" height={200} barGap={8} stretchBars />
         </div>
@@ -881,12 +880,12 @@ function ReleasesPanel({ refreshKey }) {
       </div>
 
       {/* Donut + distributions */}
-      <div className="card-row card-row-half" style={{ marginBottom: 20 }}>
-        <div className="card card-half" style={{ padding: "12px 16px" }}>
+      <div className="card-row card-row-half system-mobile-full-row" style={{ marginBottom: 20 }}>
+        <div className="card card-half system-mobile-full-card" style={{ padding: "12px 16px" }}>
           <div className="card-title" style={{ marginBottom: 16 }}>Top Catégories</div>
           <DonutChart data={donutData} size={190} thickness={36} />
         </div>
-        <div className="card card-half" style={{ padding: "12px 16px" }}>
+        <div className="card card-half system-mobile-full-card" style={{ padding: "12px 16px" }}>
           <div className="card-title" style={{ marginBottom: 12 }}>Distribution par taille</div>
           <HorizontalBarChart data={sizeData.map(d => ({ label: d.range, value: d.count }))} valueKey="value" labelKey="label" color="#8b5cf6" height={200} barGap={8} stretchBars />
         </div>

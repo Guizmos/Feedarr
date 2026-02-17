@@ -1,13 +1,26 @@
-const CACHE_NAME = "feedarr-pwa-v1";
+const CACHE_NAME = "feedarr-pwa-v2";
+const SCOPE_PATH = (() => {
+  const scopePath = new URL(self.registration.scope).pathname;
+  return scopePath !== "/" && scopePath.endsWith("/")
+    ? scopePath.slice(0, -1)
+    : (scopePath === "/" ? "" : scopePath);
+})();
+
+function scopedPath(path) {
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  const full = `${SCOPE_PATH}${normalized}`;
+  return full || "/";
+}
+
 const APP_SHELL = [
-  "/",
-  "/index.html",
-  "/manifest.webmanifest",
-  "/favicon.png",
-  "/favicon-32.png",
-  "/favicon-ios.png",
-  "/icon-192.png",
-  "/icon-512.png",
+  scopedPath("/"),
+  scopedPath("/index.html"),
+  scopedPath("/manifest.webmanifest"),
+  scopedPath("/favicon.png"),
+  scopedPath("/favicon-32.png"),
+  scopedPath("/favicon-ios.png"),
+  scopedPath("/icon-192.png"),
+  scopedPath("/icon-512.png"),
 ];
 
 self.addEventListener("install", (event) => {
@@ -41,16 +54,19 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith("/api/")) return;
+  if (url.pathname.startsWith("/api/") || url.pathname.startsWith(scopedPath("/api/"))) return;
 
   if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request).catch(() => caches.match("/index.html"))
+      fetch(request).catch(() => caches.match(scopedPath("/index.html")) || caches.match("/index.html"))
     );
     return;
   }
 
-  const isStaticAsset = url.pathname.startsWith("/assets/") || APP_SHELL.includes(url.pathname);
+  const isStaticAsset =
+    url.pathname.startsWith("/assets/") ||
+    url.pathname.startsWith(scopedPath("/assets/")) ||
+    APP_SHELL.includes(url.pathname);
   if (!isStaticAsset) return;
 
   event.respondWith(
