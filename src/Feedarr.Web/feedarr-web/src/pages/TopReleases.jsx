@@ -7,6 +7,9 @@ import Modal from "../ui/Modal.jsx";
 import { openDownloadPath } from "../utils/downloadPath.js";
 import { executeAsync } from "../utils/executeAsync.js";
 import { fmtBytes, fmtDateFromTs } from "../utils/formatters.js";
+import useArrApps from "../hooks/useArrApps.js";
+import { normalizeRequestMode } from "../utils/appTypes.js";
+import { getSourceColor } from "../utils/sourceColors.js";
 import TopReleasesSubSelectIcon from "./topReleases/components/TopReleasesSubSelectIcon.jsx";
 import {
   TopReleasesBannerSection,
@@ -128,6 +131,31 @@ export default function TopReleases() {
     });
     return map;
   }, [sources]);
+
+  const sourceColorById = useMemo(() => {
+    const map = new Map();
+    (sources || []).forEach((s) => {
+      const id = Number(s.id ?? s.sourceId);
+      if (Number.isFinite(id)) map.set(id, getSourceColor(id, s.color));
+    });
+    return map;
+  }, [sources]);
+
+  // Arr apps integration
+  const {
+    hasSonarr,
+    hasRadarr,
+    hasOverseerr,
+    hasJellyseerr,
+    hasSeer,
+    integrationMode,
+  } = useArrApps({ pollMs: 120000 });
+  const requestMode = normalizeRequestMode(integrationMode);
+  const [arrStatusMap, setArrStatusMap] = useState({});
+
+  const handleArrStatusChange = useCallback((itemId, arrType, newStatus) => {
+    setArrStatusMap((prev) => ({ ...prev, [itemId]: { ...prev[itemId], ...newStatus } }));
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -617,13 +645,22 @@ export default function TopReleases() {
             : ""
         }
         indexerLabel={sourceNameById.get(Number(selectedItem?.sourceId)) || ""}
+        indexerColor={sourceColorById.get(Number(selectedItem?.sourceId)) || null}
+        hasSonarr={hasSonarr}
+        hasRadarr={hasRadarr}
+        hasOverseerr={hasOverseerr}
+        hasJellyseerr={hasJellyseerr}
+        hasSeer={hasSeer}
+        integrationMode={requestMode}
+        arrStatus={selectedItem ? arrStatusMap[selectedItem.id] : null}
+        onArrStatusChange={handleArrStatusChange}
       />
 
       <Modal open={renameOpen} title="Renommer" onClose={closeRename} width={520}>
         <form onSubmit={saveRename} style={{ padding: 12 }}>
           <div className="field" style={{ marginBottom: 12 }}>
             <label className="muted">Titre original</label>
-            <div style={{ padding: "4px 0", color: "var(--text-primary)" }}>
+            <div className="rename-original" style={{ padding: "4px 0" }}>
               {renameOriginal || "—"}
             </div>
           </div>

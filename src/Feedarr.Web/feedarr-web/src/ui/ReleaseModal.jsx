@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Download, CirclePlus, Loader2 } from "lucide-react";
+import { Download, CirclePlus, Loader2, FileText } from "lucide-react";
 import { apiPost, resolveApiUrl } from "../api/client.js";
 import Modal from "./Modal.jsx";
 import { buildIndexerPillStyle } from "../utils/sourceColors.js";
@@ -40,6 +40,79 @@ function formatSeasonEpisode(item) {
   return "";
 }
 
+function detectLanguageLabel(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const upper = raw.toUpperCase();
+
+  // Keep VFF and VFQ/VQ distinct with strict priority.
+  if (/(^|[^A-Z0-9])(VFF|TRUEFRENCH|FR[-_. ]?FR)(?=[^A-Z0-9]|$)/.test(upper)) return "VFF";
+  if (/(^|[^A-Z0-9])(VFQ)(?=[^A-Z0-9]|$)/.test(upper)) return "VFQ";
+  if (/(^|[^A-Z0-9])(VQ|QCF|FR[-_. ]?CA|QUEBEC)(?=[^A-Z0-9]|$)/.test(upper)) return "VQ";
+  if (/(^|[^A-Z0-9])(VOSTFR)(?=[^A-Z0-9]|$)/.test(upper)) return "VOSTFR";
+  if (/(^|[^A-Z0-9])(VO)(?=[^A-Z0-9]|$)/.test(upper)) return "VO";
+  if (/(^|[^A-Z0-9])(VF|FRENCH|FR)(?=[^A-Z0-9]|$)/.test(upper)) return "VF";
+  return "";
+}
+
+function pushLanguageCandidates(target, value) {
+  if (Array.isArray(value)) {
+    value.forEach((entry) => pushLanguageCandidates(target, entry));
+    return;
+  }
+  if (value == null) return;
+  if (typeof value === "object") {
+    pushLanguageCandidates(target, value?.code);
+    pushLanguageCandidates(target, value?.name);
+    pushLanguageCandidates(target, value?.label);
+    pushLanguageCandidates(target, value?.value);
+    pushLanguageCandidates(target, value?.lang);
+    pushLanguageCandidates(target, value?.language);
+    return;
+  }
+  const text = String(value).trim();
+  if (text) target.push(text);
+}
+
+function getLanguageLabel(item) {
+  if (!item) return "";
+
+  const explicitCandidates = [];
+  pushLanguageCandidates(explicitCandidates, item?.language);
+  pushLanguageCandidates(explicitCandidates, item?.lang);
+  pushLanguageCandidates(explicitCandidates, item?.languages);
+  pushLanguageCandidates(explicitCandidates, item?.audioLanguage);
+  pushLanguageCandidates(explicitCandidates, item?.audioLanguages);
+  pushLanguageCandidates(explicitCandidates, item?.audioLang);
+
+  for (const candidate of explicitCandidates) {
+    const label = detectLanguageLabel(candidate);
+    if (label) return label;
+  }
+
+  const inferredCandidates = [];
+  pushLanguageCandidates(inferredCandidates, item?.title);
+  pushLanguageCandidates(inferredCandidates, item?.titleClean);
+  pushLanguageCandidates(inferredCandidates, item?.releaseGroup);
+
+  for (const candidate of inferredCandidates) {
+    const label = detectLanguageLabel(candidate);
+    if (label) return label;
+  }
+
+  return "";
+}
+
+function getLanguagePillClass(languageLabel) {
+  const normalized = String(languageLabel || "").toUpperCase();
+  if (normalized === "VFF") return "banner-pill banner-pill--lang-vff";
+  if (normalized === "VFQ" || normalized === "VQ") return "banner-pill banner-pill--lang-vfq";
+  if (normalized === "VOSTFR") return "banner-pill banner-pill--lang-vostfr";
+  if (normalized === "VO") return "banner-pill banner-pill--lang-vo";
+  if (normalized) return "banner-pill banner-pill--lang";
+  return "banner-pill";
+}
+
 function getMediaTypeLabel(item) {
   const raw = String(item?.mediaType || item?.unifiedCategoryKey || "").toLowerCase();
   if (!raw) return item?.unifiedCategoryLabel || "";
@@ -59,6 +132,22 @@ function formatRuntime(minutes) {
   const m = Math.round(n % 60);
   if (h <= 0) return `${m}m`;
   return `${h}h${String(m).padStart(2, "0")}`;
+}
+
+function getExternalUrl(item) {
+  if (!item) return null;
+  if (item.igdbUrl) return item.igdbUrl;
+  const provider = String(item.detailsProvider || "").toLowerCase();
+  if (provider === "igdb" && item.detailsProviderId) return null;
+  const tmdb = Number(item.tmdbId);
+  if (Number.isFinite(tmdb) && tmdb > 0) {
+    const raw = String(item.mediaType || item.unifiedCategoryKey || "").toLowerCase();
+    const isTv = ["tv", "series", "serie", "tv_series", "series_tv", "seriestv", "anime", "show", "shows", "emission", "emissions"].includes(raw);
+    return isTv
+      ? `https://www.themoviedb.org/tv/${tmdb}`
+      : `https://www.themoviedb.org/movie/${tmdb}`;
+  }
+  return null;
 }
 
 function isGameItem(item) {
@@ -123,17 +212,19 @@ export default function ReleaseModal({
 
   const seasonEpisode = useMemo(() => formatSeasonEpisode(item), [item]);
   const mediaTypeLabel = useMemo(() => getMediaTypeLabel(item), [item]);
+  const languageLabel = useMemo(() => getLanguageLabel(item), [item]);
   const resolution = item?.resolution || "";
   const pills = useMemo(
     () =>
       [
         mediaTypeLabel,
         seasonEpisode,
+        languageLabel,
         resolution,
         item?.codec,
         item?.releaseGroup,
       ].filter(Boolean),
-    [item, mediaTypeLabel, seasonEpisode, resolution]
+    [item, mediaTypeLabel, seasonEpisode, languageLabel, resolution]
   );
   const indexer = String(indexerLabel || "").trim();
   const indexerClass = getIndexerClass(indexer);
@@ -161,6 +252,7 @@ export default function ReleaseModal({
       ].filter((row) => row.value),
     [item]
   );
+  const externalUrl = useMemo(() => getExternalUrl(item), [item]);
   const resolutionClass = (() => {
     const lower = String(resolution).toLowerCase();
     if (lower.includes("2160") || lower.includes("4k")) return "banner-pill banner-pill--4k";
@@ -324,7 +416,7 @@ export default function ReleaseModal({
   }
 
   return (
-    <Modal open={open} onClose={onClose} title={title} width={840}>
+    <Modal open={open} onClose={onClose} title={title} width={920} modalClassName="modal--details">
       {!item ? null : (
         <div className="releaseModal">
           <div className="releaseModal__grid">
@@ -334,231 +426,244 @@ export default function ReleaseModal({
               ) : (
                 <div className="releaseModal__posterFallback">??</div>
               )}
+              {externalUrl && (
+                <a
+                  href={externalUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="releaseModal__externalLink"
+                  title="Voir sur TMDB / IGDB"
+                >
+                  i
+                </a>
+              )}
             </div>
 
             <div className="releaseModal__meta">
-              {page === "main" ? (
-                <>
-                  {(pills.length > 0 || indexer) && (
-                    <div className="releaseModal__pills">
-                      <div className="releaseModal__pillsLeft">
-                        {pills.map((p) => (
-                          <span
-                            key={p}
-                            className={
-                              p === seasonEpisode
-                                ? "banner-pill banner-pill--episode"
-                                : p === resolution
-                                ? resolutionClass
-                                : "banner-pill"
-                            }
-                          >
-                            {p}
-                          </span>
-                        ))}
-                      </div>
-                      {indexer ? (
-                        <div className="releaseModal__pillsRight">
-                          <span
-                            className={`banner-pill banner-pill--indexer${indexerClass ? ` ${indexerClass}` : ""}`}
-                            style={indexerStyle || undefined}
-                          >
-                            {indexer}
-                          </span>
+              <div className="releaseModal__content">
+                {page === "main" ? (
+                  <>
+                    {(pills.length > 0 || indexer) && (
+                      <div className="releaseModal__pills">
+                        <div className="releaseModal__pillsLeft">
+                          {pills.map((p, idx) => (
+                            <span
+                              key={`${p}-${idx}`}
+                              className={
+                                p === seasonEpisode
+                                  ? "banner-pill banner-pill--episode"
+                                  : p === resolution
+                                    ? resolutionClass
+                                    : p === languageLabel
+                                      ? getLanguagePillClass(languageLabel)
+                                      : "banner-pill"
+                              }
+                            >
+                              {p}
+                            </span>
+                          ))}
                         </div>
-                      ) : null}
-                    </div>
-                  )}
-
-                  <div className="releaseModal__overview">
-                    {infoRows.length > 0 && (
-                      <div className="releaseModal__info">
-                        {infoRows.map((row) => (
-                          <div key={row.label} className="releaseModal__infoRow">
-                            <span className="releaseModal__infoLabel">{row.label}</span>
-                            <span className="releaseModal__infoValue">{row.value}</span>
+                        {indexer ? (
+                          <div className="releaseModal__pillsRight">
+                            <span
+                              className={`banner-pill banner-pill--indexer${indexerClass ? ` ${indexerClass}` : ""}`}
+                              style={indexerStyle || undefined}
+                            >
+                              {indexer}
+                            </span>
                           </div>
-                        ))}
+                        ) : null}
                       </div>
                     )}
-                    <div className="releaseModal__overviewLabel">Synopsis</div>
-                    <div className="releaseModal__overviewText">
-                      {overview || "Aucune description disponible."}
-                    </div>
-                  </div>
 
-                  <div className="releaseModal__footer">
-                    <div className="releaseModal__footerItem">
-                      <span className="releaseModal__footerLabel">Seeders</span>
-                      <span className="releaseModal__footerValue">{item.seeders ?? "-"}</span>
-                      <span className="releaseModal__footerSep">•</span>
-                      <span className="releaseModal__footerLabel">Leechers</span>
-                      <span className="releaseModal__footerValue">{item.leechers ?? "-"}</span>
+                    <div className="releaseModal__overview">
+                      {infoRows.length > 0 && (
+                        <div className="releaseModal__info">
+                          {infoRows.map((row) => (
+                            <div key={row.label} className="releaseModal__infoRow">
+                              <span className="releaseModal__infoLabel">{row.label}</span>
+                              <span className="releaseModal__infoValue">{row.value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="releaseModal__overviewLabel">Synopsis</div>
+                      <div className="releaseModal__overviewText">
+                        {overview || "Aucune description disponible."}
+                      </div>
                     </div>
-                    <div className="releaseModal__footerItem releaseModal__footerItem--center">
-                      <span className="releaseModal__footerLabel">Taille</span>
-                      <span className="releaseModal__footerValue">{item.size || "-"}</span>
+                  </>
+                ) : (
+                  <div className="releaseModal__rows">
+                    <div className="releaseModal__row">
+                      <span className="releaseModal__label">Titre clean</span>
+                      <span className="releaseModal__value">{item.titleClean || "-"}</span>
                     </div>
-                    <div className="releaseModal__footerItem releaseModal__footerItem--right">
-                      <span className="releaseModal__footerLabel">Publie</span>
-                      <span className="releaseModal__footerValue">{item.date || "-"}</span>
+                    <div className="releaseModal__row">
+                      <span className="releaseModal__label">Annee</span>
+                      <span className="releaseModal__value">{item.year || "-"}</span>
+                    </div>
+                    <div className="releaseModal__row">
+                      <span className="releaseModal__label">Saison / Episode</span>
+                      <span className="releaseModal__value">{seasonEpisode || "-"}</span>
+                    </div>
+                    <div className="releaseModal__row">
+                      <span className="releaseModal__label">Groupe</span>
+                      <span className="releaseModal__value">{item.releaseGroup || "-"}</span>
+                    </div>
+                    <div className="releaseModal__row">
+                      <span className="releaseModal__label">Categorie</span>
+                      <span className="releaseModal__value">{categoryLabel || item.categoryId || "-"}</span>
+                    </div>
+                    <div className="releaseModal__row">
+                      <span className="releaseModal__label">Media type</span>
+                      <span className="releaseModal__value">{item.mediaType || "-"}</span>
+                    </div>
+                    <div className="releaseModal__row">
+                      <span className="releaseModal__label">Qualite</span>
+                      <span className="releaseModal__value">{item.resolution || "-"}</span>
+                    </div>
+                    <div className="releaseModal__row">
+                      <span className="releaseModal__label">Langue</span>
+                      <span className="releaseModal__value">{languageLabel || "-"}</span>
+                    </div>
+                    <div className="releaseModal__row">
+                      <span className="releaseModal__label">Source</span>
+                      <span className="releaseModal__value">{item.source || "-"}</span>
+                    </div>
+                    <div className="releaseModal__row">
+                      <span className="releaseModal__label">Codec</span>
+                      <span className="releaseModal__value">{item.codec || "-"}</span>
+                    </div>
+                    <div className="releaseModal__row">
+                      <span className="releaseModal__label">ID</span>
+                      <span className="releaseModal__value">{item.id ?? "-"}</span>
                     </div>
                   </div>
-                </>
-              ) : (
-                <div className="releaseModal__rows">
-                  <div className="releaseModal__row">
-                    <span className="releaseModal__label">Titre clean</span>
-                    <span className="releaseModal__value">{item.titleClean || "-"}</span>
+                )}
+              </div>
+
+              <div className="releaseModal__bottom">
+                <div className="releaseModal__footer">
+                  <div className="releaseModal__footerItem">
+                    <span className="releaseModal__footerLabel">Seeders</span>
+                    <span className="releaseModal__footerValue">{item.seeders ?? "-"}</span>
+                    <span className="releaseModal__footerSep">•</span>
+                    <span className="releaseModal__footerLabel">Leechers</span>
+                    <span className="releaseModal__footerValue">{item.leechers ?? "-"}</span>
                   </div>
-                  <div className="releaseModal__row">
-                    <span className="releaseModal__label">Annee</span>
-                    <span className="releaseModal__value">{item.year || "-"}</span>
+                  <div className="releaseModal__footerItem releaseModal__footerItem--center">
+                    <span className="releaseModal__footerLabel">Taille</span>
+                    <span className="releaseModal__footerValue">{item.size || "-"}</span>
                   </div>
-                  <div className="releaseModal__row">
-                    <span className="releaseModal__label">Saison / Episode</span>
-                    <span className="releaseModal__value">{seasonEpisode || "-"}</span>
-                  </div>
-                  <div className="releaseModal__row">
-                    <span className="releaseModal__label">Groupe</span>
-                    <span className="releaseModal__value">{item.releaseGroup || "-"}</span>
-                  </div>
-                  <div className="releaseModal__row">
-                    <span className="releaseModal__label">Categorie</span>
-                    <span className="releaseModal__value">{categoryLabel || item.categoryId || "-"}</span>
-                  </div>
-                  <div className="releaseModal__row">
-                    <span className="releaseModal__label">Media type</span>
-                    <span className="releaseModal__value">{item.mediaType || "-"}</span>
-                  </div>
-                  <div className="releaseModal__row">
-                    <span className="releaseModal__label">Qualite</span>
-                    <span className="releaseModal__value">{item.resolution || "-"}</span>
-                  </div>
-                  <div className="releaseModal__row">
-                    <span className="releaseModal__label">Source</span>
-                    <span className="releaseModal__value">{item.source || "-"}</span>
-                  </div>
-                  <div className="releaseModal__row">
-                    <span className="releaseModal__label">Codec</span>
-                    <span className="releaseModal__value">{item.codec || "-"}</span>
-                  </div>
-                  <div className="releaseModal__row">
-                    <span className="releaseModal__label">Seeders</span>
-                    <span className="releaseModal__value">{item.seeders ?? "-"}</span>
-                  </div>
-                  <div className="releaseModal__row">
-                    <span className="releaseModal__label">Leechers</span>
-                    <span className="releaseModal__value">{item.leechers ?? "-"}</span>
-                  </div>
-                  <div className="releaseModal__row">
-                    <span className="releaseModal__label">Taille</span>
-                    <span className="releaseModal__value">{item.size || "-"}</span>
-                  </div>
-                  <div className="releaseModal__row">
-                    <span className="releaseModal__label">Publie</span>
-                    <span className="releaseModal__value">{item.date || "-"}</span>
-                  </div>
-                  <div className="releaseModal__row">
-                    <span className="releaseModal__label">ID</span>
-                    <span className="releaseModal__value">{item.id ?? "-"}</span>
+                  <div className="releaseModal__footerItem releaseModal__footerItem--right">
+                    <span className="releaseModal__footerLabel">Publie</span>
+                    <span className="releaseModal__footerValue">{item.date || "-"}</span>
                   </div>
                 </div>
-              )}
 
-              {/* Arr status/error message */}
-              {arrError && (
-                <div className="releaseModal__arrError">{arrError}</div>
-              )}
+                {/* Arr status/error message */}
+                {arrError && (
+                  <div className="releaseModal__arrError">{arrError}</div>
+                )}
 
-              <div className="releaseModal__actions">
-                <div className="releaseModal__actionsLeft">
-                  <button
-                    className="btn-icon btn-icon--accent"
-                    type="button"
-                    onClick={() => onDownload?.(item)}
-                    aria-label="Télécharger cette release"
-                    title="Download"
-                  >
-                    <Download size={18} strokeWidth={2.5} />
-                  </button>
-
-                  {/* Integration action button */}
-                  {(showSonarrBtn || showRadarrBtn || showRequestBtn) && (
-                    isAlreadyInTarget ? (
-                      <div className="releaseModal__arrStatus">
-                        {arrOpenUrl ? (
-                          <a
-                            href={arrOpenUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className={`releaseModal__arrBadge releaseModal__arrBadge--${actionType} releaseModal__arrBadge--link`}
-                          >
-                            <AppIcon name="check_circle" size={16} />
-                            {actionLabel}
-                          </a>
-                        ) : (
-                          <span className={`releaseModal__arrBadge releaseModal__arrBadge--${actionType}`}>
-                            <AppIcon name="check_circle" size={16} />
-                            {actionLabel}
-                          </span>
-                        )}
-                      </div>
-                    ) : mode === "arr" && arrResult?.status === "fallback" ? (
-                      <div className="releaseModal__arrStatus">
-                        {arrResult.openUrl ? (
-                          <a
-                            href={arrResult.openUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="releaseModal__arrBadge releaseModal__arrBadge--warn releaseModal__arrBadge--link"
-                          >
-                            <AppIcon name="warning" size={16} />
-                            Non trouvé - Ouvrir {arrResult.appName || actionLabel}
-                          </a>
-                        ) : (
-                          <span className="releaseModal__arrBadge releaseModal__arrBadge--warn">
-                            <AppIcon name="warning" size={16} />
-                            Non trouvé
-                          </span>
-                        )}
-                      </div>
-                    ) : (
-                      <button
-                        className={`btn-soft btn-soft--${actionType}`}
-                        type="button"
-                        onClick={handleAddToArr}
-                        aria-label={mode === "arr" ? `Ajouter à ${actionLabel}` : `Ajouter à ${actionLabel}`}
-                        disabled={arrAdding || (mode !== "arr" && !hasRequestApp)}
-                      >
-                        {arrAdding ? (
-                          <>
-                            <Loader2 size={15} strokeWidth={2.5} className="releaseModal__arrSpin" />
-                            {mode === "arr" ? "Ajout..." : "Demande..."}
-                          </>
-                        ) : (
-                          <>
-                            <CirclePlus size={15} strokeWidth={2.5} />
-                            {mode === "arr" ? `Ajouter à ${actionLabel}` : `Ajouter à ${actionLabel}`}
-                          </>
-                        )}
-                      </button>
-                    )
-                  )}
-
-                  {page === "main" ? (
-                    <button className="btn-soft" type="button" onClick={() => setPage("details")}>
-                      Details
+                <div className="releaseModal__actions">
+                  <div className="releaseModal__actionsLeft">
+                    <button
+                      className="btn-icon btn-icon--accent"
+                      type="button"
+                      onClick={() => onDownload?.(item)}
+                      aria-label="Télécharger cette release"
+                      title="Download"
+                    >
+                      <Download size={18} strokeWidth={2.5} />
                     </button>
-                  ) : (
+                    {page === "main" ? (
+                      <button
+                        className="btn-icon btn-icon--details"
+                        type="button"
+                        onClick={() => setPage("details")}
+                        aria-label="Afficher les détails"
+                        title="Détails"
+                      >
+                        <FileText size={18} strokeWidth={2.5} />
+                      </button>
+                    ) : null}
+
+                    {/* Integration action button */}
+                    {(showSonarrBtn || showRadarrBtn || showRequestBtn) && (
+                      isAlreadyInTarget ? (
+                        <div className="releaseModal__arrStatus">
+                          {arrOpenUrl ? (
+                            <a
+                              href={arrOpenUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className={`releaseModal__arrBadge releaseModal__arrBadge--${actionType} releaseModal__arrBadge--link`}
+                            >
+                              <AppIcon name="check_circle" size={16} />
+                              {actionLabel}
+                            </a>
+                          ) : (
+                            <span className={`releaseModal__arrBadge releaseModal__arrBadge--${actionType}`}>
+                              <AppIcon name="check_circle" size={16} />
+                              {actionLabel}
+                            </span>
+                          )}
+                        </div>
+                      ) : mode === "arr" && arrResult?.status === "fallback" ? (
+                        <div className="releaseModal__arrStatus">
+                          {arrResult.openUrl ? (
+                            <a
+                              href={arrResult.openUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="releaseModal__arrBadge releaseModal__arrBadge--warn releaseModal__arrBadge--link"
+                            >
+                              <AppIcon name="warning" size={16} />
+                              Non trouvé - Ouvrir {arrResult.appName || actionLabel}
+                            </a>
+                          ) : (
+                            <span className="releaseModal__arrBadge releaseModal__arrBadge--warn">
+                              <AppIcon name="warning" size={16} />
+                              Non trouvé
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <button
+                          className={`btn-soft btn-soft--${actionType}`}
+                          type="button"
+                          onClick={handleAddToArr}
+                          aria-label={mode === "arr" ? `Ajouter à ${actionLabel}` : `Ajouter à ${actionLabel}`}
+                          disabled={arrAdding || (mode !== "arr" && !hasRequestApp)}
+                        >
+                          {arrAdding ? (
+                            <>
+                              <Loader2 size={15} strokeWidth={2.5} className="releaseModal__arrSpin" />
+                              {mode === "arr" ? "Ajout..." : "Demande..."}
+                            </>
+                          ) : (
+                            <>
+                              <CirclePlus size={15} strokeWidth={2.5} />
+                              {mode === "arr" ? `Ajouter à ${actionLabel}` : `Ajouter à ${actionLabel}`}
+                            </>
+                          )}
+                        </button>
+                      )
+                    )}
+
+                  </div>
+                  {page !== "main" ? (
                     <button className="btn-soft" type="button" onClick={() => setPage("main")}>
                       Retour
                     </button>
+                  ) : (
+                    <button className="btn-soft" type="button" onClick={onClose}>
+                      Fermer
+                    </button>
                   )}
                 </div>
-                <button className="btn-soft" type="button" onClick={onClose}>
-                  Fermer
-                </button>
               </div>
             </div>
           </div>

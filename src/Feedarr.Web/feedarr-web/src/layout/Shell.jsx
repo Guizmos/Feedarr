@@ -115,7 +115,7 @@ export default function Shell() {
   }, [isNavOpen, closeNav]);
 
   useEffect(() => {
-    const edge = 22;
+    const edgeZone = 30;
     const threshold = 50;
     const maxVertical = 40;
 
@@ -142,14 +142,13 @@ export default function Shell() {
         el = el.parentElement;
       }
       const touch = e.touches[0];
-      const fromEdge = !isNavOpen && touch.clientX > edge;
       swipeRef.current = {
         active: true,
         startX: touch.clientX,
         startY: touch.clientY,
         isForm: false,
         locked: false,
-        fromEdge,
+        nearEdge: touch.clientX <= edgeZone,
       };
     };
 
@@ -159,6 +158,11 @@ export default function Shell() {
       const touch = e.touches[0];
       const dx = touch.clientX - s.startX;
       const dy = touch.clientY - s.startY;
+
+      // Block iOS back-swipe gesture when swiping right from left edge
+      if (s.nearEdge && dx > 0 && Math.abs(dx) > Math.abs(dy)) {
+        e.preventDefault();
+      }
 
       // Early cancel: if user scrolls vertically first, abort
       if (!s.locked && Math.abs(dy) > 8 && Math.abs(dy) > Math.abs(dx)) {
@@ -180,13 +184,6 @@ export default function Shell() {
           closeNav();
           s.active = false;
         }
-        return;
-      }
-
-      // Open drawer: swipe right only from left edge
-      if (!s.fromEdge && s.startX <= edge && dx > threshold) {
-        openNav();
-        s.active = false;
       }
     };
 
@@ -196,7 +193,7 @@ export default function Shell() {
     };
 
     window.addEventListener("touchstart", onTouchStart, { passive: true });
-    window.addEventListener("touchmove", onTouchMove, { passive: true });
+    window.addEventListener("touchmove", onTouchMove, { passive: false });
     window.addEventListener("touchend", onTouchEnd);
     window.addEventListener("touchcancel", onTouchEnd);
     return () => {

@@ -17,7 +17,8 @@ public sealed class IgdbClient
         string? ReleaseDate,
         double? Rating,
         int? Votes,
-        string? Genres);
+        string? Genres,
+        string? Url);
 
     private static void ThrowIfRateLimited(HttpResponseMessage resp)
     {
@@ -236,7 +237,7 @@ public sealed class IgdbClient
         var token = await GetTokenAsync(ct);
         if (string.IsNullOrWhiteSpace(token)) return null;
 
-        var body = $"fields id,name,summary,first_release_date,genres.name,total_rating,total_rating_count; where id = {igdbId}; limit 1;";
+        var body = $"fields id,name,summary,first_release_date,genres.name,total_rating,total_rating_count,url; where id = {igdbId}; limit 1;";
 
         using var req = new HttpRequestMessage(HttpMethod.Post, "https://api.igdb.com/v4/games")
         {
@@ -273,7 +274,8 @@ public sealed class IgdbClient
             releaseDate,
             best.TotalRating > 0 ? best.TotalRating : null,
             best.TotalRatingCount > 0 ? best.TotalRatingCount : null,
-            genres
+            genres,
+            best.Url?.Trim()
         );
     }
 
@@ -367,6 +369,9 @@ public sealed class IgdbClient
 
         [JsonPropertyName("total_rating_count")]
         public int TotalRatingCount { get; set; }
+
+        [JsonPropertyName("url")]
+        public string? Url { get; set; }
     }
 
     private sealed class CoverItem

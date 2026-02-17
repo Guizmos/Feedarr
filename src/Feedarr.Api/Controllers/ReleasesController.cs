@@ -344,7 +344,8 @@ public sealed class ReleasesController : ControllerBase
                 rating = details.Rating,
                 ratingVotes = details.Votes,
                 detailsProvider = "igdb",
-                detailsProviderId = igdbId.Value.ToString(CultureInfo.InvariantCulture)
+                detailsProviderId = igdbId.Value.ToString(CultureInfo.InvariantCulture),
+                igdbUrl = details.Url
             }
         });
     }

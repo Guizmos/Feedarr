@@ -19,7 +19,7 @@ export default function RenameModal({
       <form onSubmit={onSave} style={{ padding: 12 }}>
         <div className="field" style={{ marginBottom: 12 }}>
           <label className="muted">Titre original</label>
-          <div style={{ padding: "4px 0", color: "var(--text-primary)" }}>
+          <div className="rename-original" style={{ padding: "4px 0" }}>
             {renameOriginal || "—"}
           </div>
         </div>
