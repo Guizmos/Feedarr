@@ -126,6 +126,7 @@ public sealed class ReleasesController : ControllerBase
             """
             UPDATE releases
             SET title = @title,
+                title_manual_override = 1,
                 title_clean = @titleClean,
                 year = @year,
                 season = @season,

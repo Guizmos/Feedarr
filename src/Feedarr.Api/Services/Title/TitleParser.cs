@@ -46,16 +46,18 @@ public sealed class TitleParser
     private static readonly Regex RxGameUpdate = new(@"(?i)[._+-]?(update|hotfix|patch|aio)(?:[._-]?\d+(?:[._-]\d+)*)?", RegexOptions.Compiled);
     private static readonly Regex RxGameYear = new(@"[._+-]?(19\d{2}|20\d{2})(?=[._+-]|$)", RegexOptions.Compiled);
     private static readonly Regex RxGameLang = new(@"(?i)(?:^|[._+\-])(multi\d*|multilingual|eng|english|french|fr|german|ger|de|spanish|spa|es|italian|ita|it|russian|rus|ru|japanese|jap|jp|chinese|chn|cn|korean|kor|kr|polish|pol|pl|portuguese|por|pt|brazilian|dutch|dut|nl|swedish|swe|czech|cze|hungarian|hun|turkish|tur|arabic|ara|thai|vietnamese|viet|norwegian|nor|danish|dan|finnish|fin|vf|vff|vfq|vfi|vostfr|vo|truefrench|subfrench|multi-?\d*)(?=[._+\-]|$)", RegexOptions.Compiled);
-    private static readonly Regex RxGamePlatform = new(@"(?i)[._+-]?(linux|lin|macos|mac|osx|win|windows|x64|x86|win64|win32|amd64|portable|gog|steam|epic|origin|uplay|egs|drm[._-]?free|switch|ps[45]|xbox|nsw)(?=[._+-]|$)", RegexOptions.Compiled);
-    private static readonly Regex RxGameRepack = new(@"(?i)[._+-]?(repack|rip|proper|internal|read[._-]?nfo|nfo[._-]?fix|incl[._-]?dlc|crack[._-]?fix|crack|preactive)(?=[._+-]|$)", RegexOptions.Compiled);
-    private static readonly Regex RxGameScene = new(@"(?i)[._+-]?(fitgirl|elamigos|dodi|rune|skidrow|codex|plaza|flt|tenoke|prophet|cpy|steampunks|darksiders|reloaded|razor1911|hoodlum|fairlight|empress|goldberg|i[_-]?know|notag|noteam|mephisto|k49n|kron4ek|lain|max\d+|razordox|ali213|3dm|tinyiso|kaos|chronos)(?=[._+-]|$)", RegexOptions.Compiled);
+    private static readonly Regex RxGamePlatform = new(@"(?i)(?:^|[._+\-:])(winmac|macwin|linux|lin|macos|mac|osx|win|windows|x64|x86|win64|win32|amd64|portable|gog|steam|epic|origin|uplay|egs|iso|drm[._-]?free|switch|ps[45]|xbox|nsw)(?=[._+\-:]|$)", RegexOptions.Compiled);
+    private static readonly Regex RxGameRepack = new(@"(?i)(?:^|[._+\-:])(repack|rip|proper|internal|read[._-]?nfo|nfo[._-]?fix|incl[._-]?dlc|crack[._-]?fix|crack|preactive)(?=[._+\-:]|$)", RegexOptions.Compiled);
+    private static readonly Regex RxGameScene = new(@"(?i)(?:^|[._+\-:])(fitgirl|elamigos|dodi|rune|skidrow|codex|plaza|flt|tenoke|prophet|cpy|steampunks|darksiders|reloaded|razor1911|hoodlum|fairlight|empress|goldberg|i[_-]?know|notag|noteam|mephisto|k49n|kron4ek|lain|max\d+|razordox|ali213|3dm|tinyiso|kaos|chronos)(?=[._+\-:]|$)", RegexOptions.Compiled);
     private static readonly Regex RxGameAnniversaryEdition = new(@"(?i)[._+-]?\d+[._-]?(year|th|nd|rd|st)?[._-]?anniversary[._-]?edition", RegexOptions.Compiled);
     private static readonly Regex RxGameEditionFull = new(@"(?i)[._+-]?(gold|goty|game[._-]?of[._-]?the[._-]?year|complete|deluxe|ultimate|definitive|collector'?s?|digital|premium|special|enhanced|anniversary|legendary|standard|limited|remastered|remake|hd|4k|super|mega|extreme)[._+-]?edition(?=[._+-]|$)", RegexOptions.Compiled);
     private static readonly Regex RxGameEditionShort = new(@"(?i)[._+-]?(remastered|remake|hd[._-]?remaster)(?=[._+-]|$)", RegexOptions.Compiled);
     private static readonly Regex RxGameCE = new(@"(?i)[._+-]ce(?=[._+-]|$)", RegexOptions.Compiled);
     private static readonly Regex RxGameDLC = new(@"(?i)[._+-]?(\d+[._+-]?)?dlcs?(?=[._+-]|$)", RegexOptions.Compiled);
     private static readonly Regex RxGameAllDLC = new(@"(?i)[._+-]?all[._+-]?dlcs?", RegexOptions.Compiled);
-    private static readonly Regex RxGameBonus = new(@"(?i)[._+-]?bonus[._+-]?(content|pack|wallpapers?|soundtrack|ost|artbook)?(?=[._+-]|$)", RegexOptions.Compiled);
+    private static readonly Regex RxGameBonus = new(@"(?i)[._+-]?(?:\d+[._+-]?)?bonus[._+-]?(content|pack|wallpapers?|soundtracks?|osts?|artbook)?(?=[._+-]|$)", RegexOptions.Compiled);
+    private static readonly Regex RxGameOst = new(@"(?i)(?:^|[._+\-:])(?:\d+[._+\-]?)?(?:bonus[._+\-]?)?(osts?|soundtracks?)(?=[._+\-:]|$)", RegexOptions.Compiled);
+    private static readonly Regex RxGameSupporterPack = new(@"(?i)(?:^|[._+\-:])supporter[._+\-]?pack(?=[._+\-:]|$)", RegexOptions.Compiled);
     private static readonly Regex RxGameSeasonPass = new(@"(?i)[._+-]?season[._+-]?pass", RegexOptions.Compiled);
     private static readonly Regex RxGameExpansion = new(@"(?i)[._+-]?expansion[._+-]?(pack)?(?=[._+-]|$)", RegexOptions.Compiled);
     private static readonly Regex RxGameBundle = new(@"(?i)[._+-]?(ultimate[._-]?bundle|bundle)(?=[._+-]|$)", RegexOptions.Compiled);
@@ -64,7 +66,6 @@ public sealed class TitleParser
     private static readonly Regex RxGameRevisionTag = new(@"(?i)\br\d{4,}\b", RegexOptions.Compiled);
     private static readonly Regex RxGameHash = new(@"(?i)\b[a-f0-9]{7,}\b", RegexOptions.Compiled);
     private static readonly Regex RxGameTrailingNums = new(@"\s+\d+(\s+\d+)+\s*$", RegexOptions.Compiled);
-    private static readonly Regex RxGameEndNums = new(@"\s+\d{1,2}\s*$", RegexOptions.Compiled);
     private static readonly Regex RxGameTrailingSingleLetter = new(@"\s+\p{L}\s*$", RegexOptions.Compiled);
     private static readonly Regex RxCollectionSuffix = new(@"(?i)\s*[-'"" ]?\s*(integrale|integral|complete|collection|pack|trilogie|trilogy|saga|hexalogie|pentalogie|quadrilogie|quadrilogy|tetralogie|tetralogy|duologie|duology|coffret|boxset|box set|anthology|anthologie)\s*$", RegexOptions.Compiled);
     private static readonly Regex RxCollectionMid = new(@"(?i)\s+[-'"" ]?\s*(integrale|integral|complete|collection|pack|trilogie|trilogy|saga|hexalogie|pentalogie|quadrilogie|quadrilogy|tetralogie|tetralogy|duologie|duology|coffret|boxset|box set|anthology|anthologie)\s+(?=\d{4}|1080p|720p|2160p|480p|WEB|BluRay|HDTV|x264|x265|HEVC|AV1)", RegexOptions.Compiled);
@@ -78,7 +79,7 @@ public sealed class TitleParser
         @"(?i)\b(eac3|aac|ac3|ddp|dd|dts|truehd|atmos|flac|opus|mp3|xvid|divx|5\.1|7\.1|2\.0|1\.0|10bit|10bits|8bit|hdr|dv|dolby\s*vision|4klight|lc)\b",
         RegexOptions.Compiled);
     private static readonly Regex RxFilmJunk = new(
-        @"(?i)\b(repack|custom)\b",
+        @"(?i)\b(repack|custom|re[-._\s]?edition|reedition|réédition)\b",
         RegexOptions.Compiled);
     private static readonly (Regex rx, string value)[] Sources =
     {
@@ -275,7 +276,10 @@ public sealed class TitleParser
         s = RxLangTags.Replace(s, " ");
 
         if (category == UnifiedCategory.Film)
+        {
             s = RxFilmJunk.Replace(s, " ");
+            s = RxCollectionSuffix.Replace(s, "");
+        }
 
         if (category == UnifiedCategory.Serie)
             s = RxSeriesJunk.Replace(s, " ");
@@ -412,7 +416,7 @@ public sealed class TitleParser
     /// </summary>
     private static string CleanGameTitle(string raw)
     {
-        var s = Regex.Replace(raw, @"\s+", ".");
+        var s = Regex.Replace(raw, @"\s+", ".").Replace(':', '.');
 
         // 1. Remove brackets and parentheses content first
         s = RxGameBrackets.Replace(s, " ");
@@ -450,11 +454,13 @@ public sealed class TitleParser
         s = RxGameEditionShort.Replace(s, "");
         s = RxGameCE.Replace(s, "");
         s = RxGameBundle.Replace(s, "");
+        s = RxGameSupporterPack.Replace(s, "");
 
         // 10. Remove DLC patterns
         s = RxGameAllDLC.Replace(s, "");
         s = RxGameDLC.Replace(s, "");
         s = RxGameBonus.Replace(s, "");
+        s = RxGameOst.Replace(s, "");
         s = RxGameSeasonPass.Replace(s, "");
         s = RxGameExpansion.Replace(s, "");
 
@@ -467,21 +473,12 @@ public sealed class TitleParser
         s = RxGameHash.Replace(s, "");
 
         // 13. NOW convert delimiters to spaces
-        s = s.Replace('.', ' ').Replace('_', ' ').Replace('+', ' ').Replace('-', ' ');
+        s = s.Replace('.', ' ').Replace('_', ' ').Replace('+', ' ').Replace('-', ' ').Replace(':', ' ');
 
         // 14. Remove trailing number sequences (version remnants like "1 0 41")
         s = RxGameTrailingNums.Replace(s, "");
 
-        // 15. Remove standalone numbers at end that look like version parts
-        // Apply multiple times to catch nested patterns
-        for (int i = 0; i < 3; i++)
-        {
-            var prev = s;
-            s = RxGameEndNums.Replace(s, "");
-            if (s == prev) break;
-        }
-
-        // 15b. Remove trailing single-letter tokens (ex: "f")
+        // 15. Remove trailing single-letter tokens (ex: "f")
         s = RxGameTrailingSingleLetter.Replace(s, "");
 
         // 16. Final cleanup

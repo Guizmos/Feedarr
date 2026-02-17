@@ -63,7 +63,10 @@ public sealed class ReleaseRepository
           @titleClean, @year, @season, @episode, @resolution, @source, @codec, @group, @mediaType
         )
         ON CONFLICT(source_id, guid) DO UPDATE SET
-          title = excluded.title,
+          title = CASE
+                    WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.title
+                    ELSE excluded.title
+                  END,
           link = excluded.link,
           published_at_ts = excluded.published_at_ts,
           size_bytes = COALESCE(excluded.size_bytes, releases.size_bytes),
@@ -78,15 +81,42 @@ public sealed class ReleaseRepository
           unified_category = COALESCE(excluded.unified_category, releases.unified_category),
           category_ids = COALESCE(excluded.category_ids, releases.category_ids),
 
-          title_clean = COALESCE(excluded.title_clean, releases.title_clean),
-          year = COALESCE(excluded.year, releases.year),
-          season = COALESCE(excluded.season, releases.season),
-          episode = COALESCE(excluded.episode, releases.episode),
-          resolution = COALESCE(excluded.resolution, releases.resolution),
-          source = COALESCE(excluded.source, releases.source),
-          codec = COALESCE(excluded.codec, releases.codec),
-          release_group = COALESCE(excluded.release_group, releases.release_group),
-          media_type = COALESCE(excluded.media_type, releases.media_type);
+          title_clean = CASE
+                          WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.title_clean
+                          ELSE COALESCE(excluded.title_clean, releases.title_clean)
+                        END,
+          year = CASE
+                   WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.year
+                   ELSE COALESCE(excluded.year, releases.year)
+                 END,
+          season = CASE
+                     WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.season
+                     ELSE COALESCE(excluded.season, releases.season)
+                   END,
+          episode = CASE
+                      WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.episode
+                      ELSE COALESCE(excluded.episode, releases.episode)
+                    END,
+          resolution = CASE
+                         WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.resolution
+                         ELSE COALESCE(excluded.resolution, releases.resolution)
+                       END,
+          source = CASE
+                     WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.source
+                     ELSE COALESCE(excluded.source, releases.source)
+                   END,
+          codec = CASE
+                    WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.codec
+                    ELSE COALESCE(excluded.codec, releases.codec)
+                  END,
+          release_group = CASE
+                            WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.release_group
+                            ELSE COALESCE(excluded.release_group, releases.release_group)
+                          END,
+          media_type = CASE
+                         WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.media_type
+                         ELSE COALESCE(excluded.media_type, releases.media_type)
+                       END;
         """;
 
         var rowsPayload = itemList.Select(it =>
@@ -823,6 +853,7 @@ public sealed class ReleaseRepository
             """
             UPDATE releases
             SET title = @title,
+                title_manual_override = 1,
                 title_clean = @titleClean,
                 year = @year,
                 season = @season,

@@ -3,6 +3,13 @@ const THEME_KEY = 'feedarr-theme';
 let systemMql = null;
 let systemListener = null;
 
+function syncThemeColor(theme) {
+  if (typeof document === "undefined") return;
+  const metaTheme = document.querySelector('meta[name="theme-color"]');
+  if (!metaTheme) return;
+  metaTheme.setAttribute("content", theme === "dark" ? "#2a2a2a" : "#2493b5");
+}
+
 function normalizeTheme(theme) {
   const value = String(theme || "system").trim().toLowerCase();
   if (value === "light" || value === "dark" || value === "system") return value;
@@ -31,7 +38,9 @@ export function applyTheme(theme, persist = false) {
 
     if (mql) {
       const setFromMatches = (matches) => {
-        root.setAttribute("data-theme", matches ? "dark" : "light");
+        const resolved = matches ? "dark" : "light";
+        root.setAttribute("data-theme", resolved);
+        syncThemeColor(resolved);
       };
       setFromMatches(mql.matches);
 
@@ -45,11 +54,13 @@ export function applyTheme(theme, persist = false) {
       }
     } else {
       root.setAttribute("data-theme", "light");
+      syncThemeColor("light");
     }
     return;
   }
 
   root.setAttribute("data-theme", normalized);
+  syncThemeColor(normalized);
   if (systemMql && systemListener) {
     systemMql.removeEventListener("change", systemListener);
     systemMql = null;
