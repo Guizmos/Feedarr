@@ -53,7 +53,7 @@ function TopReleasesSubbar({
   setViewMode,
 }) {
   return (
-    <div className="top24-subbar-content">
+    <div className={`top24-subbar-content ${subbarClassName || ""}`}>
       <div className="subspacer" />
 
       {sources.length > 0 ? (

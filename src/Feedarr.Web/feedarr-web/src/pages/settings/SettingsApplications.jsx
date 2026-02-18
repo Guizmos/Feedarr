@@ -87,14 +87,18 @@ export default function SettingsApplications({
   const [syncModalInitial, setSyncModalInitial] = useState(null);
   const [optionPulseKeys, setOptionPulseKeys] = useState(() => new Set());
   const optionPulseTimerRef = useRef(null);
+  const wasOptionsModalOpenRef = useRef(false);
 
   useEffect(() => {
-    if (!optionsModalOpen) return;
-    setSyncModalInitial({
-      arrAutoSyncEnabled: !!arrSyncSettings.arrAutoSyncEnabled,
-      arrSyncIntervalMinutes: Number(arrSyncSettings.arrSyncIntervalMinutes ?? 60),
-    });
-  }, [optionsModalOpen]);
+    const justOpened = optionsModalOpen && !wasOptionsModalOpenRef.current;
+    if (justOpened) {
+      setSyncModalInitial({
+        arrAutoSyncEnabled: !!arrSyncSettings.arrAutoSyncEnabled,
+        arrSyncIntervalMinutes: Number(arrSyncSettings.arrSyncIntervalMinutes ?? 60),
+      });
+    }
+    wasOptionsModalOpenRef.current = optionsModalOpen;
+  }, [optionsModalOpen, arrSyncSettings.arrAutoSyncEnabled, arrSyncSettings.arrSyncIntervalMinutes]);
 
   useEffect(() => {
     return () => {
