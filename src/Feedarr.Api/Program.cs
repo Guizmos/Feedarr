@@ -19,6 +19,7 @@ using Feedarr.Api.Services.Security;
 using Feedarr.Api.Services.Backup;
 using Feedarr.Api.Services.Diagnostics;
 using Feedarr.Api.Filters;
+using Feedarr.Api.Services.Updates;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.XmlEncryption;
@@ -108,6 +109,7 @@ SqlMapper.AddTypeHandler(new SqliteNullableInt32Handler());
 
 // Options + DB
 builder.Services.Configure<AppOptions>(builder.Configuration.GetSection("App"));
+builder.Services.Configure<UpdatesOptions>(builder.Configuration.GetSection("App:Updates"));
 builder.Services.AddSingleton<Db>();
 builder.Services.AddSingleton<MigrationsRunner>();
 
@@ -152,6 +154,13 @@ builder.Services.AddSingleton<ExternalIdBackfillService>();
 builder.Services.AddSingleton<RequestTmdbResolverService>();
 builder.Services.AddSingleton<RequestTmdbBackfillService>();
 builder.Services.AddSingleton<RetentionService>();
+builder.Services.AddSingleton<ReleaseInfoService>();
+
+builder.Services.AddHttpClient("github-updates", c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(30);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
+});
 
 // Resilience: transient retry handler for external HTTP clients
 builder.Services.AddTransient<TransientHttpRetryHandler>();

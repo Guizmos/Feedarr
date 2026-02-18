@@ -146,6 +146,14 @@ Common API environment variables:
 - `App__RateLimit__Stats__WindowSeconds`
 - `App__ReverseProxy__TrustedProxies__0`
 - `App__ReverseProxy__TrustedNetworks__0`
+- `App__Updates__Enabled`
+- `App__Updates__RepoOwner`
+- `App__Updates__RepoName`
+- `App__Updates__CheckIntervalHours`
+- `App__Updates__TimeoutSeconds`
+- `App__Updates__AllowPrerelease`
+- `App__Updates__GitHubApiBaseUrl`
+- `App__Updates__GitHubToken`
 
 ## Configuration
 
@@ -161,6 +169,7 @@ Feedarr includes a 6-step Setup Wizard (`/setup`) for first-run configuration.
   - Users & auth: `http://localhost:8888/settings/users`
   - Maintenance: `http://localhost:8888/settings/maintenance`
   - Backup/restore: `http://localhost:8888/settings/backup`
+  - About / updates: `http://localhost:8888/system/updates`
   - Indexers: `http://localhost:8888/indexers`
 
 - Full step-by-step guides (with screenshots and API key instructions):
@@ -209,6 +218,35 @@ npm run lint
 npm run test
 npm run build
 ```
+
+## Release Workflow and Updates
+
+### Create/Update a GitHub Release
+
+Use the PowerShell script (Windows PowerShell 5.1+ and PowerShell 7 supported):
+
+```powershell
+$env:GITHUB_TOKEN="ghp_xxx"
+pwsh ./scripts/release.ps1 `
+  -Version 5.4.0 `
+  -RepoOwner Guizmos `
+  -RepoName Feedarr `
+  -GenerateNotes $true
+```
+
+Notes:
+- Tag format is always `vX.Y.Z` (created locally if missing, then pushed).
+- Script upserts the matching GitHub Release for the tag.
+- If `gh` CLI is installed it is used first; otherwise script falls back to GitHub REST API.
+- Use `-DryRun` to preview actions without changing GitHub.
+
+### In-App Update Check
+
+- Backend endpoint: `GET /api/updates/latest` (manual refresh: `?force=true`).
+- Feedarr compares current build version to latest GitHub release tag (supports `v` prefix).
+- By default prerelease tags are ignored unless `App:Updates:AllowPrerelease=true`.
+- UI location: `Systeme -> A propos`.
+- “Update available” red badge remains until changelog is opened/acknowledged (stored in localStorage per tag).
 
 ## Security Notes
 

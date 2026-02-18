@@ -146,6 +146,14 @@ Variables d'environnement API les plus utiles:
 - `App__RateLimit__Stats__WindowSeconds`
 - `App__ReverseProxy__TrustedProxies__0`
 - `App__ReverseProxy__TrustedNetworks__0`
+- `App__Updates__Enabled`
+- `App__Updates__RepoOwner`
+- `App__Updates__RepoName`
+- `App__Updates__CheckIntervalHours`
+- `App__Updates__TimeoutSeconds`
+- `App__Updates__AllowPrerelease`
+- `App__Updates__GitHubApiBaseUrl`
+- `App__Updates__GitHubToken`
 
 ## Configuration
 
@@ -161,6 +169,7 @@ Feedarr inclut un Setup Wizard en 6 étapes (`/setup`) pour la configuration ini
   - Utilisateurs & auth: `http://localhost:8888/settings/users`
   - Maintenance: `http://localhost:8888/settings/maintenance`
   - Sauvegarde/restauration: `http://localhost:8888/settings/backup`
+  - A propos / updates: `http://localhost:8888/system/updates`
   - Indexeurs: `http://localhost:8888/indexers`
 
 - Guide complet en français (par défaut):
@@ -212,6 +221,35 @@ npm run lint
 npm run test
 npm run build
 ```
+
+## Releases et updates
+
+### Créer/mettre à jour une GitHub Release
+
+Script PowerShell (Windows PowerShell 5.1+ et PowerShell 7):
+
+```powershell
+$env:GITHUB_TOKEN="ghp_xxx"
+pwsh ./scripts/release.ps1 `
+  -Version 5.4.0 `
+  -RepoOwner Guizmos `
+  -RepoName Feedarr `
+  -GenerateNotes $true
+```
+
+Notes:
+- Le tag est au format `vX.Y.Z` (créé localement si absent, puis poussé).
+- Le script crée ou met à jour la GitHub Release liée au tag.
+- Si `gh` est installé, il est utilisé en priorité, sinon fallback REST API GitHub.
+- `-DryRun` permet de valider le flux sans écrire côté GitHub.
+
+### Vérification de mise à jour dans Feedarr
+
+- Endpoint backend: `GET /api/updates/latest` (rafraîchissement manuel: `?force=true`).
+- Comparaison SemVer entre version courante du build et dernier tag GitHub.
+- Les prereleases sont ignorées par défaut (`App:Updates:AllowPrerelease=false`).
+- UI: `Système -> A propos`.
+- Le badge rouge “update dispo” reste affiché jusqu’à l’ouverture/acknowledge du changelog (stocké en localStorage par tag).
 
 ## Notes sécurité
 

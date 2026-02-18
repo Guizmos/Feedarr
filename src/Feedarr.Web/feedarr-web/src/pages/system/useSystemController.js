@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiGet } from "../../api/client.js";
+import useUpdates from "./hooks/useUpdates.js";
 
 const DEFAULT_EXTERNAL = {
   hasTmdbApiKey: false,
@@ -39,6 +40,7 @@ export default function useSystemController(section = "overview") {
   const showProviders = section === "providers" || section === "externals";
   const showOverview = section === "overview";
   const showStatistics = section === "statistics";
+  const showUpdates = section === "updates" || section === "about";
   const systemTitleBySection = {
     overview: "Système",
     storage: "Stockage",
@@ -46,6 +48,8 @@ export default function useSystemController(section = "overview") {
     externals: "Providers",
     statistics: "Statistiques",
     indexers: "Indexeurs",
+    updates: "A propos",
+    about: "A propos",
   };
   const systemTitle = systemTitleBySection[section] || "Système";
 
@@ -57,6 +61,7 @@ export default function useSystemController(section = "overview") {
   const [providerStats, setProviderStats] = useState(createDefaultProviderStats);
   const [missingPosterCount, setMissingPosterCount] = useState(0);
   const [storageInfo, setStorageInfo] = useState(createDefaultStorageInfo);
+  const updates = useUpdates();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -179,6 +184,7 @@ export default function useSystemController(section = "overview") {
     showProviders,
     showOverview,
     showStatistics,
+    showUpdates,
     loading,
     err,
     status,
@@ -190,5 +196,19 @@ export default function useSystemController(section = "overview") {
     load,
     matchingPercent,
     matchingColor,
+    updates: {
+      updatesLoading: updates.loading,
+      updatesChecking: updates.checking,
+      updatesError: updates.error,
+      updatesEnabled: updates.updatesEnabled,
+      currentVersion: updates.currentVersion,
+      isUpdateAvailable: updates.isUpdateAvailable,
+      latestRelease: updates.latestRelease,
+      releases: updates.releases,
+      hasUnseenUpdate: updates.hasUnseenUpdate,
+      checkIntervalHours: updates.checkIntervalHours,
+      checkForUpdates: (force = false) => updates.checkForUpdates({ force }),
+      acknowledgeLatest: updates.acknowledgeLatest,
+    },
   };
 }

@@ -1,5 +1,6 @@
 import React, { useEffect } from "react";
 import SystemStatistics from "./system/SystemStatistics.jsx";
+import SystemUpdates from "./system/SystemUpdates.jsx";
 import { useLocation } from "react-router-dom";
 import { useSubbarSetter } from "../layout/useSubbar.js";
 import SubAction from "../ui/SubAction.jsx";
@@ -25,6 +26,7 @@ export default function System() {
     showProviders,
     showOverview,
     showStatistics,
+    showUpdates,
     loading,
     err,
     status,
@@ -35,17 +37,33 @@ export default function System() {
     load,
     matchingPercent,
     matchingColor,
+    updates,
   } = useSystemController(section);
 
   useEffect(() => {
     setContent(
       <>
         <SubAction icon="refresh" label="Rafraîchir" onClick={load} />
-        <SubAction icon="dns" label="Status" disabled />
+        {showUpdates ? (
+          <SubAction
+            icon={updates?.updatesChecking ? "progress_activity" : "sync"}
+            label="Vérifier"
+            onClick={() => updates?.checkForUpdates?.(true)}
+            disabled={updates?.updatesChecking}
+            className={[
+              "subaction--system-verify",
+              updates?.updatesChecking ? "is-loading" : "",
+            ].filter(Boolean).join(" ")}
+            badge={updates?.hasUnseenUpdate ? "!" : null}
+            badgeTone="error"
+          />
+        ) : (
+          <SubAction icon="dns" label="Status" disabled />
+        )}
       </>
     );
     return () => setContent(null);
-  }, [setContent, load]);
+  }, [setContent, load, showUpdates, updates]);
 
   return (
     <div className="page page--system">
@@ -317,6 +335,21 @@ export default function System() {
                 </div>
               </div>
             </>
+          )}
+
+          {showUpdates && (
+            <SystemUpdates
+              loading={updates?.updatesLoading}
+              error={updates?.updatesError}
+              updatesEnabled={updates?.updatesEnabled}
+              currentVersion={updates?.currentVersion}
+              isUpdateAvailable={updates?.isUpdateAvailable}
+              latestRelease={updates?.latestRelease}
+              releases={updates?.releases}
+              hasUnseenUpdate={updates?.hasUnseenUpdate}
+              checkIntervalHours={updates?.checkIntervalHours}
+              onAcknowledge={updates?.acknowledgeLatest}
+            />
           )}
 
         </div>

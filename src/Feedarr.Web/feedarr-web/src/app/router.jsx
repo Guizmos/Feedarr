@@ -64,6 +64,7 @@ export const router = createBrowserRouter([
       { path: "system/indexers", element: withSuspense(<SystemIndexers />) },
       { path: "system/storage", element: withSuspense(<System />) },
       { path: "system/providers", element: withSuspense(<System />) },
+      { path: "system/updates", element: withSuspense(<System />) },
       { path: "settings", element: withSuspense(<Settings />) },
       { path: "settings/ui", element: withSuspense(<Settings />) },
       { path: "settings/providers", element: withSuspense(<Providers />) },
@@ -73,6 +74,7 @@ export const router = createBrowserRouter([
       { path: "settings/users", element: withSuspense(<Settings />) },
       { path: "settings/maintenance", element: withSuspense(<Settings />) },
       { path: "settings/backup", element: withSuspense(<Settings />) },
+      { path: "settings/about", element: <Navigate to="/system/updates" replace /> },
     ],
   },
 ], { basename });

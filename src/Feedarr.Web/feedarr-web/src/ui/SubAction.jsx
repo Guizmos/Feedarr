@@ -9,7 +9,13 @@ export default function SubAction({
   onClick,
   title,
   className,
+  badge,
+  badgeTone,
 }) {
+  const showBadge = badge != null && badge !== false && badge !== 0;
+  const badgeLabel = badge === "warn" ? "!" : badge;
+  const badgeClass = "subaction__badge" + (badgeTone ? ` subaction__badge--${badgeTone}` : "");
+
   return (
     <button
       className={
@@ -25,6 +31,7 @@ export default function SubAction({
     >
       <AppIcon name={icon} className="subaction__icon" />
       <span className="subaction__label">{label}</span>
+      {showBadge && <span className={badgeClass}>{badgeLabel}</span>}
     </button>
   );
 }

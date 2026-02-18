@@ -1,6 +1,41 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, resolveApiUrl } from "../api/client.js";
 
+const ACTIVITY_LAST_SEEN_KEY = "feedarr:lastSeen:activity";
+const RELEASES_LAST_SEEN_KEY = "feedarr:lastSeen:releases";
+const RELEASES_LAST_SEEN_TS_KEY = "feedarr:lastSeen:releases_ts";
+const UPDATE_LAST_SEEN_TAG_KEY = "feedarr:lastSeenReleaseTag";
+const UPDATE_CACHE_KEY = "feedarr:update:latest";
+const UPDATE_LAST_CHECK_TS_KEY = "feedarr:update:lastCheckTs";
+
+function readCachedUpdate() {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(UPDATE_CACHE_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+
+    const hasLegacyShape = !!parsed.latestRelease && !Object.prototype.hasOwnProperty.call(parsed, "releases");
+    const hasInvalidReleases = Object.prototype.hasOwnProperty.call(parsed, "releases") && !Array.isArray(parsed.releases);
+    if (hasLegacyShape || hasInvalidReleases) {
+      window.localStorage.removeItem(UPDATE_CACHE_KEY);
+      window.localStorage.removeItem(UPDATE_LAST_CHECK_TS_KEY);
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function persistCachedUpdate(payload) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(UPDATE_CACHE_KEY, JSON.stringify(payload || {}));
+  window.localStorage.setItem(UPDATE_LAST_CHECK_TS_KEY, String(Date.now()));
+}
+
 /**
  * Badges Sonarr-like
  * - activity: nb d'events non-info (ou error-only si tu veux)
@@ -11,10 +46,6 @@ export default function useBadges({
   activityLimit = 200,
   activityMode = "nonInfo", // "nonInfo" | "errorOnly"
 } = {}) {
-  const ACTIVITY_LAST_SEEN_KEY = "feedarr:lastSeen:activity";
-  const RELEASES_LAST_SEEN_KEY = "feedarr:lastSeen:releases";
-  const RELEASES_LAST_SEEN_TS_KEY = "feedarr:lastSeen:releases_ts";
-
   const [lastSeenActivityTs, setLastSeenActivityTsState] = useState(() =>
     typeof window === "undefined" ? 0 : Number(window.localStorage.getItem(ACTIVITY_LAST_SEEN_KEY) || 0)
   );
@@ -37,6 +68,8 @@ export default function useBadges({
     latestActivityTs: 0,
     latestReleasesCount: 0,
     latestReleasesTs: 0,
+    hasUnseenUpdate: false,
+    latestUpdateTag: "",
     tasks: [],
   });
   const timer = useRef(null);
@@ -235,6 +268,35 @@ export default function useBadges({
         return missing;
       })();
 
+      let updatePayload = readCachedUpdate();
+      try {
+        const lastUpdateCheckTs = typeof window === "undefined"
+          ? 0
+          : Number(window.localStorage.getItem(UPDATE_LAST_CHECK_TS_KEY) || 0);
+        const updateIntervalHours = Number(updatePayload?.checkIntervalHours ?? 6);
+        const updateIntervalMs = Math.max(1, Number.isFinite(updateIntervalHours) ? updateIntervalHours : 6) * 60 * 60 * 1000;
+        const shouldCheckUpdates = !updatePayload || (Date.now() - lastUpdateCheckTs) >= updateIntervalMs;
+        if (shouldCheckUpdates) {
+          const fetched = await apiGet("/api/updates/latest");
+          if (fetched && typeof fetched === "object") {
+            updatePayload = fetched;
+            persistCachedUpdate(fetched);
+          }
+        }
+      } catch {
+        // Keep previous cached update payload on failures.
+      }
+
+      const latestUpdateTag = String(updatePayload?.latestRelease?.tagName || "");
+      const lastSeenUpdateTag = typeof window === "undefined"
+        ? ""
+        : String(window.localStorage.getItem(UPDATE_LAST_SEEN_TAG_KEY) || "");
+      const hasUnseenUpdate = !!(
+        updatePayload?.isUpdateAvailable
+        && latestUpdateTag
+        && latestUpdateTag !== lastSeenUpdateTag
+      );
+
       setBadges((prev) => ({
         activity: activityInfo?.activityCount ?? prev.activity,
         activityTone: activityInfo?.activityTone ?? prev.activityTone,
@@ -245,6 +307,8 @@ export default function useBadges({
         latestActivityTs: activityInfo?.latestActivityTs ?? prev.latestActivityTs,
         latestReleasesCount: releasesCount ?? prev.latestReleasesCount,
         latestReleasesTs: releasesLatestTs ?? prev.latestReleasesTs,
+        hasUnseenUpdate,
+        latestUpdateTag,
         tasks,
       }));
     } catch {
@@ -294,6 +358,18 @@ export default function useBadges({
       es.close();
     };
   }, []); // stable: EventSource connection created once, never recreated
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
+    const onUpdateSignal = () => refreshRef.current?.();
+    window.addEventListener("feedarr:update-ack", onUpdateSignal);
+    window.addEventListener("feedarr:update-refreshed", onUpdateSignal);
+    return () => {
+      window.removeEventListener("feedarr:update-ack", onUpdateSignal);
+      window.removeEventListener("feedarr:update-refreshed", onUpdateSignal);
+    };
+  }, []);
 
   return {
     ...badges,

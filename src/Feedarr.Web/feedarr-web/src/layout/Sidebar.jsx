@@ -72,6 +72,7 @@ export default function Sidebar({ onNavigate }) {
     latestReleasesTs,
     lastSeenReleasesTs,
     markReleasesSeen,
+    hasUnseenUpdate,
   } = useBadges({
     pollMs: 25000,
     activityLimit: 200,
@@ -84,6 +85,11 @@ export default function Sidebar({ onNavigate }) {
   const path = location.pathname;
   const isLibrary = path.startsWith("/library");
   const isLogs = path.startsWith("/activity");
+  const systemItemBadge = !isSystem
+    ? (hasUnseenUpdate
+      ? { value: "!", tone: "error" }
+      : (systemBadge ? { value: "warn", tone: systemBadge } : null))
+    : null;
 
   useEffect(() => {
     if (isLogs && latestActivityTs > 0 && latestActivityTs > lastSeenActivityTs) {
@@ -205,7 +211,7 @@ export default function Sidebar({ onNavigate }) {
           to="/system"
           icon="dns"
           label="Système"
-          badge={!isSystem && systemBadge ? { value: "warn", tone: systemBadge } : null}
+          badge={systemItemBadge}
           end={false}
           onNavigate={onNavigate}
         />
@@ -239,6 +245,13 @@ export default function Sidebar({ onNavigate }) {
               onClick={onNavigate}
             >
               Stockage
+            </NavLink>
+            <NavLink
+              to="/system/updates"
+              className={() => "snav__subitem" + (path === "/system/updates" ? " is-active" : "")}
+              onClick={onNavigate}
+            >
+              A propos
             </NavLink>
           </div>
         )}
