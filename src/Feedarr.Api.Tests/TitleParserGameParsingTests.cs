@@ -20,6 +20,12 @@ public sealed class TitleParserGameParsingTests
     [InlineData(
         "Mewgenics.2026.MULTI.1.0.WIN.ISO-TENOKE",
         "Mewgenics")]
+    [InlineData(
+        "Sid.Meiers.Civilization.VII.2025.MULTI.v1.3.2.+29.DLC.+Multiplayer.Linux.PREACTIVE-LinuxRuleZ",
+        "Sid Meiers Civilization VII")]
+    [InlineData(
+        "The.Sims.4.Digital.Deluxe.Edition.2014.MULTI.v1.121.361.1020.+All.DLC.Linux.PREACTIVE.anadius-LAiN",
+        "The Sims 4")]
     public void Parse_GameTitles_CleansKnownNoisyPatterns(string raw, string expectedTitleClean)
     {
         var parsed = _parser.Parse(raw, UnifiedCategory.JeuWindows);

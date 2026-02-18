@@ -48,8 +48,9 @@ public sealed class TitleParser
     private static readonly Regex RxGameLang = new(@"(?i)(?:^|[._+\-])(multi\d*|multilingual|eng|english|french|fr|german|ger|de|spanish|spa|es|italian|ita|it|russian|rus|ru|japanese|jap|jp|chinese|chn|cn|korean|kor|kr|polish|pol|pl|portuguese|por|pt|brazilian|dutch|dut|nl|swedish|swe|czech|cze|hungarian|hun|turkish|tur|arabic|ara|thai|vietnamese|viet|norwegian|nor|danish|dan|finnish|fin|vf|vff|vfq|vfi|vostfr|vo|truefrench|subfrench|multi-?\d*)(?=[._+\-]|$)", RegexOptions.Compiled);
     private static readonly Regex RxGamePlatform = new(@"(?i)(?:^|[._+\-:])(winmac|macwin|linux|lin|macos|mac|osx|win|windows|x64|x86|win64|win32|amd64|portable|gog|steam|epic|origin|uplay|egs|iso|drm[._-]?free|switch|ps[45]|xbox|nsw)(?=[._+\-:]|$)", RegexOptions.Compiled);
     private static readonly Regex RxGameRepack = new(@"(?i)(?:^|[._+\-:])(repack|rip|proper|internal|read[._-]?nfo|nfo[._-]?fix|incl[._-]?dlc|crack[._-]?fix|crack|preactive)(?=[._+\-:]|$)", RegexOptions.Compiled);
-    private static readonly Regex RxGameScene = new(@"(?i)(?:^|[._+\-:])(fitgirl|elamigos|dodi|rune|skidrow|codex|plaza|flt|tenoke|prophet|cpy|steampunks|darksiders|reloaded|razor1911|hoodlum|fairlight|empress|goldberg|i[_-]?know|notag|noteam|mephisto|k49n|kron4ek|lain|max\d+|razordox|ali213|3dm|tinyiso|kaos|chronos)(?=[._+\-:]|$)", RegexOptions.Compiled);
+    private static readonly Regex RxGameScene = new(@"(?i)(?:^|[._+\-:])(fitgirl|elamigos|dodi|rune|skidrow|codex|plaza|flt|tenoke|prophet|cpy|steampunks|darksiders|reloaded|razor1911|hoodlum|fairlight|empress|goldberg|i[_-]?know|notag|noteam|mephisto|k49n|kron4ek|lain|anadius|max\d+|razordox|ali213|3dm|tinyiso|kaos|chronos)(?=[._+\-:]|$)", RegexOptions.Compiled);
     private static readonly Regex RxGameAnniversaryEdition = new(@"(?i)[._+-]?\d+[._-]?(year|th|nd|rd|st)?[._-]?anniversary[._-]?edition", RegexOptions.Compiled);
+    private static readonly Regex RxGameDigitalDeluxeEdition = new(@"(?i)[._+-]?digital[._+-]?deluxe[._+-]?edition(?=[._+-]|$)", RegexOptions.Compiled);
     private static readonly Regex RxGameEditionFull = new(@"(?i)[._+-]?(gold|goty|game[._-]?of[._-]?the[._-]?year|complete|deluxe|ultimate|definitive|collector'?s?|digital|premium|special|enhanced|anniversary|legendary|standard|limited|remastered|remake|hd|4k|super|mega|extreme)[._+-]?edition(?=[._+-]|$)", RegexOptions.Compiled);
     private static readonly Regex RxGameEditionShort = new(@"(?i)[._+-]?(remastered|remake|hd[._-]?remaster)(?=[._+-]|$)", RegexOptions.Compiled);
     private static readonly Regex RxGameCE = new(@"(?i)[._+-]ce(?=[._+-]|$)", RegexOptions.Compiled);
@@ -61,6 +62,7 @@ public sealed class TitleParser
     private static readonly Regex RxGameSeasonPass = new(@"(?i)[._+-]?season[._+-]?pass", RegexOptions.Compiled);
     private static readonly Regex RxGameExpansion = new(@"(?i)[._+-]?expansion[._+-]?(pack)?(?=[._+-]|$)", RegexOptions.Compiled);
     private static readonly Regex RxGameBundle = new(@"(?i)[._+-]?(ultimate[._-]?bundle|bundle)(?=[._+-]|$)", RegexOptions.Compiled);
+    private static readonly Regex RxGameMode = new(@"(?i)(?:^|[._+\-:])(multiplayer|singleplayer|co[._-]?op|coop|lan)(?=[._+\-:]|$)", RegexOptions.Compiled);
     private static readonly Regex RxGameEarlyAccess = new(@"(?i)[._+-]?(early[._+-]?access|ea|alpha|beta|demo|trial|preview)(?=[._+-]|$)", RegexOptions.Compiled);
     private static readonly Regex RxGameBuildNum = new(@"[._+-]?\d{6,}", RegexOptions.Compiled);
     private static readonly Regex RxGameRevisionTag = new(@"(?i)\br\d{4,}\b", RegexOptions.Compiled);
@@ -78,6 +80,7 @@ public sealed class TitleParser
     private static readonly Regex RxAudioJunk = new(
         @"(?i)\b(eac3|aac|ac3|ddp|dd|dts|truehd|atmos|flac|opus|mp3|xvid|divx|5\.1|7\.1|2\.0|1\.0|10bit|10bits|8bit|hdr|dv|dolby\s*vision|4klight|lc)\b",
         RegexOptions.Compiled);
+    private static readonly Regex RxVideoStandardJunk = new(@"\b(PAL|NTSC|SECAM)\b", RegexOptions.Compiled);
     private static readonly Regex RxFilmJunk = new(
         @"(?i)\b(repack|custom|re[-._\s]?edition|reedition|réédition)\b",
         RegexOptions.Compiled);
@@ -256,6 +259,7 @@ public sealed class TitleParser
 
         s = s.Replace('.', ' ').Replace('_', ' ').Replace('+', ' ');
         s = RxAudioJunk.Replace(s, " ");
+        s = RxVideoStandardJunk.Replace(s, " ");
         s = RxCollectionSuffix.Replace(s, "");
         s = RxCollectionMid.Replace(s, " ");
         s = RxYearRange.Replace(s, " ");
@@ -450,6 +454,7 @@ public sealed class TitleParser
 
         // 9. Remove edition suffixes (longer/specific patterns first, then general)
         s = RxGameAnniversaryEdition.Replace(s, ""); // "1-Year Anniversary Edition", "10th Anniversary Edition"
+        s = RxGameDigitalDeluxeEdition.Replace(s, "");
         s = RxGameEditionFull.Replace(s, "");
         s = RxGameEditionShort.Replace(s, "");
         s = RxGameCE.Replace(s, "");
@@ -465,6 +470,7 @@ public sealed class TitleParser
         s = RxGameExpansion.Replace(s, "");
 
         // 11. Remove early access / tech markers
+        s = RxGameMode.Replace(s, "");
         s = RxGameEarlyAccess.Replace(s, "");
 
         // 12. Remove long build numbers / revision tags / hash codes
