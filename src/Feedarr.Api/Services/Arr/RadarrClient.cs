@@ -79,12 +79,30 @@ public sealed class RadarrClient
     public async Task<List<MovieLookupResult>> LookupMovieAsync(
         string baseUrl, string apiKey, int tmdbId, CancellationToken ct)
     {
-        using var request = CreateRequest(HttpMethod.Get, baseUrl, $"movie/lookup?term=tmdb:{tmdbId}", apiKey);
-        using var response = await _http.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
+        // Radarr versions/proxies may not all support the same lookup route.
+        // Try legacy query first, then fallback to dedicated tmdb lookup route.
+        var legacy = await TryLookupMovieAsync(baseUrl, apiKey, $"movie/lookup?term=tmdb:{tmdbId}", ct);
+        if (legacy.ok)
+            return legacy.results;
 
+        var fallback = await TryLookupMovieAsync(baseUrl, apiKey, $"movie/lookup/tmdb?tmdbId={tmdbId}", ct);
+        if (fallback.ok)
+            return fallback.results;
+
+        throw new InvalidOperationException($"radarr lookup failed (HTTP {(int)(fallback.statusCode ?? legacy.statusCode ?? HttpStatusCode.BadGateway)})");
+    }
+
+    private async Task<(bool ok, List<MovieLookupResult> results, HttpStatusCode? statusCode)> TryLookupMovieAsync(
+        string baseUrl, string apiKey, string endpoint, CancellationToken ct)
+    {
+        using var request = CreateRequest(HttpMethod.Get, baseUrl, endpoint, apiKey);
+        using var response = await _http.SendAsync(request, ct);
         var json = await response.Content.ReadAsStringAsync(ct);
-        return JsonSerializer.Deserialize<List<MovieLookupResult>>(json, JsonOpts) ?? new();
+
+        if (!response.IsSuccessStatusCode)
+            return (false, new(), response.StatusCode);
+
+        return (true, JsonSerializer.Deserialize<List<MovieLookupResult>>(json, JsonOpts) ?? new(), response.StatusCode);
     }
 
     public async Task<List<MovieResult>> GetAllMoviesAsync(
@@ -187,7 +205,8 @@ public sealed class RadarrClient
     {
         using var request = CreateRequest(HttpMethod.Get, baseUrl, "rootfolder", apiKey);
         using var response = await _http.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"radarr rootfolder fetch failed (HTTP {(int)response.StatusCode})");
 
         var json = await response.Content.ReadAsStringAsync(ct);
         return JsonSerializer.Deserialize<List<RootFolderResult>>(json, JsonOpts) ?? new();
@@ -198,7 +217,8 @@ public sealed class RadarrClient
     {
         using var request = CreateRequest(HttpMethod.Get, baseUrl, "qualityprofile", apiKey);
         using var response = await _http.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"radarr qualityprofile fetch failed (HTTP {(int)response.StatusCode})");
 
         var json = await response.Content.ReadAsStringAsync(ct);
         return JsonSerializer.Deserialize<List<QualityProfileResult>>(json, JsonOpts) ?? new();
@@ -209,7 +229,8 @@ public sealed class RadarrClient
     {
         using var request = CreateRequest(HttpMethod.Get, baseUrl, "tag", apiKey);
         using var response = await _http.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"radarr tag fetch failed (HTTP {(int)response.StatusCode})");
 
         var json = await response.Content.ReadAsStringAsync(ct);
         return JsonSerializer.Deserialize<List<TagResult>>(json, JsonOpts) ?? new();
