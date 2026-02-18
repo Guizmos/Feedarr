@@ -39,8 +39,6 @@ export default function System() {
     matchingColor,
     updates,
   } = useSystemController(section);
-  const showStatusAction = !showUpdates && (showOverview || showStatistics);
-
   useEffect(() => {
     setContent(
       <>
@@ -58,13 +56,11 @@ export default function System() {
             badge={updates?.hasUnseenUpdate ? "!" : null}
             badgeTone="error"
           />
-        ) : showStatusAction ? (
-          <SubAction icon="dns" label="Status" disabled />
         ) : null}
       </>
     );
     return () => setContent(null);
-  }, [setContent, load, showUpdates, showStatusAction, updates]);
+  }, [setContent, load, showUpdates, updates]);
 
   return (
     <div className="page page--system">
