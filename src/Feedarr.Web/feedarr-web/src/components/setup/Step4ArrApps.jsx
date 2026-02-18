@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { apiDelete, apiGet, apiPost, apiPut } from "../../api/client.js";
 import ItemRow from "../../ui/ItemRow.jsx";
 import Modal from "../../ui/Modal.jsx";
-import { getAppLabel, isArrLibraryType } from "../../utils/appTypes.js";
+import { getAppBaseUrlPlaceholder, getAppLabel, isArrLibraryType } from "../../utils/appTypes.js";
 
 const ALL_APP_TYPES = ["sonarr", "radarr", "overseerr", "jellyseerr", "seer"];
 
@@ -406,7 +406,7 @@ export default function Step4ArrApps() {
             <input
               value={modalBaseUrl}
               onChange={(e) => setModalBaseUrl(e.target.value)}
-              placeholder={modalType === "sonarr" ? "http://192.168.1.x:8989 ou https://sonarr.domain.com" : modalType === "radarr" ? "http://192.168.1.x:7878 ou https://radarr.domain.com" : "http://192.168.1.x:5055 ou https://overseerr.domain.com"}
+              placeholder={getAppBaseUrlPlaceholder(modalType)}
               disabled={modalSaving || modalTesting}
             />
             <span className="field-hint">IP, hostname ou URL reverse proxy (http/https)</span>

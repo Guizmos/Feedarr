@@ -12,6 +12,15 @@ export function getAppLabel(type) {
   return normalized || "Application";
 }
 
+export function getAppBaseUrlPlaceholder(type) {
+  const normalized = normalizeAppType(type);
+  if (normalized === "sonarr") return "http://192.168.1.x:8989 ou https://sonarr.domain.com";
+  if (normalized === "radarr") return "http://192.168.1.x:7878 ou https://radarr.domain.com";
+  if (normalized === "jellyseerr") return "http://192.168.1.x:5055 ou https://jellyseerr.domain.com";
+  if (normalized === "seer") return "http://192.168.1.x:5055 ou https://seer.domain.com";
+  return "http://192.168.1.x:5055 ou https://overseerr.domain.com";
+}
+
 export function isArrLibraryType(type) {
   const normalized = normalizeAppType(type);
   return normalized === "sonarr" || normalized === "radarr";

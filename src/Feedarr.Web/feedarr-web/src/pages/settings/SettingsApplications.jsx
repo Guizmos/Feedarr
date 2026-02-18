@@ -4,7 +4,7 @@ import ItemRow from "../../ui/ItemRow.jsx";
 import { fmtBytes } from "./settingsUtils.js";
 import AppIcon from "../../ui/AppIcon.jsx";
 import ToggleSwitch from "../../ui/ToggleSwitch.jsx";
-import { getAppLabel, isArrLibraryType, normalizeRequestMode } from "../../utils/appTypes.js";
+import { getAppBaseUrlPlaceholder, getAppLabel, isArrLibraryType, normalizeRequestMode } from "../../utils/appTypes.js";
 
 export default function SettingsApplications({
   arrApps,
@@ -447,7 +447,7 @@ export default function SettingsApplications({
                 setArrModalTested(false);
                 setArrModalError("");
               }}
-              placeholder={arrModalType === "sonarr" ? "http://192.168.1.x:8989 ou https://sonarr.domain.com" : arrModalType === "radarr" ? "http://192.168.1.x:7878 ou https://radarr.domain.com" : "http://192.168.1.x:5055 ou https://overseerr.domain.com"}
+              placeholder={getAppBaseUrlPlaceholder(arrModalType)}
               disabled={arrModalTesting || arrModalSaving}
             />
             <span className="field-hint">IP, hostname ou URL reverse proxy (http/https)</span>
