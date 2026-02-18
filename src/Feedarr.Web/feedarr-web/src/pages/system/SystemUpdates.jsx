@@ -10,6 +10,7 @@ function fmtDate(value) {
 function fmtVersion(value) {
   const raw = String(value || "").trim();
   if (!raw) return "-";
+  if (/(^|-)v\d+\.\d+\.\d+/.test(raw)) return raw;
   return raw.startsWith("v") ? raw : `v${raw}`;
 }
 

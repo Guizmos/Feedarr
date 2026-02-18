@@ -10,7 +10,7 @@ public sealed record ReleaseSemVersion(int Major, int Minor, int Patch, IReadOnl
 public static class ReleaseVersionComparer
 {
     private static readonly Regex SemVerRegex = new(
-        @"^\s*v?(?<major>0|[1-9]\d*)\.(?<minor>0|[1-9]\d*)\.(?<patch>0|[1-9]\d*)(?:-(?<pre>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\s*$",
+        @"^\s*(?:(?<component>[0-9A-Za-z][0-9A-Za-z._-]*)-v|v)?(?<major>0|[1-9]\d*)\.(?<minor>0|[1-9]\d*)\.(?<patch>0|[1-9]\d*)(?:-(?<pre>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\s*$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     public static bool TryParse(string? value, out ReleaseSemVersion version)
