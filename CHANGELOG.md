@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.3](https://github.com/Guizmos/Feedarr/compare/v1.6.2...v1.6.3) (2026-02-18)
+
+
+### Bug Fixes
+
+* align Sonarr and request app URL placeholders ([bf745ca](https://github.com/Guizmos/Feedarr/commit/bf745cacadd4b4714cd746e62fae526bdac7fd9c))
+
 ## [1.6.2](https://github.com/Guizmos/Feedarr/compare/v1.6.1...v1.6.2) (2026-02-18)
 
 
