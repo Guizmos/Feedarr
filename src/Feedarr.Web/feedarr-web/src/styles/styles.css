@@ -500,6 +500,15 @@ body{
   border: 1px solid rgba(255,255,255,.12);
 }
 
+:root[data-theme="dark"] .topbar-search input,
+:root[data-theme="dark"] .topbar-search input:hover,
+:root[data-theme="dark"] .topbar-search input:focus{
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: #ffffff;
+}
+
 .brand{ display:flex; align-items:center; gap:10px; }
 .brand-logo{
   height: 40px;
