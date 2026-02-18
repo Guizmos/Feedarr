@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/Guizmos/Feedarr/compare/v1.6.0...v1.6.1) (2026-02-18)
+
+
+### Bug Fixes
+
+* more precision for parsing engine ([17b7b11](https://github.com/Guizmos/Feedarr/commit/17b7b1133d8674d5da5cb96af260eb679b8b5fb4))
+
 ## [1.6.0](https://github.com/Guizmos/Feedarr/compare/feedarr-v1.5.0...feedarr-v1.6.0) (2026-02-18)
 
 
