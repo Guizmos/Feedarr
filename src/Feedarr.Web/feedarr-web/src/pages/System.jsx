@@ -47,7 +47,7 @@ export default function System() {
         {showUpdates ? (
           <SubAction
             icon={updates?.updatesChecking ? "progress_activity" : "sync"}
-            label="Vérifier"
+            label="Mise à jour"
             onClick={() => updates?.checkForUpdates?.(true)}
             disabled={updates?.updatesChecking}
             className={[

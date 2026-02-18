@@ -1928,6 +1928,16 @@ html.display-mode-standalone body {
   color: var(--accent, #2493b5);
 }
 
+@media (min-width: 769px){
+  .subbar .subaction.subaction--system-verify{
+    margin-left: auto;
+  }
+  .subbar .subaction + .subaction.subaction--system-verify::before,
+  .subbar .subaction-group + .subaction.subaction--system-verify::before{
+    content: none;
+  }
+}
+
 /* Sonarr-like dropdowns in subbar (icon + label) */
 .subdropdown{
   position: relative;
