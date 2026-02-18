@@ -517,7 +517,12 @@ export default function Indexers() {
       <div className="indexers-subbar-content" subbarClassName="subbar--indexers-sync">
         <SubAction icon="refresh" label="Refresh" onClick={load} />
         <SubAction icon="add_circle" label="Ajouter" onClick={openAdd} />
-        <SubAction icon="settings" label="Options" onClick={() => setSyncModalOpen(true)} />
+        <SubAction
+          icon="settings"
+          label="Options"
+          onClick={() => setSyncModalOpen(true)}
+          title="Options de synchronisation"
+        />
         {hasEnabledIndexers && <div className="subspacer" />}
         {hasEnabledIndexers && (
           <SubAction
@@ -637,6 +642,7 @@ export default function Indexers() {
           <div className="muted">Sources Torznab / Jackett / Prowlarr</div>
         </div>
       </div>
+      <div className="pagehead__divider" />
 
       {err && (
         <div className="errorbox">

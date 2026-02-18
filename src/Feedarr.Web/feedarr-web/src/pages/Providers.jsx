@@ -389,6 +389,7 @@ export default function Providers() {
           <div className="muted">Jackett / Prowlarr</div>
         </div>
       </div>
+      <div className="pagehead__divider" />
 
       {err && (
         <div className="errorbox">
