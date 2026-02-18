@@ -226,6 +226,8 @@ export default function Library() {
   const arrStatusFetchedRef = useRef(new Map());
   const arrAbortRef = useRef(null);
   const arrRequestIdRef = useRef(0);
+  const loadAbortRef = useRef(null);
+  const loadRequestIdRef = useRef(0);
 
   // Items
   const [items, setItems] = useState([]);
@@ -264,6 +266,7 @@ export default function Library() {
     return () => {
       arrStatusFetched.clear();
       gameDetailsFetch.clear();
+      if (loadAbortRef.current) loadAbortRef.current.abort();
       if (posterRefresh.timer) clearTimeout(posterRefresh.timer);
     };
   }, []);
@@ -312,6 +315,13 @@ export default function Library() {
 
   // Load items
   const load = useCallback(async () => {
+    if (loadAbortRef.current) loadAbortRef.current.abort();
+    const abortController = new AbortController();
+    loadAbortRef.current = abortController;
+    const requestId = ++loadRequestIdRef.current;
+    const isLatestRequest = () =>
+      loadRequestIdRef.current === requestId && !abortController.signal.aborted;
+
     if (posterRefreshRef.current.timer) {
       clearTimeout(posterRefreshRef.current.timer);
       posterRefreshRef.current.timer = null;
@@ -326,8 +336,7 @@ export default function Library() {
     try {
       if (!Number.isFinite(sid) || sid <= 0) {
         if (enabledSources.length === 0) {
-          setItems([]);
-          setLoading(false);
+          if (isLatestRequest()) setItems([]);
           return;
         }
         const params = new URLSearchParams();
@@ -338,12 +347,15 @@ export default function Library() {
           enabledSources.map(async (s) => {
             const id = s.id ?? s.sourceId;
             if (!id) return [];
-            const data = await apiGet(`/api/feed/${id}?${params.toString()}`);
+            const data = await apiGet(`/api/feed/${id}?${params.toString()}`, {
+              signal: abortController.signal,
+            });
             return Array.isArray(data)
               ? data.map((it) => ({ ...it, sourceId: it.sourceId ?? id }))
               : [];
           })
         );
+        if (!isLatestRequest()) return;
 
         const merged = all
           .filter((r) => r.status === "fulfilled")
@@ -355,27 +367,32 @@ export default function Library() {
           }));
 
         merged.sort((a, b) => Number(b.publishedAt || 0) - Number(a.publishedAt || 0));
-        setItems(merged);
+        if (isLatestRequest()) setItems(merged);
       } else {
         const params = new URLSearchParams();
         params.set("limit", String(fetchLimit));
         if (filters.q.trim()) params.set("q", filters.q.trim());
         if (filters.seen) params.set("seen", filters.seen);
 
-        const data = await apiGet(`/api/feed/${sid}?${params.toString()}`);
+        const data = await apiGet(`/api/feed/${sid}?${params.toString()}`, {
+          signal: abortController.signal,
+        });
+        if (!isLatestRequest()) return;
         const mapped = (Array.isArray(data) ? data : []).map((it) => ({
           ...it,
           sourceId: it.sourceId ?? sid,
           size: fmtBytes(it.sizeBytes),
           date: fmtDateFromTs(it.publishedAt),
         }));
-        setItems(mapped);
+        if (isLatestRequest()) setItems(mapped);
       }
     } catch (e) {
+      if (e?.name === "AbortError") return;
+      if (!isLatestRequest()) return;
       setErr(e?.message || "Erreur chargement feed");
       setItems([]);
     } finally {
-      setLoading(false);
+      if (loadRequestIdRef.current === requestId) setLoading(false);
     }
   }, [filters.sourceId, enabledSources, filters.limit, filters.q, filters.seen, setErr, setLoading]);
 
