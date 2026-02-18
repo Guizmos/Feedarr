@@ -1,0 +1,9 @@
+{
+  "release-type": "simple",
+  "include-v-in-tag": true,
+  "packages": {
+    ".": {
+      "package-name": "feedarr"
+    }
+  }
+}

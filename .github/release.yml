@@ -1,21 +1,25 @@
 changelog:
-  exclude:
-    labels:
-      - docs
   categories:
-    - title: Breaking Changes
-      labels:
-        - breaking
-    - title: Features
+    - title: 🚀 Features
       labels:
         - feature
         - enhancement
-    - title: Fixes
+
+    - title: 🐛 Fixes
       labels:
         - bug
         - fix
-    - title: Maintenance
+
+    - title: 🧹 Maintenance
       labels:
         - chore
         - refactor
         - deps
+
+    - title: 💥 Breaking Changes
+      labels:
+        - breaking
+
+  exclude:
+    labels:
+      - docs
