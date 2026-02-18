@@ -206,6 +206,7 @@ export default function Library() {
 
   // Arr apps integration
   const {
+    apps,
     hasSonarr,
     hasRadarr,
     hasOverseerr,
@@ -214,6 +215,13 @@ export default function Library() {
     integrationMode,
   } = useArrApps({ pollMs: 120000 });
   const requestMode = normalizeRequestMode(integrationMode);
+  const installedApps = useMemo(
+    () =>
+      (apps || [])
+        .filter((app) => app && app.id != null && app.isEnabled !== false && app.hasApiKey !== false)
+        .sort((a, b) => String(a.name || a.title || "").localeCompare(String(b.name || b.title || ""), "fr-FR", { sensitivity: "base" })),
+    [apps]
+  );
   const [arrStatusMap, setArrStatusMap] = useState({});
   const arrStatusFetchedRef = useRef(new Map());
   const arrAbortRef = useRef(null);
@@ -387,10 +395,10 @@ export default function Library() {
 
   // Fetch arr status
   const fetchArrStatus = useCallback(async (itemsToCheck) => {
-    const canCheckArr = requestMode === "arr" && (hasSonarr || hasRadarr);
-    const canCheckOverseerr = requestMode === "overseerr" && hasOverseerr;
-    const canCheckJellyseerr = requestMode === "jellyseerr" && hasJellyseerr;
-    const canCheckSeer = requestMode === "seer" && hasSeer;
+    const canCheckArr = hasSonarr || hasRadarr;
+    const canCheckOverseerr = hasOverseerr;
+    const canCheckJellyseerr = hasJellyseerr;
+    const canCheckSeer = hasSeer;
     if (!canCheckArr && !canCheckOverseerr && !canCheckJellyseerr && !canCheckSeer) return;
     if (!itemsToCheck || itemsToCheck.length === 0) return;
 
@@ -482,20 +490,20 @@ export default function Library() {
       context: "Failed to refresh Arr status batch in library",
       ignoreAbort: true,
     });
-  }, [hasSonarr, hasRadarr, hasOverseerr, hasJellyseerr, hasSeer, requestMode]);
+  }, [hasSonarr, hasRadarr, hasOverseerr, hasJellyseerr, hasSeer]);
 
   useEffect(() => {
     if (loading) return;
-    const canCheckArr = requestMode === "arr" && (hasSonarr || hasRadarr);
-    const canCheckOverseerr = requestMode === "overseerr" && hasOverseerr;
-    const canCheckJellyseerr = requestMode === "jellyseerr" && hasJellyseerr;
-    const canCheckSeer = requestMode === "seer" && hasSeer;
+    const canCheckArr = hasSonarr || hasRadarr;
+    const canCheckOverseerr = hasOverseerr;
+    const canCheckJellyseerr = hasJellyseerr;
+    const canCheckSeer = hasSeer;
     if (!canCheckArr && !canCheckOverseerr && !canCheckJellyseerr && !canCheckSeer) return;
     fetchArrStatus(items || []);
     return () => {
       if (arrAbortRef.current) arrAbortRef.current.abort();
     };
-  }, [items, loading, hasSonarr, hasRadarr, hasOverseerr, hasJellyseerr, hasSeer, requestMode, fetchArrStatus]);
+  }, [items, loading, hasSonarr, hasRadarr, hasOverseerr, hasJellyseerr, hasSeer, fetchArrStatus]);
 
   // Handler for arr status change
   const handleArrStatusChange = useCallback(async (itemId, arrType, newStatus) => {
@@ -537,6 +545,8 @@ export default function Library() {
 
   // Destructure filter properties for stable dependencies
   const filterCategoryId = filters.categoryId;
+  const filterApplicationId = filters.applicationId;
+  const filterQuality = filters.quality;
   const filterSeen = filters.seen;
   const filterSortBy = filters.sortBy;
   const filterMaxAgeDays = filters.maxAgeDays;
@@ -545,11 +555,19 @@ export default function Library() {
   const filterListSortBy = filters.listSortBy;
   const filterListSortDir = filters.listSortDir;
   const filterLimit = filters.limit;
+  const filterApplicationType = useMemo(() => {
+    if (!filterApplicationId) return "";
+    if (filterApplicationId === "__hide_apps__") return "__hide_apps__";
+    const row = installedApps.find((app) => String(app.id) === String(filterApplicationId));
+    return row?.type ? String(row.type).toLowerCase() : "";
+  }, [filterApplicationId, installedApps]);
 
-  const { visibleItems, categoriesForDropdown } = useLibraryDerivedData({
+  const { visibleItems, categoriesForDropdown, qualityOptions } = useLibraryDerivedData({
     items,
     sourceNameById,
     filterCategoryId,
+    filterApplicationType,
+    filterQuality,
     filterSeen,
     filterSortBy,
     filterMaxAgeDays,
@@ -558,16 +576,33 @@ export default function Library() {
     filterListSortBy,
     filterListSortDir,
     filterLimit,
+    arrStatusById: arrStatusMap,
   });
 
   // Reset category if it no longer exists
   const setFilterCategoryId = filters.setCategoryId;
+  const setFilterApplicationId = filters.setApplicationId;
+  const setFilterQuality = filters.setQuality;
 
   useEffect(() => {
     if (!filterCategoryId) return;
     const exists = (categoriesForDropdown || []).some((c) => c.key === filterCategoryId);
     if (!exists) setFilterCategoryId("");
   }, [filterCategoryId, categoriesForDropdown, setFilterCategoryId]);
+
+  useEffect(() => {
+    if (!filterApplicationId) return;
+    if (filterApplicationId === "__hide_apps__") return;
+    const exists = (installedApps || []).some((app) => String(app.id) === String(filterApplicationId));
+    if (!exists) setFilterApplicationId("");
+  }, [filterApplicationId, installedApps, setFilterApplicationId]);
+
+  useEffect(() => {
+    if (!filterQuality) return;
+    const wanted = String(filterQuality).trim().toLowerCase();
+    const exists = (qualityOptions || []).some((q) => String(q).trim().toLowerCase() === wanted);
+    if (!exists) setFilterQuality("");
+  }, [filterQuality, qualityOptions, setFilterQuality]);
 
   const filterShowCategories = filters.uiSettings?.showCategories;
   useEffect(() => {
@@ -878,6 +913,14 @@ export default function Library() {
     sortBy,
     maxAgeDays,
     setMaxAgeDays,
+    seen,
+    setSeen,
+    applicationId,
+    setApplicationId,
+    quality,
+    setQuality,
+    filtersOpen,
+    setFiltersOpen,
     sourceId,
     setSourceId,
     uiSettings,
@@ -912,6 +955,7 @@ export default function Library() {
   }, [bulkSetSeen]);
 
   const subbarProps = useMemo(() => ({
+    subbarClassName: `subbar--library${filtersOpen && !selectionMode ? " subbar--library-filter-open" : ""}`,
     selectionMode,
     selectedIds,
     onToggleSelectionMode: toggleSelectionMode,
@@ -923,6 +967,16 @@ export default function Library() {
     sortBy,
     maxAgeDays,
     setMaxAgeDays,
+    seen,
+    setSeen,
+    applicationId,
+    setApplicationId,
+    quality,
+    setQuality,
+    qualityOptions,
+    filtersOpen,
+    setFiltersOpen,
+    installedApps,
     sources,
     enabledSources,
     sourceId,
@@ -941,9 +995,11 @@ export default function Library() {
     defaultMaxAgeDays,
     defaultLimit,
   }), [
-    selectionMode, selectedIds, toggleSelectionMode, handleSelectAllVisible,
+    filtersOpen, selectionMode, selectedIds, toggleSelectionMode, handleSelectAllVisible,
     posterAutoLoading, handleBulkFetchPosters, handleOpenManualPoster,
     handleBulkSetSeen, sortBy, maxAgeDays, setMaxAgeDays, sources,
+    seen, setSeen, applicationId, setApplicationId, quality, setQuality,
+    qualityOptions, setFiltersOpen, installedApps,
     enabledSources, sourceId, setSourceId, uiSettings, categoryId,
     setCategoryId, categoriesForDropdown, setSortBy, viewMode, setViewMode,
     viewOptions, limit, setLimit, defaultSort, defaultMaxAgeDays, defaultLimit,

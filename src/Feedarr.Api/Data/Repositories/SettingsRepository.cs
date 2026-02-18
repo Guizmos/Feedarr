@@ -126,6 +126,16 @@ public sealed class SettingsRepository
                 defaults.DefaultMaxAgeDays = loaded.DefaultMaxAgeDays;
             if (json.Contains("defaultLimit", StringComparison.OrdinalIgnoreCase))
                 defaults.DefaultLimit = loaded.DefaultLimit;
+            if (json.Contains("defaultFilterSeen", StringComparison.OrdinalIgnoreCase))
+                defaults.DefaultFilterSeen = loaded.DefaultFilterSeen;
+            if (json.Contains("defaultFilterApplication", StringComparison.OrdinalIgnoreCase))
+                defaults.DefaultFilterApplication = loaded.DefaultFilterApplication;
+            if (json.Contains("defaultFilterSourceId", StringComparison.OrdinalIgnoreCase))
+                defaults.DefaultFilterSourceId = loaded.DefaultFilterSourceId;
+            if (json.Contains("defaultFilterCategoryId", StringComparison.OrdinalIgnoreCase))
+                defaults.DefaultFilterCategoryId = loaded.DefaultFilterCategoryId;
+            if (json.Contains("defaultFilterQuality", StringComparison.OrdinalIgnoreCase))
+                defaults.DefaultFilterQuality = loaded.DefaultFilterQuality;
             return defaults;
         }
         catch

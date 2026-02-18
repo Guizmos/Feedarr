@@ -41,6 +41,74 @@ const sortOptions = [
   { value: "recent", label: "Récent" },
 ];
 
+function TopReleasesSubbar({
+  subbarClassName,
+  sources,
+  sourceId,
+  setSourceId,
+  enabledSources,
+  sortBy,
+  setSortBy,
+  viewMode,
+  setViewMode,
+}) {
+  return (
+    <div className="top24-subbar-content">
+      <div className="subspacer" />
+
+      {sources.length > 0 ? (
+        <TopReleasesSubSelectIcon
+          icon="storage"
+          label="Source"
+          value={sourceId}
+          active={!!sourceId}
+          onChange={(e) => setSourceId(e.target.value)}
+        >
+          <option value="">Tous les indexeurs</option>
+          {enabledSources.map((s) => {
+            const id = s.id ?? s.sourceId;
+            const name = s.name ?? s.title ?? `Source ${id}`;
+            return (
+              <option key={id} value={String(id)}>
+                {name}
+              </option>
+            );
+          })}
+        </TopReleasesSubSelectIcon>
+      ) : null}
+
+      <TopReleasesSubSelectIcon
+        icon="sort"
+        label="Tri"
+        value={sortBy}
+        active={sortBy !== "seeders"}
+        onChange={(e) => setSortBy(e.target.value)}
+        title="Tri"
+      >
+        {sortOptions.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </TopReleasesSubSelectIcon>
+
+      <TopReleasesSubSelectIcon
+        icon="view_module"
+        label="Vue"
+        value={viewMode}
+        onChange={(e) => setViewMode(e.target.value)}
+        title="Vue"
+      >
+        {viewOptions.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </TopReleasesSubSelectIcon>
+    </div>
+  );
+}
+
 function isGameItem(it) {
   const key = String(it?.unifiedCategoryKey || "").toLowerCase();
   const mediaType = String(it?.mediaType || "").toLowerCase();
@@ -424,62 +492,17 @@ export default function TopReleases() {
   // Subbar avec Source, Tri et Vue
   useEffect(() => {
     setContent(
-      <>
-        <div className="subspacer" />
-
-        {/* SOURCE */}
-        {sources.length > 0 ? (
-          <TopReleasesSubSelectIcon
-            icon="storage"
-            label="Source"
-            value={sourceId}
-            active={!!sourceId}
-            onChange={(e) => setSourceId(e.target.value)}
-          >
-            <option value="">Tous les indexeurs</option>
-            {enabledSources.map((s) => {
-              const id = s.id ?? s.sourceId;
-              const name = s.name ?? s.title ?? `Source ${id}`;
-              return (
-                <option key={id} value={String(id)}>
-                  {name}
-                </option>
-              );
-            })}
-          </TopReleasesSubSelectIcon>
-        ) : null}
-
-        {/* TRI */}
-        <TopReleasesSubSelectIcon
-          icon="sort"
-          label="Tri"
-          value={sortBy}
-          active={sortBy !== "seeders"}
-          onChange={(e) => setSortBy(e.target.value)}
-          title="Tri"
-        >
-          {sortOptions.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </TopReleasesSubSelectIcon>
-
-        {/* VIEW */}
-        <TopReleasesSubSelectIcon
-          icon="view_module"
-          label="Vue"
-          value={viewMode}
-          onChange={(e) => setViewMode(e.target.value)}
-          title="Vue"
-        >
-          {viewOptions.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </TopReleasesSubSelectIcon>
-      </>
+      <TopReleasesSubbar
+        subbarClassName="subbar--top24h"
+        sources={sources}
+        sourceId={sourceId}
+        setSourceId={setSourceId}
+        enabledSources={enabledSources}
+        sortBy={sortBy}
+        setSortBy={setSortBy}
+        viewMode={viewMode}
+        setViewMode={setViewMode}
+      />
     );
 
     return () => setContent(null);

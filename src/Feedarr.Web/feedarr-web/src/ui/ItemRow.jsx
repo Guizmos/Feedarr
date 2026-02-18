@@ -103,6 +103,41 @@ function AutoScrollLine({ className = "", title, children }) {
   );
 }
 
+function FitTextLine({ className = "", title, children, minSize = 9 }) {
+  const ref = React.useRef(null);
+
+  const fit = React.useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.fontSize = "";
+    const computed = parseFloat(getComputedStyle(el).fontSize) || 14;
+    let size = computed;
+    el.style.fontSize = `${size}px`;
+    while (el.scrollWidth > el.clientWidth + 1 && size > minSize) {
+      size -= 0.5;
+      el.style.fontSize = `${size}px`;
+    }
+  }, [minSize]);
+
+  React.useLayoutEffect(() => {
+    fit();
+  }, [children, fit]);
+
+  React.useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [fit]);
+
+  return (
+    <span ref={ref} className={className} title={title}>
+      {children}
+    </span>
+  );
+}
+
 /**
  * IconBtn - Bouton avec icône lucide-react
  */
@@ -187,17 +222,17 @@ export default function ItemRow({
           )}
         </div>
         {meta && (
-          <AutoScrollLine className="itemrow__meta" title={meta}>
+          <FitTextLine className="itemrow__meta" title={meta}>
             {meta}
-          </AutoScrollLine>
+          </FitTextLine>
         )}
         {metaSub && (
-          <AutoScrollLine className="itemrow__meta-sub" title={metaSub}>
+          <FitTextLine className="itemrow__meta-sub" title={metaSub}>
             {metaSub}
-          </AutoScrollLine>
+          </FitTextLine>
         )}
         {badges && badges.length > 0 && (
-          <AutoScrollLine className="itemrow__badges" title="Badges">
+          <div className="itemrow__badges">
             {badges.map((badge, idx) =>
               React.isValidElement(badge) ? (
                 <React.Fragment key={idx}>{badge}</React.Fragment>
@@ -211,7 +246,7 @@ export default function ItemRow({
                 </span>
               )
             )}
-          </AutoScrollLine>
+          </div>
         )}
       </div>
       <div className={`itemrow__footer itemrow__footer--count-${actions.length}`}>

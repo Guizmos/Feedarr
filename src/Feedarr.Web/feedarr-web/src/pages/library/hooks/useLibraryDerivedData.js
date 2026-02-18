@@ -2,10 +2,31 @@ import { useMemo } from "react";
 import { getEpisodeSortValue, scoreResolution } from "../utils/helpers.js";
 import { UNIFIED_CATEGORY_OPTIONS } from "../utils/constants.js";
 
+function normalize(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function matchesApplicationFilter(item, arrStatus, appType) {
+  const type = normalize(appType);
+  if (!type) return true;
+  const hasAnyApp =
+    !!(arrStatus?.inSonarr || arrStatus?.inRadarr || arrStatus?.inOverseerr || arrStatus?.inJellyseerr || arrStatus?.inSeer)
+    || !!(item?.isInSonarr || item?.isInRadarr);
+  if (type === "__hide_apps__") return !hasAnyApp;
+  if (type === "sonarr") return !!(arrStatus?.inSonarr || item?.isInSonarr);
+  if (type === "radarr") return !!(arrStatus?.inRadarr || item?.isInRadarr);
+  if (type === "overseerr") return !!arrStatus?.inOverseerr;
+  if (type === "jellyseerr") return !!arrStatus?.inJellyseerr;
+  if (type === "seer") return !!arrStatus?.inSeer;
+  return true;
+}
+
 export default function useLibraryDerivedData({
   items,
   sourceNameById,
   filterCategoryId,
+  filterApplicationType,
+  filterQuality,
   filterSeen,
   filterSortBy,
   filterMaxAgeDays,
@@ -14,16 +35,23 @@ export default function useLibraryDerivedData({
   filterListSortBy,
   filterListSortDir,
   filterLimit,
+  arrStatusById,
 }) {
   const preCategoryFiltered = useMemo(() => {
     let result = items || [];
     result = result.filter((it) => it.unifiedCategoryKey);
 
+    if (filterApplicationType) {
+      result = result.filter((it) =>
+        matchesApplicationFilter(it, arrStatusById?.[it.id], filterApplicationType)
+      );
+    }
+
     if (filterSeen) {
       const sv = filterSeen === "1" ? 1 : filterSeen === "0" ? 0 : null;
       if (sv !== null) result = result.filter((it) => Number(it.seen) === sv);
     }
-    if (filterSortBy === "date" && filterMaxAgeDays) {
+    if (filterMaxAgeDays) {
       const days = Number(filterMaxAgeDays);
       if (Number.isFinite(days) && days > 0) {
         const now = Date.now() / 1000;
@@ -42,13 +70,43 @@ export default function useLibraryDerivedData({
     }
 
     return result;
-  }, [items, filterSeen, filterSortBy, filterMaxAgeDays, filterQ]);
+  }, [items, filterApplicationType, arrStatusById, filterSeen, filterMaxAgeDays, filterQ]);
+
+  const categoryFiltered = useMemo(() => {
+    if (!filterCategoryId) return preCategoryFiltered;
+    return preCategoryFiltered.filter((it) => it.unifiedCategoryKey === filterCategoryId);
+  }, [preCategoryFiltered, filterCategoryId]);
+
+  const qualityOptions = useMemo(() => {
+    const byKey = new Map();
+    (categoryFiltered || []).forEach((it) => {
+      const raw = String(it?.resolution || "").trim();
+      const key = normalize(raw);
+      if (!key) return;
+      if (!byKey.has(key)) byKey.set(key, raw);
+    });
+
+    const ordered = Array.from(byKey.entries())
+      .sort((a, b) => {
+        const scoreDiff = scoreResolution(b[1]) - scoreResolution(a[1]);
+        if (scoreDiff !== 0) return scoreDiff;
+        return a[1].localeCompare(b[1], "fr-FR", { sensitivity: "base" });
+      })
+      .map(([, label]) => label);
+
+    const selectedKey = normalize(filterQuality);
+    if (selectedKey && !byKey.has(selectedKey)) {
+      return [filterQuality, ...ordered];
+    }
+    return ordered;
+  }, [categoryFiltered, filterQuality]);
 
   const filtered = useMemo(() => {
-    let result = preCategoryFiltered;
+    let result = categoryFiltered;
 
-    if (filterCategoryId) {
-      result = result.filter((it) => it.unifiedCategoryKey === filterCategoryId);
+    if (filterQuality) {
+      const wanted = normalize(filterQuality);
+      result = result.filter((it) => normalize(it?.resolution) === wanted);
     }
 
     if (filterViewMode === "missing") {
@@ -93,8 +151,8 @@ export default function useLibraryDerivedData({
 
     return sorted;
   }, [
-    preCategoryFiltered,
-    filterCategoryId,
+    categoryFiltered,
+    filterQuality,
     filterViewMode,
     filterListSortBy,
     filterListSortDir,
@@ -127,6 +185,7 @@ export default function useLibraryDerivedData({
 
   return {
     filtered,
+    qualityOptions,
     visibleItems,
     categoriesForDropdown,
   };

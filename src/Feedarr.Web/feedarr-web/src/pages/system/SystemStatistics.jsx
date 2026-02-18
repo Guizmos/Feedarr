@@ -127,6 +127,16 @@ const MAIN_CATEGORY_FALLBACKS = {
   8: { color: "#6366f1", name: "Autre" },
 };
 
+const UNIFIED_CATEGORY_INFO = {
+  film: { color: "#3b82f6", name: "Films" },
+  serie: { color: "#22c55e", name: "Séries" },
+  emission: { color: "#a855f7", name: "Émissions" },
+  spectacle: { color: "#f97316", name: "Spectacle" },
+  jeuwindows: { color: "#ec4899", name: "PC Games" },
+  animation: { color: "#f472b6", name: "Animation" },
+  autre: { color: "#94a3b8", name: "Autre" },
+};
+
 function getCategoryInfo(categoryId) {
   if (!categoryId) return { color: "#94a3b8", name: "Autre" };
   let normalizedId = categoryId;
@@ -135,6 +145,14 @@ function getCategoryInfo(categoryId) {
   const mainCatDigit = Math.floor(normalizedId / 1000);
   if (MAIN_CATEGORY_FALLBACKS[mainCatDigit]) return MAIN_CATEGORY_FALLBACKS[mainCatDigit];
   return { color: "#94a3b8", name: "Autre" };
+}
+
+function getCategoryInfoForStats(categoryId, unifiedCategory) {
+  const unifiedKey = String(unifiedCategory || "").trim().toLowerCase();
+  if (unifiedKey && UNIFIED_CATEGORY_INFO[unifiedKey]) {
+    return UNIFIED_CATEGORY_INFO[unifiedKey];
+  }
+  return getCategoryInfo(categoryId);
 }
 
 const CATEGORY_ORDER = [
@@ -228,7 +246,7 @@ function StackedHorizontalBarChart({ data, height = 260, barGap = 12 }) {
   data.forEach(d => {
     (d.categories || []).forEach(c => {
       if (!categoryMap.has(c.name)) {
-        const info = getCategoryInfo(c.categoryId);
+        const info = getCategoryInfoForStats(c.categoryId, c.unifiedCategory);
         categoryMap.set(c.name, { name: c.name, color: info.color });
       }
     });
@@ -258,7 +276,7 @@ function StackedHorizontalBarChart({ data, height = 260, barGap = 12 }) {
               <div style={{ flex: 1, height: 20, display: "flex", borderRadius: 4, overflow: "hidden", backgroundColor: "var(--page-bg)" }}>
                 {(item.categories || []).map((cat, j) => {
                   const segmentWidth = item.total > 0 ? (cat.count / item.total) * totalWidth : 0;
-                  const info = getCategoryInfo(cat.categoryId);
+                  const info = getCategoryInfoForStats(cat.categoryId, cat.unifiedCategory);
                   return <div key={j} style={{ width: `${segmentWidth}%`, height: "100%", backgroundColor: info.color, transition: "width 0.3s ease" }} title={`${info.name}: ${cat.count}`} />;
                 })}
               </div>
@@ -665,9 +683,14 @@ function IndexersPanel({ refreshKey }) {
     const byIndexer = {};
     data.releasesByCategoryByIndexer.forEach(item => {
       if (!byIndexer[item.sourceName]) byIndexer[item.sourceName] = { name: item.sourceName, categoriesMap: {}, total: 0 };
-      const info = getCategoryInfo(item.categoryId);
+      const info = getCategoryInfoForStats(item.categoryId, item.unifiedCategory);
       const key = info.name;
-      if (!byIndexer[item.sourceName].categoriesMap[key]) byIndexer[item.sourceName].categoriesMap[key] = { categoryId: item.categoryId, name: info.name, count: 0 };
+      if (!byIndexer[item.sourceName].categoriesMap[key]) byIndexer[item.sourceName].categoriesMap[key] = {
+        categoryId: item.categoryId,
+        unifiedCategory: item.unifiedCategory,
+        name: info.name,
+        count: 0
+      };
       byIndexer[item.sourceName].categoriesMap[key].count += item.count;
       byIndexer[item.sourceName].total += item.count;
     });

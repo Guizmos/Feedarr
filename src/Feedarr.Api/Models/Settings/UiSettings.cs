@@ -18,6 +18,22 @@ public sealed class UiSettings
     // 50 / 100 / 200 / 500 / 0 (0 = all)
     public int DefaultLimit { get; set; } = 100;
 
+    // Filterbar defaults
+    // "" / "1" / "0"
+    public string DefaultFilterSeen { get; set; } = "";
+
+    // "" / "__hide_apps__" / "<app_id>"
+    public string DefaultFilterApplication { get; set; } = "";
+
+    // Source id (stringified)
+    public string DefaultFilterSourceId { get; set; } = "";
+
+    // Unified category key
+    public string DefaultFilterCategoryId { get; set; } = "";
+
+    // Resolution label
+    public string DefaultFilterQuality { get; set; } = "";
+
     // Badges logs (par niveau)
     public bool BadgeInfo { get; set; } = false;
     public bool BadgeWarn { get; set; } = true;

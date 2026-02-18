@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { apiGet, apiPut } from "../../../api/client.js";
 
+const MAX_AGE_VALUES = new Set(["", "1", "2", "3", "7", "15", "30"]);
+const SEEN_VALUES = new Set(["", "1", "0"]);
+const APP_FILTER_SPECIAL_VALUES = new Set(["", "__hide_apps__"]);
+
 function safeGetStorage(key) {
   try { return window.localStorage.getItem(key); }
   catch { return null; }
@@ -19,13 +23,27 @@ export default function useLibraryFilters(sources, enabledSources) {
   const [searchParams] = useSearchParams();
   const [sourceId, setSourceId] = useState("");
   const [q, setQ] = useState("");
-  const [categoryId, setCategoryId] = useState("");
+  const [categoryId, setCategoryId] = useState(() => safeGetStorage("feedarr.library.filter.categoryId") || "");
   const [sortBy, setSortBy] = useState("date");
-  const [maxAgeDays, setMaxAgeDays] = useState("");
+  const [maxAgeDays, setMaxAgeDays] = useState(() => {
+    const stored = safeGetStorage("feedarr.library.filter.maxAgeDays");
+    return MAX_AGE_VALUES.has(stored ?? "") ? (stored ?? "") : "";
+  });
   const [viewMode, setViewMode] = useState("grid");
   const [listSortBy, setListSortBy] = useState("date");
   const [listSortDir, setListSortDir] = useState("desc");
-  const [seen, setSeen] = useState("");
+  const [seen, setSeen] = useState(() => {
+    const stored = safeGetStorage("feedarr.library.filter.seen");
+    return SEEN_VALUES.has(stored ?? "") ? (stored ?? "") : "";
+  });
+  const [applicationId, setApplicationId] = useState(() => {
+    const stored = safeGetStorage("feedarr.library.filter.applicationId") || "";
+    return APP_FILTER_SPECIAL_VALUES.has(stored) || /^-?\d+$/.test(stored) ? stored : "";
+  });
+  const [quality, setQuality] = useState(() => safeGetStorage("feedarr.library.filter.quality") || "");
+  const [filtersOpen, setFiltersOpen] = useState(
+    () => safeGetStorage("feedarr.library.filterbar.open") === "1"
+  );
   const [uiSettings, setUiSettings] = useState(null);
   const [sourceReady, setSourceReady] = useState(false);
 
@@ -56,28 +74,62 @@ export default function useLibraryFilters(sources, enabledSources) {
     return row?.name ?? row?.title ?? `Source ${sid}`;
   }, [sourceId, enabledSources]);
 
-  // Charger les sources depuis le localStorage
+  // Charger la source courante depuis localStorage (ou defaults UI)
   useEffect(() => {
+    if (!uiSettings) return;
     if (!sources || sources.length === 0) return;
-    const stored = safeGetStorage("feedarr.library.sourceId") || "";
+    const storedRaw = safeGetStorage("feedarr.library.sourceId");
+    const stored = storedRaw ?? "";
+    const defaultSourceId = String(uiSettings?.defaultFilterSourceId ?? "").trim();
     const isValid = (id) =>
       enabledSources.some((s) => String(s.id ?? s.sourceId) === String(id));
 
     setSourceId((prev) => {
       if (prev && isValid(prev)) return prev;
-      if (!prev && stored === "") return "";
       if (stored && isValid(stored)) return stored;
+      if (storedRaw == null && defaultSourceId && isValid(defaultSourceId)) return defaultSourceId;
+      if (!prev && stored === "") return "";
       const first = enabledSources[0]?.id ?? enabledSources[0]?.sourceId;
       return first != null ? String(first) : "";
     });
     setSourceReady(true);
-  }, [sources, enabledSources]);
+  }, [sources, enabledSources, uiSettings]);
 
   // Persister sourceId
   useEffect(() => {
     if (!sourceReady) return;
     safeSetStorage("feedarr.library.sourceId", String(sourceId || ""));
   }, [sourceId, sourceReady]);
+
+  // Persister categoryId
+  useEffect(() => {
+    safeSetStorage("feedarr.library.filter.categoryId", String(categoryId || ""));
+  }, [categoryId]);
+
+  // Persister maxAgeDays
+  useEffect(() => {
+    safeSetStorage("feedarr.library.filter.maxAgeDays", String(maxAgeDays || ""));
+  }, [maxAgeDays]);
+
+  // Persister seen
+  useEffect(() => {
+    safeSetStorage("feedarr.library.filter.seen", String(seen || ""));
+  }, [seen]);
+
+  // Persister applicationId
+  useEffect(() => {
+    safeSetStorage("feedarr.library.filter.applicationId", String(applicationId || ""));
+  }, [applicationId]);
+
+  // Persister quality
+  useEffect(() => {
+    safeSetStorage("feedarr.library.filter.quality", String(quality || ""));
+  }, [quality]);
+
+  // Persister ouverture de la filterbar
+  useEffect(() => {
+    safeSetStorage("feedarr.library.filterbar.open", filtersOpen ? "1" : "0");
+  }, [filtersOpen]);
 
   // Persister limit
   useEffect(() => {
@@ -102,8 +154,35 @@ export default function useLibraryFilters(sources, enabledSources) {
 
         // Apply default maxAgeDays
         const defMaxAge = String(ui?.defaultMaxAgeDays ?? "");
-        if (["", "1", "2", "3", "7", "15", "30"].includes(defMaxAge)) {
+        const storedMaxAge = safeGetStorage("feedarr.library.filter.maxAgeDays");
+        if (storedMaxAge == null && MAX_AGE_VALUES.has(defMaxAge)) {
           setMaxAgeDays(defMaxAge);
+        }
+
+        // Apply default seen (only if no localStorage override)
+        const storedSeen = safeGetStorage("feedarr.library.filter.seen");
+        const defSeen = String(ui?.defaultFilterSeen ?? "");
+        if (storedSeen == null && SEEN_VALUES.has(defSeen)) {
+          setSeen(defSeen);
+        }
+
+        // Apply default application filter (only if no localStorage override)
+        const storedApp = safeGetStorage("feedarr.library.filter.applicationId");
+        const defApp = String(ui?.defaultFilterApplication ?? "");
+        if (storedApp == null) {
+          if (APP_FILTER_SPECIAL_VALUES.has(defApp) || /^-?\d+$/.test(defApp)) {
+            setApplicationId(defApp);
+          }
+        }
+
+        // Apply default category/quality (only if no localStorage override)
+        const storedCategory = safeGetStorage("feedarr.library.filter.categoryId");
+        if (storedCategory == null) {
+          setCategoryId(String(ui?.defaultFilterCategoryId ?? ""));
+        }
+        const storedQuality = safeGetStorage("feedarr.library.filter.quality");
+        if (storedQuality == null) {
+          setQuality(String(ui?.defaultFilterQuality ?? ""));
         }
 
         // Apply default limit (only if no localStorage override)
@@ -180,6 +259,10 @@ export default function useLibraryFilters(sources, enabledSources) {
   const defaultSort = uiSettings?.defaultSort || "date";
   const defaultMaxAgeDays = uiSettings?.defaultMaxAgeDays ?? "";
   const defaultLimit = uiSettings?.defaultLimit === 0 ? "all" : (uiSettings?.defaultLimit || 100);
+  const defaultSeen = uiSettings?.defaultFilterSeen ?? "";
+  const defaultApplication = uiSettings?.defaultFilterApplication ?? "";
+  const defaultCategoryId = uiSettings?.defaultFilterCategoryId ?? "";
+  const defaultQuality = uiSettings?.defaultFilterQuality ?? "";
 
   return {
     sourceId,
@@ -199,6 +282,12 @@ export default function useLibraryFilters(sources, enabledSources) {
     toggleListSort,
     seen,
     setSeen,
+    applicationId,
+    setApplicationId,
+    quality,
+    setQuality,
+    filtersOpen,
+    setFiltersOpen,
     limit,
     setLimit,
     uiSettings,
@@ -208,5 +297,9 @@ export default function useLibraryFilters(sources, enabledSources) {
     defaultSort,
     defaultMaxAgeDays,
     defaultLimit,
+    defaultSeen,
+    defaultApplication,
+    defaultCategoryId,
+    defaultQuality,
   };
 }

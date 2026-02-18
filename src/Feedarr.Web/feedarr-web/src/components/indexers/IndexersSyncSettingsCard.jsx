@@ -17,7 +17,7 @@ const toInt = (value, fallback) => {
   return Number.isFinite(n) ? Math.trunc(n) : fallback;
 };
 
-export default function IndexersSyncSettingsCard({ onStateChange }) {
+export default function IndexersSyncSettingsCard({ onStateChange, showSaveButton = false }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [saveState, setSaveState] = useState("idle");
@@ -243,6 +243,19 @@ export default function IndexersSyncSettingsCard({ onStateChange }) {
             </div>
             <div className="settings-help">Plafond global par source, purge des plus anciens.</div>
           </div>
+        </div>
+      )}
+
+      {showSaveButton && !loading && isDirty && (
+        <div className="formactions" style={{ marginTop: 16 }}>
+          <button
+            className={`btn ${saveState === "success" ? "btn-hover-ok" : saveState === "error" ? "btn-fixed-danger btn-nohover" : "btn-hover-ok"}`}
+            type="button"
+            onClick={handleSave}
+            disabled={!isDirty || saveState === "loading"}
+          >
+            {saveState === "loading" ? "Enregistrement..." : saveState === "success" ? "Enregistré" : saveState === "error" ? "Erreur" : "Enregistrer"}
+          </button>
         </div>
       )}
     </div>

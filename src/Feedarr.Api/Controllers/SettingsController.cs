@@ -126,6 +126,28 @@ public sealed class SettingsController : ControllerBase
         var limit = dto.DefaultLimit;
         if (limit != 0 && limit != 50 && limit != 100 && limit != 200 && limit != 500) limit = 100;
 
+        var filterSeen = (dto.DefaultFilterSeen ?? "").Trim();
+        if (filterSeen is not ("" or "1" or "0")) filterSeen = "";
+
+        var filterApp = (dto.DefaultFilterApplication ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(filterApp))
+        {
+            filterApp = "";
+        }
+        else if (!string.Equals(filterApp, "__hide_apps__", StringComparison.Ordinal) &&
+                 !long.TryParse(filterApp, out _))
+        {
+            filterApp = "";
+        }
+
+        var filterSource = (dto.DefaultFilterSourceId ?? "").Trim();
+        if (!string.IsNullOrWhiteSpace(filterSource) && !long.TryParse(filterSource, out _))
+            filterSource = "";
+
+        var filterCategory = (dto.DefaultFilterCategoryId ?? "").Trim().ToLowerInvariant();
+        var filterQuality = (dto.DefaultFilterQuality ?? "").Trim();
+        if (filterQuality.Length > 64) filterQuality = filterQuality[..64];
+
         var theme = (dto.Theme ?? "light").Trim().ToLowerInvariant();
         if (theme is not ("light" or "dark" or "system")) theme = "light";
 
@@ -138,6 +160,11 @@ public sealed class SettingsController : ControllerBase
             DefaultSort = sort,
             DefaultMaxAgeDays = maxAge,
             DefaultLimit = limit,
+            DefaultFilterSeen = filterSeen,
+            DefaultFilterApplication = filterApp,
+            DefaultFilterSourceId = filterSource,
+            DefaultFilterCategoryId = filterCategory,
+            DefaultFilterQuality = filterQuality,
             BadgeInfo = dto.BadgeInfo,
             BadgeWarn = dto.BadgeWarn,
             BadgeError = dto.BadgeError,

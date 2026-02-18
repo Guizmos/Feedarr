@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Modal from "../../ui/Modal.jsx";
 import ItemRow from "../../ui/ItemRow.jsx";
 import { fmtBytes } from "./settingsUtils.js";
@@ -30,6 +30,8 @@ export default function SettingsApplications({
   setArrSyncSettings,
   setArrRequestModeDraft,
   saveArrSyncSettings,
+  optionsModalOpen,
+  closeOptionsModal,
   arrModalOpen,
   arrModalMode,
   arrModalApp,
@@ -82,6 +84,67 @@ export default function SettingsApplications({
 }) {
   const hasApps = (arrApps || []).length > 0;
   const noAvailableAddTypes = (availableAddTypes || []).length === 0;
+  const [syncModalInitial, setSyncModalInitial] = useState(null);
+  const [optionPulseKeys, setOptionPulseKeys] = useState(() => new Set());
+  const optionPulseTimerRef = useRef(null);
+
+  useEffect(() => {
+    if (!optionsModalOpen) return;
+    setSyncModalInitial({
+      arrAutoSyncEnabled: !!arrSyncSettings.arrAutoSyncEnabled,
+      arrSyncIntervalMinutes: Number(arrSyncSettings.arrSyncIntervalMinutes ?? 60),
+    });
+  }, [optionsModalOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (optionPulseTimerRef.current) clearTimeout(optionPulseTimerRef.current);
+    };
+  }, []);
+
+  const isSyncDirty = useMemo(() => {
+    if (!syncModalInitial) return false;
+    return (
+      !!arrSyncSettings.arrAutoSyncEnabled !== syncModalInitial.arrAutoSyncEnabled
+      || Number(arrSyncSettings.arrSyncIntervalMinutes ?? 60) !== syncModalInitial.arrSyncIntervalMinutes
+    );
+  }, [arrSyncSettings.arrAutoSyncEnabled, arrSyncSettings.arrSyncIntervalMinutes, syncModalInitial]);
+
+  const isOptionsDirty = isRequestModeDirty || isSyncDirty;
+
+  const optionPulseClass = (key) => (optionPulseKeys.has(key) ? " pulse-ok" : "");
+
+  async function handleSaveOptionsModal() {
+    if (!isOptionsDirty || arrSyncSaving) return;
+    const changed = new Set();
+    if (isRequestModeDirty) changed.add("arr.requestIntegrationMode");
+    if (syncModalInitial) {
+      if (!!arrSyncSettings.arrAutoSyncEnabled !== syncModalInitial.arrAutoSyncEnabled) {
+        changed.add("arr.arrAutoSyncEnabled");
+      }
+      if (Number(arrSyncSettings.arrSyncIntervalMinutes ?? 60) !== syncModalInitial.arrSyncIntervalMinutes) {
+        changed.add("arr.arrSyncIntervalMinutes");
+      }
+    }
+
+    await saveArrSyncSettings({
+      ...arrSyncSettings,
+      requestIntegrationMode: arrRequestModeDraft,
+    });
+
+    if (changed.size > 0) {
+      if (optionPulseTimerRef.current) clearTimeout(optionPulseTimerRef.current);
+      setOptionPulseKeys(new Set(changed));
+      optionPulseTimerRef.current = setTimeout(() => {
+        setOptionPulseKeys(new Set());
+      }, 1200);
+    }
+
+    setSyncModalInitial({
+      arrAutoSyncEnabled: !!arrSyncSettings.arrAutoSyncEnabled,
+      arrSyncIntervalMinutes: Number(arrSyncSettings.arrSyncIntervalMinutes ?? 60),
+    });
+  }
 
   return (
     <>
@@ -172,141 +235,163 @@ export default function SettingsApplications({
         )}
       </div>
 
-      {hasApps && (
-        <div className="settings-card" id="request-integration">
-          <div className="settings-card__title">Mode d&apos;envoi</div>
-          <div className="indexer-list">
-            <div className={`indexer-card${arrPulseKeys?.has("arr.requestIntegrationMode") ? " pulse-ok" : ""}`}>
-              <div className="indexer-row indexer-row--settings">
-                <span className="indexer-title">Intégration active</span>
-                <div className="indexer-actions">
-                  {isRequestModeDirty && (
-                    <span className="indexer-status">À sauvegarder</span>
-                  )}
-                  <select
-                    value={arrRequestModeDraft}
-                    onChange={(e) => setArrRequestModeDraft(normalizeRequestMode(e.target.value))}
-                    disabled={arrSyncSaving}
-                  >
-                    <option value="arr">Sonarr/Radarr</option>
-                    <option value="overseerr">Overseerr</option>
-                    <option value="jellyseerr">Jellyseerr</option>
-                    <option value="seer">Seer</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {hasApps && (
-        <div className="settings-card" id="arr-sync">
-          <div className="settings-card__title">Synchronisation</div>
-          <div className="indexer-list">
-            <div className={`indexer-card${!hasEnabledArrApps ? " is-disabled" : ""}`}>
-              <div className="indexer-row indexer-row--settings">
-                <span className="indexer-title">Synchronisation Automatique</span>
-                <div className="indexer-actions">
-                  <span className="indexer-status">
-                    {arrSyncSettings.arrAutoSyncEnabled ? "Actif" : "Desactive"}
-                  </span>
-                  <ToggleSwitch
-                    checked={arrSyncSettings.arrAutoSyncEnabled}
-                    onIonChange={(e) => {
-                      const enabled = e.detail.checked;
-                      const updated = { ...arrSyncSettings, arrAutoSyncEnabled: enabled };
-                      setArrSyncSettings(updated);
-                      saveArrSyncSettings(updated);
-                    }}
-                    className="settings-toggle"
-                    disabled={!hasEnabledArrApps || arrSyncSaving}
-                  />
-                </div>
-              </div>
-            </div>
-            <div className={`indexer-card${(!hasEnabledArrApps || !arrSyncSettings.arrAutoSyncEnabled) ? " is-disabled" : ""}`}>
-              <div className="indexer-row indexer-row--settings">
-                <span className="indexer-title">Intervalle Sync (minutes)</span>
-                <div className="indexer-actions">
-                  <input
-                    type="number"
-                    min={1}
-                    max={1440}
-                    value={arrSyncSettings.arrSyncIntervalMinutes}
-                    onChange={(e) => {
-                      const val = Math.max(1, Math.min(1440, Number(e.target.value) || 10));
-                      setArrSyncSettings((prev) => ({ ...prev, arrSyncIntervalMinutes: val }));
-                    }}
-                    onBlur={() => saveArrSyncSettings(arrSyncSettings)}
-                    disabled={!arrSyncSettings.arrAutoSyncEnabled || !hasEnabledArrApps}
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {arrSyncStatus.length > 0 && (
-            <div className="indexer-list" style={{ marginTop: 16 }}>
-              <div className="settings-card__title" style={{ fontSize: 14, marginBottom: 8 }}>
-                État de synchronisation
-              </div>
-              {arrSyncStatus.map((status) => {
-                const hasError = !!status.lastError;
-                let lastSyncDisplay = "Jamais";
-                if (status.lastSyncAt) {
-                  const syncDate = new Date(status.lastSyncAt);
-                  const now = new Date();
-                  const isToday = syncDate.toDateString() === now.toDateString();
-                  const timeStr = syncDate.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
-                  if (isToday) {
-                    lastSyncDisplay = timeStr;
-                  } else {
-                    const dateStr = syncDate.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" });
-                    lastSyncDisplay = `${dateStr} ${timeStr}`;
-                  }
-                }
-                return (
-                  <div
-                    key={status.appId}
-                    className={`indexer-card ${!status.isEnabled ? "is-disabled" : ""}`}
-                  >
+      <Modal
+        open={optionsModalOpen}
+        title="Options applications"
+        onClose={closeOptionsModal}
+        width={560}
+      >
+        <div style={{ padding: 12 }}>
+          {!hasApps ? (
+            <div className="muted">Aucune application configurée.</div>
+          ) : (
+            <>
+              <div className="settings-card" id="request-integration">
+                <div className="settings-card__title">Mode d&apos;envoi</div>
+                <div className="indexer-list">
+                  <div className={`indexer-card${arrPulseKeys?.has("arr.requestIntegrationMode") ? " pulse-ok" : ""}${optionPulseClass("arr.requestIntegrationMode")}`}>
                     <div className="indexer-row indexer-row--settings">
-                      <span className={`dot ${hasError ? "warn" : status.isEnabled ? "ok" : "off"}`} />
-                      <span className="indexer-title">
-                        {status.appName || `App ${status.appId}`}
-                        <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
-                          ({getAppLabel(status.appType)})
-                        </span>
-                      </span>
+                      <span className="indexer-title">Intégration active</span>
                       <div className="indexer-actions">
-                        <span className="indexer-url muted">
-                          Dernier sync: {lastSyncDisplay}
-                        </span>
-                        {status.lastSyncCount > 0 && (
-                          <span className="pill">
-                            {status.lastSyncCount} {(isArrLibraryType(status.appType) ? "items" : "demandes")}
-                          </span>
+                        {isRequestModeDirty && (
+                          <span className="indexer-status">À sauvegarder</span>
                         )}
-                        {hasError && (
-                          <span className="pill pill-warn">
-                            Erreur
-                          </span>
-                        )}
+                        <select
+                          value={arrRequestModeDraft}
+                          onChange={(e) => setArrRequestModeDraft(normalizeRequestMode(e.target.value))}
+                          disabled={arrSyncSaving}
+                        >
+                          <option value="arr">Sonarr/Radarr</option>
+                          <option value="overseerr">Overseerr</option>
+                          <option value="jellyseerr">Jellyseerr</option>
+                          <option value="seer">Seer</option>
+                        </select>
                       </div>
                     </div>
-                    {hasError && (
-                      <div className="settings-help" style={{ color: "var(--color-warn)" }}>
-                        {status.lastError}
-                      </div>
-                    )}
                   </div>
-                );
-              })}
-            </div>
+                </div>
+              </div>
+
+              <div className="settings-card" id="arr-sync" style={{ marginTop: 16 }}>
+                <div className="settings-card__title">Synchronisation</div>
+                <div className="indexer-list">
+                  <div className={`indexer-card${optionPulseClass("arr.arrAutoSyncEnabled")}${!hasEnabledArrApps ? " is-disabled" : ""}`}>
+                    <div className="indexer-row indexer-row--settings">
+                      <span className="indexer-title">Synchronisation Automatique</span>
+                      <div className="indexer-actions">
+                        <span className="indexer-status">
+                          {arrSyncSettings.arrAutoSyncEnabled ? "Actif" : "Desactive"}
+                        </span>
+                        <ToggleSwitch
+                          checked={arrSyncSettings.arrAutoSyncEnabled}
+                          onIonChange={(e) => {
+                            const enabled = e.detail.checked;
+                            const updated = { ...arrSyncSettings, arrAutoSyncEnabled: enabled };
+                            setArrSyncSettings(updated);
+                          }}
+                          className="settings-toggle"
+                          disabled={!hasEnabledArrApps || arrSyncSaving}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div className={`indexer-card${optionPulseClass("arr.arrSyncIntervalMinutes")}${(!hasEnabledArrApps || !arrSyncSettings.arrAutoSyncEnabled) ? " is-disabled" : ""}`}>
+                    <div className="indexer-row indexer-row--settings">
+                      <span className="indexer-title">Intervalle Sync (minutes)</span>
+                      <div className="indexer-actions">
+                        <input
+                          type="number"
+                          min={1}
+                          max={1440}
+                          value={arrSyncSettings.arrSyncIntervalMinutes}
+                          onChange={(e) => {
+                            const val = Math.max(1, Math.min(1440, Number(e.target.value) || 10));
+                            setArrSyncSettings((prev) => ({ ...prev, arrSyncIntervalMinutes: val }));
+                          }}
+                          disabled={!arrSyncSettings.arrAutoSyncEnabled || !hasEnabledArrApps}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {arrSyncStatus.length > 0 && (
+                  <div className="indexer-list" style={{ marginTop: 16 }}>
+                    <div className="settings-card__title" style={{ fontSize: 14, marginBottom: 8 }}>
+                      État de synchronisation
+                    </div>
+                    {arrSyncStatus.map((status) => {
+                      const hasError = !!status.lastError;
+                      let lastSyncDisplay = "Jamais";
+                      if (status.lastSyncAt) {
+                        const syncDate = new Date(status.lastSyncAt);
+                        const now = new Date();
+                        const isToday = syncDate.toDateString() === now.toDateString();
+                        const timeStr = syncDate.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+                        if (isToday) {
+                          lastSyncDisplay = timeStr;
+                        } else {
+                          const dateStr = syncDate.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" });
+                          lastSyncDisplay = `${dateStr} ${timeStr}`;
+                        }
+                      }
+                      return (
+                        <div
+                          key={status.appId}
+                          className={`indexer-card ${!status.isEnabled ? "is-disabled" : ""}`}
+                        >
+                          <div className="indexer-row indexer-row--settings">
+                            <span className={`dot ${hasError ? "warn" : status.isEnabled ? "ok" : "off"}`} />
+                            <span className="indexer-title">
+                              {status.appName || `App ${status.appId}`}
+                              <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
+                                ({getAppLabel(status.appType)})
+                              </span>
+                            </span>
+                            <div className="indexer-actions">
+                              <span className="indexer-url muted">
+                                Dernier sync: {lastSyncDisplay}
+                              </span>
+                              {status.lastSyncCount > 0 && (
+                                <span className="pill">
+                                  {status.lastSyncCount} {(isArrLibraryType(status.appType) ? "items" : "demandes")}
+                                </span>
+                              )}
+                              {hasError && (
+                                <span className="pill pill-warn">
+                                  Erreur
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {hasError && (
+                            <div className="settings-help" style={{ color: "var(--color-warn)" }}>
+                              {status.lastError}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {isOptionsDirty && (
+                <div className="formactions" style={{ marginTop: 16 }}>
+                  <button
+                    className="btn btn-accent"
+                    type="button"
+                    onClick={handleSaveOptionsModal}
+                    disabled={arrSyncSaving}
+                  >
+                    {arrSyncSaving ? "Enregistrement..." : "Enregistrer"}
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
-      )}
+      </Modal>
 
       <Modal
         open={arrModalOpen}

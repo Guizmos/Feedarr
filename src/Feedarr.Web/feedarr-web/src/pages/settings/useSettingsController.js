@@ -404,6 +404,14 @@ export default function useSettingsController(section = "general") {
     }
   }, []);
 
+  const saveArrRequestModeDraft = useCallback(async () => {
+    try {
+      await saveArrRequestModeDraftRef.current();
+    } catch (e) {
+      setErr(e?.message || "Erreur");
+    }
+  }, []);
+
   const confirmArrDelete = useCallback(async () => {
     try {
       await confirmArrDeleteRef.current();
@@ -536,6 +544,7 @@ export default function useSettingsController(section = "general") {
       setArrSyncSettings: applications.setArrSyncSettings,
       setArrRequestModeDraft: applications.setArrRequestModeDraft,
       saveArrSyncSettings,
+      saveArrRequestModeDraft,
       arrModalOpen: applications.arrModalOpen,
       arrModalMode: applications.arrModalMode,
       arrModalApp: applications.arrModalApp,

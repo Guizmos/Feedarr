@@ -494,7 +494,7 @@ public sealed class SystemController : ControllerBase
     [HttpGet("stats/indexers")]
     public IActionResult StatsIndexers()
     {
-        const string cacheKey = "system:stats:indexers:v1";
+        const string cacheKey = "system:stats:indexers:v2";
         if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
             return Ok(cached);
 
@@ -518,14 +518,25 @@ public sealed class SystemController : ControllerBase
             .OrderByDescending(r => r.releaseCount)
             .ToList();
 
-        var releasesByCategoryByIndexer = conn.Query<(long sourceId, string sourceName, int categoryId, int count)>(
-            @"SELECT s.id as sourceId, s.name as sourceName, r.category_id as categoryId, COUNT(*) as count
+        var releasesByCategoryByIndexer = conn.Query<(long sourceId, string sourceName, string unifiedCategory, int categoryId, int count)>(
+            @"SELECT s.id as sourceId,
+                     s.name as sourceName,
+                     COALESCE(NULLIF(TRIM(r.unified_category), ''), 'Autre') as unifiedCategory,
+                     MAX(r.category_id) as categoryId,
+                     COUNT(*) as count
               FROM releases r
               JOIN sources s ON r.source_id = s.id
-              WHERE s.enabled = 1 AND r.category_id IS NOT NULL
-              GROUP BY s.id, s.name, r.category_id
+              WHERE s.enabled = 1
+              GROUP BY s.id, s.name, COALESCE(NULLIF(TRIM(r.unified_category), ''), 'Autre')
               ORDER BY s.name, count DESC"
-        ).Select(r => new { sourceId = r.sourceId, sourceName = r.sourceName, categoryId = r.categoryId, count = r.count }).ToList();
+        ).Select(r => new
+        {
+            sourceId = r.sourceId,
+            sourceName = r.sourceName,
+            unifiedCategory = r.unifiedCategory,
+            categoryId = r.categoryId,
+            count = r.count
+        }).ToList();
 
         var indexerDetails = sourceRows
             .Select(r => new

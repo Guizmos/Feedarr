@@ -9,6 +9,11 @@ const defaultUi = {
   defaultSort: "date",
   defaultMaxAgeDays: "",
   defaultLimit: 100,
+  defaultFilterSeen: "",
+  defaultFilterApplication: "",
+  defaultFilterSourceId: "",
+  defaultFilterCategoryId: "",
+  defaultFilterQuality: "",
   badgeInfo: false,
   badgeWarn: true,
   badgeError: true,
@@ -27,6 +32,11 @@ export function buildUiPayload(source, overrides = {}) {
     defaultSort: merged.defaultSort || "date",
     defaultMaxAgeDays: merged.defaultMaxAgeDays ?? "",
     defaultLimit: merged.defaultLimit ?? 100,
+    defaultFilterSeen: merged.defaultFilterSeen ?? "",
+    defaultFilterApplication: merged.defaultFilterApplication ?? "",
+    defaultFilterSourceId: merged.defaultFilterSourceId ?? "",
+    defaultFilterCategoryId: merged.defaultFilterCategoryId ?? "",
+    defaultFilterQuality: merged.defaultFilterQuality ?? "",
     badgeInfo: !!merged.badgeInfo,
     badgeWarn: !!merged.badgeWarn,
     badgeError: !!merged.badgeError,
@@ -55,6 +65,11 @@ export default function useUiSettings() {
           defaultSort: u.defaultSort || "date",
           defaultMaxAgeDays: u.defaultMaxAgeDays ?? "",
           defaultLimit: u.defaultLimit ?? 100,
+          defaultFilterSeen: u.defaultFilterSeen ?? "",
+          defaultFilterApplication: u.defaultFilterApplication ?? "",
+          defaultFilterSourceId: u.defaultFilterSourceId ?? "",
+          defaultFilterCategoryId: u.defaultFilterCategoryId ?? "",
+          defaultFilterQuality: u.defaultFilterQuality ?? "",
           theme: u.theme || "light",
           enableMissingPosterView: !!u.enableMissingPosterView,
           animationsEnabled: u.animationsEnabled !== false,
@@ -76,6 +91,11 @@ export default function useUiSettings() {
     if (ui.defaultSort !== initialUi.defaultSort) changed.add("ui.defaultSort");
     if (ui.defaultMaxAgeDays !== initialUi.defaultMaxAgeDays) changed.add("ui.defaultMaxAgeDays");
     if (ui.defaultLimit !== initialUi.defaultLimit) changed.add("ui.defaultLimit");
+    if (ui.defaultFilterSeen !== initialUi.defaultFilterSeen) changed.add("ui.defaultFilterSeen");
+    if (ui.defaultFilterApplication !== initialUi.defaultFilterApplication) changed.add("ui.defaultFilterApplication");
+    if (ui.defaultFilterSourceId !== initialUi.defaultFilterSourceId) changed.add("ui.defaultFilterSourceId");
+    if (ui.defaultFilterCategoryId !== initialUi.defaultFilterCategoryId) changed.add("ui.defaultFilterCategoryId");
+    if (ui.defaultFilterQuality !== initialUi.defaultFilterQuality) changed.add("ui.defaultFilterQuality");
     if (ui.theme !== initialUi.theme) changed.add("ui.theme");
     if (ui.enableMissingPosterView !== initialUi.enableMissingPosterView) changed.add("ui.missingPosterView");
     if (ui.animationsEnabled !== initialUi.animationsEnabled) changed.add("ui.animations");

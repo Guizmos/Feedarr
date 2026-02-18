@@ -85,9 +85,7 @@ export default function Indexers() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [testPassed, setTestPassed] = useState(false);
   const [testSourceId, setTestSourceId] = useState(null); // ID of source created during test
-  const [syncSettingsSaveState, setSyncSettingsSaveState] = useState("idle");
-  const [syncSettingsDirty, setSyncSettingsDirty] = useState(false);
-  const syncSettingsSaveRef = useRef(null);
+  const [syncModalOpen, setSyncModalOpen] = useState(false);
   const initialEditRef = useRef(null);
   const initialCategoryIdsRef = useRef(null);
 
@@ -516,32 +514,10 @@ export default function Indexers() {
   // Subbar (comme Library)
   useEffect(() => {
     setContent(
-      <>
+      <div className="indexers-subbar-content" subbarClassName="subbar--indexers-sync">
         <SubAction icon="refresh" label="Refresh" onClick={load} />
         <SubAction icon="add_circle" label="Ajouter" onClick={openAdd} />
-        <SubAction
-          icon={
-            syncSettingsSaveState === "loading"
-              ? "progress_activity"
-              : syncSettingsSaveState === "success"
-              ? "check_circle"
-              : syncSettingsSaveState === "error"
-              ? "cancel"
-              : "save"
-          }
-          label="Sauver"
-          onClick={() => syncSettingsSaveRef.current?.()}
-          disabled={syncSettingsSaveState === "loading" || !syncSettingsDirty}
-          className={
-            syncSettingsSaveState === "loading"
-              ? "is-loading"
-              : syncSettingsSaveState === "success"
-              ? "is-success"
-              : syncSettingsSaveState === "error"
-              ? "is-error"
-              : ""
-          }
-        />
+        <SubAction icon="settings" label="Options" onClick={() => setSyncModalOpen(true)} />
         {hasEnabledIndexers && <div className="subspacer" />}
         {hasEnabledIndexers && (
           <SubAction
@@ -553,7 +529,7 @@ export default function Indexers() {
             className={syncAllRunning ? "is-loading" : undefined}
           />
         )}
-      </>
+      </div>
     );
     return () => setContent(null);
   }, [
@@ -564,8 +540,6 @@ export default function Indexers() {
     syncAllRunning,
     hasEnabledIndexers,
     hasPendingSync,
-    syncSettingsSaveState,
-    syncSettingsDirty,
   ]);
 
   async function removeSource(s) {
@@ -654,13 +628,6 @@ export default function Indexers() {
       );
     }
   }, [useRecommendedFilter, recommendedCategories.length, allCategories.length]);
-
-  const handleSyncSettingsStateChange = useCallback((nextState) => {
-    if (!nextState) return;
-    syncSettingsSaveRef.current = nextState.onSave;
-    setSyncSettingsDirty(!!nextState.isDirty);
-    setSyncSettingsSaveState(nextState.saveState || "idle");
-  }, []);
 
   return (
     <div className="page page--indexers">
@@ -759,9 +726,17 @@ export default function Indexers() {
         </div>
       )}
 
-      <div className="settings-grid" style={{ marginTop: 16 }}>
-        <IndexersSyncSettingsCard onStateChange={handleSyncSettingsStateChange} />
-      </div>
+      {/* MODAL SYNC OPTIONS */}
+      <Modal
+        open={syncModalOpen}
+        title="Options de synchronisation"
+        onClose={() => setSyncModalOpen(false)}
+        width={560}
+      >
+        <div style={{ padding: 12 }}>
+          <IndexersSyncSettingsCard showSaveButton />
+        </div>
+      </Modal>
 
       {/* MODAL DELETE CONFIRM */}
       <Modal

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useSubbarSetter } from "../layout/useSubbar.js";
 import SubAction from "../ui/SubAction.jsx";
@@ -50,34 +50,44 @@ export default function Settings() {
 
   // Refs for stable callback references in subbar - direct assignment (refs don't trigger re-renders)
   const openBackupCreateRef = useRef(null);
-  const handleRetroFetchRef = useRef(null);
-  const handleRetroFetchStopRef = useRef(null);
   const handleSaveRef = useRef(null);
   const openArrModalAddRef = useRef(null);
 
   // Sync refs directly during render (safe because refs don't trigger re-renders)
   openBackupCreateRef.current = backup?.openBackupCreate;
-  handleRetroFetchRef.current = providers?.handleRetroFetch;
-  handleRetroFetchStopRef.current = providers?.handleRetroFetchStop;
   handleSaveRef.current = handleSave;
   openArrModalAddRef.current = openArrModalAdd;
+  const [posterModalOpen, setPosterModalOpen] = useState(false);
+  const [applicationsOptionsOpen, setApplicationsOptionsOpen] = useState(false);
   const backupActionsLocked = !!backup?.backupState?.isBusy || !!backup?.backupState?.needsRestart;
   const backupLockedTitle = backup?.backupState?.needsRestart
     ? "Redemarrage requis apres restauration"
     : "Operation de sauvegarde en cours";
 
   useEffect(() => {
+    if (!showApplications) {
+      setApplicationsOptionsOpen(false);
+    }
+  }, [showApplications]);
+
+  useEffect(() => {
     setContent(
-      <>
+      <div
+        className="settings-subbar-content"
+        subbarClassName={showApplications ? "subbar--settings-apps-sync" : ""}
+      >
         <SubAction icon="refresh" label="Rafraîchir" onClick={handleRefresh} />
         {showApplications && (
-          <SubAction
-            icon="add_circle"
-            label="Ajouter"
-            onClick={() => openArrModalAddRef.current?.()}
-            disabled={!canAddArrApp}
-            title={!canAddArrApp ? "Toutes les applications sont déjà ajoutées" : "Ajouter"}
-          />
+          <>
+            <SubAction
+              icon="add_circle"
+              label="Ajouter"
+              onClick={() => openArrModalAddRef.current?.()}
+              disabled={!canAddArrApp}
+              title={!canAddArrApp ? "Toutes les applications sont déjà ajoutées" : "Ajouter"}
+            />
+            <SubAction icon="settings" label="Options" onClick={() => setApplicationsOptionsOpen(true)} />
+          </>
         )}
         {showBackup && (
           <SubAction
@@ -88,7 +98,7 @@ export default function Settings() {
             title={backupActionsLocked ? backupLockedTitle : "Ajouter"}
           />
         )}
-        {!showMaintenance && !showBackup && (
+        {!showMaintenance && !showBackup && !showExternals && !showApplications && (
           <SubAction
             icon={
               saveState === "loading"
@@ -127,30 +137,9 @@ export default function Settings() {
           </>
         )}
         {showExternals && (
-          <>
-            <div className="subspacer" />
-            {providers?.retroActive ? (
-              <SubAction
-                icon="progress_activity"
-                label={`${providers?.retroPercent ?? 0}%`}
-                onClick={() => handleRetroFetchStopRef.current?.()}
-                disabled={providers?.retroStopLoading}
-                title="Arrêter le retro fetch"
-                className="is-loading"
-              />
-            ) : (
-              <SubAction
-                icon={providers?.retroLoading ? "progress_activity" : "image_search"}
-                label="Retro Fetch"
-                onClick={() => handleRetroFetchRef.current?.()}
-                disabled={providers?.retroLoading}
-                title="Rechercher les posters manquants"
-                className={providers?.retroLoading ? "is-loading" : undefined}
-              />
-            )}
-          </>
+          <SubAction icon="settings" label="Options" onClick={() => setPosterModalOpen(true)} />
         )}
-      </>
+      </div>
     );
     return () => setContent(null);
   }, [
@@ -166,10 +155,6 @@ export default function Settings() {
     triggerArrSync,
     arrSyncing,
     hasEnabledArrApps,
-    providers?.retroActive,
-    providers?.retroLoading,
-    providers?.retroStopLoading,
-    providers?.retroPercent,
     backupActionsLocked,
     backupLockedTitle,
   ]);
@@ -197,8 +182,14 @@ export default function Settings() {
         <div className="settings-grid">
           {showGeneral && <SettingsGeneral {...general} />}
           {showUi && <SettingsUI {...ui} />}
-          {showExternals && <SettingsProviders {...providers} />}
-          {showApplications && <SettingsApplications {...applications} />}
+          {showExternals && <SettingsProviders {...providers} posterModalOpen={posterModalOpen} closePosterModal={() => setPosterModalOpen(false)} />}
+          {showApplications && (
+            <SettingsApplications
+              {...applications}
+              optionsModalOpen={applicationsOptionsOpen}
+              closeOptionsModal={() => setApplicationsOptionsOpen(false)}
+            />
+          )}
           {showMaintenance && <SettingsMaintenance {...maintenance} />}
           {showBackup && <SettingsBackup {...backup} />}
           {showUsers && <SettingsUsers {...users} />}

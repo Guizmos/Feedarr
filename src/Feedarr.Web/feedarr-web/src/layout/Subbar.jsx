@@ -6,8 +6,10 @@ export default function Subbar() {
 
   if (!content) return null;
 
+  const extraClass = React.isValidElement(content) ? content.props?.subbarClassName : "";
+
   return (
-    <div className="subbar">
+    <div className={`subbar${extraClass ? ` ${extraClass}` : ""}`}>
       {content}
     </div>
   );

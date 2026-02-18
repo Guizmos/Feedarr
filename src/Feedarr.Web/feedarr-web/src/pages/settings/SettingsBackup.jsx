@@ -90,58 +90,24 @@ export default function SettingsBackup({
             return (
               <div
                 key={item.name}
-                className="settings-rowcard"
-                style={{
-                  padding: "10px 16px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 16,
-                  overflow: "hidden",
-                  minWidth: 0,
-                }}
+                className="settings-rowcard settings-rowcard--backup"
               >
-                {/* Dot */}
-                <span style={{
-                  width: 10, height: 10, borderRadius: "50%",
-                  background: "#22c55e", flexShrink: 0,
-                }} />
-
-                {/* Number */}
-                <span style={{
-                  fontSize: 16, fontWeight: 800, flexShrink: 0,
-                  width: 20, textAlign: "left",
-                }}>
+                <span className="backup-row__dot" />
+                <span className="backup-row__idx">
                   {idx + 1}
                 </span>
-
-                {/* Filename — flex-shrink, truncate with ellipsis */}
-                <span
-                  title={item.name}
-                  style={{
-                    flex: "1 1 0px",
-                    minWidth: 0,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    fontSize: 13,
-                    fontWeight: 600,
-                  }}
-                >
+                <span className="backup-row__name" title={item.name}>
                   {item.name}
                 </span>
-
-                {/* Size pill */}
-                <span className="pill pill-muted" style={{ flexShrink: 0 }}>
-                  {sizeLabel}
-                </span>
-
-                {/* Date pill */}
-                <span className="pill pill-muted" style={{ flexShrink: 0 }}>
-                  {dateLabel}
-                </span>
-
-                {/* Actions */}
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, marginLeft: "auto" }}>
+                <div className="backup-row__meta">
+                  <span className="pill pill-muted">
+                    {sizeLabel}
+                  </span>
+                  <span className="pill pill-muted">
+                    {dateLabel}
+                  </span>
+                </div>
+                <div className="backup-row__actions">
                   <BackupIconBtn
                     icon="download"
                     title={isDownloading ? "Téléchargement..." : "Télécharger"}
