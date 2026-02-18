@@ -74,14 +74,15 @@ jobs:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/feedarr-api
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=sha
+            type=sha,enable={{is_default_branch}}
             type=ref,event=tag
+            type=ref,event=tag,pattern={{version}},strip=v
       - name: Resolve app version
         id: app_version
         shell: bash
         run: |
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           else
             echo "version=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           fi
@@ -106,8 +107,9 @@ jobs:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/feedarr-web
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=sha
+            type=sha,enable={{is_default_branch}}
             type=ref,event=tag
+            type=ref,event=tag,pattern={{version}},strip=v
 
       - name: Build & push (web)
         uses: docker/build-push-action@v6
@@ -120,31 +122,3 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Detect manual release notes
-        if: startsWith(github.ref, 'refs/tags/v')
-        id: relnotes
-        shell: bash
-        run: |
-          NOTES_FILE=".github/release-notes/${{ github.ref_name }}.md"
-          if [ -f "$NOTES_FILE" ]; then
-            echo "found=true" >> "$GITHUB_OUTPUT"
-            echo "path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
-          else
-            echo "found=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Create GitHub Release (manual notes)
-        if: startsWith(github.ref, 'refs/tags/v') && steps.relnotes.outputs.found == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          body_path: ${{ steps.relnotes.outputs.path }}
-
-      - name: Create GitHub Release (auto notes)
-        if: startsWith(github.ref, 'refs/tags/v') && steps.relnotes.outputs.found != 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          generate_release_notes: true
