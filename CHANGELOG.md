@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.6.2](https://github.com/Guizmos/Feedarr/compare/v1.6.1...v1.6.2) (2026-02-18)
+
+
+### Bug Fixes
+
+* Add separator behind title and cards ([59468e7](https://github.com/Guizmos/Feedarr/commit/59468e720e9bd1e3b9830a44ab07f8847545f0ce))
+* Ajust serach bar ([6adf261](https://github.com/Guizmos/Feedarr/commit/6adf261d037c1028aeef5b6276476a7644174b10))
+* Delete Status button in System page ([84f59c8](https://github.com/Guizmos/Feedarr/commit/84f59c8bde24aaf3359ac6a95cdc347e339d7a69))
+* Opimize load() in library ([48f974b](https://github.com/Guizmos/Feedarr/commit/48f974b8ddfebb8c9629fc617807711f6903c7f2))
+
 ## [1.6.1](https://github.com/Guizmos/Feedarr/compare/v1.6.0...v1.6.1) (2026-02-18)
 
 
