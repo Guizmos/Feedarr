@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Download, CirclePlus, Loader2, FileText } from "lucide-react";
+import { Download, Plus, Loader2, FileText } from "lucide-react";
 import { apiPost, resolveApiUrl } from "../api/client.js";
 import Modal from "./Modal.jsx";
 import { buildIndexerPillStyle } from "../utils/sourceColors.js";
@@ -570,23 +570,25 @@ export default function ReleaseModal({
                 <div className="releaseModal__actions">
                   <div className="releaseModal__actionsLeft">
                     <button
-                      className="btn-icon btn-icon--accent"
+                      className="btn-icon btn-icon--accent releaseModal__expandBtn releaseModal__expandBtn--download"
                       type="button"
                       onClick={() => onDownload?.(item)}
                       aria-label="Télécharger cette release"
-                      title="Download"
+                      title="Télécharger"
                     >
                       <Download size={18} strokeWidth={2.5} />
+                      <span className="releaseModal__expandBtnLabel">Télécharger</span>
                     </button>
                     {page === "main" ? (
                       <button
-                        className="btn-icon btn-icon--details"
+                        className="btn-icon btn-icon--details releaseModal__expandBtn releaseModal__expandBtn--details"
                         type="button"
                         onClick={() => setPage("details")}
                         aria-label="Afficher les détails"
                         title="Détails"
                       >
                         <FileText size={18} strokeWidth={2.5} />
+                        <span className="releaseModal__expandBtnLabel">Détails</span>
                       </button>
                     ) : null}
 
@@ -632,21 +634,22 @@ export default function ReleaseModal({
                         </div>
                       ) : (
                         <button
-                          className={`btn-soft btn-soft--${actionType}`}
+                          className={`btn-icon releaseModal__expandBtn releaseModal__expandBtn--add btn-soft--${actionType}${arrAdding ? " releaseModal__expandBtn--loading" : ""}`}
                           type="button"
                           onClick={handleAddToArr}
                           aria-label={mode === "arr" ? `Ajouter à ${actionLabel}` : `Ajouter à ${actionLabel}`}
+                          title={mode === "arr" ? `Ajouter à ${actionLabel}` : `Ajouter à ${actionLabel}`}
                           disabled={arrAdding || (mode !== "arr" && !hasRequestApp)}
                         >
                           {arrAdding ? (
                             <>
-                              <Loader2 size={15} strokeWidth={2.5} className="releaseModal__arrSpin" />
-                              {mode === "arr" ? "Ajout..." : "Demande..."}
+                              <Loader2 size={16} strokeWidth={2.5} className="releaseModal__arrSpin" />
+                              <span className="releaseModal__expandBtnLabel">{mode === "arr" ? "Ajout..." : "Demande..."}</span>
                             </>
                           ) : (
                             <>
-                              <CirclePlus size={15} strokeWidth={2.5} />
-                              {mode === "arr" ? `Ajouter à ${actionLabel}` : `Ajouter à ${actionLabel}`}
+                              <Plus size={18} strokeWidth={2.75} />
+                              <span className="releaseModal__expandBtnLabel">{mode === "arr" ? `Ajouter à ${actionLabel}` : `Ajouter à ${actionLabel}`}</span>
                             </>
                           )}
                         </button>
