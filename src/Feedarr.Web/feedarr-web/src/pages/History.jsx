@@ -6,16 +6,18 @@ import Loader from "../ui/Loader.jsx";
 import Modal from "../ui/Modal.jsx";
 import AppIcon from "../ui/AppIcon.jsx";
 import { buildIndexerPillStyle, getSourceColor } from "../utils/sourceColors.js";
+import { getActiveUiLanguage } from "../app/locale.js";
+import { tr } from "../app/uiText.js";
 
 const PAGE_SIZE = 15;
 
 const UNIFIED_LABELS = {
   films: "Films",
-  series: "Series TV",
+  series: "Séries TV",
   anime: "Animation",
   games: "Jeux PC",
   spectacle: "Spectacle",
-  shows: "Emissions",
+  shows: "Émissions",
 };
 
 const UNIFIED_PRIORITY = ["series", "anime", "films", "games", "spectacle", "shows"];
@@ -48,7 +50,7 @@ const EXCLUDED_TOKENS = [
 
 function fmtTs(tsSeconds) {
   if (!tsSeconds) return "-";
-  return new Date(tsSeconds * 1000).toLocaleString("fr-FR");
+  return new Date(tsSeconds * 1000).toLocaleString(getActiveUiLanguage());
 }
 
 function normalizeIndexerName(value) {
@@ -216,7 +218,7 @@ function buildCategoryList(catIds, lookup) {
     if (orderA !== -1 || orderB !== -1) {
       return (orderA === -1 ? 999 : orderA) - (orderB === -1 ? 999 : orderB);
     }
-    return String(a.label).localeCompare(String(b.label));
+    return String(a.label).localeCompare(String(b.label), getActiveUiLanguage(), { sensitivity: "base" });
   });
 }
 
@@ -255,7 +257,7 @@ export default function History() {
       sources.forEach((src) => {
         const id = src?.id ?? src?.sourceId;
         if (!id) return;
-        sourceNameById[id] = src?.name || `Source ${id}`;
+        sourceNameById[id] = src?.name || `Fournisseur ${id}`;
         sourceColorById[id] = getSourceColor(id, src?.color);
       });
 
@@ -334,7 +336,7 @@ export default function History() {
           id: key,
           sourceId: group.sourceId,
           createdAt: group.createdAt,
-          indexer: sourceNameById[group.sourceId] || `Source ${group.sourceId}`,
+          indexer: sourceNameById[group.sourceId] || `Fournisseur ${group.sourceId}`,
           indexerColor: sourceColorById[group.sourceId] || getSourceColor(group.sourceId, null),
           itemsCount: group.itemsCount,
           categories,
@@ -406,8 +408,8 @@ export default function History() {
   useEffect(() => {
     setContent(
       <>
-        <SubAction icon="refresh" label="Rafraîchir" onClick={refresh} />
-        <SubAction icon="delete" label="Effacer" onClick={() => setPurgeOpen(true)} disabled={purgeLoading || rows.length === 0} />
+        <SubAction icon="refresh" label={tr("Rafraîchir", "Refresh")} onClick={refresh} />
+        <SubAction icon="delete" label={tr("Effacer", "Clear")} onClick={() => setPurgeOpen(true)} disabled={purgeLoading || rows.length === 0} />
       </>
     );
     return () => setContent(null);
@@ -421,12 +423,12 @@ export default function History() {
     <div className="page">
       <div className="pagehead">
         <div>
-          <h1>Historique</h1>
-          <div className="muted">Requêtes et synchronisations</div>
+          <h1>{tr("Historique", "History")}</h1>
+          <div className="muted">{tr("Requêtes et synchronisations", "Requests and synchronizations")}</div>
         </div>
       </div>
 
-      {loading && <Loader label="Chargement de l'historique..." />}
+      {loading && <Loader label={tr("Chargement de l'historique...", "Loading history...")} />}
 
       {!loading && err && (
         <div className="errorbox">
@@ -438,15 +440,15 @@ export default function History() {
       {!loading && !err && (
       <div className="history-table table">
         <div className="thead">
-          <div className="th">Indexeurs</div>
-          <div className="th">Items</div>
-          <div className="th">Categories sync</div>
-          <div className="th">Date</div>
-          <div className="th th-right">Temps réponses</div>
+          <div className="th">{tr("Fournisseurs", "Providers")}</div>
+          <div className="th">{tr("Éléments", "Items")}</div>
+          <div className="th">{tr("Catégories sync", "Sync categories")}</div>
+          <div className="th">{tr("Date", "Date")}</div>
+          <div className="th th-right">{tr("Temps de réponse", "Response time")}</div>
         </div>
         {pagedRows.length === 0 ? (
           <div className="trow">
-            <div className="td history-empty">Aucune entrée d'historique</div>
+            <div className="td history-empty">{tr("Aucune entrée d'historique", "No history entries")}</div>
           </div>
         ) : (
           pagedRows.map((row) => {
@@ -492,15 +494,15 @@ export default function History() {
 
       {!loading && !err && (
       <div className="history-footer">
-        <div className="history-meta muted">Total records: {totalRecords}</div>
+        <div className="history-meta muted">{tr("Total entrées", "Total records")}: {totalRecords}</div>
         <div className="history-pager">
           <button
             className="iconbtn"
             type="button"
             onClick={() => setPage(1)}
             disabled={currentPage <= 1}
-            title="Première page"
-            aria-label="Première page"
+            title={tr("Première page", "First page")}
+            aria-label={tr("Première page", "First page")}
           >
             <AppIcon name="first_page" />
           </button>
@@ -509,8 +511,8 @@ export default function History() {
             type="button"
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={currentPage <= 1}
-            title="Page précédente"
-            aria-label="Page précédente"
+            title={tr("Page précédente", "Previous page")}
+            aria-label={tr("Page précédente", "Previous page")}
           >
             <AppIcon name="chevron_left" />
           </button>
@@ -520,8 +522,8 @@ export default function History() {
             type="button"
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             disabled={currentPage >= totalPages}
-            title="Page suivante"
-            aria-label="Page suivante"
+            title={tr("Page suivante", "Next page")}
+            aria-label={tr("Page suivante", "Next page")}
           >
             <AppIcon name="chevron_right" />
           </button>
@@ -530,8 +532,8 @@ export default function History() {
             type="button"
             onClick={() => setPage(totalPages)}
             disabled={currentPage >= totalPages}
-            title="Dernière page"
-            aria-label="Dernière page"
+            title={tr("Dernière page", "Last page")}
+            aria-label={tr("Dernière page", "Last page")}
           >
             <AppIcon name="last_page" />
           </button>
@@ -541,20 +543,23 @@ export default function History() {
 
       <Modal
         open={purgeOpen}
-        title="Effacer l'historique"
+        title={tr("Effacer l'historique", "Clear history")}
         onClose={() => setPurgeOpen(false)}
         width={520}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div className="muted">
-            Voulez-vous effacer l'historique ? Cette action est definitive.
+            {tr("Confirmer la suppression de l'historique.", "Confirm history deletion.")}
+          </div>
+          <div className="muted">
+            {tr("Cette action est définitive.", "This action is permanent.")}
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button className="btn" type="button" onClick={() => setPurgeOpen(false)} disabled={purgeLoading}>
-              Annuler
+              {tr("Annuler", "Cancel")}
             </button>
             <button className="btn btn-accent" type="button" onClick={clear} disabled={purgeLoading}>
-              {purgeLoading ? "Suppression..." : "Confirmer"}
+              {purgeLoading ? tr("Suppression...", "Deleting...") : tr("Confirmer", "Confirm")}
             </button>
           </div>
         </div>

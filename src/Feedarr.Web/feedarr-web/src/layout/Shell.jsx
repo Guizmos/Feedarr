@@ -6,6 +6,7 @@ import Subbar from "./Subbar.jsx";
 import { SubbarProvider } from "./SubbarContext.jsx";
 import { apiGet, apiPost } from "../api/client.js";
 import { applyTheme } from "../app/theme.js";
+import { applyUiLanguage } from "../app/locale.js";
 import OnboardingWizard from "../ui/OnboardingWizard.jsx";
 import { usePosterQueueMonitoring } from "../hooks/usePosterQueueMonitoring.js";
 import { usePosterPollingService } from "../hooks/usePosterPollingService.js";
@@ -44,6 +45,7 @@ export default function Shell() {
       .then((ui) => {
         if (!active) return;
         applyTheme(ui?.theme);
+        applyUiLanguage(ui?.uiLanguage, true);
       })
       .catch((error) => {
         console.error("Failed to load UI settings theme", error);

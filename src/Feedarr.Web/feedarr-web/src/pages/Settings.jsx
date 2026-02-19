@@ -109,7 +109,7 @@ export default function Settings() {
                 ? "cancel"
                 : "save"
             }
-            label="Sauver"
+            label="Enregistrer"
             onClick={() => handleSaveRef.current?.()}
             disabled={saveState === "loading" || !isDirty}
             className={

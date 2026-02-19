@@ -10,6 +10,7 @@ import useArrApps from "@hooks/useArrApps.js";
 import { triggerPosterPolling } from "@hooks/usePosterPollingService.js";
 import { normalizeRequestMode } from "@utils/appTypes.js";
 import { LayoutGrid } from "lucide-react";
+import { getActiveUiLanguage } from "../../app/locale.js";
 
 // Local imports
 import { fmtBytes, fmtDateFromTs } from "./utils/formatters.js";
@@ -219,7 +220,7 @@ export default function Library() {
     () =>
       (apps || [])
         .filter((app) => app && app.id != null && app.isEnabled !== false && app.hasApiKey !== false)
-        .sort((a, b) => String(a.name || a.title || "").localeCompare(String(b.name || b.title || ""), "fr-FR", { sensitivity: "base" })),
+        .sort((a, b) => String(a.name || a.title || "").localeCompare(String(b.name || b.title || ""), getActiveUiLanguage(), { sensitivity: "base" })),
     [apps]
   );
   const [arrStatusMap, setArrStatusMap] = useState({});

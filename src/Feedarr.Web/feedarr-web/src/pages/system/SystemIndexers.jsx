@@ -68,7 +68,7 @@ export default function SystemIndexers() {
         setSources(Array.isArray(srcRes.value) ? srcRes.value : []);
       } else {
         setSources([]);
-        errors.push("Sources indisponibles");
+        errors.push("Fournisseurs indisponibles");
       }
 
       if (generalRes.status === "fulfilled") {
@@ -91,7 +91,7 @@ export default function SystemIndexers() {
       setSources([]);
       setGeneral({ syncIntervalMinutes: 60, autoSyncEnabled: true });
       setLastSyncInfo(null);
-      setErr(e?.message || "Sources indisponibles");
+      setErr(e?.message || "Fournisseurs indisponibles");
     } finally {
       setLoading(false);
     }
@@ -104,7 +104,7 @@ export default function SystemIndexers() {
   useEffect(() => {
     setContent(
       <>
-        <SubAction icon="refresh" label="Rafraichir" onClick={load} />
+        <SubAction icon="refresh" label="Rafraîchir" onClick={load} />
       </>
     );
     return () => setContent(null);
@@ -141,13 +141,13 @@ export default function SystemIndexers() {
     <div className="page page--system">
       <div className="pagehead">
         <div>
-          <h1>Indexeurs</h1>
+          <h1>Fournisseurs</h1>
           <div className="muted">Configuration de l'application</div>
         </div>
       </div>
       <div className="pagehead__divider" />
 
-      {loading && <Loader label="Chargement des indexeurs..." />}
+      {loading && <Loader label="Chargement des fournisseurs..." />}
 
       {!loading && err && (
         <div className="errorbox">
@@ -160,7 +160,7 @@ export default function SystemIndexers() {
         <div className="settings-grid">
           <div className="card-row card-row-third" style={{ gridColumn: "1 / -1" }}>
             <div className="card card-third">
-              <div className="card-title">Derniers sync</div>
+              <div className="card-title">Dernier sync</div>
               <div className="card-value">{fmtTs(lastSyncAt)}</div>
               <div className="muted">Mode: {lastSyncMode}</div>
             </div>
@@ -174,7 +174,7 @@ export default function SystemIndexers() {
             </div>
           </div>
           <div className="settings-card settings-card--full">
-            <div className="settings-card__title">Sante des indexers</div>
+            <div className="settings-card__title">Santé des fournisseurs</div>
             <div className="health-head">
               <div>Nom</div>
               <div>URL</div>
@@ -186,7 +186,7 @@ export default function SystemIndexers() {
             {sourcesSorted.length === 0 && (
               <div className="indexer-card">
                 <div className="indexer-row indexer-row--settings">
-                  <span className="indexer-title">Aucune source configuree.</span>
+                  <span className="indexer-title">Aucune source configurée.</span>
                 </div>
               </div>
             )}
@@ -199,7 +199,7 @@ export default function SystemIndexers() {
                   <div className="health-row">
                     <div className="health-cell td-name">
                       <span className={`dot ${s?.enabled ? "ok" : "off"}`} />
-                      <span className="name">{s?.name || `Source ${s?.id}`}</span>
+                      <span className="name">{s?.name || `Fournisseur ${s?.id}`}</span>
                     </div>
                     <div className="health-cell td-url">
                       <span className="muted">{s?.torznabUrl || "-"}</span>

@@ -1,8 +1,9 @@
 import { fmtBytes as sharedFmtBytes } from "../../utils/formatters.js";
+import { getActiveUiLanguage } from "../../app/locale.js";
 
 export function fmtTs(tsSeconds) {
   if (!tsSeconds) return "-";
-  return new Date(tsSeconds * 1000).toLocaleString("fr-FR");
+  return new Date(tsSeconds * 1000).toLocaleString(getActiveUiLanguage());
 }
 
 export function fmtUptime(seconds) {

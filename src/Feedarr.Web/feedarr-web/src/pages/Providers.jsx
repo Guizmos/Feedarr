@@ -444,7 +444,7 @@ export default function Providers() {
                   },
                   {
                     icon: "edit",
-                    title: "Éditer",
+                    title: "Modifier",
                     onClick: () => openEdit(p),
                     disabled: isTesting || !p.enabled,
                   },

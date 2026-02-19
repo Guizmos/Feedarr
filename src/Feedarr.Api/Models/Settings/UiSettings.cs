@@ -2,6 +2,12 @@ namespace Feedarr.Api.Models.Settings;
 
 public sealed class UiSettings
 {
+    // Interface locale (dates/sorting + future i18n): "fr-FR", "en-US", ...
+    public string UiLanguage { get; set; } = UiLanguageCatalog.DefaultUiLanguage;
+
+    // External media metadata locale (TMDB details/credits/search): "fr-FR", "en-US", ...
+    public string MediaInfoLanguage { get; set; } = UiLanguageCatalog.DefaultMediaInfoLanguage;
+
     public bool HideSeenByDefault { get; set; } = false;
     public bool ShowCategories { get; set; } = true;
     public bool EnableMissingPosterView { get; set; } = false;

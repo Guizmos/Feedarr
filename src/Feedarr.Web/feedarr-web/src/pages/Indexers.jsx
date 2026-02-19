@@ -12,6 +12,7 @@ import ItemRow, { CategoryBubble } from "../ui/ItemRow.jsx";
 import IndexersSyncSettingsCard from "../components/indexers/IndexersSyncSettingsCard.jsx";
 import useIndexerModal from "./indexers/hooks/useIndexerModal.js";
 import useIndexerSync from "./indexers/hooks/useIndexerSync.js";
+import { tr } from "../app/uiText.js";
 import {
   SOURCE_COLOR_PALETTE,
   getSourceColor,
@@ -638,7 +639,7 @@ export default function Indexers() {
     <div className="page page--indexers">
       <div className="pagehead">
         <div>
-          <h1>Indexers</h1>
+          <h1>Indexeurs</h1>
           <div className="muted">Sources Torznab / Jackett / Prowlarr</div>
         </div>
       </div>
@@ -711,7 +712,7 @@ export default function Indexers() {
                   },
                   {
                     icon: "edit",
-                    title: "Éditer",
+                    title: "Modifier",
                     onClick: () => openEdit(s),
                     disabled: isBusy || !s.enabled,
                   },
@@ -916,17 +917,17 @@ export default function Indexers() {
               )}
 
               <div className="field">
-                <label className="muted">Nom</label>
+                <label className="muted">{tr("Nom", "Name")}</label>
                 <input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="Nom de l'indexeur"
+                  placeholder={tr("Nom de l'indexeur", "Indexer name")}
                   disabled={isAdding && !selectedIndexerId}
                 />
               </div>
 
               <div className="field" style={{ gridColumn: "1 / -1" }}>
-                <label className="muted">Couleur</label>
+                <label className="muted">{tr("Couleur", "Color")}</label>
                 <div className={`color-slider${colorOpen ? " is-open" : ""}`} ref={colorPickerRef}>
                   <button
                     className="color-dot color-dot--main"
@@ -934,8 +935,8 @@ export default function Indexers() {
                     onClick={() => !colorPickerDisabled && setColorOpen((v) => !v)}
                     disabled={colorPickerDisabled}
                     style={{ background: selectedColor }}
-                    aria-label="Choisir une couleur"
-                    title="Choisir une couleur"
+                    aria-label={tr("Choisir une couleur", "Choose a color")}
+                    title={tr("Choisir une couleur", "Choose a color")}
                   />
                   <div className="color-slider__track">
                     {SOURCE_COLOR_PALETTE.map((swatch) => {
@@ -951,7 +952,7 @@ export default function Indexers() {
                             setColor(swatch);
                             setColorOpen(false);
                           }}
-                          aria-label={`Couleur ${swatch}`}
+                          aria-label={`${tr("Couleur", "Color")} ${swatch}`}
                           title={swatch}
                         />
                       );

@@ -6,11 +6,13 @@ import { apiGet, apiPost, resolveApiUrl } from "../api/client.js";
 import Loader from "../ui/Loader.jsx";
 import Modal from "../ui/Modal.jsx";
 import AppIcon from "../ui/AppIcon.jsx";
+import { getActiveUiLanguage } from "../app/locale.js";
+import { tr } from "../app/uiText.js";
 
 export default function Activity() {
   function fmtTs(ts) {
     if (!ts) return "";
-    return new Date(ts * 1000).toLocaleString("fr-FR");
+    return new Date(ts * 1000).toLocaleString(getActiveUiLanguage());
   }
 
   const [loading, setLoading] = useState(true);
@@ -39,7 +41,7 @@ export default function Activity() {
       const data = await apiGet(`/api/activity?${params.toString()}`);
       setItems(Array.isArray(data) ? data : []);
     } catch (e) {
-      setErr(e.message || "Erreur chargement activity");
+      setErr(e.message || "Erreur chargement activité");
       setItems([]);
     } finally {
       setLoading(false);
@@ -59,7 +61,7 @@ export default function Activity() {
           src.forEach((s) => {
             const id = s?.id ?? s?.sourceId;
             if (!id) return;
-            map[id] = s?.name || `Source ${id}`;
+            map[id] = s?.name || `Fournisseur ${id}`;
           });
           setSourcesById(map);
         }
@@ -90,36 +92,36 @@ export default function Activity() {
   useEffect(() => {
     setContent(
       <>
-        <SubAction icon="refresh" label="Rafraîchir" onClick={load} />
-        <SubAction icon="delete" label="Effacer" onClick={() => setPurgeOpen(true)} disabled={purgeLoading || items.length === 0} />
+        <SubAction icon="refresh" label={tr("Rafraîchir", "Refresh")} onClick={load} />
+        <SubAction icon="delete" label={tr("Effacer", "Clear")} onClick={() => setPurgeOpen(true)} disabled={purgeLoading || items.length === 0} />
 
         <span className="subsep" />
         <div className="subspacer" />
 
         <SubSelectIcon
           icon="filter_list"
-          label="Type"
+          label={tr("Type", "Type")}
           value={eventType}
           onChange={(e) => setEventType(e.target.value)}
-          title="Type de logs"
+          title={tr("Type de logs", "Log type")}
         >
-          <option value="">Tous</option>
+          <option value="">{tr("Tous", "All")}</option>
           <option value="sync">Sync</option>
-          <option value="source">Source</option>
-          <option value="poster_fetch">Posters</option>
+          <option value="source">{tr("Source", "Source")}</option>
+          <option value="poster_fetch">{tr("Posters", "Posters")}</option>
         </SubSelectIcon>
 
         <SubSelectIcon
           icon="priority_high"
-          label="Level"
+          label={tr("Niveau", "Level")}
           value={level}
           onChange={(e) => setLevel(e.target.value)}
-          title="Niveau de log"
+          title={tr("Niveau de log", "Log level")}
         >
-          <option value="">Tous</option>
+          <option value="">{tr("Tous", "All")}</option>
           <option value="info">Info</option>
-          <option value="warn">Warn</option>
-          <option value="error">Error</option>
+          <option value="warn">{tr("Avertissement", "Warning")}</option>
+          <option value="error">{tr("Erreur", "Error")}</option>
         </SubSelectIcon>
       </>
     );
@@ -175,8 +177,8 @@ export default function Activity() {
     <div className="page">
       <div className="pagehead">
         <div>
-          <h1>Activity</h1>
-          <div className="muted">Synchronisations & événements</div>
+          <h1>Logs</h1>
+          <div className="muted">{tr("Synchronisations et événements", "Synchronizations and events")}</div>
         </div>
 
         <div style={{ display: "flex", gap: 8 }}>
@@ -188,7 +190,7 @@ export default function Activity() {
         </div>
       </div>
 
-      {loading && <Loader label="Chargement des logs…" />}
+      {loading && <Loader label={tr("Chargement des logs...", "Loading logs...")} />}
 
       {!loading && err && (
         <div className="errorbox">
@@ -219,10 +221,10 @@ export default function Activity() {
                   </div>
                   <div className="muted" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <span>
-                      Source: {it.sourceId ?? "-"}
+                      {tr("Source", "Source")} : {it.sourceId ?? "-"}
                       {it.sourceId && sourcesById[it.sourceId] ? ` ${sourcesById[it.sourceId]}` : ""}
                     </span>
-                    <span>Type: {it.eventType ?? "-"}</span>
+                    <span>{tr("Type", "Type")} : {it.eventType ?? "-"}</span>
                     <span>#{it.id ?? "-"}</span>
                   </div>
                 </div>
@@ -233,8 +235,8 @@ export default function Activity() {
                 <button
                   className="activityCard__toggle"
                   onClick={() => toggleExpanded(it.id ?? i)}
-                  title={expandedIds.has(it.id ?? i) ? "Masquer détails" : "Afficher détails"}
-                  aria-label="Afficher détails"
+                  title={expandedIds.has(it.id ?? i) ? tr("Masquer détails", "Hide details") : tr("Afficher détails", "Show details")}
+                  aria-label={expandedIds.has(it.id ?? i) ? tr("Masquer détails", "Hide details") : tr("Afficher détails", "Show details")}
                 >
                   {expandedIds.has(it.id ?? i) ? "–" : "+"}
                 </button>
@@ -243,7 +245,7 @@ export default function Activity() {
               {expandedIds.has(it.id ?? i) && (
                 <>
                   <pre className="activityCard__details">
-                    {formatDetails(it.dataJson) || "Aucun détail"}
+                    {formatDetails(it.dataJson) || tr("Aucun détail", "No details")}
                   </pre>
                   {parseDetails(it.dataJson)?.logFile && (
                     <div className="activityCard__detailsActions">
@@ -254,7 +256,7 @@ export default function Activity() {
                         )}
                         download
                       >
-                        Télécharger
+                        {tr("Télécharger", "Download")}
                       </a>
                     </div>
                   )}
@@ -267,20 +269,23 @@ export default function Activity() {
 
       <Modal
         open={purgeOpen}
-        title="Effacer les logs"
+        title={tr("Effacer les logs", "Clear logs")}
         onClose={() => setPurgeOpen(false)}
         width={520}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div className="muted">
-            Voulez-vous purger les logs ? Cette action est definitive.
+            {tr("Confirmer la purge des logs.", "Confirm log purge.")}
+          </div>
+          <div className="muted">
+            {tr("Cette action est définitive.", "This action is permanent.")}
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button className="btn" type="button" onClick={() => setPurgeOpen(false)} disabled={purgeLoading}>
-              Annuler
+              {tr("Annuler", "Cancel")}
             </button>
             <button className="btn btn-accent" type="button" onClick={purgeLogs} disabled={purgeLoading}>
-              {purgeLoading ? "Suppression..." : "Confirmer"}
+              {purgeLoading ? tr("Suppression...", "Deleting...") : tr("Confirmer", "Confirm")}
             </button>
           </div>
         </div>

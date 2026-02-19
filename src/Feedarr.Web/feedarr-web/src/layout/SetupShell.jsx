@@ -2,6 +2,7 @@ import React, { useEffect } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
 import { apiGet } from "../api/client.js";
 import { applyTheme } from "../app/theme.js";
+import { applyUiLanguage } from "../app/locale.js";
 import Topbar from "./Topbar.jsx";
 
 export default function SetupShell() {
@@ -13,6 +14,7 @@ export default function SetupShell() {
       .then((ui) => {
         if (!active) return;
         applyTheme(ui?.theme);
+        applyUiLanguage(ui?.uiLanguage, true);
       })
       .catch((error) => {
         console.error("Failed to load UI settings theme on setup shell", error);

@@ -250,22 +250,22 @@ export default function System() {
                 </div>
               </div>
               <div className="settings-card settings-card--full">
-                <div className="settings-card__title">Providers</div>
+                <div className="settings-card__title">Métadonnées</div>
                 <div className="indexer-list">
                   <div className="indexer-card">
                     <div className="indexer-row indexer-row--settings indexer-row--providers">
                       <span className="indexer-title">TMDB</span>
                       <div className="provider-badges provider-badges--left">
                         <span className={`settings-badge settings-badge--lg ${external.hasTmdbApiKey ? "ok" : "warn"}`}>
-                          Cle API {external.hasTmdbApiKey ? "OK" : "NO"}
+                          Clé API {external.hasTmdbApiKey ? "OK" : "NO"}
                         </span>
                         <span className="settings-badge settings-badge--lg settings-badge--fixed">
-                          Reponse {fmtMs(providerStats.tmdb.avgMs)}
+                          Réponse {fmtMs(providerStats.tmdb.avgMs)}
                         </span>
                       </div>
                       <div className="provider-badges provider-badges--right">
                         <span className="settings-badge settings-badge--lg settings-badge--fixed">Appels {providerStats.tmdb.calls}</span>
-                        <span className="settings-badge settings-badge--lg settings-badge--fixed">Echecs {providerStats.tmdb.failures}</span>
+                        <span className="settings-badge settings-badge--lg settings-badge--fixed">Échecs {providerStats.tmdb.failures}</span>
                       </div>
                     </div>
                   </div>
@@ -275,10 +275,10 @@ export default function System() {
 
                       <div className="provider-badges provider-badges--left">
                         <span className="settings-badge settings-badge--lg settings-badge--fixed">
-                          Cle API N/A
+                          Clé API N/A
                         </span>
                         <span className="settings-badge settings-badge--lg settings-badge--fixed">
-                          Reponse {fmtMs(providerStats.tvmaze.avgMs)}
+                          Réponse {fmtMs(providerStats.tvmaze.avgMs)}
                         </span>
                       </div>
                       <div className="provider-badges provider-badges--right">
@@ -286,7 +286,7 @@ export default function System() {
                           Appels {providerStats.tvmaze.calls}
                         </span>
                         <span className="settings-badge settings-badge--lg settings-badge--fixed">
-                          Echecs {providerStats.tvmaze.failures}
+                          Échecs {providerStats.tvmaze.failures}
                         </span>
                       </div>
                     </div>
@@ -296,15 +296,15 @@ export default function System() {
                       <span className="indexer-title">Fanart.tv</span>
                       <div className="provider-badges provider-badges--left">
                         <span className={`settings-badge settings-badge--lg ${external.hasFanartApiKey ? "ok" : "warn"}`}>
-                          Cle API {external.hasFanartApiKey ? "OK" : "NO"}
+                          Clé API {external.hasFanartApiKey ? "OK" : "NO"}
                         </span>
                         <span className="settings-badge settings-badge--lg settings-badge--fixed">
-                          Reponse {fmtMs(providerStats.fanart.avgMs)}
+                          Réponse {fmtMs(providerStats.fanart.avgMs)}
                         </span>
                       </div>
                       <div className="provider-badges provider-badges--right">
                         <span className="settings-badge settings-badge--lg settings-badge--fixed">Appels {providerStats.fanart.calls}</span>
-                        <span className="settings-badge settings-badge--lg settings-badge--fixed">Echecs {providerStats.fanart.failures}</span>
+                        <span className="settings-badge settings-badge--lg settings-badge--fixed">Échecs {providerStats.fanart.failures}</span>
                       </div>
                     </div>
                   </div>
@@ -317,15 +317,15 @@ export default function System() {
                             external.hasIgdbClientId && external.hasIgdbClientSecret ? "ok" : "warn"
                           }`}
                         >
-                          Cle API {external.hasIgdbClientId && external.hasIgdbClientSecret ? "OK" : "NO"}
+                          Clé API {external.hasIgdbClientId && external.hasIgdbClientSecret ? "OK" : "NO"}
                         </span>
                         <span className="settings-badge settings-badge--lg settings-badge--fixed">
-                          Reponse {fmtMs(providerStats.igdb.avgMs)}
+                          Réponse {fmtMs(providerStats.igdb.avgMs)}
                         </span>
                       </div>
                       <div className="provider-badges provider-badges--right">
                         <span className="settings-badge settings-badge--lg settings-badge--fixed">Appels {providerStats.igdb.calls}</span>
-                        <span className="settings-badge settings-badge--lg settings-badge--fixed">Echecs {providerStats.igdb.failures}</span>
+                        <span className="settings-badge settings-badge--lg settings-badge--fixed">Échecs {providerStats.igdb.failures}</span>
                       </div>
                     </div>
                   </div>

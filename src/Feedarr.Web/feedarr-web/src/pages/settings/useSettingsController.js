@@ -13,9 +13,9 @@ import useSecuritySettings from "./hooks/useSecuritySettings.js";
 const settingsTitleBySection = {
   general: "Paramètres",
   ui: "UI",
-  externals: "Providers",
+  externals: "Métadonnées",
   applications: "Applications",
-  users: "Utilisateurs",
+  users: "Sécurité",
   maintenance: "Maintenance",
   backup: "Sauvegarde",
 };

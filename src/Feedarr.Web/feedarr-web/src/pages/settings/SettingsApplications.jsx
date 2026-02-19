@@ -5,6 +5,7 @@ import { fmtBytes } from "./settingsUtils.js";
 import AppIcon from "../../ui/AppIcon.jsx";
 import ToggleSwitch from "../../ui/ToggleSwitch.jsx";
 import { getAppBaseUrlPlaceholder, getAppLabel, isArrLibraryType, normalizeRequestMode } from "../../utils/appTypes.js";
+import { getActiveUiLanguage } from "../../app/locale.js";
 
 export default function SettingsApplications({
   arrApps,
@@ -218,7 +219,7 @@ export default function SettingsApplications({
                   },
                   {
                     icon: "edit",
-                    title: "Éditer",
+                    title: "Modifier",
                     onClick: () => openArrModalEdit(app),
                     disabled: isBusy || !app.isEnabled,
                   },
@@ -331,11 +332,12 @@ export default function SettingsApplications({
                         const syncDate = new Date(status.lastSyncAt);
                         const now = new Date();
                         const isToday = syncDate.toDateString() === now.toDateString();
-                        const timeStr = syncDate.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+                        const activeLocale = getActiveUiLanguage();
+                        const timeStr = syncDate.toLocaleTimeString(activeLocale, { hour: "2-digit", minute: "2-digit" });
                         if (isToday) {
                           lastSyncDisplay = timeStr;
                         } else {
-                          const dateStr = syncDate.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" });
+                          const dateStr = syncDate.toLocaleDateString(activeLocale, { day: "2-digit", month: "2-digit" });
                           lastSyncDisplay = `${dateStr} ${timeStr}`;
                         }
                       }
@@ -399,7 +401,7 @@ export default function SettingsApplications({
 
       <Modal
         open={arrModalOpen}
-        title={arrModalMode === "add" ? "Ajouter une application" : `Éditer : ${arrModalApp?.name || arrModalApp?.type || "Application"}`}
+        title={arrModalMode === "add" ? "Ajouter une application" : `Modifier : ${arrModalApp?.name || arrModalApp?.type || "Application"}`}
         onClose={closeArrModal}
         width={560}
       >

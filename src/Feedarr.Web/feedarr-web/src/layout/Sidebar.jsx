@@ -170,7 +170,7 @@ export default function Sidebar({ onNavigate }) {
               className={() => "snav__subitem" + (path === "/settings/externals" ? " is-active" : "")}
               onClick={onNavigate}
             >
-              Providers
+              Métadonnées
             </NavLink>
             <NavLink
               to="/settings/applications"
@@ -184,7 +184,7 @@ export default function Sidebar({ onNavigate }) {
               className={() => "snav__subitem" + (path === "/settings/users" ? " is-active" : "")}
               onClick={onNavigate}
             >
-              Utilisateurs
+              Sécurité
             </NavLink>
             <NavLink
               to="/settings/maintenance"
@@ -220,14 +220,14 @@ export default function Sidebar({ onNavigate }) {
               className={() => "snav__subitem" + (path === "/system/indexers" ? " is-active" : "")}
               onClick={onNavigate}
             >
-              Indexeurs
+              Fournisseurs
             </NavLink>
             <NavLink
               to="/system/providers"
               className={() => "snav__subitem" + (path === "/system/providers" ? " is-active" : "")}
               onClick={onNavigate}
             >
-              Providers
+              Métadonnées
             </NavLink>
             <NavLink
               to="/system/statistics"
@@ -248,7 +248,7 @@ export default function Sidebar({ onNavigate }) {
               className={() => "snav__subitem" + (path === "/system/updates" ? " is-active" : "")}
               onClick={onNavigate}
             >
-              <span>A propos</span>
+              <span>À propos</span>
               {isUpdateAvailable ? (
                 <span className="snav__badge snav__badge--error snav__subbadge">1</span>
               ) : null}

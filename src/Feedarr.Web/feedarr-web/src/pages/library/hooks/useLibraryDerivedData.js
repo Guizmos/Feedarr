@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { getEpisodeSortValue, scoreResolution } from "../utils/helpers.js";
 import { UNIFIED_CATEGORY_OPTIONS } from "../utils/constants.js";
+import { getActiveUiLanguage } from "../../../app/locale.js";
 
 function normalize(value) {
   return String(value || "").trim().toLowerCase();
@@ -90,7 +91,7 @@ export default function useLibraryDerivedData({
       .sort((a, b) => {
         const scoreDiff = scoreResolution(b[1]) - scoreResolution(a[1]);
         if (scoreDiff !== 0) return scoreDiff;
-        return a[1].localeCompare(b[1], "fr-FR", { sensitivity: "base" });
+        return a[1].localeCompare(b[1], getActiveUiLanguage(), { sensitivity: "base" });
       })
       .map(([, label]) => label);
 

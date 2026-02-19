@@ -114,6 +114,9 @@ public sealed class SettingsController : ControllerBase
     [HttpPut("ui")]
     public IActionResult PutUi([FromBody] UiSettings dto)
     {
+        var uiLanguage = UiLanguageCatalog.NormalizeUiLanguage(dto.UiLanguage);
+        var mediaInfoLanguage = UiLanguageCatalog.NormalizeMediaInfoLanguage(dto.MediaInfoLanguage);
+
         var view = (dto.DefaultView ?? "grid").Trim().ToLowerInvariant();
         if (view is not ("grid" or "list" or "banner" or "poster")) view = "grid";
 
@@ -153,6 +156,8 @@ public sealed class SettingsController : ControllerBase
 
         var saved = new UiSettings
         {
+            UiLanguage = uiLanguage,
+            MediaInfoLanguage = mediaInfoLanguage,
             HideSeenByDefault = dto.HideSeenByDefault,
             ShowCategories = dto.ShowCategories,
             EnableMissingPosterView = dto.EnableMissingPosterView,

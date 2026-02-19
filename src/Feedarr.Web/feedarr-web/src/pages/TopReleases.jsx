@@ -10,6 +10,7 @@ import { fmtBytes, fmtDateFromTs } from "../utils/formatters.js";
 import useArrApps from "../hooks/useArrApps.js";
 import { normalizeRequestMode } from "../utils/appTypes.js";
 import { getSourceColor } from "../utils/sourceColors.js";
+import { getActiveUiLanguage } from "../app/locale.js";
 import TopReleasesSubSelectIcon from "./topReleases/components/TopReleasesSubSelectIcon.jsx";
 import {
   TopReleasesBannerSection,
@@ -136,11 +137,26 @@ function getSortLabel(sortBy) {
   return found?.label || "Seeders";
 }
 
-function getSortSummaryLabel(sortBy) {
+function getSortSummaryLabelFr(sortBy) {
   if (sortBy === "rating") return "les mieux notés";
   if (sortBy === "downloads") return "les plus téléchargés";
   if (sortBy === "recent") return "les plus récents";
   return "les plus seedés";
+}
+
+function getSortSummaryLabelNonFr(sortBy) {
+  if (sortBy === "rating") return "top rated";
+  if (sortBy === "downloads") return "most downloaded";
+  if (sortBy === "recent") return "most recent";
+  return "most seeded";
+}
+
+function buildTopSummary(sortBy, totalCount, uiLanguage) {
+  const lang = String(uiLanguage || "fr-FR").toLowerCase();
+  if (lang.startsWith("fr")) {
+    return `Top 5 des ${getSortSummaryLabelFr(sortBy)} - Résultats: ${totalCount}`;
+  }
+  return `Top 5 ${getSortSummaryLabelNonFr(sortBy)} - Results: ${totalCount}`;
 }
 
 function isSeriesItem(it) {
@@ -515,7 +531,12 @@ export default function TopReleases() {
   }, [sourceId, sources]);
   const sourceLabelSuffix = selectedSourceName ? ` (${selectedSourceName})` : " (Tous indexeurs)";
   const sortLabel = getSortLabel(sortBy);
-  const sortSummaryLabel = getSortSummaryLabel(sortBy);
+  const uiLanguage = getActiveUiLanguage();
+  const totalResults = globalTop.length + Object.values(topByCategory).flat().length;
+  const topSummary = useMemo(
+    () => buildTopSummary(sortBy, totalResults, uiLanguage),
+    [sortBy, totalResults, uiLanguage]
+  );
 
   if (loading) return <Loader />;
   if (err) return <div className="error">{err}</div>;
@@ -526,7 +547,7 @@ export default function TopReleases() {
         <div>
           <h1>Top 24h</h1>
           <div className="muted">
-            Top 5 des {sortSummaryLabel} - Résultats: {globalTop.length + Object.values(topByCategory).flat().length}
+            {topSummary}
           </div>
         </div>
       </div>

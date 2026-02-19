@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import ToggleSwitch from "../../ui/ToggleSwitch.jsx";
 import { apiGet } from "../../api/client.js";
+import { LANGUAGE_OPTIONS } from "../../app/locale.js";
 
 const FILTER_QUALITY_OPTIONS = [
   "2160p",
@@ -79,8 +80,8 @@ export default function SettingsUI({
           value: String(a.id),
           label: a.name || a.title || `${String(a.type || "App").toLowerCase()} ${a.id}`,
         }))
-        .sort((a, b) => a.label.localeCompare(b.label, "fr-FR", { sensitivity: "base" })),
-    [apps]
+        .sort((a, b) => a.label.localeCompare(b.label, ui?.uiLanguage || "fr-FR", { sensitivity: "base" })),
+    [apps, ui?.uiLanguage]
   );
 
   const cardClass = (pulseKey, enabled) =>
@@ -88,6 +89,59 @@ export default function SettingsUI({
 
   return (
     <>
+      <div className="settings-card" id="language">
+        <div className="settings-card__title">Language</div>
+        <div className="indexer-list">
+          <div className={cardClass("ui.mediaInfoLanguage", true)}>
+            <div className="indexer-row indexer-row--settings">
+              <span className="indexer-title">Media Info Language</span>
+              <div className="indexer-actions">
+                <select
+                  value={ui.mediaInfoLanguage || "fr-FR"}
+                  onChange={(e) => setUi((u) => ({ ...u, mediaInfoLanguage: e.target.value }))}
+                >
+                  {LANGUAGE_OPTIONS.map((language) => (
+                    <option key={language.value} value={language.value}>
+                      {language.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="settings-help">
+              Langue utilisee pour les infos media (TMDB: synopsis, titres, cast).
+            </div>
+            <div className="settings-help" style={{ color: "#f59e0b" }}>
+              Rechargement du navigateur requis
+            </div>
+          </div>
+
+          <div className={cardClass("ui.uiLanguage", true)}>
+            <div className="indexer-row indexer-row--settings">
+              <span className="indexer-title">UI Language</span>
+              <div className="indexer-actions">
+                <select
+                  value={ui.uiLanguage || "fr-FR"}
+                  onChange={(e) => setUi((u) => ({ ...u, uiLanguage: e.target.value }))}
+                >
+                  {LANGUAGE_OPTIONS.map((language) => (
+                    <option key={language.value} value={language.value}>
+                      {language.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="settings-help">
+              Langue de l&apos;interface (formatage dates/heures et preference UI).
+            </div>
+            <div className="settings-help" style={{ color: "#f59e0b" }}>
+              Rechargement du navigateur requis
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="settings-card" id="theme">
         <div className="settings-card__title">Thème</div>
         <div className={`indexer-card${pulseKeys.has("ui.theme") ? " pulse-ok" : ""}`}>

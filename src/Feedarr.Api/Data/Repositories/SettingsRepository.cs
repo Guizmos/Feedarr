@@ -103,6 +103,10 @@ public sealed class SettingsRepository
             var loaded = JsonSerializer.Deserialize<UiSettings>(json, JsonOpts);
             if (loaded is null) return defaults;
 
+            if (json.Contains("uiLanguage", StringComparison.OrdinalIgnoreCase))
+                defaults.UiLanguage = UiLanguageCatalog.NormalizeUiLanguage(loaded.UiLanguage);
+            if (json.Contains("mediaInfoLanguage", StringComparison.OrdinalIgnoreCase))
+                defaults.MediaInfoLanguage = UiLanguageCatalog.NormalizeMediaInfoLanguage(loaded.MediaInfoLanguage);
             defaults.HideSeenByDefault = loaded.HideSeenByDefault;
             defaults.ShowCategories = loaded.ShowCategories;
             if (json.Contains("enableMissingPosterView", StringComparison.OrdinalIgnoreCase))

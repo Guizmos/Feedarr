@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { apiGet } from '../../api/client.js';
 import { fmtUptime, fmtBytes } from './systemUtils.js';
+import { getActiveUiLanguage } from '../../app/locale.js';
+import { tr } from '../../app/uiText.js';
 
 /* ─────────────────────── Helpers ─────────────────────── */
 
@@ -533,7 +535,7 @@ function FeedarrPanel({ refreshKey }) {
       color: meta.color,
       enabled: isEnabled,
       displayCount: Math.max(0, Math.trunc(displayCount)),
-      metricLabel: countMode === "requests" ? "demandes" : "items matchés"
+      metricLabel: countMode === "requests" ? "demandes" : "éléments matchés"
     };
   });
 
@@ -543,8 +545,8 @@ function FeedarrPanel({ refreshKey }) {
       <div className="card" style={{ padding: 20, marginBottom: 20 }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
           <MetricCard title="Uptime" value={fmtUptime(data.uptimeSeconds)} />
-          <MetricCard title="Taille Base" value={`${data.dbSizeMB || 0} Mo`} />
-          <MetricCard title="Posters Locaux" value={formatNumber(data.localPosters || 0)} />
+          <MetricCard title="Taille base" value={`${data.dbSizeMB || 0} Mo`} />
+          <MetricCard title="Posters locaux" value={formatNumber(data.localPosters || 0)} />
         </div>
       </div>
 
@@ -709,10 +711,10 @@ function IndexersPanel({ refreshKey }) {
       {/* Metric cards */}
       <div className="card" style={{ padding: 20, marginBottom: 20 }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
-          <MetricCard title="Queries Totales" value={formatNumber(data.queries || 0)} />
-          <MetricCard title="Echecs Queries" value={data.failures || 0} color={data.failures > 0 ? "#ef4444" : undefined} />
+          <MetricCard title="Requêtes totales" value={formatNumber(data.queries || 0)} />
+          <MetricCard title="Échecs requêtes" value={data.failures || 0} color={data.failures > 0 ? "#ef4444" : undefined} />
           <MetricCard title="Sync Jobs" value={formatNumber(data.syncJobs || 0)} />
-          <MetricCard title="Echecs Sync" value={data.syncFailures || 0} color={data.syncFailures > 0 ? "#ef4444" : undefined} />
+          <MetricCard title="Échecs sync" value={data.syncFailures || 0} color={data.syncFailures > 0 ? "#ef4444" : undefined} />
         </div>
       </div>
 
@@ -720,11 +722,11 @@ function IndexersPanel({ refreshKey }) {
       {indexerChartData.length > 0 && (
         <div className="card-row card-row-half system-mobile-full-row" style={{ marginBottom: 20 }}>
           <div className="card card-half system-mobile-full-card" style={{ padding: "12px 16px" }}>
-            <div className="card-title" style={{ marginBottom: 12 }}>Releases par Indexeur</div>
+            <div className="card-title" style={{ marginBottom: 12 }}>Releases par fournisseur</div>
             <HorizontalBarChart data={indexerChartData} valueKey="releases" labelKey="name" color="#5cb3ff" height={260} barGap={24} barMaxWidth={110} />
           </div>
           <div className="card card-half system-mobile-full-card" style={{ padding: "12px 12px 12px 8px" }}>
-            <div className="card-title" style={{ marginBottom: 8 }}>Catégories par Indexeur</div>
+            <div className="card-title" style={{ marginBottom: 8 }}>Catégories par fournisseur</div>
             <StackedHorizontalBarChart data={stackedByIndexer} height={260} barGap={8} />
           </div>
         </div>
@@ -733,17 +735,17 @@ function IndexersPanel({ refreshKey }) {
       {/* Indexer detail table */}
       {data.indexerDetails?.length > 0 && (
         <div className="card" style={{ padding: 20 }}>
-          <div className="card-title" style={{ marginBottom: 16 }}>Détail Indexeurs</div>
+          <div className="card-title" style={{ marginBottom: 16 }}>Détail fournisseurs</div>
           <div style={{ overflowX: "auto" }}>
             <table className="stats-table">
               <thead>
                 <tr>
-                  <th>Nom</th>
-                  <th>Actif</th>
+                  <th>{tr("Nom", "Name")}</th>
+                  <th>{tr("Actif", "Active")}</th>
                   <th>Releases</th>
                   <th>Dernier Sync</th>
                   <th>Statut</th>
-                  <th>Derniers items</th>
+                  <th>{tr("Derniers items", "Last items")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -755,7 +757,7 @@ function IndexersPanel({ refreshKey }) {
                     </td>
                     <td>{formatNumber(ix.releaseCount)}</td>
                     <td style={{ fontSize: 12, color: "var(--muted)" }}>
-                      {ix.lastSyncAtTs ? new Date(ix.lastSyncAtTs * 1000).toLocaleString("fr-FR") : "-"}
+                      {ix.lastSyncAtTs ? new Date(ix.lastSyncAtTs * 1000).toLocaleString(getActiveUiLanguage()) : "-"}
                     </td>
                     <td>
                       <span className={`status-badge status-badge--${ix.lastStatus === "ok" ? "ok" : ix.lastStatus === "error" ? "error" : "unknown"}`}>
@@ -809,8 +811,8 @@ function ProvidersPanel({ refreshKey }) {
       <div className="card" style={{ padding: 20, marginBottom: 20 }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
           <MetricCard title="Total Appels" value={formatNumber(totalCalls)} />
-          <MetricCard title="Total Echecs" value={formatNumber(totalFails)} color={totalFails > 0 ? "#ef4444" : undefined} />
-          <MetricCard title="Taux Echec Global" value={globalRate} color={totalFails > 0 ? "#f59e0b" : undefined} />
+          <MetricCard title="Total échecs" value={formatNumber(totalFails)} color={totalFails > 0 ? "#ef4444" : undefined} />
+          <MetricCard title="Taux d'échec global" value={globalRate} color={totalFails > 0 ? "#f59e0b" : undefined} />
         </div>
       </div>
 
@@ -832,15 +834,15 @@ function ProvidersPanel({ refreshKey }) {
 
       {/* Detail table */}
       <div className="card" style={{ padding: 20 }}>
-        <div className="card-title" style={{ marginBottom: 16 }}>Détail Providers</div>
+        <div className="card-title" style={{ marginBottom: 16 }}>Détail Métadonnées</div>
         <table className="stats-table">
           <thead>
             <tr>
               <th>Provider</th>
               <th>Appels</th>
-              <th>Echecs</th>
+              <th>Échecs</th>
               <th>Taux échec</th>
-              <th>Temps moyen</th>
+              <th>{tr("Temps moyen", "Average time")}</th>
             </tr>
           </thead>
           <tbody>
@@ -984,12 +986,12 @@ export default function SystemStatistics({ refreshKey = 0 }) {
           sub={summary ? fmtUptime(summary.uptimeSeconds) : null}
         />
         <StatTab
-          id="indexers" label="Indexeurs" active={activeTab} onClick={setActiveTab}
+          id="indexers" label="Fournisseurs" active={activeTab} onClick={setActiveTab}
           value={summary ? `${summary.activeIndexers} actifs` : '...'}
-          sub={summary ? `${formatNumber(summary.totalQueries)} queries` : null}
+          sub={summary ? `${formatNumber(summary.totalQueries)} requêtes` : null}
         />
         <StatTab
-          id="providers" label="Providers" active={activeTab} onClick={setActiveTab}
+          id="providers" label="Métadonnées" active={activeTab} onClick={setActiveTab}
           value={summary ? formatNumber(summary.totalCalls) : '...'}
           sub={summary ? `${summary.totalFailures} échecs` : null}
         />

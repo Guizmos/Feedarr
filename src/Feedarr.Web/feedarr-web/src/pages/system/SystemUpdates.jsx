@@ -1,10 +1,11 @@
 import React, { useMemo } from "react";
+import { getActiveUiLanguage } from "../../app/locale.js";
 
 function fmtDate(value) {
   if (!value) return "-";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return "-";
-  return parsed.toLocaleString();
+  return parsed.toLocaleString(getActiveUiLanguage());
 }
 
 function fmtVersion(value) {
@@ -21,7 +22,7 @@ function getReleaseSummary(body) {
     .filter(Boolean);
 
   const firstUseful = lines.find((line) => !line.startsWith("#"));
-  if (!firstUseful) return "Aucun detail de changelog.";
+  if (!firstUseful) return "Aucun détail de changelog.";
   return firstUseful.length > 140 ? `${firstUseful.slice(0, 137)}...` : firstUseful;
 }
 
@@ -36,10 +37,10 @@ export default function SystemUpdates({
   checkIntervalHours,
 }) {
   const statusLabel = useMemo(() => {
-    if (!updatesEnabled) return "Desactive";
+    if (!updatesEnabled) return "Désactivé";
     if (!latestRelease?.tagName) return "Inconnu";
-    if (isUpdateAvailable) return "Mise a jour disponible";
-    return "A jour";
+    if (isUpdateAvailable) return "Mise à jour disponible";
+    return "À jour";
   }, [updatesEnabled, latestRelease?.tagName, isUpdateAvailable]);
 
   const statusClass = useMemo(() => {
@@ -51,7 +52,7 @@ export default function SystemUpdates({
   return (
     <>
       <div className="settings-card settings-card--full system-updates__card">
-        <div className="settings-card__title">Update</div>
+        <div className="settings-card__title">Mise à jour</div>
         <div className="indexer-list">
           <div className="indexer-card">
             <div className="indexer-row indexer-row--settings">
@@ -63,7 +64,7 @@ export default function SystemUpdates({
           </div>
           <div className="indexer-card">
             <div className="indexer-row indexer-row--settings">
-              <span className="indexer-title">Derniere release</span>
+              <span className="indexer-title">Dernière release</span>
               <div className="indexer-actions">
                 <span className="indexer-status">{latestRelease?.tagName ? fmtVersion(latestRelease.tagName) : "-"}</span>
               </div>
@@ -71,7 +72,7 @@ export default function SystemUpdates({
           </div>
           <div className="indexer-card">
             <div className="indexer-row indexer-row--settings">
-              <span className="indexer-title">Publie le</span>
+              <span className="indexer-title">Publié le</span>
               <div className="indexer-actions">
                 <span className="indexer-status">{fmtDate(latestRelease?.publishedAt)}</span>
               </div>
@@ -95,7 +96,7 @@ export default function SystemUpdates({
 
         <div className="system-updates__footer">
           <div className="muted system-updates__footer-text">
-            Intervalle de verification: {checkIntervalHours}h {loading ? "• chargement..." : ""}
+            Intervalle de vérification: {checkIntervalHours}h {loading ? "• chargement..." : ""}
           </div>
         </div>
       </div>

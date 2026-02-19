@@ -7,7 +7,7 @@ export default function SettingsUsers({
 }) {
   return (
     <div className="settings-card" id="security">
-      <div className="settings-card__title">Security</div>
+      <div className="settings-card__title">Authentification</div>
       <div className="indexer-list">
         <div className="indexer-card">
           <div className="indexer-row indexer-row--settings">

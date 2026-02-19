@@ -178,12 +178,12 @@
   flex: 0 0 104px;
 }
 .system-feedarr-wide .system-feedarr-wide-card{
-  flex: 0 0 100%;
-  max-width: 100%;
+  flex: 0 0 calc(50% - 9px);
+  max-width: calc(50% - 9px);
 }
 .page--system .system-feedarr-wide .system-feedarr-wide-card{
-  flex: 0 0 100%;
-  max-width: 100%;
+  flex: 0 0 calc(50% - 9px);
+  max-width: calc(50% - 9px);
 }
 .card-value--wrap{
   white-space: normal;
@@ -4391,6 +4391,18 @@ body.modal-open .content{
 
 .indexer-row--settings .indexer-actions{
   margin-left: auto;
+}
+
+@media (min-width: 769px){
+  .page--settings .indexer-row--settings .indexer-title{
+    font-size: 13px;
+  }
+
+  .page--settings .indexer-row--settings .indexer-status,
+  .page--settings .indexer-row--settings .indexer-actions select,
+  .page--settings .indexer-row--settings .indexer-actions input{
+    font-size: 13px;
+  }
 }
 
 .indexer-actions--aligned{

@@ -1,8 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiPut } from "../../../api/client.js";
 import { applyTheme, getStoredTheme } from "../../../app/theme.js";
+import {
+  applyUiLanguage,
+  DEFAULT_UI_LANGUAGE,
+  DEFAULT_MEDIA_INFO_LANGUAGE,
+  getStoredUiLanguage,
+  normalizeMediaInfoLanguage,
+  normalizeUiLanguage,
+} from "../../../app/locale.js";
 
 const defaultUi = {
+  uiLanguage: DEFAULT_UI_LANGUAGE,
+  mediaInfoLanguage: DEFAULT_MEDIA_INFO_LANGUAGE,
   hideSeenByDefault: false,
   showCategories: true,
   defaultView: "grid",
@@ -26,6 +36,8 @@ const defaultUi = {
 export function buildUiPayload(source, overrides = {}) {
   const merged = { ...source, ...overrides };
   return {
+    uiLanguage: normalizeUiLanguage(merged.uiLanguage),
+    mediaInfoLanguage: normalizeMediaInfoLanguage(merged.mediaInfoLanguage),
     hideSeenByDefault: !!merged.hideSeenByDefault,
     showCategories: !!merged.showCategories,
     defaultView: merged.defaultView || "grid",
@@ -49,8 +61,9 @@ export function buildUiPayload(source, overrides = {}) {
 
 export default function useUiSettings() {
   const storedTheme = getStoredTheme();
-  const [ui, setUi] = useState({ ...defaultUi, theme: storedTheme });
-  const [initialUi, setInitialUi] = useState({ ...defaultUi, theme: storedTheme });
+  const storedUiLanguage = getStoredUiLanguage();
+  const [ui, setUi] = useState({ ...defaultUi, theme: storedTheme, uiLanguage: storedUiLanguage });
+  const [initialUi, setInitialUi] = useState({ ...defaultUi, theme: storedTheme, uiLanguage: storedUiLanguage });
   const [pulseKeys, setPulseKeys] = useState(() => new Set());
   const pulseTimerRef = useRef(null);
 
@@ -62,6 +75,8 @@ export default function useUiSettings() {
       if (u) {
         const normalizedUi = {
           ...u,
+          uiLanguage: normalizeUiLanguage(u.uiLanguage),
+          mediaInfoLanguage: normalizeMediaInfoLanguage(u.mediaInfoLanguage),
           defaultSort: u.defaultSort || "date",
           defaultMaxAgeDays: u.defaultMaxAgeDays ?? "",
           defaultLimit: u.defaultLimit ?? 100,
@@ -85,6 +100,8 @@ export default function useUiSettings() {
 
   const saveUiSettings = useCallback(async () => {
     const changed = new Set();
+    if (ui.uiLanguage !== initialUi.uiLanguage) changed.add("ui.uiLanguage");
+    if (ui.mediaInfoLanguage !== initialUi.mediaInfoLanguage) changed.add("ui.mediaInfoLanguage");
     if (ui.hideSeenByDefault !== initialUi.hideSeenByDefault) changed.add("ui.hideSeen");
     if (ui.showCategories !== initialUi.showCategories) changed.add("ui.showCategories");
     if (ui.defaultView !== initialUi.defaultView) changed.add("ui.defaultView");
@@ -103,6 +120,7 @@ export default function useUiSettings() {
     await apiPut("/api/settings/ui", buildUiPayload(ui));
     setInitialUi(buildUiPayload(ui));
     applyTheme(ui.theme, true);
+    applyUiLanguage(ui.uiLanguage, true);
 
     // Pulse effect for changed fields
     if (changed.size > 0) {
@@ -124,6 +142,10 @@ export default function useUiSettings() {
   useEffect(() => {
     applyTheme(ui?.theme);
   }, [ui?.theme]);
+
+  useEffect(() => {
+    applyUiLanguage(ui?.uiLanguage);
+  }, [ui?.uiLanguage]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;

@@ -139,7 +139,7 @@ export default function SettingsProviders({
                   },
                   {
                     icon: "edit",
-                    title: !row.enabled ? "Activez d'abord le provider" : "Editer",
+                    title: !row.enabled ? "Activez d'abord le provider" : "Modifier",
                     onClick: () => openExternalModal(row),
                     disabled: isTesting || !row.enabled,
                   },
@@ -238,7 +238,7 @@ export default function SettingsProviders({
 
       <Modal
         open={externalModalOpen}
-        title={externalModalRow ? `Éditer : ${externalModalRow.title}` : "Éditer"}
+        title={externalModalRow ? `Modifier : ${externalModalRow.title}` : "Modifier"}
         onClose={closeExternalModal}
         width={520}
       >

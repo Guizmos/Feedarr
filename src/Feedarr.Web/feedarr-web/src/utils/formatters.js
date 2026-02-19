@@ -1,3 +1,5 @@
+import { getActiveUiLanguage } from "../app/locale.js";
+
 export function fmtBytes(bytes) {
   const n = Number(bytes);
   if (!Number.isFinite(n) || n <= 0) return "";
@@ -24,7 +26,7 @@ export function fmtDateFromTs(tsSeconds) {
   const n = Number(tsSeconds);
   if (!Number.isFinite(n) || n <= 0) return "";
   const d = new Date(n * 1000);
-  return d.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+  return d.toLocaleString(getActiveUiLanguage(), { dateStyle: "short", timeStyle: "short" });
 }
 
 export function getSizeLabel(it) {

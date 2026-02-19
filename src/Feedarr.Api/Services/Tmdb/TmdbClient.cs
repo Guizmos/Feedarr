@@ -58,6 +58,12 @@ public sealed class TmdbClient
         return key;
     }
 
+    private string GetMediaInfoLanguage()
+    {
+        var ui = _settings.GetUi(new UiSettings());
+        return UiLanguageCatalog.NormalizeMediaInfoLanguage(ui.MediaInfoLanguage);
+    }
+
     private static string CleanQuery(string s)
     {
         s = (s ?? "").Trim();
@@ -146,8 +152,9 @@ public sealed class TmdbClient
     public async Task<List<SearchResult>> SearchMovieListAsync(string title, int? year, CancellationToken ct, int limit = 10)
     {
         var results = new List<SearchResult>();
+        var mediaInfoLanguage = GetMediaInfoLanguage();
         results.AddRange(await SearchMovieListWithLanguageAsync(title, year, null, ct, limit));
-        results.AddRange(await SearchMovieListWithLanguageAsync(title, year, "fr-FR", ct, limit));
+        results.AddRange(await SearchMovieListWithLanguageAsync(title, year, mediaInfoLanguage, ct, limit));
         return results;
     }
 
@@ -186,8 +193,9 @@ public sealed class TmdbClient
     public async Task<List<SearchResult>> SearchTvListAsync(string title, int? year, CancellationToken ct, int limit = 10)
     {
         var results = new List<SearchResult>();
+        var mediaInfoLanguage = GetMediaInfoLanguage();
         results.AddRange(await SearchTvListWithLanguageAsync(title, year, null, ct, limit));
-        results.AddRange(await SearchTvListWithLanguageAsync(title, year, "fr-FR", ct, limit));
+        results.AddRange(await SearchTvListWithLanguageAsync(title, year, mediaInfoLanguage, ct, limit));
         return results;
     }
 
@@ -220,8 +228,8 @@ public sealed class TmdbClient
     }
 
     /// <summary>
-    /// Picks a poster path with language priority: fr, en, es, it, null.
-    /// Returns null when no poster is available for the title.
+    /// Picks a poster path with language priority based on UI media-info settings,
+    /// then common fallbacks, then language-agnostic posters.
     /// </summary>
     public async Task<string?> GetPreferredPosterPathAsync(int tmdbId, string mediaType, CancellationToken ct)
     {
@@ -230,7 +238,9 @@ public sealed class TmdbClient
         if (tmdbId <= 0) return null;
 
         var kind = mediaType == "series" ? "tv" : "movie";
-        var url = $"{kind}/{tmdbId}/images?api_key={Uri.EscapeDataString(key)}&include_image_language=fr,en,es,it,null";
+        var posterLanguagePriority = UiLanguageCatalog.BuildPosterLanguagePriority(GetMediaInfoLanguage());
+        var includeImageLanguage = string.Join(",", posterLanguagePriority);
+        var url = $"{kind}/{tmdbId}/images?api_key={Uri.EscapeDataString(key)}&include_image_language={Uri.EscapeDataString(includeImageLanguage)}";
         var data = await GetJsonAsync<ImagesResponse>(url, ct);
         var posters = data?.Posters?
             .Where(x => !string.IsNullOrWhiteSpace(x.FilePath))
@@ -246,17 +256,15 @@ public sealed class TmdbClient
         static bool IsNoLang(ImageItem item)
             => string.IsNullOrWhiteSpace(item.Iso639_1) || string.Equals(item.Iso639_1, "null", StringComparison.OrdinalIgnoreCase);
 
-        var fr = posters.FirstOrDefault(x => IsLang(x, "fr"));
-        if (!string.IsNullOrWhiteSpace(fr?.FilePath)) return fr.FilePath;
+        foreach (var language in posterLanguagePriority)
+        {
+            if (string.Equals(language, "null", StringComparison.OrdinalIgnoreCase))
+                continue;
 
-        var en = posters.FirstOrDefault(x => IsLang(x, "en"));
-        if (!string.IsNullOrWhiteSpace(en?.FilePath)) return en.FilePath;
-
-        var es = posters.FirstOrDefault(x => IsLang(x, "es"));
-        if (!string.IsNullOrWhiteSpace(es?.FilePath)) return es.FilePath;
-
-        var it = posters.FirstOrDefault(x => IsLang(x, "it"));
-        if (!string.IsNullOrWhiteSpace(it?.FilePath)) return it.FilePath;
+            var match = posters.FirstOrDefault(x => IsLang(x, language));
+            if (!string.IsNullOrWhiteSpace(match?.FilePath))
+                return match.FilePath;
+        }
 
         var noLang = posters.FirstOrDefault(IsNoLang);
         if (!string.IsNullOrWhiteSpace(noLang?.FilePath)) return noLang.FilePath;
@@ -272,7 +280,8 @@ public sealed class TmdbClient
         if (tmdbId <= 0) return null;
 
         var kind = mediaType == "series" ? "tv" : "movie";
-        var url = $"{kind}/{tmdbId}/images?api_key={Uri.EscapeDataString(key)}&include_image_language=en,null";
+        var includeImageLanguage = string.Join(",", UiLanguageCatalog.BuildPosterLanguagePriority(GetMediaInfoLanguage()));
+        var url = $"{kind}/{tmdbId}/images?api_key={Uri.EscapeDataString(key)}&include_image_language={Uri.EscapeDataString(includeImageLanguage)}";
         var data = await GetJsonAsync<ImagesResponse>(url, ct);
         var path = data?.Backdrops?.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.FilePath))?.FilePath;
         return string.IsNullOrWhiteSpace(path) ? null : path;
@@ -350,10 +359,11 @@ public sealed class TmdbClient
         if (string.IsNullOrWhiteSpace(key)) return null;
         if (tmdbId <= 0) return null;
 
-        var url = $"movie/{tmdbId}?api_key={Uri.EscapeDataString(key)}&language=fr-FR";
+        var mediaInfoLanguage = GetMediaInfoLanguage();
+        var url = $"movie/{tmdbId}?api_key={Uri.EscapeDataString(key)}&language={Uri.EscapeDataString(mediaInfoLanguage)}";
         var r = await GetJsonAsync<MovieDetailsResponse>(url, ct);
         if (r is null) return null;
-        var credits = await GetMovieCreditsAsync(tmdbId, ct);
+        var credits = await GetMovieCreditsAsync(tmdbId, mediaInfoLanguage, ct);
 
         return new DetailsResult(
             r.Title?.Trim(),
@@ -376,10 +386,11 @@ public sealed class TmdbClient
         if (string.IsNullOrWhiteSpace(key)) return null;
         if (tmdbId <= 0) return null;
 
-        var url = $"tv/{tmdbId}?api_key={Uri.EscapeDataString(key)}&language=fr-FR";
+        var mediaInfoLanguage = GetMediaInfoLanguage();
+        var url = $"tv/{tmdbId}?api_key={Uri.EscapeDataString(key)}&language={Uri.EscapeDataString(mediaInfoLanguage)}";
         var r = await GetJsonAsync<TvDetailsResponse>(url, ct);
         if (r is null) return null;
-        var credits = await GetTvCreditsAsync(tmdbId, ct);
+        var credits = await GetTvCreditsAsync(tmdbId, mediaInfoLanguage, ct);
 
         var runtime = r.EpisodeRunTime?.FirstOrDefault(x => x > 0);
         return new DetailsResult(
@@ -588,13 +599,13 @@ public sealed class TmdbClient
         return names.Count == 0 ? null : string.Join(", ", names);
     }
 
-    private async Task<CreditsResult?> GetMovieCreditsAsync(int tmdbId, CancellationToken ct)
+    private async Task<CreditsResult?> GetMovieCreditsAsync(int tmdbId, string mediaInfoLanguage, CancellationToken ct)
     {
         var key = TryGetApiKey();
         if (string.IsNullOrWhiteSpace(key)) return null;
         if (tmdbId <= 0) return null;
 
-        var url = $"movie/{tmdbId}/credits?api_key={Uri.EscapeDataString(key)}&language=fr-FR";
+        var url = $"movie/{tmdbId}/credits?api_key={Uri.EscapeDataString(key)}&language={Uri.EscapeDataString(mediaInfoLanguage)}";
         var r = await GetJsonAsync<CreditsResponse>(url, ct);
         if (r is null) return null;
 
@@ -630,13 +641,13 @@ public sealed class TmdbClient
         );
     }
 
-    private async Task<CreditsResult?> GetTvCreditsAsync(int tmdbId, CancellationToken ct)
+    private async Task<CreditsResult?> GetTvCreditsAsync(int tmdbId, string mediaInfoLanguage, CancellationToken ct)
     {
         var key = TryGetApiKey();
         if (string.IsNullOrWhiteSpace(key)) return null;
         if (tmdbId <= 0) return null;
 
-        var url = $"tv/{tmdbId}/credits?api_key={Uri.EscapeDataString(key)}&language=fr-FR";
+        var url = $"tv/{tmdbId}/credits?api_key={Uri.EscapeDataString(key)}&language={Uri.EscapeDataString(mediaInfoLanguage)}";
         var r = await GetJsonAsync<CreditsResponse>(url, ct);
         if (r is null) return null;
 

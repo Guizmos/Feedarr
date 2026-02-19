@@ -44,12 +44,12 @@ export default function useSystemController(section = "overview") {
   const systemTitleBySection = {
     overview: "Système",
     storage: "Stockage",
-    providers: "Providers",
-    externals: "Providers",
+    providers: "Métadonnées",
+    externals: "Métadonnées",
     statistics: "Statistiques",
-    indexers: "Indexeurs",
-    updates: "A propos",
-    about: "A propos",
+    indexers: "Fournisseurs",
+    updates: "À propos",
+    about: "À propos",
   };
   const systemTitle = systemTitleBySection[section] || "Système";
 
@@ -100,7 +100,7 @@ export default function useSystemController(section = "overview") {
       });
     } else {
       setExternal(createDefaultExternal());
-      errors.push("Providers indisponibles");
+      errors.push("Métadonnées indisponibles");
     }
 
     if (provRes.status === "fulfilled") {
@@ -128,7 +128,7 @@ export default function useSystemController(section = "overview") {
       });
     } else {
       setProviderStats(createDefaultProviderStats());
-      errors.push("Stats providers indisponibles");
+      errors.push("Stats métadonnées indisponibles");
     }
 
     if (missingRes.status === "fulfilled") {
