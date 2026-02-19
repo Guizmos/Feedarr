@@ -53,7 +53,7 @@ export default function System() {
               "subaction--system-verify",
               updates?.updatesChecking ? "is-loading" : "",
             ].filter(Boolean).join(" ")}
-            badge={updates?.hasUnseenUpdate ? "!" : null}
+            badge={updates?.isUpdateAvailable ? 1 : null}
             badgeTone="error"
           />
         ) : null}
@@ -343,9 +343,7 @@ export default function System() {
               isUpdateAvailable={updates?.isUpdateAvailable}
               latestRelease={updates?.latestRelease}
               releases={updates?.releases}
-              hasUnseenUpdate={updates?.hasUnseenUpdate}
               checkIntervalHours={updates?.checkIntervalHours}
-              onAcknowledge={updates?.acknowledgeLatest}
             />
           )}
 

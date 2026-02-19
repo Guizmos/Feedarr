@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useMemo } from "react";
 
 function fmtDate(value) {
   if (!value) return "-";
@@ -33,16 +33,8 @@ export default function SystemUpdates({
   isUpdateAvailable,
   latestRelease,
   releases,
-  hasUnseenUpdate,
   checkIntervalHours,
-  onAcknowledge,
 }) {
-  useEffect(() => {
-    if (hasUnseenUpdate) {
-      onAcknowledge?.();
-    }
-  }, [hasUnseenUpdate, onAcknowledge]);
-
   const statusLabel = useMemo(() => {
     if (!updatesEnabled) return "Desactive";
     if (!latestRelease?.tagName) return "Inconnu";
@@ -105,9 +97,6 @@ export default function SystemUpdates({
           <div className="muted system-updates__footer-text">
             Intervalle de verification: {checkIntervalHours}h {loading ? "• chargement..." : ""}
           </div>
-          {hasUnseenUpdate ? (
-            <span className="settings-badge settings-badge--lg warn system-updates__unseen-badge">Nouveau</span>
-          ) : null}
         </div>
       </div>
 

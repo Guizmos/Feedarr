@@ -68,6 +68,7 @@ export default function useBadges({
     latestActivityTs: 0,
     latestReleasesCount: 0,
     latestReleasesTs: 0,
+    isUpdateAvailable: false,
     hasUnseenUpdate: false,
     latestUpdateTag: "",
     tasks: [],
@@ -288,11 +289,12 @@ export default function useBadges({
       }
 
       const latestUpdateTag = String(updatePayload?.latestRelease?.tagName || "");
+      const isUpdateAvailable = !!updatePayload?.isUpdateAvailable;
       const lastSeenUpdateTag = typeof window === "undefined"
         ? ""
         : String(window.localStorage.getItem(UPDATE_LAST_SEEN_TAG_KEY) || "");
       const hasUnseenUpdate = !!(
-        updatePayload?.isUpdateAvailable
+        isUpdateAvailable
         && latestUpdateTag
         && latestUpdateTag !== lastSeenUpdateTag
       );
@@ -307,6 +309,7 @@ export default function useBadges({
         latestActivityTs: activityInfo?.latestActivityTs ?? prev.latestActivityTs,
         latestReleasesCount: releasesCount ?? prev.latestReleasesCount,
         latestReleasesTs: releasesLatestTs ?? prev.latestReleasesTs,
+        isUpdateAvailable,
         hasUnseenUpdate,
         latestUpdateTag,
         tasks,
