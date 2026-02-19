@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.7.0](https://github.com/Guizmos/Feedarr/compare/v1.6.3...v1.7.0) (2026-02-19)
+
+
+### Features
+
+* Add English language ([21ba24d](https://github.com/Guizmos/Feedarr/commit/21ba24d1b4e94f221fbae9e8088fcaa51afb2911))
+
+
+### Bug Fixes
+
+* minor design ajustment ([4415cb8](https://github.com/Guizmos/Feedarr/commit/4415cb84d8eb98922781938b308ce847622e2849))
+* new badge design ([67cb7b7](https://github.com/Guizmos/Feedarr/commit/67cb7b7044b0e0dfe51c0ec44aa67bacd9d99c4d))
+
 ## [1.6.3](https://github.com/Guizmos/Feedarr/compare/v1.6.2...v1.6.3) (2026-02-18)
 
 
