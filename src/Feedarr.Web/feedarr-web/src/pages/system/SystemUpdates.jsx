@@ -123,7 +123,7 @@ export default function SystemUpdates({
                     )}
                     {release.htmlUrl ? (
                       <a
-                        className="btn system-updates__release-link system-updates__release-link--inline"
+                        className="settings-badge settings-badge--lg info system-updates__release-link system-updates__release-link--inline"
                         href={release.htmlUrl}
                         target="_blank"
                         rel="noopener noreferrer"
