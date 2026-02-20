@@ -34,7 +34,10 @@ public sealed class TitleParser
     private static readonly Regex RxYearRange = new(@"\b(19\d{2}|20\d{2})\s*-\s*(19\d{2}|20\d{2})\b", RegexOptions.Compiled);
     private static readonly Regex RxWeirdRes = new(@"\b\d{3,4}p\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex RxRes = new(@"(?i)\b(2160p|1080p|720p|480p|4k)\b", RegexOptions.Compiled);
-    private static readonly Regex RxLangTags = new(@"(?i)\b(multi\d*|multi|vff|vfq|vfi|vf|vostfr|vost|vof|truefrench|subfrench|french|fr|eng|english|vo)\b", RegexOptions.Compiled);
+    private static readonly Regex RxLangTags = new(@"(?i)\b(multi\d*|multi|multisub|multisubs|vff|vfq|vfi|vf|vostfr|vost|vof|truefrench|subfrench|french|fr|eng|english|vo)\b", RegexOptions.Compiled);
+    private static readonly Regex RxLangVersionJunk = new(@"(?i)\b(japanese|japonais|english|eng|french|fr)\s+ver(?:sion)?\b", RegexOptions.Compiled);
+    private static readonly Regex RxUpperEnTag = new(@"\bEN\b", RegexOptions.Compiled);
+    private static readonly Regex RxTrailingWebTag = new(@"(?i)\bWEB\b\s*$", RegexOptions.Compiled);
     private static readonly Regex RxTechSplit = new(@"(?i)\b(2160p|1080p|720p|480p|4k|WEB[- .]?DL|WEB[- .]?RIP|BLURAY|BDRIP|BRRIP|HDTV|DVDRIP|FULL\s*DVD|DVD|x264|x265|HEVC|AV1|MPEG2|AC3|MULTI|VFF|VFQ|VFI|VF|VOSTFR|TRUEFRENCH)\b", RegexOptions.Compiled);
     private static readonly Regex RxGameBrackets = new(@"\[[^\]]*\]", RegexOptions.Compiled);
     private static readonly Regex RxGameParens = new(@"\([^\)]*\)", RegexOptions.Compiled);
@@ -266,6 +269,13 @@ public sealed class TitleParser
         s = RxWeirdRes.Replace(s, " ");
         s = RxCollectionSuffix.Replace(s, "");
 
+        if (category == UnifiedCategory.Serie)
+        {
+            s = RxAirDateYmd.Replace(s, " ");
+            s = RxAirDateDmy.Replace(s, " ");
+            s = RxLangVersionJunk.Replace(s, " ");
+        }
+
         if (category == UnifiedCategory.Serie && p.Year.HasValue)
             s = Regex.Replace(s, $@"\b{p.Year}\b", " ");
         if (category == UnifiedCategory.Emission)
@@ -278,6 +288,12 @@ public sealed class TitleParser
         }
 
         s = RxLangTags.Replace(s, " ");
+
+        if (category == UnifiedCategory.Serie)
+        {
+            s = RxUpperEnTag.Replace(s, " ");
+            s = RxTrailingWebTag.Replace(s, " ");
+        }
 
         if (category == UnifiedCategory.Film)
         {
