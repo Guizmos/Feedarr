@@ -2,6 +2,10 @@ import React, { useEffect, useState } from "react";
 import Modal from "./Modal.jsx";
 import { apiPost, apiPut } from "../api/client.js";
 
+// TODO(metadata-providers-step1): This legacy wizard duplicates metadata provider logic
+// from setup Step2/settings (state + test/save flow via /api/settings/external).
+// Keep for compatibility, but migrate to shared useExternalProviderInstances + shared UI flow.
+
 // --- Category helpers (copié depuis Indexers.jsx) ---
 const UNIFIED_LABELS = {
   films: "Films",

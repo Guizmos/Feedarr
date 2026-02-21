@@ -1,8 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Feedarr.Api.Data.Repositories;
-using Feedarr.Api.Models.Settings;
+using Feedarr.Api.Services.ExternalProviders;
 using Feedarr.Api.Services;
 
 namespace Feedarr.Api.Services.Fanart;
@@ -10,19 +9,22 @@ namespace Feedarr.Api.Services.Fanart;
 public sealed class FanartClient
 {
     private readonly HttpClient _http;
-    private readonly SettingsRepository _settings;
     private readonly ProviderStatsService _stats;
+    private readonly ActiveExternalProviderConfigResolver _activeConfigResolver;
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNameCaseInsensitive = true
     };
 
-    public FanartClient(HttpClient http, SettingsRepository settings, ProviderStatsService stats)
+    public FanartClient(
+        HttpClient http,
+        ProviderStatsService stats,
+        ActiveExternalProviderConfigResolver activeConfigResolver)
     {
         _http = http;
-        _settings = settings;
         _stats = stats;
+        _activeConfigResolver = activeConfigResolver;
 
         _http.BaseAddress = new Uri("https://webservice.fanart.tv/v3/");
         _http.Timeout = TimeSpan.FromSeconds(20);
@@ -30,10 +32,13 @@ public sealed class FanartClient
 
     private string? GetApiKey()
     {
-        var ext = _settings.GetExternal(new ExternalSettings());
-        if (ext.FanartEnabled == false) return null;
-        var key = (ext.FanartApiKey ?? "").Trim();
-        return string.IsNullOrWhiteSpace(key) ? null : key;
+        var active = _activeConfigResolver.Resolve(ExternalProviderKeys.Fanart);
+        if (!active.Enabled) return null;
+        if (!active.Auth.TryGetValue("apiKey", out var activeValue))
+            return null;
+
+        var activeKey = (activeValue ?? "").Trim();
+        return string.IsNullOrWhiteSpace(activeKey) ? null : activeKey;
     }
 
     private async Task<T?> GetJsonAsync<T>(string relativeUrl, CancellationToken ct)

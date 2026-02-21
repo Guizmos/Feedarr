@@ -1,14 +1,17 @@
 const UNIFIED_LABELS = {
   films: "Films",
   series: "Series TV",
-  anime: "Animation",
+  anime: "Anime",
   games: "Jeux PC",
   spectacle: "Spectacle",
   shows: "Emissions",
+  audio: "Audio",
+  books: "Livres",
+  comics: "Comics",
   other: "Autre",
 };
 
-const UNIFIED_PRIORITY = ["series", "anime", "films", "games", "spectacle", "shows", "other"];
+const UNIFIED_PRIORITY = ["series", "anime", "films", "games", "spectacle", "shows", "audio", "books", "comics", "other"];
 
 const EXCLUDED_TOKENS = [
   "application",
@@ -54,38 +57,6 @@ const EXCLUDED_TOKENS = [
   "imprimantes",
   "printer",
   "printers",
-  "audio",
-  "music",
-  "mp3",
-  "aac",
-  "ogg",
-  "wav",
-  "m4a",
-  "opus",
-  "flac",
-  "alac",
-  "ost",
-  "album",
-  "albums",
-  "soundtrack",
-  "ebook",
-  "ebooks",
-  "book",
-  "books",
-  "livre",
-  "livres",
-  "epub",
-  "mobi",
-  "kindle",
-  "comic",
-  "comics",
-  "manga",
-  "scan",
-  "scans",
-  "audiobook",
-  "audiobooks",
-  "podcast",
-  "podcasts",
   "console",
   "xbox",
   "ps4",
@@ -209,6 +180,9 @@ function classifyByTokens(tokens) {
     games: 0,
     spectacle: 0,
     shows: 0,
+    audio: 0,
+    books: 0,
+    comics: 0,
   };
 
   const hasSeriesToken = hasAnyToken(tokens, ["serie", "series", "tv", "tele"]);
@@ -256,6 +230,9 @@ function classifyByTokens(tokens) {
   ]);
 
   if (hasAnyToken(tokens, ["anime", "animation"])) scores.anime = 4;
+  if (hasAnyToken(tokens, ["audio", "music", "musique", "mp3", "flac", "wav", "aac", "m4a", "opus", "podcast", "audiobook", "audiobooks", "album", "albums", "soundtrack", "ost"])) scores.audio = 4;
+  if (hasAnyToken(tokens, ["book", "books", "livre", "livres", "ebook", "ebooks", "epub", "mobi", "kindle", "isbn"])) scores.books = 4;
+  if (hasAnyToken(tokens, ["comic", "comics", "bd", "manga", "scan", "scans", "graphic", "novel", "novels"])) scores.comics = 4;
   if (hasSpectacleToken) scores.spectacle = 4;
   if (hasAnyToken(tokens, [
     "emission",
@@ -290,9 +267,14 @@ function classifyById(id, tokens) {
   if (!Number.isFinite(id)) return null;
 
   if (id === 5070) return "anime";
+  if (id >= 3000 && id < 4000) return "audio";
   if (id >= 2000 && id < 3000) return "films";
   if (id >= 5000 && id < 6000) return "series";
   if (id === 4050) return "games";
+  if (id >= 7000 && id < 8000) {
+    if (id >= 7030 && id < 7040) return "comics";
+    return "books";
+  }
   if (id >= 4000 && id < 5000) {
     if (hasAnyToken(tokens, ["jeu", "jeux", "game", "games", "pc", "windows"])) return "games";
   }
@@ -385,7 +367,7 @@ export function decorateCategories(categories, context = {}) {
 
 export function applyRecommendedFilter(categories, context = {}) {
   const decorated = decorateCategories(categories, context);
-  const recommendedKeys = new Set(["films", "series", "anime", "games", "spectacle", "shows"]);
+  const recommendedKeys = new Set(["films", "series", "anime", "games", "spectacle", "shows", "audio", "books", "comics"]);
   const filtered = decorated.filter((cat) => {
     const unifiedKey = String(cat.unifiedKey || "");
     if (!recommendedKeys.has(unifiedKey)) return false;

@@ -15,6 +15,9 @@ export const UNIFIED_CATEGORY_OPTIONS = [
   { key: "games", label: "Jeux" },
   { key: "shows", label: "Emissions" },
   { key: "spectacle", label: "Spectacle" },
+  { key: "audio", label: "Audio" },
+  { key: "books", label: "Livres" },
+  { key: "comics", label: "Comics" },
 ];
 
 export const ARR_STATUS_TTL_MS = 10 * 60 * 1000;

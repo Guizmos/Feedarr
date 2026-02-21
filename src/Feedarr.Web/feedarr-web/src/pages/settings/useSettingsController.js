@@ -5,7 +5,7 @@ import { sleep } from "./settingsUtils.js";
 
 // Specialized hooks
 import useUiSettings from "./hooks/useUiSettings.js";
-import useExternalProviders from "./hooks/useExternalProviders.js";
+import useExternalProviderInstances from "./hooks/useExternalProviderInstances.js";
 import useArrApplications from "./hooks/useArrApplications.js";
 import useMaintenanceActions from "./hooks/useMaintenanceActions.js";
 import useSecuritySettings from "./hooks/useSecuritySettings.js";
@@ -40,7 +40,7 @@ export default function useSettingsController(section = "general") {
 
   // Compose specialized hooks
   const uiSettings = useUiSettings();
-  const providers = useExternalProviders();
+  const providers = useExternalProviderInstances();
   const applications = useArrApplications();
   const maintenance = useMaintenanceActions();
   const security = useSecuritySettings();
@@ -80,8 +80,8 @@ export default function useSettingsController(section = "general") {
   const saveArrRequestModeDraftRef = useRef(applications.saveArrRequestModeDraft);
   const confirmArrDeleteRef = useRef(applications.confirmArrDelete);
   const toggleArrEnabledRef = useRef(applications.toggleArrEnabled);
-  const confirmDisableExternalRef = useRef(providers.confirmDisableExternal);
-  const confirmToggleExternalRef = useRef(providers.confirmToggleExternal);
+  const confirmExternalDeleteRef = useRef(providers.confirmExternalDelete);
+  const confirmExternalToggleRef = useRef(providers.confirmExternalToggle);
 
   // Sync all refs in a single render-phase update (refs don't trigger re-renders)
   // This replaces 23 individual useEffect hooks with direct assignment
@@ -117,19 +117,14 @@ export default function useSettingsController(section = "general") {
   saveArrRequestModeDraftRef.current = applications.saveArrRequestModeDraft;
   confirmArrDeleteRef.current = applications.confirmArrDelete;
   toggleArrEnabledRef.current = applications.toggleArrEnabled;
-  confirmDisableExternalRef.current = providers.confirmDisableExternal;
-  confirmToggleExternalRef.current = providers.confirmToggleExternal;
+  confirmExternalDeleteRef.current = providers.confirmExternalDelete;
+  confirmExternalToggleRef.current = providers.confirmExternalToggle;
 
   // Calculate isDirty with safe property access
   const isDirty =
     uiSettings.isDirty ||
     security.isDirty ||
-    applications.isRequestModeDirty ||
-    !!providers?.externalInput?.tmdbApiKey ||
-    !!providers?.externalInput?.tvmazeApiKey ||
-    !!providers?.externalInput?.fanartApiKey ||
-    !!providers?.externalInput?.igdbClientId ||
-    !!providers?.externalInput?.igdbClientSecret;
+    applications.isRequestModeDirty;
 
   // Load all settings
   const load = useCallback(async () => {
@@ -429,17 +424,17 @@ export default function useSettingsController(section = "general") {
   }, []);
 
   // Wrap provider handlers with error handling
-  const confirmDisableExternal = useCallback(async () => {
+  const confirmExternalDelete = useCallback(async () => {
     try {
-      await confirmDisableExternalRef.current();
+      await confirmExternalDeleteRef.current();
     } catch (e) {
       setErr(e?.message || "Erreur");
     }
   }, []);
 
-  const confirmToggleExternal = useCallback(async () => {
+  const confirmExternalToggle = useCallback(async () => {
     try {
-      await confirmToggleExternalRef.current();
+      await confirmExternalToggleRef.current();
     } catch (e) {
       setErr(e?.message || "Erreur");
     }
@@ -463,6 +458,8 @@ export default function useSettingsController(section = "general") {
     isDirty,
     openArrModalAdd: applications.openArrModalAdd,
     canAddArrApp: applications.availableAddTypes.length > 0,
+    openExternalModalAdd: providers.openExternalModalAdd,
+    canAddExternalProvider: providers.canAddExternalProvider,
     triggerArrSync,
     arrSyncing: applications.arrSyncing,
     hasEnabledArrApps: applications.hasEnabledArrApps,
@@ -477,48 +474,9 @@ export default function useSettingsController(section = "general") {
       handleThemeChange: uiSettings.handleThemeChange,
     },
     providers: {
-      externalFlags: providers.externalFlags,
-      providerStats: providers.providerStats,
-      testingExternal: providers.testingExternal,
-      testStatusByExternal: providers.testStatusByExternal,
-      testExternal: providers.testExternal,
-      openExternalModal: providers.openExternalModal,
-      openExternalDisable: providers.openExternalDisable,
-      openExternalToggle: providers.openExternalToggle,
-      posterCount: providers.posterCount,
-      missingPosterCount: providers.missingPosterCount,
-      releasesCount: providers.releasesCount,
-      retroActive: providers.retroActive,
-      retroLoading: providers.retroLoading,
-      retroStopLoading: providers.retroStopLoading,
-      retroMsg: providers.retroMsg,
-      retroPercent: providers.retroPercent,
-      retroDone: providers.retroDone,
-      retroTotal: providers.retroTotal,
-      handleRetroFetch: providers.handleRetroFetch,
-      handleRetroFetchStop: providers.handleRetroFetchStop,
-      externalModalOpen: providers.externalModalOpen,
-      externalModalRow: providers.externalModalRow,
-      externalModalValue: providers.externalModalValue,
-      setExternalModalValue: providers.setExternalModalValue,
-      externalModalValue2: providers.externalModalValue2,
-      setExternalModalValue2: providers.setExternalModalValue2,
-      externalModalTesting: providers.externalModalTesting,
-      externalModalTested: providers.externalModalTested,
-      externalModalError: providers.externalModalError,
-      setExternalModalTested: providers.setExternalModalTested,
-      setExternalModalError: providers.setExternalModalError,
-      closeExternalModal: providers.closeExternalModal,
-      testExternalModal: providers.testExternalModal,
-      saveExternalModal: providers.saveExternalModal,
-      externalDisableOpen: providers.externalDisableOpen,
-      externalDisableRow: providers.externalDisableRow,
-      closeExternalDisable: providers.closeExternalDisable,
-      confirmDisableExternal,
-      externalToggleOpen: providers.externalToggleOpen,
-      externalToggleRow: providers.externalToggleRow,
-      closeExternalToggle: providers.closeExternalToggle,
-      confirmToggleExternal,
+      ...providers,
+      confirmExternalDelete,
+      confirmExternalToggle,
     },
     applications: {
       arrApps: applications.arrApps,

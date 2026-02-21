@@ -170,6 +170,7 @@ function HorizontalBarChart({
   color = "#5cb3ff", secondaryColor = "#f0c54d",
   height = 280, showLegend = false, legendLabels = [],
   barGap = 16, barMaxWidth, stretchBars = false,
+  valueFormatter = formatNumber,
 }) {
   const maxValue = Math.max(...data.map(d => Math.max(d[valueKey] || 0, d[secondaryKey] || 0)), 1);
   const columnCount = Math.max(1, data.length);
@@ -198,7 +199,7 @@ function HorizontalBarChart({
           return (
             <div key={i} style={{ flex: stretchBars ? `0 0 ${columnWidth}` : 1, width: stretchBars ? columnWidth : "100%", display: "flex", flexDirection: "column", alignItems: "center", minWidth: 0 }}>
               <div style={{ fontSize: 12, marginBottom: 6, color: "var(--muted)", fontWeight: 600 }}>
-                {value > 0 ? formatNumber(value) : ""}
+                {value > 0 ? valueFormatter(value) : ""}
               </div>
               <div style={{ flex: 1, width: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", gap: 2 }}>
                 {secondaryKey && secondary > 0 && (
@@ -705,6 +706,7 @@ function IndexersPanel({ refreshKey }) {
   if (!data) return <PanelLoading />;
 
   const indexerChartData = (data.indexerStatsBySource || []).map(src => ({ name: src.name, releases: src.releaseCount, failed: src.lastStatus === "error" ? 1 : 0 }));
+  const responseChartData = (data.indexerResponseMsBySource || []).map(src => ({ name: src.name, avgMs: Number(src.avgMs || 0) }));
 
   return (
     <>
@@ -719,16 +721,35 @@ function IndexersPanel({ refreshKey }) {
       </div>
 
       {/* Charts */}
-      {indexerChartData.length > 0 && (
+      {(indexerChartData.length > 0 || responseChartData.length > 0) && (
         <div className="card-row card-row-half system-mobile-full-row" style={{ marginBottom: 20 }}>
-          <div className="card card-half system-mobile-full-card" style={{ padding: "12px 16px" }}>
-            <div className="card-title" style={{ marginBottom: 12 }}>Releases par fournisseur</div>
-            <HorizontalBarChart data={indexerChartData} valueKey="releases" labelKey="name" color="#5cb3ff" height={260} barGap={24} barMaxWidth={110} />
-          </div>
-          <div className="card card-half system-mobile-full-card" style={{ padding: "12px 12px 12px 8px" }}>
-            <div className="card-title" style={{ marginBottom: 8 }}>Catégories par fournisseur</div>
-            <StackedHorizontalBarChart data={stackedByIndexer} height={260} barGap={8} />
-          </div>
+          {indexerChartData.length > 0 && (
+            <div className="card card-half system-mobile-full-card" style={{ padding: "12px 16px" }}>
+              <div className="card-title" style={{ marginBottom: 12 }}>Releases par fournisseur</div>
+              <HorizontalBarChart data={indexerChartData} valueKey="releases" labelKey="name" color="#5cb3ff" height={260} barGap={24} barMaxWidth={110} />
+            </div>
+          )}
+          {responseChartData.length > 0 && (
+            <div className="card card-half system-mobile-full-card" style={{ padding: "12px 16px" }}>
+              <div className="card-title" style={{ marginBottom: 12 }}>Temps de réponse</div>
+              <HorizontalBarChart
+                data={responseChartData}
+                valueKey="avgMs"
+                labelKey="name"
+                color="#22c55e"
+                height={260}
+                barGap={24}
+                barMaxWidth={110}
+                valueFormatter={(value) => `${Math.round(value)} ms`}
+              />
+            </div>
+          )}
+        </div>
+      )}
+      {stackedByIndexer.length > 0 && (
+        <div className="card" style={{ padding: "12px 12px 12px 8px", marginBottom: 20 }}>
+          <div className="card-title" style={{ marginBottom: 8 }}>Catégories par indexeur</div>
+          <StackedHorizontalBarChart data={stackedByIndexer} height={260} barGap={8} />
         </div>
       )}
 
@@ -780,12 +801,23 @@ function IndexersPanel({ refreshKey }) {
 
 function ProvidersPanel({ refreshKey }) {
   const [data, setData] = useState(null);
+  const [externalProviders, setExternalProviders] = useState({ definitions: [], instances: [] });
   const [error, setError] = useState("");
 
   useEffect(() => {
     (async () => {
       setError("");
-      try { setData(await apiGet('/api/system/stats/providers')); }
+      try {
+        const [statsData, providersData] = await Promise.all([
+          apiGet('/api/system/stats/providers'),
+          apiGet('/api/providers/external'),
+        ]);
+        setData(statsData || {});
+        setExternalProviders({
+          definitions: Array.isArray(providersData?.definitions) ? providersData.definitions : [],
+          instances: Array.isArray(providersData?.instances) ? providersData.instances : [],
+        });
+      }
       catch (e) { setError(e?.message || "Erreur"); }
     })();
   }, [refreshKey]);
@@ -793,11 +825,36 @@ function ProvidersPanel({ refreshKey }) {
   if (error) return <div className="card" style={{ color: "red", fontWeight: 700 }}>Erreur: {error}</div>;
   if (!data) return <PanelLoading />;
 
-  const providers = ['tmdb', 'tvmaze', 'fanart', 'igdb'];
-  const labels = { tmdb: 'TMDB', tvmaze: 'TVmaze', fanart: 'Fanart', igdb: 'IGDB' };
+  const labels = {
+    tmdb: 'TMDB',
+    tvmaze: 'TVmaze',
+    fanart: 'Fanart',
+    igdb: 'IGDB',
+    jikan: 'Jikan (MAL)',
+    googlebooks: 'Google Books',
+    theaudiodb: 'TheAudioDB',
+    comicvine: 'Comic Vine',
+  };
 
-  const providerData = providers.map(p => ({
-    provider: labels[p], calls: data[p]?.calls || 0, failures: data[p]?.failures || 0, avgMs: data[p]?.avgMs || 0
+  const activeProviderKeys = (externalProviders?.instances || [])
+    .filter((instance) => instance?.enabled !== false)
+    .map((instance) => String(instance?.providerKey || "").toLowerCase())
+    .filter(Boolean);
+
+  const providerKeys = Array.from(new Set(activeProviderKeys)).sort((a, b) => a.localeCompare(b));
+
+  const providerData = providerKeys.map(p => ({
+    provider: labels[p] || p.toUpperCase(),
+    calls: Number(data?.[p]?.calls || 0),
+    failures: Number(data?.[p]?.failures || 0),
+    avgMs: Number(data?.[p]?.avgMs || 0),
+  }));
+  const matchingByProvider = (data?._matchingByProvider && typeof data._matchingByProvider === "object")
+    ? data._matchingByProvider
+    : {};
+  const matchingData = providerKeys.map((key) => ({
+    provider: labels[key] || key.toUpperCase(),
+    matched: Number(matchingByProvider[key] || 0),
   }));
   const failureData = providerData.map(p => ({ provider: p.provider, rate: p.calls > 0 ? (p.failures / p.calls) : 0 }));
 
@@ -830,6 +887,12 @@ function ProvidersPanel({ refreshKey }) {
           <div className="card-title" style={{ marginBottom: 12 }}>Temps de réponse moyen</div>
           <HorizontalBarChart data={providerData} valueKey="avgMs" labelKey="provider" color="#22c55e" height={200} barGap={8} stretchBars />
         </div>
+      </div>
+
+      {/* Matching */}
+      <div className="card" style={{ padding: "12px 16px", marginBottom: 20 }}>
+        <div className="card-title" style={{ marginBottom: 12 }}>Matching</div>
+        <HorizontalBarChart data={matchingData} valueKey="matched" labelKey="provider" color="#f59e0b" height={220} barGap={12} stretchBars />
       </div>
 
       {/* Detail table */}

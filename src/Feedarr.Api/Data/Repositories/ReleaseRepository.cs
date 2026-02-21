@@ -21,7 +21,11 @@ public sealed class ReleaseRepository
         nameof(UnifiedCategory.Emission),
         nameof(UnifiedCategory.Spectacle),
         nameof(UnifiedCategory.JeuWindows),
-        nameof(UnifiedCategory.Animation)
+        nameof(UnifiedCategory.Animation),
+        nameof(UnifiedCategory.Anime),
+        nameof(UnifiedCategory.Audio),
+        nameof(UnifiedCategory.Book),
+        nameof(UnifiedCategory.Comic)
     };
 
     public ReleaseRepository(Db db, TitleParser parser, UnifiedCategoryResolver resolver)

@@ -14,6 +14,10 @@ public static class UnifiedCategoryMappings
             UnifiedCategory.Spectacle => "spectacle",
             UnifiedCategory.JeuWindows => "games",
             UnifiedCategory.Animation => "anime",
+            UnifiedCategory.Anime => "anime",
+            UnifiedCategory.Audio => "audio",
+            UnifiedCategory.Book => "books",
+            UnifiedCategory.Comic => "comics",
             _ => "other"
         };
     }
@@ -28,6 +32,10 @@ public static class UnifiedCategoryMappings
             UnifiedCategory.Spectacle => "Spectacle",
             UnifiedCategory.JeuWindows => "Jeux PC",
             UnifiedCategory.Animation => "Animation",
+            UnifiedCategory.Anime => "Anime",
+            UnifiedCategory.Audio => "Audio",
+            UnifiedCategory.Book => "Livres",
+            UnifiedCategory.Comic => "Comics",
             _ => "Autre"
         };
     }
@@ -42,6 +50,10 @@ public static class UnifiedCategoryMappings
             UnifiedCategory.Emission => "series",
             UnifiedCategory.JeuWindows => "game",
             UnifiedCategory.Animation => "movie",
+            UnifiedCategory.Anime => "anime",
+            UnifiedCategory.Audio => "audio",
+            UnifiedCategory.Book => "book",
+            UnifiedCategory.Comic => "comic",
             _ => "unknown"
         };
     }
@@ -82,7 +94,18 @@ public static class UnifiedCategoryMappings
                 category = UnifiedCategory.JeuWindows;
                 return true;
             case "anime":
-                category = UnifiedCategory.Animation;
+                category = UnifiedCategory.Anime;
+                return true;
+            case "audio":
+                category = UnifiedCategory.Audio;
+                return true;
+            case "book":
+            case "books":
+                category = UnifiedCategory.Book;
+                return true;
+            case "comic":
+            case "comics":
+                category = UnifiedCategory.Comic;
                 return true;
         }
 

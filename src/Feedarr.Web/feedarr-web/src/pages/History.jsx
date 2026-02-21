@@ -14,24 +14,18 @@ const PAGE_SIZE = 15;
 const UNIFIED_LABELS = {
   films: "Films",
   series: "Séries TV",
-  anime: "Animation",
+  anime: "Anime",
   games: "Jeux PC",
   spectacle: "Spectacle",
   shows: "Émissions",
+  audio: "Audio",
+  books: "Livres",
+  comics: "Comics",
 };
 
-const UNIFIED_PRIORITY = ["series", "anime", "films", "games", "spectacle", "shows"];
+const UNIFIED_PRIORITY = ["series", "anime", "films", "games", "spectacle", "shows", "audio", "books", "comics"];
 
 const EXCLUDED_TOKENS = [
-  "audio",
-  "music",
-  "mp3",
-  "flac",
-  "ebook",
-  "book",
-  "livre",
-  "audiobook",
-  "podcast",
   "software",
   "app",
   "application",
@@ -92,6 +86,9 @@ function categorizeLabel(name) {
     games: 0,
     spectacle: 0,
     shows: 0,
+    audio: 0,
+    books: 0,
+    comics: 0,
   };
 
   if (hasAnyToken(tokens, ["serie", "series", "tv", "tele"])) scores.series = 3;
@@ -100,6 +97,9 @@ function categorizeLabel(name) {
   const hasSpectacleToken = hasAnyToken(tokens, ["spectacle", "concert", "opera", "theatre", "ballet", "symphonie", "orchestr", "philharmon", "ring", "choregraph", "danse"]);
 
   if (hasAnyToken(tokens, ["anime", "animation"])) scores.anime = 4;
+  if (hasAnyToken(tokens, ["audio", "music", "musique", "mp3", "flac", "wav", "aac", "m4a", "opus", "podcast", "audiobook", "audiobooks", "album", "albums", "soundtrack", "ost"])) scores.audio = 4;
+  if (hasAnyToken(tokens, ["book", "books", "livre", "livres", "ebook", "ebooks", "epub", "mobi", "kindle", "isbn"])) scores.books = 4;
+  if (hasAnyToken(tokens, ["comic", "comics", "bd", "manga", "scan", "scans", "graphic", "novel", "novels"])) scores.comics = 4;
   if (hasSpectacleToken) scores.spectacle = 4;
   if (hasAnyToken(tokens, ["emission", "show", "talk", "reality", "documentaire", "docu", "magazine", "reportage", "enquete", "quotidien", "quotidienne"])) scores.shows = 4;
 

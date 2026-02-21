@@ -3,12 +3,16 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Models;
-using Feedarr.Api.Models.Settings;
 using Feedarr.Api.Options;
 using Feedarr.Api.Services.Categories;
+using Feedarr.Api.Services.ExternalProviders;
 using Feedarr.Api.Services.Fanart;
+using Feedarr.Api.Services.GoogleBooks;
 using Feedarr.Api.Services.Igdb;
 using Feedarr.Api.Services.Matching;
+using Feedarr.Api.Services.Jikan;
+using Feedarr.Api.Services.ComicVine;
+using Feedarr.Api.Services.TheAudioDb;
 using Feedarr.Api.Services.Tmdb;
 using Feedarr.Api.Services.TvMaze;
 using Microsoft.Extensions.Options;
@@ -32,37 +36,52 @@ public sealed class PosterFetchService
 
     private readonly ReleaseRepository _releases;
     private readonly ActivityRepository _activity;
-    private readonly SettingsRepository _settings;
     private readonly TmdbClient _tmdb;
     private readonly FanartClient _fanart;
     private readonly IgdbClient _igdb;
     private readonly TvMazeClient _tvmaze;
+    private readonly JikanClient _jikan;
+    private readonly TheAudioDbClient _theAudioDb;
+    private readonly GoogleBooksClient _googleBooks;
+    private readonly ComicVineClient _comicVine;
     private readonly PosterMatchCacheService _matchCache;
     private readonly AppOptions _opt;
     private readonly IWebHostEnvironment _env;
+    private readonly PosterMatchingOrchestrator _matchingOrchestrator;
+    private readonly ActiveExternalProviderConfigResolver _activeConfigResolver;
 
     public PosterFetchService(
         ReleaseRepository releases,
         ActivityRepository activity,
-        SettingsRepository settings,
         TmdbClient tmdb,
         FanartClient fanart,
         IgdbClient igdb,
         TvMazeClient tvmaze,
+        JikanClient jikan,
+        TheAudioDbClient theAudioDb,
+        GoogleBooksClient googleBooks,
+        ComicVineClient comicVine,
         PosterMatchCacheService matchCache,
         IOptions<AppOptions> opt,
-        IWebHostEnvironment env)
+        IWebHostEnvironment env,
+        PosterMatchingOrchestrator matchingOrchestrator,
+        ActiveExternalProviderConfigResolver activeConfigResolver)
     {
         _releases = releases;
         _activity = activity;
-        _settings = settings;
         _tmdb = tmdb;
         _fanart = fanart;
         _igdb = igdb;
         _tvmaze = tvmaze;
+        _jikan = jikan;
+        _theAudioDb = theAudioDb;
+        _googleBooks = googleBooks;
+        _comicVine = comicVine;
         _matchCache = matchCache;
         _opt = opt.Value;
         _env = env;
+        _matchingOrchestrator = matchingOrchestrator;
+        _activeConfigResolver = activeConfigResolver;
     }
 
     // data/ posteurs = relatif => on l'ancre sur le ContentRoot (racine du projet)
@@ -190,6 +209,64 @@ public sealed class PosterFetchService
         return $"/api/posters/release/{id}?v={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
     }
 
+    public async Task<string?> SaveTheAudioDbPosterAsync(long id, string? providerId, string posterUrl, CancellationToken ct, bool logSingle = true)
+    {
+        if (string.IsNullOrWhiteSpace(posterUrl)) return null;
+
+        Directory.CreateDirectory(PostersDirAbs);
+
+        var bytes = await _theAudioDb.DownloadImageAsync(posterUrl, ct);
+        if (bytes is null || bytes.Length == 0) return null;
+
+        var ext = InferFileExtensionFromUrl(posterUrl, ".jpg");
+        var normalizedProviderId = string.IsNullOrWhiteSpace(providerId)
+            ? Guid.NewGuid().ToString("N")
+            : SanitizeForFile(providerId);
+        var file = $"theaudiodb-{normalizedProviderId}-manual{ext}";
+        var full = Path.Combine(PostersDirAbs, file);
+        await System.IO.File.WriteAllBytesAsync(full, bytes, ct);
+
+        _releases.SavePoster(id, null, posterUrl, file);
+        _releases.UpdateExternalDetails(
+            id,
+            ExternalProviderKeys.TheAudioDb,
+            providerId?.Trim() ?? normalizedProviderId,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null);
+
+        var hash = ComputeSha256Hex(bytes);
+        PosterAudit.UpdateAttemptSuccess(
+            _releases,
+            id,
+            ExternalProviderKeys.TheAudioDb,
+            providerId?.Trim() ?? normalizedProviderId,
+            null,
+            "original",
+            hash);
+
+        if (logSingle)
+        {
+            LogActivity(null, "info", "poster_fetch", "Poster set manually (TheAudioDB)", new
+            {
+                releaseId = id,
+                providerId = providerId?.Trim(),
+                posterUrl,
+                posterFile = file
+            });
+        }
+
+        return $"/api/posters/release/{id}?v={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+    }
+
     private void LogActivity(long? sourceId, string level, string eventType, string message, object? data = null)
     {
         var json = data is null ? null : JsonSerializer.Serialize(data);
@@ -219,8 +296,7 @@ public sealed class PosterFetchService
 
     private bool IsTvmazeEnabled()
     {
-        var ext = _settings.GetExternal(new ExternalSettings());
-        return ext.TvmazeEnabled != false;
+        return _activeConfigResolver.GetActiveEnabled(ExternalProviderKeys.Tvmaze);
     }
 
     public async Task<PosterFetchResult> FetchPosterAsync(long id, CancellationToken ct, bool logSingle, bool skipIfExists = true)
@@ -446,8 +522,69 @@ public sealed class PosterFetchService
             }
         }
 
+        var routingContext = new PosterFetchRoutingContext(
+            id,
+            title,
+            year,
+            categoryName,
+            unifiedCategory,
+            mediaType,
+            tmdbIdStored,
+            tvdbIdStored,
+            normalizedTitle,
+            season,
+            episode,
+            ambiguity,
+            titleKey,
+            fingerprint,
+            knownIds,
+            tvmazeEnabled,
+            logSingle,
+            sourceId);
+
+        return await _matchingOrchestrator.FetchPosterAsync(this, routingContext, ct);
+    }
+
+    internal Task<PosterFetchResult> FetchGameBranchAsync(PosterFetchRoutingContext context, CancellationToken ct)
+        => FetchLegacyCategoryBranchAsync(context, ct, forceGameBranch: true);
+
+    internal Task<PosterFetchResult> FetchVideoBranchAsync(PosterFetchRoutingContext context, CancellationToken ct)
+        => FetchLegacyCategoryBranchAsync(context, ct, forceGameBranch: false);
+
+    internal Task<PosterFetchResult> FetchAnimeBranchAsync(PosterFetchRoutingContext context, CancellationToken ct)
+        => FetchAnimeCategoryBranchAsync(context, ct);
+
+    internal Task<PosterFetchResult> FetchAudioBranchAsync(PosterFetchRoutingContext context, CancellationToken ct)
+        => FetchAudioCategoryBranchAsync(context, ct);
+
+    internal Task<PosterFetchResult> FetchGenericBranchAsync(PosterFetchRoutingContext context, CancellationToken ct)
+        => FetchGenericCategoryBranchAsync(context, ct);
+
+    private async Task<PosterFetchResult> FetchLegacyCategoryBranchAsync(
+        PosterFetchRoutingContext context,
+        CancellationToken ct,
+        bool forceGameBranch)
+    {
+        var id = context.ReleaseId;
+        var title = context.Title;
+        var year = context.Year;
+        var categoryName = context.CategoryName;
+        var unifiedCategory = context.UnifiedCategory;
+        var mediaType = context.MediaType;
+        var tmdbIdStored = context.TmdbIdStored;
+        var tvdbIdStored = context.TvdbIdStored;
+        var normalizedTitle = context.NormalizedTitle;
+        var season = context.Season;
+        var episode = context.Episode;
+        var ambiguity = context.Ambiguity;
+        var titleKey = context.TitleKey;
+        var fingerprint = context.Fingerprint;
+        var knownIds = context.KnownIds;
+        var tvmazeEnabled = context.TvmazeEnabled;
+        var logSingle = context.LogSingle;
+        var sourceId = context.SourceId;
         // Utilise la catégorie + le mediaType parsé + indices dans le titre brut
-        var isGame = unifiedCategory == UnifiedCategory.JeuWindows;
+        var isGame = forceGameBranch || unifiedCategory == UnifiedCategory.JeuWindows;
 
         if (isGame)
         {
@@ -882,6 +1019,377 @@ public sealed class PosterFetchService
             tmdbId = tmdbIdForFanart.Value,
             posterPath = fanartUrl,
             posterFile = fanartFile,
+            posterUrl = $"/api/posters/release/{id}"
+        }, sourceId);
+    }
+
+    private async Task<PosterFetchResult> FetchAnimeCategoryBranchAsync(
+        PosterFetchRoutingContext context,
+        CancellationToken ct)
+    {
+        var id = context.ReleaseId;
+        var title = context.Title;
+        var year = context.Year;
+        var sourceId = context.SourceId;
+        var logSingle = context.LogSingle;
+
+        LogProviderAttempted(sourceId, logSingle, ExternalProviderKeys.Jikan, new { releaseId = id, query = title, year });
+        var match = await _jikan.SearchAnimeAsync(title, year, ct);
+        if (match is null)
+        {
+            if (logSingle)
+                LogActivity(sourceId, "warn", "poster_fetch", "Poster fetch failed: no Jikan match", new { releaseId = id, title, year });
+
+            PosterAudit.UpdateAttemptFailure(_releases, id, ExternalProviderKeys.Jikan, null, null, null, "no jikan match");
+            return new PosterFetchResult(false, 404, new { error = "no jikan match", title, year }, sourceId);
+        }
+
+        if (string.IsNullOrWhiteSpace(match.ImageUrl))
+        {
+            PosterAudit.UpdateAttemptFailure(_releases, id, ExternalProviderKeys.Jikan, match.MalId.ToString(CultureInfo.InvariantCulture), null, null, "missing jikan image");
+            return new PosterFetchResult(false, 404, new { error = "missing jikan image", title, year }, sourceId);
+        }
+
+        var bytes = await _jikan.DownloadImageAsync(match.ImageUrl, ct);
+        if (bytes is null || bytes.Length == 0)
+        {
+            PosterAudit.UpdateAttemptFailure(_releases, id, ExternalProviderKeys.Jikan, match.MalId.ToString(CultureInfo.InvariantCulture), null, null, "jikan image download failed");
+            return new PosterFetchResult(false, 502, new { error = "jikan image download failed" }, sourceId);
+        }
+
+        var ext = InferFileExtensionFromUrl(match.ImageUrl, ".jpg");
+        var file = $"jikan-{match.MalId}{ext}";
+        await SavePosterFileAsync(file, bytes, ct);
+
+        _releases.SavePoster(id, null, match.ImageUrl, file);
+        _releases.UpdateExternalDetails(
+            id,
+            ExternalProviderKeys.Jikan,
+            match.MalId.ToString(CultureInfo.InvariantCulture),
+            match.Title,
+            match.Synopsis,
+            null,
+            match.Genres,
+            match.Year.HasValue ? $"{match.Year.Value:0000}-01-01" : null,
+            null,
+            match.Rating,
+            null,
+            null,
+            null,
+            null);
+
+        var hash = ComputeSha256Hex(bytes);
+        PosterAudit.UpdateAttemptSuccess(_releases, id, ExternalProviderKeys.Jikan, match.MalId.ToString(CultureInfo.InvariantCulture), null, "original", hash);
+
+        _matchCache.Upsert(new PosterMatch(
+            context.Fingerprint,
+            context.MediaType,
+            context.NormalizedTitle,
+            context.Year,
+            context.Season,
+            context.Episode,
+            PosterMatchCacheService.SerializeIds(new PosterMatchIds(null, null, null, null, null)),
+            0.70,
+            ExternalProviderKeys.Jikan,
+            file,
+            ExternalProviderKeys.Jikan,
+            match.MalId.ToString(CultureInfo.InvariantCulture),
+            null,
+            "original",
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            null,
+            null));
+
+        if (logSingle)
+        {
+            LogActivity(sourceId, "info", "poster_fetch", "Poster fetched (Jikan)", new
+            {
+                releaseId = id,
+                title,
+                year,
+                malId = match.MalId,
+                posterFile = file
+            });
+        }
+
+        return new PosterFetchResult(true, 200, new
+        {
+            ok = true,
+            provider = ExternalProviderKeys.Jikan,
+            providerId = match.MalId,
+            posterFile = file,
+            posterUrl = $"/api/posters/release/{id}"
+        }, sourceId);
+    }
+
+    private async Task<PosterFetchResult> FetchAudioCategoryBranchAsync(
+        PosterFetchRoutingContext context,
+        CancellationToken ct)
+    {
+        var id = context.ReleaseId;
+        var title = context.Title;
+        var year = context.Year;
+        var sourceId = context.SourceId;
+        var logSingle = context.LogSingle;
+
+        var (artist, trackOrAlbum) = ParseAudioQuery(title);
+        var query = string.IsNullOrWhiteSpace(trackOrAlbum) ? title : trackOrAlbum;
+        LogProviderAttempted(sourceId, logSingle, ExternalProviderKeys.TheAudioDb, new { releaseId = id, query, artist, year });
+
+        var match = await _theAudioDb.SearchAudioAsync(query, artist, year, ct);
+        if (match is null)
+        {
+            if (logSingle)
+                LogActivity(sourceId, "warn", "poster_fetch", "Poster fetch failed: no TheAudioDB match", new { releaseId = id, title, year });
+
+            PosterAudit.UpdateAttemptFailure(_releases, id, ExternalProviderKeys.TheAudioDb, null, null, null, "no theaudiodb match");
+            return new PosterFetchResult(false, 404, new { error = "no theaudiodb match", title, year }, sourceId);
+        }
+
+        if (string.IsNullOrWhiteSpace(match.PosterUrl))
+        {
+            PosterAudit.UpdateAttemptFailure(_releases, id, ExternalProviderKeys.TheAudioDb, match.ProviderId, null, null, "missing theaudiodb image");
+            return new PosterFetchResult(false, 404, new { error = "missing theaudiodb image", title, year }, sourceId);
+        }
+
+        var bytes = await _theAudioDb.DownloadImageAsync(match.PosterUrl, ct);
+        if (bytes is null || bytes.Length == 0)
+        {
+            PosterAudit.UpdateAttemptFailure(_releases, id, ExternalProviderKeys.TheAudioDb, match.ProviderId, null, null, "theaudiodb image download failed");
+            return new PosterFetchResult(false, 502, new { error = "theaudiodb image download failed" }, sourceId);
+        }
+
+        var ext = InferFileExtensionFromUrl(match.PosterUrl, ".jpg");
+        var file = $"theaudiodb-{match.ProviderId}{ext}";
+        await SavePosterFileAsync(file, bytes, ct);
+
+        _releases.SavePoster(id, null, match.PosterUrl, file);
+        _releases.UpdateExternalDetails(
+            id,
+            ExternalProviderKeys.TheAudioDb,
+            match.ProviderId,
+            match.Title,
+            match.Description,
+            null,
+            match.Genre,
+            match.Released,
+            null,
+            match.Rating,
+            null,
+            null,
+            null,
+            match.Artist);
+
+        var hash = ComputeSha256Hex(bytes);
+        PosterAudit.UpdateAttemptSuccess(_releases, id, ExternalProviderKeys.TheAudioDb, match.ProviderId, null, "original", hash);
+        _matchCache.Upsert(new PosterMatch(
+            context.Fingerprint,
+            context.MediaType,
+            context.NormalizedTitle,
+            context.Year,
+            context.Season,
+            context.Episode,
+            null,
+            0.65,
+            ExternalProviderKeys.TheAudioDb,
+            file,
+            ExternalProviderKeys.TheAudioDb,
+            match.ProviderId,
+            null,
+            "original",
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            null,
+            null));
+
+        return new PosterFetchResult(true, 200, new
+        {
+            ok = true,
+            provider = ExternalProviderKeys.TheAudioDb,
+            providerId = match.ProviderId,
+            posterFile = file,
+            posterUrl = $"/api/posters/release/{id}"
+        }, sourceId);
+    }
+
+    private async Task<PosterFetchResult> FetchGenericCategoryBranchAsync(
+        PosterFetchRoutingContext context,
+        CancellationToken ct)
+    {
+        return context.UnifiedCategory switch
+        {
+            UnifiedCategory.Book => await FetchBookBranchAsync(context, ct),
+            UnifiedCategory.Comic => await FetchComicBranchAsync(context, ct),
+            _ => new PosterFetchResult(false, 400, new { error = "unsupported generic category" }, context.SourceId)
+        };
+    }
+
+    private async Task<PosterFetchResult> FetchBookBranchAsync(
+        PosterFetchRoutingContext context,
+        CancellationToken ct)
+    {
+        var id = context.ReleaseId;
+        var title = context.Title;
+        var year = context.Year;
+        var sourceId = context.SourceId;
+        var logSingle = context.LogSingle;
+
+        var isbn = TryExtractIsbn(title);
+        LogProviderAttempted(sourceId, logSingle, ExternalProviderKeys.GoogleBooks, new { releaseId = id, query = title, isbn });
+        var match = await _googleBooks.SearchBookAsync(title, isbn, ct);
+        if (match is null)
+        {
+            PosterAudit.UpdateAttemptFailure(_releases, id, ExternalProviderKeys.GoogleBooks, null, null, null, "no google books match");
+            return new PosterFetchResult(false, 404, new { error = "no google books match", title, year }, sourceId);
+        }
+
+        if (string.IsNullOrWhiteSpace(match.ThumbnailUrl))
+        {
+            PosterAudit.UpdateAttemptFailure(_releases, id, ExternalProviderKeys.GoogleBooks, match.VolumeId, null, null, "missing google books image");
+            return new PosterFetchResult(false, 404, new { error = "missing google books image", title, year }, sourceId);
+        }
+
+        var bytes = await _googleBooks.DownloadImageAsync(match.ThumbnailUrl, ct);
+        if (bytes is null || bytes.Length == 0)
+        {
+            PosterAudit.UpdateAttemptFailure(_releases, id, ExternalProviderKeys.GoogleBooks, match.VolumeId, null, null, "google books image download failed");
+            return new PosterFetchResult(false, 502, new { error = "google books image download failed" }, sourceId);
+        }
+
+        var ext = InferFileExtensionFromUrl(match.ThumbnailUrl, ".jpg");
+        var file = $"googlebooks-{SanitizeForFile(match.VolumeId)}{ext}";
+        await SavePosterFileAsync(file, bytes, ct);
+
+        _releases.SavePoster(id, null, match.ThumbnailUrl, file);
+        _releases.UpdateExternalDetails(
+            id,
+            ExternalProviderKeys.GoogleBooks,
+            match.VolumeId,
+            match.Title,
+            match.Description,
+            null,
+            match.Genres,
+            match.PublishedDate,
+            null,
+            match.Rating,
+            match.RatingCount,
+            null,
+            null,
+            null);
+
+        var hash = ComputeSha256Hex(bytes);
+        PosterAudit.UpdateAttemptSuccess(_releases, id, ExternalProviderKeys.GoogleBooks, match.VolumeId, null, "thumb", hash);
+        _matchCache.Upsert(new PosterMatch(
+            context.Fingerprint,
+            context.MediaType,
+            context.NormalizedTitle,
+            context.Year,
+            context.Season,
+            context.Episode,
+            null,
+            0.65,
+            ExternalProviderKeys.GoogleBooks,
+            file,
+            ExternalProviderKeys.GoogleBooks,
+            match.VolumeId,
+            null,
+            "thumb",
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            null,
+            null));
+
+        return new PosterFetchResult(true, 200, new
+        {
+            ok = true,
+            provider = ExternalProviderKeys.GoogleBooks,
+            providerId = match.VolumeId,
+            posterFile = file,
+            posterUrl = $"/api/posters/release/{id}"
+        }, sourceId);
+    }
+
+    private async Task<PosterFetchResult> FetchComicBranchAsync(
+        PosterFetchRoutingContext context,
+        CancellationToken ct)
+    {
+        var id = context.ReleaseId;
+        var title = context.Title;
+        var year = context.Year;
+        var sourceId = context.SourceId;
+        var logSingle = context.LogSingle;
+
+        LogProviderAttempted(sourceId, logSingle, ExternalProviderKeys.ComicVine, new { releaseId = id, query = title, year });
+        var match = await _comicVine.SearchComicAsync(title, year, ct);
+        if (match is null)
+        {
+            PosterAudit.UpdateAttemptFailure(_releases, id, ExternalProviderKeys.ComicVine, null, null, null, "no comic vine match");
+            return new PosterFetchResult(false, 404, new { error = "no comic vine match", title, year }, sourceId);
+        }
+
+        if (string.IsNullOrWhiteSpace(match.CoverUrl))
+        {
+            PosterAudit.UpdateAttemptFailure(_releases, id, ExternalProviderKeys.ComicVine, match.ProviderId, null, null, "missing comic vine image");
+            return new PosterFetchResult(false, 404, new { error = "missing comic vine image", title, year }, sourceId);
+        }
+
+        var bytes = await _comicVine.DownloadImageAsync(match.CoverUrl, ct);
+        if (bytes is null || bytes.Length == 0)
+        {
+            PosterAudit.UpdateAttemptFailure(_releases, id, ExternalProviderKeys.ComicVine, match.ProviderId, null, null, "comic vine image download failed");
+            return new PosterFetchResult(false, 502, new { error = "comic vine image download failed" }, sourceId);
+        }
+
+        var ext = InferFileExtensionFromUrl(match.CoverUrl, ".jpg");
+        var file = $"comicvine-{match.ProviderId}{ext}";
+        await SavePosterFileAsync(file, bytes, ct);
+
+        _releases.SavePoster(id, null, match.CoverUrl, file);
+        _releases.UpdateExternalDetails(
+            id,
+            ExternalProviderKeys.ComicVine,
+            match.ProviderId,
+            match.Title,
+            match.Description,
+            null,
+            null,
+            match.ReleaseDate,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null);
+
+        var hash = ComputeSha256Hex(bytes);
+        PosterAudit.UpdateAttemptSuccess(_releases, id, ExternalProviderKeys.ComicVine, match.ProviderId, null, "original", hash);
+        _matchCache.Upsert(new PosterMatch(
+            context.Fingerprint,
+            context.MediaType,
+            context.NormalizedTitle,
+            context.Year,
+            context.Season,
+            context.Episode,
+            null,
+            0.65,
+            ExternalProviderKeys.ComicVine,
+            file,
+            ExternalProviderKeys.ComicVine,
+            match.ProviderId,
+            null,
+            "original",
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            null,
+            null));
+
+        return new PosterFetchResult(true, 200, new
+        {
+            ok = true,
+            provider = ExternalProviderKeys.ComicVine,
+            providerId = match.ProviderId,
+            posterFile = file,
             posterUrl = $"/api/posters/release/{id}"
         }, sourceId);
     }
@@ -1408,6 +1916,70 @@ public sealed class PosterFetchService
         );
     }
 
+    private async Task SavePosterFileAsync(string fileName, byte[] bytes, CancellationToken ct)
+    {
+        var full = Path.Combine(PostersDirAbs, fileName);
+        await System.IO.File.WriteAllBytesAsync(full, bytes, ct);
+    }
+
+    private static string InferFileExtensionFromUrl(string? url, string fallback)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return fallback;
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            return fallback;
+
+        var ext = Path.GetExtension(uri.AbsolutePath);
+        return string.IsNullOrWhiteSpace(ext) ? fallback : ext;
+    }
+
+    private static (string? artist, string title) ParseAudioQuery(string input)
+    {
+        var raw = (input ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(raw))
+            return (null, "");
+
+        var separators = new[] { " - ", " – ", " — ", " | ", " : " };
+        foreach (var separator in separators)
+        {
+            var idx = raw.IndexOf(separator, StringComparison.Ordinal);
+            if (idx <= 0 || idx >= raw.Length - separator.Length)
+                continue;
+
+            var artist = raw[..idx].Trim();
+            var title = raw[(idx + separator.Length)..].Trim();
+            if (!string.IsNullOrWhiteSpace(artist) && !string.IsNullOrWhiteSpace(title))
+                return (artist, title);
+        }
+
+        return (null, raw);
+    }
+
+    private static string? TryExtractIsbn(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return null;
+
+        var normalized = input.Replace("-", "", StringComparison.Ordinal);
+        var matches = System.Text.RegularExpressions.Regex.Matches(normalized, @"\b(?:97[89]\d{10}|\d{9}[\dXx])\b");
+        if (matches.Count == 0)
+            return null;
+
+        return matches[0].Value;
+    }
+
+    private static string SanitizeForFile(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return Guid.NewGuid().ToString("N");
+
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var chars = value.Trim().Select(ch => invalidChars.Contains(ch) ? '_' : ch).ToArray();
+        var sanitized = new string(chars);
+        return string.IsNullOrWhiteSpace(sanitized) ? Guid.NewGuid().ToString("N") : sanitized;
+    }
+
     private static string ComputeSha256Hex(byte[] bytes)
     {
         var hash = SHA256.HashData(bytes);
@@ -1492,4 +2064,5 @@ public sealed class PosterFetchService
         return token.Length >= 3;
     }
 }
+
 

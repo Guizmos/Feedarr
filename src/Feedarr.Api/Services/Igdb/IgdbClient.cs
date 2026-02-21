@@ -3,8 +3,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Feedarr.Api.Data.Repositories;
-using Feedarr.Api.Models.Settings;
+using Feedarr.Api.Services.ExternalProviders;
 using Feedarr.Api.Services;
 
 namespace Feedarr.Api.Services.Igdb;
@@ -27,8 +26,8 @@ public sealed class IgdbClient
     }
 
     private readonly HttpClient _http;
-    private readonly SettingsRepository _settings;
     private readonly ProviderStatsService _stats;
+    private readonly ActiveExternalProviderConfigResolver _activeConfigResolver;
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -39,22 +38,30 @@ public sealed class IgdbClient
     private DateTimeOffset _tokenExpiresAt;
     private readonly SemaphoreSlim _tokenSemaphore = new(1, 1);
 
-    public IgdbClient(HttpClient http, SettingsRepository settings, ProviderStatsService stats)
+    public IgdbClient(
+        HttpClient http,
+        ProviderStatsService stats,
+        ActiveExternalProviderConfigResolver activeConfigResolver)
     {
         _http = http;
-        _settings = settings;
         _stats = stats;
+        _activeConfigResolver = activeConfigResolver;
         _http.Timeout = TimeSpan.FromSeconds(25);
     }
 
     private (string ClientId, string ClientSecret)? GetCreds()
     {
-        var ext = _settings.GetExternal(new ExternalSettings());
-        if (ext.IgdbEnabled == false) return null;
-        var id = (ext.IgdbClientId ?? "").Trim();
-        var secret = (ext.IgdbClientSecret ?? "").Trim();
-        if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(secret)) return null;
-        return (id, secret);
+        var active = _activeConfigResolver.Resolve(ExternalProviderKeys.Igdb);
+        if (!active.Enabled) return null;
+
+        active.Auth.TryGetValue("clientId", out var activeClientId);
+        active.Auth.TryGetValue("clientSecret", out var activeClientSecret);
+        var resolvedClientId = (activeClientId ?? "").Trim();
+        var resolvedClientSecret = (activeClientSecret ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(resolvedClientId) || string.IsNullOrWhiteSpace(resolvedClientSecret))
+            return null;
+
+        return (resolvedClientId, resolvedClientSecret);
     }
 
     private async Task<string?> GetTokenAsync(CancellationToken ct)

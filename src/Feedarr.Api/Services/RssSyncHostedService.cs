@@ -368,7 +368,10 @@ public sealed class RssSyncHostedService : BackgroundService
                 {
                     var filtered = new List<TorznabItem>();
                     var missingCategory = 0;
-                    var noMapMatch = 0;
+                    var noMapMatchCount = 0;
+                    var fallbackSelectedCategoryCount = 0;
+                    var fallbackSamples = new List<string>();
+                    var noMapSamples = new List<string>();
                     foreach (var it in items)
                     {
                         var ids = GetRawCategoryIds(it);
@@ -382,8 +385,25 @@ public sealed class RssSyncHostedService : BackgroundService
                         var picked = CategorySelection.PickBestCategoryId(ids, categoryMap);
                         if (!picked.HasValue)
                         {
-                            noMapMatch++;
-                            continue;
+                            var fallbackPicked = CategorySelection.PickSelectedFallbackCategoryId(ids, selectedCategoryIds);
+                            if (fallbackPicked.HasValue)
+                            {
+                                picked = fallbackPicked.Value;
+                                fallbackSelectedCategoryCount++;
+                                if (fallbackSamples.Count < 5)
+                                {
+                                    var intersections = ids.Where(selectedCategoryIds.Contains).Distinct().ToList();
+                                    fallbackSamples.Add(
+                                        $"title={BuildCategoryLogTitle(it.Title)}, ids={string.Join("/", ids)}, selected={string.Join("/", intersections)}, picked={picked.Value}");
+                                }
+                            }
+                            else
+                            {
+                                noMapMatchCount++;
+                                if (noMapSamples.Count < 5)
+                                    noMapSamples.Add($"title={BuildCategoryLogTitle(it.Title)}, ids={string.Join("/", ids)}");
+                                continue;
+                            }
                         }
                         it.CategoryId = picked.Value;
                         filtered.Add(it);
@@ -393,8 +413,17 @@ public sealed class RssSyncHostedService : BackgroundService
                     var filteredCount = items.Count;
                     var dropped = countBeforeCategoryMapFilter - filteredCount;
                     _log.LogInformation(
-                        "AutoSync AFTER CATEGORY FILTER [{Name}] raw={RawCount} filtered={FilteredCount} dropped={Dropped} missingCategory={MissingCategory} noMapMatch={NoMapMatch}",
-                        name, countBeforeCategoryMapFilter, filteredCount, dropped, missingCategory, noMapMatch);
+                        "AutoSync AFTER CATEGORY FILTER [{Name}] raw={RawCount} filtered={FilteredCount} dropped={Dropped} missingCategory={MissingCategory} noMapMatchCount={NoMapMatchCount} fallbackSelectedCategoryCount={FallbackSelectedCategoryCount}",
+                        name, countBeforeCategoryMapFilter, filteredCount, dropped, missingCategory, noMapMatchCount, fallbackSelectedCategoryCount);
+
+                    if (fallbackSelectedCategoryCount > 0 || noMapMatchCount > 0)
+                    {
+                        activity.Add(
+                            id,
+                            "info",
+                            "sync",
+                            $"AutoSync category-map: fallbackSelectedCategoryCount={fallbackSelectedCategoryCount}, noMapMatchCount={noMapMatchCount}, fallbackSamples={(fallbackSamples.Count > 0 ? string.Join(" | ", fallbackSamples) : "-")}, droppedSamples={(noMapSamples.Count > 0 ? string.Join(" | ", noMapSamples) : "-")}");
+                    }
 
                     if (_log.IsEnabled(LogLevel.Debug))
                     {
@@ -459,6 +488,15 @@ public sealed class RssSyncHostedService : BackgroundService
         if (it.CategoryIds is { Count: > 0 })
             return it.CategoryIds;
         return it.CategoryId.HasValue ? new List<int> { it.CategoryId.Value } : new List<int>();
+    }
+
+    private static string BuildCategoryLogTitle(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+            return "-";
+
+        var trimmed = title.Trim();
+        return trimmed.Length <= 80 ? trimmed : trimmed[..80] + "...";
     }
 
     private static List<int> GetMissingCategoryIds(IEnumerable<TorznabItem> items, IReadOnlyCollection<int> requested)

@@ -60,5 +60,8 @@ export function getMediaTypeLabel(it) {
   if (["show", "shows", "emission", "emissions"].includes(raw)) return "Emission";
   if (["game", "games"].includes(raw)) return "Jeu";
   if (["spectacle"].includes(raw)) return "Spectacle";
+  if (["audio", "music"].includes(raw)) return "Audio";
+  if (["book", "books", "livre", "livres"].includes(raw)) return "Livre";
+  if (["comic", "comics", "bd", "manga"].includes(raw)) return "Comic";
   return it?.unifiedCategoryLabel || raw;
 }

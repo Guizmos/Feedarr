@@ -25,6 +25,12 @@ public static class CategorySelection
         "anime"
     };
 
+    // Golden rule for category handling:
+    // 1) Torznab/Indexer category IDs are the upstream source of truth.
+    // 2) source_categories is a local cache/lookup and must never be blocking.
+    // 3) UnifiedCategory is the internal domain truth used by Feedarr.
+    // Therefore: we never drop an item solely because level-2 cache mapping is incomplete.
+    // If a selected category is present in the item, it can be used as a fallback.
     public static int? PickBestCategoryId(IReadOnlyCollection<int> ids, Dictionary<int, (string key, string label)> map)
     {
         if (ids is null || ids.Count == 0 || map is null || map.Count == 0) return null;
@@ -55,6 +61,23 @@ public static class CategorySelection
         }
 
         return bestId;
+    }
+
+    public static int? PickSelectedFallbackCategoryId(
+        IReadOnlyCollection<int> ids,
+        IReadOnlyCollection<int> selectedCategoryIds)
+    {
+        if (ids is null || ids.Count == 0 || selectedCategoryIds is null || selectedCategoryIds.Count == 0)
+            return null;
+
+        var selectedSet = new HashSet<int>(selectedCategoryIds);
+        foreach (var id in ids)
+        {
+            if (id > 0 && selectedSet.Contains(id))
+                return id;
+        }
+
+        return null;
     }
 
     private static int GetUnifiedRank(string key)

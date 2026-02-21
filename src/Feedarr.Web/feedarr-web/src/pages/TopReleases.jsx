@@ -26,6 +26,9 @@ const CATEGORY_LABELS = {
   games: "Jeux PC",
   shows: "Emissions",
   spectacle: "Spectacle",
+  audio: "Audio",
+  books: "Livres",
+  comics: "Comics",
 };
 
 const viewOptions = [

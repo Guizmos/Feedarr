@@ -4236,6 +4236,27 @@ body.modal-open .content{
   color: #7c3aed;
 }
 
+/* Audio = Rose pastel */
+.cat-bubble--audio{
+  background: rgba(244, 114, 182, 0.22);
+  border-color: rgba(244, 114, 182, 0.38);
+  color: #9d174d;
+}
+
+/* Livres = Vert olive pastel */
+.cat-bubble--books{
+  background: rgba(163, 230, 53, 0.22);
+  border-color: rgba(163, 230, 53, 0.38);
+  color: #3f6212;
+}
+
+/* Comics = Rouge pastel */
+.cat-bubble--comics{
+  background: rgba(248, 113, 113, 0.22);
+  border-color: rgba(248, 113, 113, 0.38);
+  color: #991b1b;
+}
+
 /* Dark theme: brighter text for category bubbles */
 :root[data-theme="dark"] .cat-bubble{
   color: #e5e7eb;
@@ -4257,6 +4278,15 @@ body.modal-open .content{
 }
 :root[data-theme="dark"] .cat-bubble--games{
   color: #e9d5ff;
+}
+:root[data-theme="dark"] .cat-bubble--audio{
+  color: #fbcfe8;
+}
+:root[data-theme="dark"] .cat-bubble--books{
+  color: #d9f99d;
+}
+:root[data-theme="dark"] .cat-bubble--comics{
+  color: #fecaca;
 }
 
 /* Color Slider - horizontal sliding picker */
@@ -6372,7 +6402,7 @@ body.library-select-mode .list-edit{ display: none; }
   background: var(--page-bg);
 }
 .setup-container {
-  width: min(100%, 980px);
+  width: min(100%, 1120px);
   display: flex;
   flex-direction: column;
   gap: 16px;

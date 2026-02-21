@@ -385,7 +385,7 @@ public sealed class FeedController : ControllerBase
             else
             {
                 var unified = _unified.Get(row.CategoryName, row.TitleClean ?? row.Title);
-                var overrideKey = unified?.Key is "shows" or "spectacle";
+                var overrideKey = unified?.Key is "shows" or "spectacle" or "audio" or "books" or "comics";
 
                 if (!hasMappedKey && (overrideKey || string.IsNullOrWhiteSpace(row.UnifiedCategoryKey)))
                 {
@@ -427,7 +427,7 @@ public sealed class FeedController : ControllerBase
             });
         }
 
-        var categories = new[] { "films", "series", "anime", "games", "shows", "spectacle" };
+        var categories = new[] { "films", "series", "anime", "games", "shows", "spectacle", "audio", "books", "comics" };
         var result = new Dictionary<string, object>
         {
             ["sortBy"] = topSort
@@ -528,7 +528,7 @@ public sealed class FeedController : ControllerBase
             else
             {
                 var unified = _unified.Get(row.CategoryName, row.TitleClean ?? row.Title);
-                var overrideKey = unified?.Key is "shows" or "spectacle";
+                var overrideKey = unified?.Key is "shows" or "spectacle" or "audio" or "books" or "comics";
                 if (!hasMappedKey && (overrideKey || string.IsNullOrWhiteSpace(row.UnifiedCategoryKey)))
                 {
                     row.UnifiedCategoryKey = unified?.Key;
@@ -645,7 +645,7 @@ public sealed class FeedController : ControllerBase
                 else
                 {
                     var unified = _unified.Get(row.CategoryName, row.TitleClean ?? row.Title);
-                    var overrideKey = unified?.Key is "shows" or "spectacle";
+                    var overrideKey = unified?.Key is "shows" or "spectacle" or "audio" or "books" or "comics";
                     if (!hasMappedKey && (overrideKey || string.IsNullOrWhiteSpace(row.UnifiedCategoryKey)))
                     {
                         row.UnifiedCategoryKey = unified?.Key;

@@ -148,15 +148,8 @@ public sealed class SystemController : ControllerBase
     [HttpGet("providers")]
     public IActionResult Providers()
     {
-        var stats = _providerStats.Snapshot();
-
-        return Ok(new
-        {
-            tmdb = new { calls = stats.Tmdb.Calls, failures = stats.Tmdb.Failures, avgMs = stats.Tmdb.AvgMs },
-            tvmaze = new { calls = stats.Tvmaze.Calls, failures = stats.Tvmaze.Failures, avgMs = stats.Tvmaze.AvgMs },
-            fanart = new { calls = stats.Fanart.Calls, failures = stats.Fanart.Failures, avgMs = stats.Fanart.AvgMs },
-            igdb = new { calls = stats.Igdb.Calls, failures = stats.Igdb.Failures, avgMs = stats.Igdb.AvgMs }
-        });
+        var stats = _providerStats.SnapshotByProvider();
+        return Ok(ToProviderStatsPayload(stats));
     }
 
     // GET /api/system/perf
@@ -327,13 +320,11 @@ public sealed class SystemController : ControllerBase
         var activeIndexers = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM sources WHERE enabled = 1;");
         var releasesCount = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM releases;");
 
-        var providerStats = _providerStats.Snapshot();
+        var providerStatsByKey = _providerStats.SnapshotByProvider();
         var indexerStats = _providerStats.IndexerSnapshot();
 
-        var totalCalls = providerStats.Tmdb.Calls + providerStats.Tvmaze.Calls
-                       + providerStats.Fanart.Calls + providerStats.Igdb.Calls;
-        var totalFailures = providerStats.Tmdb.Failures + providerStats.Tvmaze.Failures
-                          + providerStats.Fanart.Failures + providerStats.Igdb.Failures;
+        var totalCalls = providerStatsByKey.Values.Sum(v => v.Calls);
+        var totalFailures = providerStatsByKey.Values.Sum(v => v.Failures);
 
         var storage = GetStorageUsageSnapshot();
         var localPosters = storage.PostersTopLevelCount;
@@ -494,7 +485,7 @@ public sealed class SystemController : ControllerBase
     [HttpGet("stats/indexers")]
     public IActionResult StatsIndexers()
     {
-        const string cacheKey = "system:stats:indexers:v2";
+        const string cacheKey = "system:stats:indexers:v3";
         if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
             return Ok(cached);
 
@@ -516,6 +507,34 @@ public sealed class SystemController : ControllerBase
                 lastStatus = r.LastStatus
             })
             .OrderByDescending(r => r.releaseCount)
+            .ToList();
+
+        var avgResponseMsBySourceId = conn.Query<(long sourceId, double avgMs)>(
+            """
+            SELECT a.source_id as sourceId,
+                   AVG(CAST(json_extract(a.data_json, '$.elapsedMs') AS REAL)) as avgMs
+            FROM activity_log a
+            JOIN sources s ON s.id = a.source_id
+            WHERE a.source_id IS NOT NULL
+              AND lower(a.event_type) = 'sync'
+              AND a.data_json IS NOT NULL
+              AND json_valid(a.data_json) = 1
+              AND json_extract(a.data_json, '$.elapsedMs') IS NOT NULL
+              AND s.enabled = 1
+            GROUP BY a.source_id
+            """
+        ).ToDictionary(k => k.sourceId, v => v.avgMs);
+
+        var indexerResponseMsBySource = sourceRows
+            .Where(r => r.Enabled == 1)
+            .Select(r => new
+            {
+                id = r.Id,
+                name = r.Name,
+                avgMs = (int)Math.Round(avgResponseMsBySourceId.TryGetValue(r.Id, out var ms) ? ms : 0d)
+            })
+            .OrderByDescending(r => r.avgMs)
+            .ThenBy(r => r.name)
             .ToList();
 
         var releasesByCategoryByIndexer = conn.Query<(long sourceId, string sourceName, string unifiedCategory, int categoryId, int count)>(
@@ -558,7 +577,7 @@ public sealed class SystemController : ControllerBase
             activeIndexers, totalIndexers,
             queries = indexerStats.Queries, failures = indexerStats.Failures,
             syncJobs = indexerStats.SyncJobs, syncFailures = indexerStats.SyncFailures,
-            indexerStatsBySource, releasesByCategoryByIndexer, indexerDetails
+            indexerStatsBySource, indexerResponseMsBySource, releasesByCategoryByIndexer, indexerDetails
         };
 
         _cache.Set(cacheKey, payload, StatsCacheDuration);
@@ -570,15 +589,32 @@ public sealed class SystemController : ControllerBase
     [HttpGet("stats/providers")]
     public IActionResult StatsProviders()
     {
-        var stats = _providerStats.Snapshot();
+        using var conn = _db.Open();
+        var stats = _providerStats.SnapshotByProvider();
+        var payload = ToProviderStatsPayload(stats);
 
-        return Ok(new
-        {
-            tmdb = new { calls = stats.Tmdb.Calls, failures = stats.Tmdb.Failures, avgMs = stats.Tmdb.AvgMs },
-            tvmaze = new { calls = stats.Tvmaze.Calls, failures = stats.Tvmaze.Failures, avgMs = stats.Tvmaze.AvgMs },
-            fanart = new { calls = stats.Fanart.Calls, failures = stats.Fanart.Failures, avgMs = stats.Fanart.AvgMs },
-            igdb = new { calls = stats.Igdb.Calls, failures = stats.Igdb.Failures, avgMs = stats.Igdb.AvgMs }
-        });
+        var matchingByProvider = conn.Query<(string ProviderKey, long MatchedCount)>(
+            """
+            SELECT providerKey, COUNT(1) as matchedCount
+            FROM (
+                SELECT LOWER(TRIM(COALESCE(
+                    NULLIF(me.ext_provider, ''),
+                    NULLIF(r.ext_provider, ''),
+                    NULLIF(r.poster_provider, '')
+                ))) as providerKey
+                FROM releases r
+                LEFT JOIN media_entities me ON me.id = r.entity_id
+            ) x
+            WHERE providerKey IS NOT NULL AND providerKey <> ''
+            GROUP BY providerKey
+            """
+        ).ToDictionary(
+            x => x.ProviderKey,
+            x => x.MatchedCount,
+            StringComparer.OrdinalIgnoreCase);
+
+        payload["_matchingByProvider"] = matchingByProvider;
+        return Ok(payload);
     }
 
     // GET /api/system/stats/releases - Releases tab
@@ -680,7 +716,7 @@ public sealed class SystemController : ControllerBase
         var localPosters = storage.PostersTopLevelCount;
 
         // Provider stats
-        var providerStats = _providerStats.Snapshot();
+        var providerStats = _providerStats.SnapshotByProvider();
         var indexerStats = _providerStats.IndexerSnapshot();
 
         // Releases by category (for charts)
@@ -734,13 +770,7 @@ public sealed class SystemController : ControllerBase
             releasesCount,
 
             // Provider stats
-            providers = new
-            {
-                tmdb = new { calls = providerStats.Tmdb.Calls, failures = providerStats.Tmdb.Failures, avgMs = providerStats.Tmdb.AvgMs },
-                tvmaze = new { calls = providerStats.Tvmaze.Calls, failures = providerStats.Tvmaze.Failures, avgMs = providerStats.Tvmaze.AvgMs },
-                fanart = new { calls = providerStats.Fanart.Calls, failures = providerStats.Fanart.Failures, avgMs = providerStats.Fanart.AvgMs },
-                igdb = new { calls = providerStats.Igdb.Calls, failures = providerStats.Igdb.Failures, avgMs = providerStats.Igdb.AvgMs }
-            },
+            providers = ToProviderStatsPayload(providerStats),
 
             // Indexer stats
             indexers = new
@@ -759,6 +789,19 @@ public sealed class SystemController : ControllerBase
 
         _cache.Set(cacheKey, payload, StatsCacheDuration);
         return Ok(payload);
+    }
+
+    private static Dictionary<string, object> ToProviderStatsPayload(IReadOnlyDictionary<string, ProviderStats> statsByProvider)
+    {
+        return statsByProvider.ToDictionary(
+            kvp => kvp.Key,
+            kvp => (object)new
+            {
+                calls = kvp.Value.Calls,
+                failures = kvp.Value.Failures,
+                avgMs = kvp.Value.AvgMs
+            },
+            StringComparer.OrdinalIgnoreCase);
     }
 
     private static List<SourceStatsRow> GetSourceStatsRows(IDbConnection conn)

@@ -4,9 +4,11 @@ using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Services.Igdb;
 using Feedarr.Api.Services.Tmdb;
 using Feedarr.Api.Services.Fanart;
+using Feedarr.Api.Services.TheAudioDb;
 using Feedarr.Api.Services.Posters;
 using Feedarr.Api.Models;
 using Feedarr.Api.Services.Categories;
+using Feedarr.Api.Services.ExternalProviders;
 
 namespace Feedarr.Api.Controllers;
 
@@ -24,6 +26,7 @@ public sealed class PostersController : ControllerBase
     private readonly TmdbClient _tmdb;
     private readonly FanartClient _fanart;
     private readonly IgdbClient _igdb;
+    private readonly TheAudioDbClient _theAudioDb;
 
     public PostersController(
         ReleaseRepository releases,
@@ -35,7 +38,8 @@ public sealed class PostersController : ControllerBase
         RetroFetchLogService retroLogs,
         TmdbClient tmdb,
         FanartClient fanart,
-        IgdbClient igdb)
+        IgdbClient igdb,
+        TheAudioDbClient theAudioDb)
     {
         _releases = releases;
         _mediaEntities = mediaEntities;
@@ -47,6 +51,7 @@ public sealed class PostersController : ControllerBase
         _tmdb = tmdb;
         _fanart = fanart;
         _igdb = igdb;
+        _theAudioDb = theAudioDb;
     }
 
     // GET /api/posters/release/{id}
@@ -217,11 +222,13 @@ public sealed class PostersController : ControllerBase
         public int? TmdbId { get; set; }
         public string? PosterPath { get; set; }
         public int? IgdbId { get; set; }
+        public string? ProviderId { get; set; }
     }
 
     private sealed class PosterSearchResult
     {
         public string? Provider { get; set; }
+        public string? ProviderId { get; set; }
         public int? TmdbId { get; set; }
         public int? IgdbId { get; set; }
         public string? Title { get; set; }
@@ -259,7 +266,7 @@ public sealed class PostersController : ControllerBase
         }
 
         var provider = (dto?.Provider ?? "").Trim().ToLowerInvariant();
-        if (provider != "tmdb" && provider != "igdb")
+        if (provider != "tmdb" && provider != "igdb" && provider != ExternalProviderKeys.TheAudioDb)
             return BadRequest(new { error = "unsupported provider" });
 
         if (provider == "tmdb")
@@ -274,17 +281,29 @@ public sealed class PostersController : ControllerBase
             return Ok(BuildPosterResponse(posterUrl));
         }
 
-        if (dto?.IgdbId is null || string.IsNullOrWhiteSpace(dto?.PosterPath))
-            return BadRequest(new { error = "igdbId/coverUrl missing" });
+        if (provider == "igdb")
+        {
+            if (dto?.IgdbId is null || string.IsNullOrWhiteSpace(dto?.PosterPath))
+                return BadRequest(new { error = "igdbId/coverUrl missing" });
 
-        var igdbPosterUrl = await _posterFetch.SaveIgdbPosterAsync(id, dto.IgdbId.Value, dto.PosterPath!, ct);
-        if (string.IsNullOrWhiteSpace(igdbPosterUrl))
+            var igdbPosterUrl = await _posterFetch.SaveIgdbPosterAsync(id, dto.IgdbId.Value, dto.PosterPath!, ct);
+            if (string.IsNullOrWhiteSpace(igdbPosterUrl))
+                return StatusCode(500, new { error = "poster download failed" });
+
+            return Ok(BuildPosterResponse(igdbPosterUrl));
+        }
+
+        if (string.IsNullOrWhiteSpace(dto?.PosterPath))
+            return BadRequest(new { error = "posterUrl missing" });
+
+        var audioPosterUrl = await _posterFetch.SaveTheAudioDbPosterAsync(id, dto.ProviderId, dto.PosterPath!, ct);
+        if (string.IsNullOrWhiteSpace(audioPosterUrl))
             return StatusCode(500, new { error = "poster download failed" });
 
-        return Ok(BuildPosterResponse(igdbPosterUrl));
+        return Ok(BuildPosterResponse(audioPosterUrl));
     }
 
-    // GET /api/posters/search?q=title&mediaType=movie|series|game
+    // GET /api/posters/search?q=title&mediaType=movie|series|game|audio
     [HttpGet("search")]
     public async Task<IActionResult> Search([FromQuery] string? q, [FromQuery] string? mediaType, CancellationToken ct)
     {
@@ -309,6 +328,24 @@ public sealed class PostersController : ControllerBase
                 PosterLang = null,
                 PosterSize = InferIgdbSize(r.coverUrl)
             }));
+        }
+        else if (mediaType == "audio")
+        {
+            var (artist, title) = ParseAudioSearchQuery(query);
+            var audio = await _theAudioDb.SearchAudioAsync(title, artist, null, ct);
+            if (audio is not null)
+            {
+                results.Add(new PosterSearchResult
+                {
+                    Provider = ExternalProviderKeys.TheAudioDb,
+                    ProviderId = audio.ProviderId,
+                    Title = audio.Title,
+                    Year = int.TryParse(audio.Released, out var parsedYear) ? parsedYear : null,
+                    MediaType = "audio",
+                    PosterPath = audio.PosterUrl,
+                    PosterUrl = audio.PosterUrl
+                });
+            }
         }
         else if (mediaType == "series")
         {
@@ -614,5 +651,27 @@ public sealed class PostersController : ControllerBase
         var title = (result.Title ?? "").Trim().ToLowerInvariant();
         var year = result.Year?.ToString() ?? "";
         return $"{provider}:{title}:{year}";
+    }
+
+    private static (string? artist, string title) ParseAudioSearchQuery(string input)
+    {
+        var raw = (input ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(raw))
+            return (null, "");
+
+        var separators = new[] { " - ", " – ", " — ", " | ", " : " };
+        foreach (var separator in separators)
+        {
+            var idx = raw.IndexOf(separator, StringComparison.Ordinal);
+            if (idx <= 0 || idx >= raw.Length - separator.Length)
+                continue;
+
+            var artist = raw[..idx].Trim();
+            var title = raw[(idx + separator.Length)..].Trim();
+            if (!string.IsNullOrWhiteSpace(artist) && !string.IsNullOrWhiteSpace(title))
+                return (artist, title);
+        }
+
+        return (null, raw);
     }
 }

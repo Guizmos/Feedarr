@@ -298,7 +298,10 @@ public sealed class SyncOrchestrationService
 
                 var filtered = new List<TorznabItem>();
                 var missingCategory = 0;
-                var noMapMatch = 0;
+                var noMapMatchCount = 0;
+                var fallbackSelectedCategoryCount = 0;
+                var fallbackSamples = new List<string>();
+                var noMapSamples = new List<string>();
                 foreach (var item in items)
                 {
                     var ids = GetRawCategoryIds(item);
@@ -311,8 +314,25 @@ public sealed class SyncOrchestrationService
                     var picked = CategorySelection.PickBestCategoryId(ids, categoryMap);
                     if (!picked.HasValue)
                     {
-                        noMapMatch++;
-                        continue;
+                        var fallbackPicked = CategorySelection.PickSelectedFallbackCategoryId(ids, selectedCategoryIds);
+                        if (fallbackPicked.HasValue)
+                        {
+                            picked = fallbackPicked.Value;
+                            fallbackSelectedCategoryCount++;
+                            if (fallbackSamples.Count < 5)
+                            {
+                                var intersections = ids.Where(selectedCategoryIds.Contains).Distinct().ToList();
+                                fallbackSamples.Add(
+                                    $"title={BuildCategoryLogTitle(item.Title)}, ids={string.Join("/", ids)}, selected={string.Join("/", intersections)}, picked={picked.Value}");
+                            }
+                        }
+                        else
+                        {
+                            noMapMatchCount++;
+                            if (noMapSamples.Count < 5)
+                                noMapSamples.Add($"title={BuildCategoryLogTitle(item.Title)}, ids={string.Join("/", ids)}");
+                            continue;
+                        }
                     }
 
                     item.CategoryId = picked.Value;
@@ -324,8 +344,17 @@ public sealed class SyncOrchestrationService
                 var filteredCount = items.Count;
                 var dropped = countBeforeCategoryMapFilter - filteredCount;
                 _log.LogInformation(
-                    "ManualSync AFTER CATEGORY FILTER [{Name}] raw={RawCount} filtered={FilteredCount} dropped={Dropped} missingCategory={MissingCategory} noMapMatch={NoMapMatch}",
-                    name, countBeforeCategoryMapFilter, filteredCount, dropped, missingCategory, noMapMatch);
+                    "ManualSync AFTER CATEGORY FILTER [{Name}] raw={RawCount} filtered={FilteredCount} dropped={Dropped} missingCategory={MissingCategory} noMapMatchCount={NoMapMatchCount} fallbackSelectedCategoryCount={FallbackSelectedCategoryCount}",
+                    name, countBeforeCategoryMapFilter, filteredCount, dropped, missingCategory, noMapMatchCount, fallbackSelectedCategoryCount);
+
+                if (fallbackSelectedCategoryCount > 0 || noMapMatchCount > 0)
+                {
+                    _activity.Add(
+                        id,
+                        "info",
+                        "sync",
+                        $"Sync category-map: fallbackSelectedCategoryCount={fallbackSelectedCategoryCount}, noMapMatchCount={noMapMatchCount}, fallbackSamples={(fallbackSamples.Count > 0 ? string.Join(" | ", fallbackSamples) : "-")}, droppedSamples={(noMapSamples.Count > 0 ? string.Join(" | ", noMapSamples) : "-")}");
+                }
 
                 if (_log.IsEnabled(LogLevel.Debug))
                 {
@@ -391,6 +420,15 @@ public sealed class SyncOrchestrationService
         if (item.CategoryIds is { Count: > 0 })
             return item.CategoryIds;
         return item.CategoryId.HasValue ? new List<int> { item.CategoryId.Value } : new List<int>();
+    }
+
+    private static string BuildCategoryLogTitle(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+            return "-";
+
+        var trimmed = title.Trim();
+        return trimmed.Length <= 80 ? trimmed : trimmed[..80] + "...";
     }
 
     private static (List<int> missing, List<int> low, int targetPerCat) ComputeFallbackCategories(

@@ -19,7 +19,7 @@ import {
   normalizeHexColor,
 } from "../utils/sourceColors.js";
 
-const UNIFIED_PRIORITY = ["series", "anime", "films", "games", "spectacle", "shows"];
+const UNIFIED_PRIORITY = ["series", "anime", "films", "games", "spectacle", "shows", "audio", "books", "comics"];
 const MANUAL_INDEXER_VALUE = "__manual__";
 
 function dedupeCategoriesById(categories) {

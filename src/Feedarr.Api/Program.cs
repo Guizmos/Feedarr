@@ -5,12 +5,17 @@ using Feedarr.Api.Options;
 using Feedarr.Api.Services;
 using Feedarr.Api.Services.Arr;
 using Feedarr.Api.Services.Categories;
+using Feedarr.Api.Services.ExternalProviders;
 using Feedarr.Api.Services.Fanart;
+using Feedarr.Api.Services.GoogleBooks;
 using Feedarr.Api.Services.Igdb;
 using Feedarr.Api.Services.Jackett;
+using Feedarr.Api.Services.Jikan;
 using Feedarr.Api.Services.Metadata;
 using Feedarr.Api.Services.Prowlarr;
 using Feedarr.Api.Services.Posters;
+using Feedarr.Api.Services.ComicVine;
+using Feedarr.Api.Services.TheAudioDb;
 using Feedarr.Api.Services.Torznab;
 using Feedarr.Api.Services.Tmdb;
 using Feedarr.Api.Services.TvMaze;
@@ -123,6 +128,7 @@ builder.Services.AddSingleton<ProviderRepository>();
 builder.Services.AddSingleton<ReleaseRepository>();
 builder.Services.AddSingleton<ActivityRepository>();
 builder.Services.AddSingleton<SettingsRepository>();
+builder.Services.AddSingleton<ExternalProviderInstanceRepository>();
 builder.Services.AddSingleton<StatsRepository>();
 builder.Services.AddSingleton<ArrApplicationRepository>();
 builder.Services.AddSingleton<ArrLibraryRepository>();
@@ -140,8 +146,17 @@ builder.Services.AddSingleton<UnifiedCategoryService>();
 builder.Services.AddSingleton<UnifiedCategoryResolver>();
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<CategoryRecommendationService>();
+builder.Services.AddSingleton<ExternalProviderRegistry>();
+builder.Services.AddSingleton<ActiveExternalProviderConfigResolver>();
+builder.Services.AddSingleton<ExternalProviderTestService>();
 builder.Services.AddHostedService<RssSyncHostedService>();
 builder.Services.AddSingleton<Feedarr.Api.Services.Titles.TitleParser>();
+builder.Services.AddSingleton<VideoMatchingStrategy>();
+builder.Services.AddSingleton<GameMatchingStrategy>();
+builder.Services.AddSingleton<AnimeMatchingStrategy>();
+builder.Services.AddSingleton<AudioMatchingStrategy>();
+builder.Services.AddSingleton<GenericMatchingStrategy>();
+builder.Services.AddSingleton<PosterMatchingOrchestrator>();
 builder.Services.AddSingleton<PosterFetchService>();
 builder.Services.AddSingleton<PosterMatchCacheService>();
 builder.Services.AddSingleton<PosterFetchJobFactory>();
@@ -207,6 +222,38 @@ builder.Services.AddHttpClient<TvMazeClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(20);
     c.BaseAddress = new Uri("https://api.tvmaze.com/");
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
+}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+
+// Jikan
+builder.Services.AddHttpClient<JikanClient>(c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(20);
+    c.BaseAddress = new Uri("https://api.jikan.moe/v4/");
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
+}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+
+// Google Books
+builder.Services.AddHttpClient<GoogleBooksClient>(c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(20);
+    c.BaseAddress = new Uri("https://www.googleapis.com/books/v1/");
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
+}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+
+// TheAudioDB
+builder.Services.AddHttpClient<TheAudioDbClient>(c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(20);
+    c.BaseAddress = new Uri("https://www.theaudiodb.com/api/v1/json/");
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
+}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+
+// Comic Vine
+builder.Services.AddHttpClient<ComicVineClient>(c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(20);
+    c.BaseAddress = new Uri("https://comicvine.gamespot.com/api/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
 }).AddHttpMessageHandler<TransientHttpRetryHandler>();
 

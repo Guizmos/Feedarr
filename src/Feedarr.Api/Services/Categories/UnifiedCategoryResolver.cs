@@ -67,8 +67,18 @@ public sealed class UnifiedCategoryResolver
             if (stdId.Value >= 2000 && stdId.Value <= 2999)
                 return UnifiedCategory.Film;
 
+            if (stdId.Value >= 3000 && stdId.Value <= 3999)
+                return UnifiedCategory.Audio;
+
             if (stdId.Value >= 5000 && stdId.Value <= 5999)
                 return UnifiedCategory.Serie;
+
+            if (stdId.Value >= 7000 && stdId.Value <= 7999)
+            {
+                if (specId is >= 7030 and < 7040)
+                    return UnifiedCategory.Comic;
+                return UnifiedCategory.Book;
+            }
 
             if (stdId.Value == 4050)
                 return UnifiedCategory.Autre;

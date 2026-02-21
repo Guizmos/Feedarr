@@ -19,7 +19,7 @@ public sealed class CategoryRecommendationService
 
     private static readonly HashSet<string> RecommendedKeys = new(StringComparer.OrdinalIgnoreCase)
     {
-        "films", "series", "anime", "games", "spectacle", "shows"
+        "films", "series", "anime", "games", "spectacle", "shows", "audio", "books", "comics"
     };
 
     private static readonly HashSet<string> PcTokens = new(StringComparer.OrdinalIgnoreCase)
@@ -48,18 +48,13 @@ public sealed class CategoryRecommendationService
         "emulation", "emulator", "emulators", "emu",
         "gps", "garmin", "tomtom",
         "imprimante", "imprimantes", "printer", "printers",
-        "audio", "music", "mp3", "aac", "ogg", "wav", "m4a", "opus", "flac", "alac",
-        "ost", "album", "albums", "soundtrack",
-        "ebook", "ebooks", "book", "books", "livre", "livres", "epub", "mobi", "kindle",
-        "comic", "comics", "manga", "scan", "scans", "audiobook", "audiobooks",
-        "podcast", "podcasts",
         "console", "xbox", "ps4", "ps5", "playstation", "nintendo", "switch",
         "wallpaper", "wallpapers", "image", "images", "photo", "photos", "pic", "pics", "picture", "pictures",
         "porn", "porno", "erotic", "erotique", "hentai", "nsfw", "xxx", "adult",
         "sport", "sports", "misc", "other", "divers"
     };
 
-    private static readonly string[] UnifiedPriority = { "series", "anime", "films", "games", "spectacle", "shows", "other" };
+    private static readonly string[] UnifiedPriority = { "series", "anime", "films", "games", "spectacle", "shows", "audio", "books", "comics", "other" };
 
     private readonly Db _db;
     private readonly SourceRepository _sources;
@@ -355,6 +350,9 @@ public sealed class CategoryRecommendationService
             "games" => "Jeux PC",
             "spectacle" => "Spectacle",
             "shows" => "Emissions",
+            "audio" => "Audio",
+            "books" => "Livres",
+            "comics" => "Comics",
             _ => "Autre"
         };
     }
@@ -422,7 +420,10 @@ public sealed class CategoryRecommendationService
             ["anime"] = 0,
             ["games"] = 0,
             ["spectacle"] = 0,
-            ["shows"] = 0
+            ["shows"] = 0,
+            ["audio"] = 0,
+            ["books"] = 0,
+            ["comics"] = 0
         };
 
         var hasSeriesToken = tokens.Overlaps(new[] { "serie", "series", "tv", "tele" });
@@ -438,6 +439,9 @@ public sealed class CategoryRecommendationService
         });
 
         if (tokens.Overlaps(new[] { "anime", "animation" })) scores["anime"] = 4;
+        if (tokens.Overlaps(new[] { "audio", "music", "musique", "mp3", "flac", "wav", "aac", "m4a", "opus", "podcast", "audiobook", "audiobooks", "album", "albums", "soundtrack", "ost" })) scores["audio"] = 4;
+        if (tokens.Overlaps(new[] { "book", "books", "livre", "livres", "ebook", "ebooks", "epub", "mobi", "kindle", "isbn" })) scores["books"] = 4;
+        if (tokens.Overlaps(new[] { "comic", "comics", "bd", "manga", "scan", "scans", "graphic", "novel", "novels" })) scores["comics"] = 4;
         if (hasSpectacleToken) scores["spectacle"] = 4;
         if (tokens.Overlaps(new[]
         {
@@ -462,9 +466,15 @@ public sealed class CategoryRecommendationService
     private static string? ClassifyById(int id, HashSet<string> tokens)
     {
         if (id == 5070) return "anime";
+        if (id >= 3000 && id < 4000) return "audio";
         if (id >= 2000 && id < 3000) return "films";
         if (id >= 5000 && id < 6000) return "series";
         if (id == 4050) return "games";
+        if (id >= 7000 && id < 8000)
+        {
+            if (id >= 7030 && id < 7040) return "comics";
+            return "books";
+        }
         if (id >= 4000 && id < 5000)
         {
             if (tokens.Overlaps(new[] { "jeu", "jeux", "game", "games", "pc", "windows" }))

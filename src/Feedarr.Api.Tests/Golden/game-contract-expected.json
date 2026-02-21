@@ -1,0 +1,24 @@
+{
+  "game_igdb_hit": {
+    "ok": true,
+    "statusCode": 200,
+    "posterProvider": "igdb",
+    "posterFile": "igdb-901-cover.jpg",
+    "matchSource": "igdb",
+    "tmdbId": 901,
+    "tvdbId": null,
+    "cached": false,
+    "error": null
+  },
+  "game_igdb_miss": {
+    "ok": false,
+    "statusCode": 404,
+    "posterProvider": "igdb",
+    "posterFile": null,
+    "matchSource": null,
+    "tmdbId": null,
+    "tvdbId": null,
+    "cached": false,
+    "error": "no igdb match"
+  }
+}

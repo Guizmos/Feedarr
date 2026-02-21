@@ -30,8 +30,7 @@ export default function System() {
     loading,
     err,
     status,
-    external,
-    providerStats,
+    metadataProviderRows,
     missingPosterCount,
     storageInfo,
     load,
@@ -252,83 +251,31 @@ export default function System() {
               <div className="settings-card settings-card--full">
                 <div className="settings-card__title">Métadonnées</div>
                 <div className="indexer-list">
-                  <div className="indexer-card">
-                    <div className="indexer-row indexer-row--settings indexer-row--providers">
-                      <span className="indexer-title">TMDB</span>
-                      <div className="provider-badges provider-badges--left">
-                        <span className={`settings-badge settings-badge--lg ${external.hasTmdbApiKey ? "ok" : "warn"}`}>
-                          Clé API {external.hasTmdbApiKey ? "OK" : "NO"}
-                        </span>
-                        <span className="settings-badge settings-badge--lg settings-badge--fixed">
-                          Réponse {fmtMs(providerStats.tmdb.avgMs)}
-                        </span>
-                      </div>
-                      <div className="provider-badges provider-badges--right">
-                        <span className="settings-badge settings-badge--lg settings-badge--fixed">Appels {providerStats.tmdb.calls}</span>
-                        <span className="settings-badge settings-badge--lg settings-badge--fixed">Échecs {providerStats.tmdb.failures}</span>
+                  {metadataProviderRows.length === 0 ? (
+                    <div className="indexer-card">
+                      <div className="indexer-row indexer-row--settings indexer-row--providers">
+                        <span className="indexer-title muted">Aucun provider metadata configuré</span>
                       </div>
                     </div>
-                  </div>
-                  <div className="indexer-card">
-                    <div className="indexer-row indexer-row--settings indexer-row--providers">
-                      <span className="indexer-title">TVmaze</span>
-
-                      <div className="provider-badges provider-badges--left">
-                        <span className="settings-badge settings-badge--lg settings-badge--fixed">
-                          Clé API N/A
-                        </span>
-                        <span className="settings-badge settings-badge--lg settings-badge--fixed">
-                          Réponse {fmtMs(providerStats.tvmaze.avgMs)}
-                        </span>
-                      </div>
-                      <div className="provider-badges provider-badges--right">
-                        <span className="settings-badge settings-badge--lg settings-badge--fixed">
-                          Appels {providerStats.tvmaze.calls}
-                        </span>
-                        <span className="settings-badge settings-badge--lg settings-badge--fixed">
-                          Échecs {providerStats.tvmaze.failures}
-                        </span>
+                  ) : metadataProviderRows.map((provider) => (
+                    <div className="indexer-card" key={provider.instanceId}>
+                      <div className="indexer-row indexer-row--settings indexer-row--providers">
+                        <span className="indexer-title">{provider.label}</span>
+                        <div className="provider-badges provider-badges--left">
+                          <span className={`settings-badge settings-badge--lg settings-badge--fixed ${provider.apiStatusClass}`}>
+                            Clé API {provider.apiStatus}
+                          </span>
+                          <span className="settings-badge settings-badge--lg settings-badge--fixed">
+                            Réponse {fmtMs(provider.avgMs)}
+                          </span>
+                        </div>
+                        <div className="provider-badges provider-badges--right">
+                          <span className="settings-badge settings-badge--lg settings-badge--fixed">Appels {provider.calls}</span>
+                          <span className="settings-badge settings-badge--lg settings-badge--fixed">Échecs {provider.failures}</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div className="indexer-card">
-                    <div className="indexer-row indexer-row--settings indexer-row--providers">
-                      <span className="indexer-title">Fanart.tv</span>
-                      <div className="provider-badges provider-badges--left">
-                        <span className={`settings-badge settings-badge--lg ${external.hasFanartApiKey ? "ok" : "warn"}`}>
-                          Clé API {external.hasFanartApiKey ? "OK" : "NO"}
-                        </span>
-                        <span className="settings-badge settings-badge--lg settings-badge--fixed">
-                          Réponse {fmtMs(providerStats.fanart.avgMs)}
-                        </span>
-                      </div>
-                      <div className="provider-badges provider-badges--right">
-                        <span className="settings-badge settings-badge--lg settings-badge--fixed">Appels {providerStats.fanart.calls}</span>
-                        <span className="settings-badge settings-badge--lg settings-badge--fixed">Échecs {providerStats.fanart.failures}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="indexer-card">
-                    <div className="indexer-row indexer-row--settings indexer-row--providers">
-                      <span className="indexer-title">IGDB</span>
-                      <div className="provider-badges provider-badges--left">
-                        <span
-                          className={`settings-badge settings-badge--lg ${
-                            external.hasIgdbClientId && external.hasIgdbClientSecret ? "ok" : "warn"
-                          }`}
-                        >
-                          Clé API {external.hasIgdbClientId && external.hasIgdbClientSecret ? "OK" : "NO"}
-                        </span>
-                        <span className="settings-badge settings-badge--lg settings-badge--fixed">
-                          Réponse {fmtMs(providerStats.igdb.avgMs)}
-                        </span>
-                      </div>
-                      <div className="provider-badges provider-badges--right">
-                        <span className="settings-badge settings-badge--lg settings-badge--fixed">Appels {providerStats.igdb.calls}</span>
-                        <span className="settings-badge settings-badge--lg settings-badge--fixed">Échecs {providerStats.igdb.failures}</span>
-                      </div>
-                    </div>
-                  </div>
+                  ))}
                 </div>
               </div>
             </>

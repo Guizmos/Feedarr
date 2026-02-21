@@ -3,6 +3,7 @@ import ItemRow from "../../ui/ItemRow.jsx";
 import Modal from "../../ui/Modal.jsx";
 import ToggleSwitch from "../../ui/ToggleSwitch.jsx";
 import { apiDelete, apiGet, apiPost, apiPut } from "../../api/client.js";
+import { tr } from "../../app/uiText.js";
 
 const STORAGE_KEYS = {
   jackett: {
@@ -49,7 +50,7 @@ function readProviderConfig(providerKey) {
 }
 
 function getProviderLabel(providerKey) {
-  return PROVIDERS.find((p) => p.key === providerKey)?.label || "Fournisseur";
+  return PROVIDERS.find((p) => p.key === providerKey)?.label || tr("Fournisseur", "Provider");
 }
 
 export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jackettConfig }) {
@@ -315,13 +316,13 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
     setSelectedCategoryIds(new Set());
 
     if (!indexer?.torznabUrl) {
-      setCapsError("Indexeur invalide.");
+      setCapsError(tr("Indexeur invalide.", "Invalid indexer."));
       return;
     }
 
     const providerId = Number(providerConfigs[providerKey]?.providerId || 0);
     if (!providerId) {
-      setCapsError("Fournisseur non configuré côté API.");
+      setCapsError(tr("Fournisseur non configure cote API.", "Provider not configured in API."));
       return;
     }
 
@@ -349,12 +350,12 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
       }
 
       if (cats.length > 0) {
-        setCapsOk("Catégories chargées.");
+        setCapsOk(tr("Categories chargees.", "Categories loaded."));
       } else if (warnings.length === 0) {
-        setCapsWarning("Aucune catégorie disponible.");
+        setCapsWarning(tr("Aucune categorie disponible.", "No category available."));
       }
     } catch (e) {
-      setCapsWarning(e?.message || "Caps indisponible. Aucune catégorie disponible.");
+      setCapsWarning(e?.message || tr("Caps indisponible. Aucune categorie disponible.", "Caps unavailable. No category available."));
     } finally {
       setCapsLoading(false);
     }
@@ -363,13 +364,13 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
   async function testCapsManual() {
     const providerKey = selectedProviderKey;
     if (!providerKey) {
-      setCapsError("Fournisseur non sélectionné.");
+      setCapsError(tr("Fournisseur non selectionne.", "Provider not selected."));
       return;
     }
 
     const torznabUrl = normalizeUrl(manualTorznabUrl);
     if (!torznabUrl) {
-      setCapsError("URL Torznab requise.");
+      setCapsError(tr("URL Torznab requise.", "Torznab URL required."));
       return;
     }
 
@@ -396,11 +397,11 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
 
     const selected = allCategories.filter((c) => selectedCategoryIds.has(c.id));
     if (!indexer?.torznabUrl || !normalizeUrl(indexer?.torznabUrl)) {
-      setCapsError(manualMode ? "URL Torznab requise." : "Indexeur invalide.");
+      setCapsError(manualMode ? tr("URL Torznab requise.", "Torznab URL required.") : tr("Indexeur invalide.", "Invalid indexer."));
       return;
     }
     if (allCategories.length > 0 && selected.length === 0) {
-      setCapsError("Sélectionne au moins une catégorie.");
+      setCapsError(tr("Selectionne au moins une categorie.", "Select at least one category."));
       return;
     }
 
@@ -414,7 +415,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
 
     const providerId = Number(providerConfigs[providerKey]?.providerId || 0);
     if (!providerId) {
-      setCapsError("Fournisseur non configuré côté API.");
+      setCapsError(tr("Fournisseur non configure cote API.", "Provider not configured in API."));
       return;
     }
 
@@ -438,7 +439,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
         await apiPut(`/api/sources/${res.id}/enabled`, { enabled: true });
       }
       await loadSources();
-      setCapsOk("Indexeur ajouté.");
+      setCapsOk(tr("Indexeur ajoute.", "Indexer added."));
       closeModal();
     } catch (e) {
       setCapsError(e?.message || "Erreur ajout indexeur");
@@ -500,9 +501,9 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
       }
 
       if (cats.length > 0) {
-        setCapsOk("Catégories chargées.");
+        setCapsOk(tr("Categories chargees.", "Categories loaded."));
       } else if (warnings.length === 0) {
-        setCapsWarning("Aucune catégorie disponible.");
+        setCapsWarning(tr("Aucune categorie disponible.", "No category available."));
       }
     } catch (e) {
       setCapsError(e?.message || "Erreur chargement categories");
@@ -515,7 +516,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
     if (!editingSource?.id) return;
     const selected = allCategories.filter((c) => selectedCategoryIds.has(c.id));
     if (selected.length === 0) {
-      setCapsError("Sélectionne au moins une catégorie.");
+      setCapsError(tr("Selectionne au moins une categorie.", "Select at least one category."));
       return;
     }
     setSaving(true);
@@ -531,7 +532,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
         })),
       });
       await loadSources();
-      setCapsOk("Catégories mises à jour.");
+      setCapsOk(tr("Categories mises a jour.", "Categories updated."));
       closeModal();
     } catch (e) {
       setCapsError(e?.message || "Erreur sauvegarde categories");
@@ -582,7 +583,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
     if (allCategories.length > 0 && recommendedCategories.length === 0) {
       setUseRecommendedFilter(false);
       setCapsWarning((prev) =>
-        prev || "Aucune catégorie recommandée. Affichage complet activé."
+        prev || tr("Aucune categorie recommandee. Affichage complet active.", "No recommended category. Full list enabled.")
       );
     }
   }, [useRecommendedFilter, recommendedCategories.length, allCategories.length]);
@@ -597,15 +598,15 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
 
   return (
     <div className="setup-step setup-jackett">
-      <h2>Indexeurs</h2>
+      <h2>{tr("Indexeurs", "Indexers")}</h2>
 
       {!hasConfiguredProviders && (
         <div className="setup-jackett__guard">
           <div className="onboarding__error">
-            Aucun fournisseur configuré, reviens à l’étape Fournisseurs.
+            {tr("Aucun fournisseur configure, reviens a l'etape Fournisseurs.", "No configured provider. Go back to Providers step.")}
           </div>
           <button className="btn btn-accent" type="button" onClick={onBack} disabled={!onBack}>
-            Retour étape 3
+            {tr("Retour etape 3", "Back to step 3")}
           </button>
         </div>
       )}
@@ -620,7 +621,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
                 <div className="setup-jackett__provider-title">{provider.label}</div>
 
                 <div className="setup-providers__add settings-row settings-row--ui-select">
-                  <label>Ajouter un indexeur</label>
+                  <label>{tr("Ajouter un indexeur", "Add an indexer")}</label>
                   <select
                     className="settings-field"
                     value={addIds[provider.key] || ""}
@@ -638,7 +639,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
                     }}
                   >
                     <option value="" disabled>
-                      Sélectionner...
+                      {tr("Selectionner...", "Select...")}
                     </option>
                     {availableIndexers.map((idx) => (
                       <option key={idx.id} value={idx.id}>
@@ -646,29 +647,32 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
                       </option>
                     ))}
                     <option value={MANUAL_INDEXER_VALUE}>
-                      Ajouter manuellement...
+                      {tr("Ajouter manuellement...", "Add manually...")}
                     </option>
                   </select>
                   {availableIndexers.length === 0 && providerConfigs[provider.key]?.indexers?.length > 0 && (
-                    <div className="muted">Tous les indexeurs détectés sont déjà ajoutés.</div>
+                    <div className="muted">{tr("Tous les indexeurs detectes sont deja ajoutes.", "All detected indexers are already added.")}</div>
                   )}
                   {availableIndexers.length === 0 && providerConfigs[provider.key]?.indexers?.length === 0 && (
                     <div className="onboarding__warn">
                       {providerIndexerWarnings[provider.key] ||
-                        `Aucun indexeur détecté automatiquement pour ${provider.label}.`}
+                        tr(`Aucun indexeur detecte automatiquement pour ${provider.label}.`, `No indexer auto-detected for ${provider.label}.`)}
                     </div>
                   )}
                   {providerConfigs[provider.key]?.manualOnly && (
                     <div className="muted">
-                      Dans {provider.label}, utilise "Copy Torznab Feed" puis colle l'URL ici. La clé API du fournisseur configurée à l'étape 3 sera utilisée.
+                      {tr(
+                        `Dans ${provider.label}, utilise "Copy Torznab Feed" puis colle l'URL ici. La cle API du fournisseur configuree a l'etape 3 sera utilisee.`,
+                        `In ${provider.label}, use "Copy Torznab Feed" and paste the URL here. The API key configured at step 3 will be used.`
+                      )}
                     </div>
                   )}
                 </div>
 
                 <div className="setup-jackett__list">
-                  <h4>Indexeurs ajoutés</h4>
+                  <h4>{tr("Indexeurs ajoutes", "Added indexers")}</h4>
                   {providerList.length === 0 ? (
-                    <div className="muted">Aucun indexeur ajouté.</div>
+                    <div className="muted">{tr("Aucun indexeur ajoute.", "No indexer added.")}</div>
                   ) : (
                     <div className="indexer-list">
                       {providerList.map((src, idx) => (
@@ -681,13 +685,13 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
                           actions={[
                             {
                               icon: "edit",
-                              title: "Modifier",
+                              title: tr("Modifier", "Edit"),
                               onClick: () => editSource(src),
                               disabled: busySourceId === src.id,
                             },
                             {
                               icon: "delete",
-                              title: "Supprimer",
+                              title: tr("Supprimer", "Delete"),
                               onClick: () => deleteSource(src),
                               disabled: busySourceId === src.id,
                               className: "iconbtn--danger",
@@ -714,7 +718,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
         {manualMode && !editingSource && (
           <div className="formgrid formgrid--edit" style={{ marginBottom: 12 }}>
             <div className="field">
-              <label>Nom (optionnel)</label>
+              <label>{tr("Nom (optionnel)", "Name (optional)")}</label>
               <input
                 value={manualName}
                 onChange={(e) => setManualName(e.target.value)}
@@ -723,7 +727,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
               />
             </div>
             <div className="field">
-              <label>Torznab Feed URL</label>
+              <label>{tr("Torznab Feed URL", "Torznab Feed URL")}</label>
               <input
                 value={manualTorznabUrl}
                 onChange={(e) => {
@@ -738,7 +742,10 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
                 disabled={saving || capsLoading}
               />
               <span className="field-hint">
-                Depuis {modalProviderLabel || "le fournisseur"}, clique "Copy Torznab Feed", puis colle l'URL complète.
+                {tr(
+                  `Depuis ${modalProviderLabel || "le fournisseur"}, clique "Copy Torznab Feed", puis colle l'URL complete.`,
+                  `From ${modalProviderLabel || "the provider"}, click "Copy Torznab Feed" and paste the full URL.`
+                )}
               </span>
             </div>
             <div className="setup-jackett__actions" style={{ gridColumn: "1 / -1" }}>
@@ -748,7 +755,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
                 onClick={testCapsManual}
                 disabled={saving || capsLoading || !normalizeUrl(manualTorznabUrl)}
               >
-                {capsLoading ? "Test..." : "Tester les catégories (caps)"}
+                {capsLoading ? tr("Test...", "Test...") : tr("Tester les categories (caps)", "Test categories (caps)")}
               </button>
             </div>
           </div>
@@ -757,12 +764,12 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
         {capsError && <div className="onboarding__error">{capsError}</div>}
         {capsWarning && <div className="onboarding__warn">{capsWarning}</div>}
         {capsOk && <div className="onboarding__ok">{capsOk}</div>}
-        {capsLoading && <div className="muted">Chargement des catégories...</div>}
+        {capsLoading && <div className="muted">{tr("Chargement des categories...", "Loading categories...")}</div>}
 
         {allCategories.length > 0 && (
           <div className="setup-jackett__categories">
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-              <span className="muted">Afficher seulement les catégories recommandées</span>
+              <span className="muted">{tr("Afficher seulement les categories recommandees", "Show only recommended categories")}</span>
               <ToggleSwitch
                 checked={useRecommendedFilter}
                 onIonChange={(e) => setUseRecommendedFilter(e.detail.checked)}
@@ -791,12 +798,17 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
                 </label>
               ))}
               {visibleCategories.length === 0 && useRecommendedFilter && (
-                <div className="muted">Aucune catégorie recommandée. Désactive le filtre pour tout voir.</div>
+                <div className="muted">{tr("Aucune categorie recommandee. Desactive le filtre pour tout voir.", "No recommended category. Disable the filter to show all.")}</div>
               )}
             </div>
             <div className="muted" style={{ marginTop: 8 }}>
-              {selectedCount} catégorie{selectedCount > 1 ? "s" : ""} sélectionnée{selectedCount > 1 ? "s" : ""}
-              {useRecommendedFilter && hiddenSelectedCount > 0 ? ` (dont ${hiddenSelectedCount} hors filtre)` : ""}
+              {tr(
+                `${selectedCount} categorie${selectedCount > 1 ? "s" : ""} selectionnee${selectedCount > 1 ? "s" : ""}`,
+                `${selectedCount} selected categor${selectedCount > 1 ? "ies" : "y"}`
+              )}
+              {useRecommendedFilter && hiddenSelectedCount > 0
+                ? tr(` (dont ${hiddenSelectedCount} hors filtre)`, ` (${hiddenSelectedCount} hidden by filter)`)
+                : ""}
             </div>
           </div>
         )}
@@ -809,7 +821,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
               onClick={saveCategories}
               disabled={saving || !canSubmitEdit}
             >
-              {saving ? "Enregistrement..." : "Mettre à jour"}
+              {saving ? tr("Enregistrement...", "Saving...") : tr("Mettre a jour", "Update")}
             </button>
           ) : (
             <button
@@ -818,7 +830,11 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
               onClick={addSource}
               disabled={saving || !canSubmitAdd}
             >
-              {saving ? "Enregistrement..." : manualMode ? "Ajouter manuellement" : "Ajouter l'indexeur"}
+              {saving
+                ? tr("Enregistrement...", "Saving...")
+                : manualMode
+                  ? tr("Ajouter manuellement", "Add manually")
+                  : tr("Ajouter l'indexeur", "Add indexer")}
             </button>
           )}
         </div>

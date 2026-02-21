@@ -8,5 +8,9 @@ public enum UnifiedCategory
     Emission = 3,
     Spectacle = 4,
     JeuWindows = 5,
-    Animation = 6
+    Animation = 6,
+    Anime = 7,
+    Audio = 8,
+    Book = 9,
+    Comic = 10
 }

@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Models.Settings;
+using Feedarr.Api.Services.ExternalProviders;
 using Feedarr.Api.Services;
 
 namespace Feedarr.Api.Services.Tmdb;
@@ -26,17 +27,23 @@ public sealed class TmdbClient
     private readonly HttpClient _http;
     private readonly SettingsRepository _settings;
     private readonly ProviderStatsService _stats;
+    private readonly ActiveExternalProviderConfigResolver _activeConfigResolver;
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNameCaseInsensitive = true
     };
 
-    public TmdbClient(HttpClient http, SettingsRepository settings, ProviderStatsService stats)
+    public TmdbClient(
+        HttpClient http,
+        SettingsRepository settings,
+        ProviderStatsService stats,
+        ActiveExternalProviderConfigResolver activeConfigResolver)
     {
         _http = http;
         _settings = settings;
         _stats = stats;
+        _activeConfigResolver = activeConfigResolver;
 
         _http.BaseAddress = new Uri("https://api.themoviedb.org/3/");
         _http.Timeout = TimeSpan.FromSeconds(20);
@@ -44,10 +51,13 @@ public sealed class TmdbClient
 
     private string? TryGetApiKey()
     {
-        var ext = _settings.GetExternal(new ExternalSettings());
-        if (ext.TmdbEnabled == false) return null;
-        var key = (ext.TmdbApiKey ?? "").Trim();
-        return string.IsNullOrWhiteSpace(key) ? null : key;
+        var active = _activeConfigResolver.Resolve(ExternalProviderKeys.Tmdb);
+        if (!active.Enabled) return null;
+        if (!active.Auth.TryGetValue("apiKey", out var activeValue))
+            return null;
+
+        var activeKey = (activeValue ?? "").Trim();
+        return string.IsNullOrWhiteSpace(activeKey) ? null : activeKey;
     }
 
     private string GetApiKeyOrThrow()
