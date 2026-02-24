@@ -26,19 +26,31 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Resolve app version (beta from manifest)
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Resolve app version (beta from git tag)
         id: app_version
         shell: bash
         run: |
           SHA7="${GITHUB_SHA::7}"
 
-          # Lit la version depuis release-please manifest
-          BASE_VERSION=$(node -p "require('./.release-please-manifest.json').feedarr")
+          # récupère les tags (sinon runner n'a rien)
+          git fetch --tags --force
 
-          # Version affichée dans l'app
+          # dernier tag stable vX.Y.Z
+          LAST_TAG="$(git tag -l 'v*' --sort=-v:refname | head -n 1)"
+
+          if [[ -z "$LAST_TAG" ]]; then
+            echo "No v* tag found. Fallback to 0.0.0" >&2
+            BASE_VERSION="0.0.0"
+          else
+            BASE_VERSION="${LAST_TAG#v}"  # enlève le v
+          fi
+
           echo "version=${BASE_VERSION}-beta-sha.${SHA7}" >> "$GITHUB_OUTPUT"
-
-          # Tag docker compatible
           echo "docker_tag=beta-${SHA7}" >> "$GITHUB_OUTPUT"
 
       - name: Docker meta (api)
