@@ -253,8 +253,6 @@ const PHRASE_TRANSLATIONS = {
   "pour chaque groupe de doublons, seule la release la plus recente sera conservee": t("For each duplicate group, only the most recent release is kept"),
   "cette action cree une archive zip locale contenant la base de donnees et les metadonnees de configuration (sans exposer les secrets en clair dans `config.json`)": t("This action creates a local ZIP archive containing the database and configuration metadata (without exposing plain secrets in `config.json`)"),
   "un redemarrage de l'application sera requis apres restauration": t("An application restart is required after restore"),
-  "afficher seulement les categories recommandees": t("Show only recommended categories"),
-  "aucune categorie recommandee. desactive le filtre pour tout voir": t("No recommended category. Disable the filter to show all"),
   "aucune categorie disponible": t("No category available"),
   "laisse vide pour utiliser la cle du fournisseur": t("Leave blank to use provider API key"),
   "colle l'url copy torznab feed": t("Paste the Copy Torznab Feed URL"),

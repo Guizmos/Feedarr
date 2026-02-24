@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import Modal from "../../ui/Modal.jsx";
-import ItemRow from "../../ui/ItemRow.jsx";
+import ItemRow, { CategoryBubble } from "../../ui/ItemRow.jsx";
 import ToggleSwitch from "../../ui/ToggleSwitch.jsx";
 import { tr } from "../../app/uiText.js";
 
@@ -137,6 +137,21 @@ export default function ExternalProviderInstancesSection({
               statusErr && "test-err",
             ].filter(Boolean).join(" ");
 
+            const KIND_LABELS = {
+              movie:   ["Films"],
+              tv:      ["Séries", "TV"],
+              artwork: ["Artwork"],
+              game:    ["Games", "Jeux"],
+              anime:   ["Anime"],
+              book:    ["Livres", "Books"],
+              audio:   ["Musique", "Audio"],
+              comic:   ["Comics", "BD"],
+            };
+            const kind = definition?.kind;
+            const kindBubbles = (KIND_LABELS[kind] || []).map((label, i) => (
+              <CategoryBubble key={i} unifiedKey={kind} label={label} />
+            ));
+
             return (
               <ItemRow
                 key={instance.instanceId}
@@ -146,9 +161,10 @@ export default function ExternalProviderInstancesSection({
                 enabled={instance.enabled !== false}
                 statusClass={statusClass}
                 badges={[
+                  ...kindBubbles,
                   {
                     label: isConfigured ? "OK" : "NO",
-                    className: isConfigured ? "pill-ok" : "pill-warn",
+                    className: `${isConfigured ? "pill-ok" : "pill-warn"} pill--trailing`,
                   },
                 ]}
                 actions={[
@@ -267,10 +283,11 @@ export default function ExternalProviderInstancesSection({
               {(externalModalDefinition?.fieldsSchema || []).map((field) => {
                 const hasFlag = !!externalModalInstance?.authFlags?.[toHasFlagName(field.key)];
                 const value = externalModalAuth[field.key] || "";
+                const editSecretPlaceholder = field.secretPlaceholder || "•••••••• (laisser vide pour conserver)";
                 const placeholder = (
                   value
                   || (externalModalMode === "edit" && hasFlag && field.secret)
-                    ? "•••••••• (laisser vide pour conserver)"
+                    ? editSecretPlaceholder
                     : (field.placeholder || "")
                 );
                 return (

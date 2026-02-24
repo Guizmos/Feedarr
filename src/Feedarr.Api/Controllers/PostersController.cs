@@ -5,6 +5,11 @@ using Feedarr.Api.Services.Igdb;
 using Feedarr.Api.Services.Tmdb;
 using Feedarr.Api.Services.Fanart;
 using Feedarr.Api.Services.TheAudioDb;
+using Feedarr.Api.Services.GoogleBooks;
+using Feedarr.Api.Services.ComicVine;
+using Feedarr.Api.Services.MusicBrainz;
+using Feedarr.Api.Services.OpenLibrary;
+using Feedarr.Api.Services.Rawg;
 using Feedarr.Api.Services.Posters;
 using Feedarr.Api.Models;
 using Feedarr.Api.Services.Categories;
@@ -27,6 +32,11 @@ public sealed class PostersController : ControllerBase
     private readonly FanartClient _fanart;
     private readonly IgdbClient _igdb;
     private readonly TheAudioDbClient _theAudioDb;
+    private readonly GoogleBooksClient _googleBooks;
+    private readonly OpenLibraryClient _openLibrary;
+    private readonly RawgClient _rawg;
+    private readonly ComicVineClient _comicVine;
+    private readonly MusicBrainzClient _musicBrainz;
 
     public PostersController(
         ReleaseRepository releases,
@@ -39,7 +49,12 @@ public sealed class PostersController : ControllerBase
         TmdbClient tmdb,
         FanartClient fanart,
         IgdbClient igdb,
-        TheAudioDbClient theAudioDb)
+        TheAudioDbClient theAudioDb,
+        GoogleBooksClient googleBooks,
+        OpenLibraryClient openLibrary,
+        RawgClient rawg,
+        ComicVineClient comicVine,
+        MusicBrainzClient musicBrainz)
     {
         _releases = releases;
         _mediaEntities = mediaEntities;
@@ -52,6 +67,11 @@ public sealed class PostersController : ControllerBase
         _fanart = fanart;
         _igdb = igdb;
         _theAudioDb = theAudioDb;
+        _googleBooks = googleBooks;
+        _openLibrary = openLibrary;
+        _rawg = rawg;
+        _comicVine = comicVine;
+        _musicBrainz = musicBrainz;
     }
 
     // GET /api/posters/release/{id}
@@ -266,7 +286,10 @@ public sealed class PostersController : ControllerBase
         }
 
         var provider = (dto?.Provider ?? "").Trim().ToLowerInvariant();
-        if (provider != "tmdb" && provider != "igdb" && provider != ExternalProviderKeys.TheAudioDb)
+        if (provider != "tmdb" && provider != "igdb" && provider != ExternalProviderKeys.TheAudioDb
+            && provider != ExternalProviderKeys.GoogleBooks && provider != ExternalProviderKeys.OpenLibrary
+            && provider != ExternalProviderKeys.ComicVine && provider != ExternalProviderKeys.MusicBrainz
+            && provider != ExternalProviderKeys.Rawg)
             return BadRequest(new { error = "unsupported provider" });
 
         if (provider == "tmdb")
@@ -293,6 +316,69 @@ public sealed class PostersController : ControllerBase
             return Ok(BuildPosterResponse(igdbPosterUrl));
         }
 
+        if (provider == ExternalProviderKeys.Rawg)
+        {
+            if (string.IsNullOrWhiteSpace(dto?.ProviderId) || string.IsNullOrWhiteSpace(dto?.PosterPath))
+                return BadRequest(new { error = "providerId/posterPath missing" });
+
+            if (!int.TryParse(dto.ProviderId, out var rawgId) || rawgId <= 0)
+                return BadRequest(new { error = "invalid rawgId" });
+
+            var rawgPosterUrl = await _posterFetch.SaveRawgPosterAsync(id, rawgId, dto.PosterPath!, ct);
+            if (string.IsNullOrWhiteSpace(rawgPosterUrl))
+                return StatusCode(500, new { error = "poster download failed" });
+
+            return Ok(BuildPosterResponse(rawgPosterUrl));
+        }
+
+        if (provider == ExternalProviderKeys.GoogleBooks)
+        {
+            if (string.IsNullOrWhiteSpace(dto?.PosterPath))
+                return BadRequest(new { error = "posterUrl missing" });
+
+            var bookPosterUrl = await _posterFetch.SaveGoogleBooksPosterAsync(id, dto.ProviderId, dto.PosterPath!, ct);
+            if (string.IsNullOrWhiteSpace(bookPosterUrl))
+                return StatusCode(500, new { error = "poster download failed" });
+
+            return Ok(BuildPosterResponse(bookPosterUrl));
+        }
+
+        if (provider == ExternalProviderKeys.OpenLibrary)
+        {
+            if (string.IsNullOrWhiteSpace(dto?.PosterPath))
+                return BadRequest(new { error = "posterUrl missing" });
+
+            var olPosterUrl = await _posterFetch.SaveOpenLibraryPosterAsync(id, dto.ProviderId, dto.PosterPath!, ct);
+            if (string.IsNullOrWhiteSpace(olPosterUrl))
+                return StatusCode(500, new { error = "poster download failed" });
+
+            return Ok(BuildPosterResponse(olPosterUrl));
+        }
+
+        if (provider == ExternalProviderKeys.ComicVine)
+        {
+            if (string.IsNullOrWhiteSpace(dto?.PosterPath))
+                return BadRequest(new { error = "posterUrl missing" });
+
+            var comicPosterUrl = await _posterFetch.SaveComicVinePosterAsync(id, dto.ProviderId, dto.PosterPath!, ct);
+            if (string.IsNullOrWhiteSpace(comicPosterUrl))
+                return StatusCode(500, new { error = "poster download failed" });
+
+            return Ok(BuildPosterResponse(comicPosterUrl));
+        }
+
+        if (provider == ExternalProviderKeys.MusicBrainz)
+        {
+            if (string.IsNullOrWhiteSpace(dto?.PosterPath))
+                return BadRequest(new { error = "posterUrl missing" });
+
+            var mbPosterUrl = await _posterFetch.SaveMusicBrainzPosterAsync(id, dto.ProviderId, dto.PosterPath!, ct);
+            if (string.IsNullOrWhiteSpace(mbPosterUrl))
+                return StatusCode(500, new { error = "poster download failed" });
+
+            return Ok(BuildPosterResponse(mbPosterUrl));
+        }
+
         if (string.IsNullOrWhiteSpace(dto?.PosterPath))
             return BadRequest(new { error = "posterUrl missing" });
 
@@ -315,8 +401,11 @@ public sealed class PostersController : ControllerBase
         var results = new List<PosterSearchResult>();
         if (mediaType == "game")
         {
-            var games = await _igdb.SearchGameListAsync(query, null, ct);
-            results.AddRange(games.Select(r => new PosterSearchResult
+            var igdbTask = _igdb.SearchGameListAsync(query, null, ct);
+            var rawgTask = _rawg.SearchGameListAsync(query, ct);
+            await Task.WhenAll(igdbTask, rawgTask);
+
+            results.AddRange(igdbTask.Result.Select(r => new PosterSearchResult
             {
                 Provider = "igdb",
                 IgdbId = r.igdbId,
@@ -328,22 +417,117 @@ public sealed class PostersController : ControllerBase
                 PosterLang = null,
                 PosterSize = InferIgdbSize(r.coverUrl)
             }));
+
+            results.AddRange(rawgTask.Result.Select(r => new PosterSearchResult
+            {
+                Provider = ExternalProviderKeys.Rawg,
+                ProviderId = r.rawgId.ToString(),
+                Title = r.title,
+                Year = r.year,
+                MediaType = "game",
+                PosterPath = r.coverUrl,
+                PosterUrl = r.coverUrl,
+                PosterLang = null,
+                PosterSize = "cover"
+            }));
         }
         else if (mediaType == "audio")
         {
             var (artist, title) = ParseAudioSearchQuery(query);
-            var audio = await _theAudioDb.SearchAudioAsync(title, artist, null, ct);
-            if (audio is not null)
+
+            // Run TheAudioDB and MusicBrainz searches in parallel
+            var audioDbTask = _theAudioDb.SearchAudioListAsync(title, artist, null, ct);
+            var mbTask = _musicBrainz.SearchReleaseListAsync(title, artist, ct);
+            await Task.WhenAll(audioDbTask, mbTask);
+
+            results.AddRange(audioDbTask.Result.Select(audio =>
             {
-                results.Add(new PosterSearchResult
+                var displayTitle = !string.IsNullOrWhiteSpace(audio.Artist)
+                    ? $"{audio.Artist} – {audio.Title}"
+                    : audio.Title;
+                return new PosterSearchResult
                 {
                     Provider = ExternalProviderKeys.TheAudioDb,
                     ProviderId = audio.ProviderId,
-                    Title = audio.Title,
+                    Title = displayTitle,
                     Year = int.TryParse(audio.Released, out var parsedYear) ? parsedYear : null,
                     MediaType = "audio",
                     PosterPath = audio.PosterUrl,
                     PosterUrl = audio.PosterUrl
+                };
+            }));
+
+            results.AddRange(mbTask.Result.Select(mb =>
+            {
+                var displayTitle = !string.IsNullOrWhiteSpace(mb.Artist)
+                    ? $"{mb.Artist} – {mb.Title}"
+                    : mb.Title;
+                return new PosterSearchResult
+                {
+                    Provider = ExternalProviderKeys.MusicBrainz,
+                    ProviderId = mb.Mbid,
+                    Title = displayTitle,
+                    Year = mb.Released?.Length >= 4
+                        && int.TryParse(mb.Released[..4], out var mbYear) ? mbYear : null,
+                    MediaType = "audio",
+                    PosterPath = mb.CoverUrl,
+                    PosterUrl = mb.CoverUrl
+                };
+            }));
+        }
+        else if (mediaType == "book")
+        {
+            var gbTask = _googleBooks.SearchBookAsync(query, null, ct);
+            var olTask = _openLibrary.SearchBookListAsync(query, ct);
+            await Task.WhenAll(gbTask, olTask);
+            var gbBook = await gbTask;
+            var olBooks = await olTask;
+
+            if (gbBook is not null)
+            {
+                results.Add(new PosterSearchResult
+                {
+                    Provider = ExternalProviderKeys.GoogleBooks,
+                    ProviderId = gbBook.VolumeId,
+                    Title = gbBook.Title,
+                    Year = gbBook.PublishedDate?.Length >= 4
+                        && int.TryParse(gbBook.PublishedDate[..4], out var bookYear) ? bookYear : null,
+                    MediaType = "book",
+                    PosterPath = gbBook.ThumbnailUrl,
+                    PosterUrl = gbBook.ThumbnailUrl
+                });
+            }
+
+            foreach (var olBook in olBooks)
+            {
+                results.Add(new PosterSearchResult
+                {
+                    Provider = ExternalProviderKeys.OpenLibrary,
+                    ProviderId = olBook.WorkId,
+                    Title = olBook.Title,
+                    Year = olBook.PublishedYear is not null
+                        && int.TryParse(olBook.PublishedYear, out var olYear) ? olYear : null,
+                    MediaType = "book",
+                    PosterPath = olBook.CoverUrl,
+                    PosterUrl = olBook.CoverUrl
+                });
+            }
+        }
+        else if (mediaType == "comic")
+        {
+            var comic = await _comicVine.SearchComicAsync(query, null, ct);
+            if (comic is not null)
+            {
+                results.Add(new PosterSearchResult
+                {
+                    Provider = ExternalProviderKeys.ComicVine,
+                    ProviderId = comic.ProviderId,
+                    Title = comic.Title,
+                    Year = comic.ReleaseDate?.Length >= 4
+                        && int.TryParse(comic.ReleaseDate[..4], out var comicYear) ? comicYear : null,
+                    MediaType = "comic",
+                    PosterPath = comic.CoverUrl,
+                    PosterUrl = comic.CoverUrl
                 });
             }
         }
@@ -659,7 +843,7 @@ public sealed class PostersController : ControllerBase
         if (string.IsNullOrWhiteSpace(raw))
             return (null, "");
 
-        var separators = new[] { " - ", " – ", " — ", " | ", " : " };
+        var separators = new[] { " - ", " – ", " — ", " | ", " : ", ", " };
         foreach (var separator in separators)
         {
             var idx = raw.IndexOf(separator, StringComparison.Ordinal);

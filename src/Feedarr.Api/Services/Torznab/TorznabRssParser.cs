@@ -128,21 +128,27 @@ public sealed class TorznabRssParser
 
     private static (int? stdId, int? specId) ResolveStdSpec(IReadOnlyCollection<int> ids)
     {
-        int? stdId = null;
+        int? parentStdId = null;
+        int? childStdId = null;
         int? specId = null;
 
         foreach (var id in ids)
         {
-            if (!specId.HasValue && id >= 10000)
-                specId = id;
-            else if (!stdId.HasValue && id >= 1000 && id <= 8999)
-                stdId = id;
-
-            if (stdId.HasValue && specId.HasValue)
-                break;
+            if (id >= 10000)
+            {
+                specId ??= id;
+            }
+            else if (id >= 1000 && id <= 8999)
+            {
+                if (id % 1000 == 0)
+                    parentStdId ??= id;
+                else
+                    childStdId ??= id; // enfant plus spécifique
+            }
         }
 
-        return (stdId, specId);
+        // L'enfant (ex: 5070) prend priorité sur le parent (ex: 5000)
+        return (childStdId ?? parentStdId, specId);
     }
 
     private static Dictionary<string, string> ParseAttrs(XElement item)

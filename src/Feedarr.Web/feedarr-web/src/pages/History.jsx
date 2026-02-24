@@ -11,36 +11,7 @@ import { tr } from "../app/uiText.js";
 
 const PAGE_SIZE = 15;
 
-const UNIFIED_LABELS = {
-  films: "Films",
-  series: "Séries TV",
-  anime: "Anime",
-  games: "Jeux PC",
-  spectacle: "Spectacle",
-  shows: "Émissions",
-  audio: "Audio",
-  books: "Livres",
-  comics: "Comics",
-};
-
 const UNIFIED_PRIORITY = ["series", "anime", "films", "games", "spectacle", "shows", "audio", "books", "comics"];
-
-const EXCLUDED_TOKENS = [
-  "software",
-  "app",
-  "application",
-  "mobile",
-  "console",
-  "xbox",
-  "ps4",
-  "ps5",
-  "playstation",
-  "nintendo",
-  "switch",
-  "xxx",
-  "adult",
-  "sport",
-];
 
 function fmtTs(tsSeconds) {
   if (!tsSeconds) return "-";
@@ -58,68 +29,6 @@ function getIndexerClass(value) {
   if (key === "TOS") return "banner-pill--indexer-tos";
   if (key === "LACALE") return "banner-pill--indexer-lacale";
   return "";
-}
-
-function normalizeCategoryLabel(value) {
-  return String(value || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
-function hasAnyToken(tokens, list) {
-  return list.some((t) => tokens.has(t));
-}
-
-function categorizeLabel(name) {
-  const normalized = normalizeCategoryLabel(name);
-  if (!normalized) return null;
-  const tokens = new Set(normalized.split(/\s+/).filter(Boolean));
-  if (hasAnyToken(tokens, EXCLUDED_TOKENS)) return null;
-
-  const scores = {
-    series: 0,
-    films: 0,
-    anime: 0,
-    games: 0,
-    spectacle: 0,
-    shows: 0,
-    audio: 0,
-    books: 0,
-    comics: 0,
-  };
-
-  if (hasAnyToken(tokens, ["serie", "series", "tv", "tele"])) scores.series = 3;
-  const hasFilmToken = hasAnyToken(tokens, ["film", "films", "movie", "movies", "cinema"]);
-  const hasVideoToken = tokens.has("video");
-  const hasSpectacleToken = hasAnyToken(tokens, ["spectacle", "concert", "opera", "theatre", "ballet", "symphonie", "orchestr", "philharmon", "ring", "choregraph", "danse"]);
-
-  if (hasAnyToken(tokens, ["anime", "animation"])) scores.anime = 4;
-  if (hasAnyToken(tokens, ["audio", "music", "musique", "mp3", "flac", "wav", "aac", "m4a", "opus", "podcast", "audiobook", "audiobooks", "album", "albums", "soundtrack", "ost"])) scores.audio = 4;
-  if (hasAnyToken(tokens, ["book", "books", "livre", "livres", "ebook", "ebooks", "epub", "mobi", "kindle", "isbn"])) scores.books = 4;
-  if (hasAnyToken(tokens, ["comic", "comics", "bd", "manga", "scan", "scans", "graphic", "novel", "novels"])) scores.comics = 4;
-  if (hasSpectacleToken) scores.spectacle = 4;
-  if (hasAnyToken(tokens, ["emission", "show", "talk", "reality", "documentaire", "docu", "magazine", "reportage", "enquete", "quotidien", "quotidienne"])) scores.shows = 4;
-
-  const hasPc = hasAnyToken(tokens, ["pc", "windows", "win32", "win64"]);
-  const hasGame = hasAnyToken(tokens, ["jeu", "jeux", "game", "games"]);
-  const isGame = hasPc && hasGame;
-  if (isGame) scores.games = 3;
-
-  if (!hasSpectacleToken && (hasFilmToken || (hasVideoToken && !hasGame && !isGame))) scores.films = 3;
-
-  const maxScore = Math.max(...Object.values(scores));
-  if (maxScore < 3) return null;
-
-  const bestKey = UNIFIED_PRIORITY.find((key) => scores[key] === maxScore);
-  if (!bestKey) return null;
-
-  return {
-    unifiedKey: bestKey,
-    unifiedLabel: UNIFIED_LABELS[bestKey] || bestKey,
-  };
 }
 
 function parseDataJson(raw) {
@@ -179,18 +88,16 @@ function extractCategoryIds(entry) {
 function resolveCategoryInfo(raw) {
   if (!raw) return null;
   const unifiedKey = raw.unifiedKey || null;
-  const unifiedLabel = raw.unifiedLabel || UNIFIED_LABELS[unifiedKey] || null;
   if (unifiedKey) {
     return {
       key: unifiedKey,
-      label: unifiedLabel || raw.name || unifiedKey,
+      label: raw.unifiedLabel || raw.name || unifiedKey,
     };
   }
-  const derived = categorizeLabel(raw.unifiedLabel || raw.name);
-  if (derived) {
+  if (raw.unifiedLabel) {
     return {
-      key: derived.unifiedKey,
-      label: derived.unifiedLabel,
+      key: null,
+      label: raw.unifiedLabel,
     };
   }
   if (raw.name) {

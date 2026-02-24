@@ -16,7 +16,7 @@ public sealed class ExternalProviderRegistry
                 DisplayName: "TMDB",
                 Kind: "movie",
                 DefaultBaseUrl: "https://api.themoviedb.org/3/",
-                UiHints: new ExternalProviderUiHints("movie", new[] { "TMDB" }),
+                UiHints: new ExternalProviderUiHints("movie", new[] { "Films" }),
                 FieldsSchema: new[]
                 {
                     new ExternalProviderFieldDefinition(
@@ -32,7 +32,7 @@ public sealed class ExternalProviderRegistry
                 DisplayName: "TVmaze",
                 Kind: "tv",
                 DefaultBaseUrl: "https://api.tvmaze.com/",
-                UiHints: new ExternalProviderUiHints("tv", new[] { "TVmaze" }),
+                UiHints: new ExternalProviderUiHints("tv", new[] { "Séries", "TV" }),
                 FieldsSchema: new[]
                 {
                     new ExternalProviderFieldDefinition(
@@ -48,7 +48,7 @@ public sealed class ExternalProviderRegistry
                 DisplayName: "Fanart TV",
                 Kind: "artwork",
                 DefaultBaseUrl: "https://webservice.fanart.tv/v3/",
-                UiHints: new ExternalProviderUiHints("artwork", new[] { "Fanart" }),
+                UiHints: new ExternalProviderUiHints("artwork", new[] { "Artwork" }),
                 FieldsSchema: new[]
                 {
                     new ExternalProviderFieldDefinition(
@@ -64,7 +64,7 @@ public sealed class ExternalProviderRegistry
                 DisplayName: "IGDB",
                 Kind: "game",
                 DefaultBaseUrl: "https://api.igdb.com/v4/",
-                UiHints: new ExternalProviderUiHints("game", new[] { "IGDB" }),
+                UiHints: new ExternalProviderUiHints("game", new[] { "Games", "Jeux" }),
                 FieldsSchema: new[]
                 {
                     new ExternalProviderFieldDefinition(
@@ -87,14 +87,23 @@ public sealed class ExternalProviderRegistry
                 DisplayName: "Jikan (MAL)",
                 Kind: "anime",
                 DefaultBaseUrl: "https://api.jikan.moe/v4/",
-                UiHints: new ExternalProviderUiHints("anime", new[] { "Anime", "MAL" }),
-                FieldsSchema: Array.Empty<ExternalProviderFieldDefinition>()),
+                UiHints: new ExternalProviderUiHints("anime", new[] { "Anime" }),
+                FieldsSchema: new[]
+                {
+                    new ExternalProviderFieldDefinition(
+                        Key: "apiKey",
+                        Label: "Cle API (optionnel)",
+                        Type: "password",
+                        Placeholder: "Cle API Jikan (optionnel — non requise pour l'API publique)",
+                        Required: false,
+                        Secret: true),
+                }),
             new(
                 ProviderKey: ExternalProviderKeys.GoogleBooks,
                 DisplayName: "Google Books",
                 Kind: "book",
                 DefaultBaseUrl: "https://www.googleapis.com/books/v1/",
-                UiHints: new ExternalProviderUiHints("book", new[] { "Books" }),
+                UiHints: new ExternalProviderUiHints("book", new[] { "Livres", "Books" }),
                 FieldsSchema: new[]
                 {
                     new ExternalProviderFieldDefinition(
@@ -110,7 +119,7 @@ public sealed class ExternalProviderRegistry
                 DisplayName: "TheAudioDB",
                 Kind: "audio",
                 DefaultBaseUrl: "https://www.theaudiodb.com/api/v1/json/",
-                UiHints: new ExternalProviderUiHints("audio", new[] { "Audio", "Music" }),
+                UiHints: new ExternalProviderUiHints("audio", new[] { "Musique", "Audio" }),
                 FieldsSchema: new[]
                 {
                     new ExternalProviderFieldDefinition(
@@ -119,7 +128,8 @@ public sealed class ExternalProviderRegistry
                         Type: "password",
                         Placeholder: "Entrez la cle API TheAudioDB",
                         Required: true,
-                        Secret: true),
+                        Secret: true,
+                        SecretPlaceholder: "\u2022\u2022\u2022\u2022 (cl\u00e9 API publique = 123, laisser vide pour conserver)"),
                 }),
             new(
                 ProviderKey: ExternalProviderKeys.ComicVine,
@@ -134,6 +144,52 @@ public sealed class ExternalProviderRegistry
                         Label: "Cle API",
                         Type: "password",
                         Placeholder: "Entrez la cle API Comic Vine",
+                        Required: true,
+                        Secret: true),
+                }),
+            new(
+                ProviderKey: ExternalProviderKeys.OpenLibrary,
+                DisplayName: "Open Library",
+                Kind: "book",
+                DefaultBaseUrl: "https://openlibrary.org/",
+                UiHints: new ExternalProviderUiHints("book", new[] { "Livres", "Books" }),
+                FieldsSchema: Array.Empty<ExternalProviderFieldDefinition>()),
+            new(
+                ProviderKey: ExternalProviderKeys.MusicBrainz,
+                DisplayName: "MusicBrainz",
+                Kind: "audio",
+                DefaultBaseUrl: "https://musicbrainz.org/ws/2/",
+                UiHints: new ExternalProviderUiHints("audio", new[] { "Musique", "Audio" }),
+                FieldsSchema: new[]
+                {
+                    new ExternalProviderFieldDefinition(
+                        Key: "clientId",
+                        Label: "Client ID (optionnel)",
+                        Type: "password",
+                        Placeholder: "Client ID OAuth2 MusicBrainz (optionnel)",
+                        Required: false,
+                        Secret: true),
+                    new ExternalProviderFieldDefinition(
+                        Key: "clientSecret",
+                        Label: "Client Secret (optionnel)",
+                        Type: "password",
+                        Placeholder: "Client Secret OAuth2 MusicBrainz (optionnel)",
+                        Required: false,
+                        Secret: true),
+                }),
+            new(
+                ProviderKey: ExternalProviderKeys.Rawg,
+                DisplayName: "RAWG",
+                Kind: "game",
+                DefaultBaseUrl: "https://api.rawg.io/api/",
+                UiHints: new ExternalProviderUiHints("game", Array.Empty<string>()),
+                FieldsSchema: new[]
+                {
+                    new ExternalProviderFieldDefinition(
+                        Key: "apiKey",
+                        Label: "Cle API",
+                        Type: "password",
+                        Placeholder: "Entrez la cle API RAWG (rawg.io/apidocs)",
                         Required: true,
                         Secret: true),
                 }),
@@ -175,7 +231,8 @@ public sealed record ExternalProviderFieldDefinition(
     string Type,
     string? Placeholder,
     bool Required,
-    bool Secret);
+    bool Secret,
+    string? SecretPlaceholder = null);
 
 public sealed record ExternalProviderUiHints(
     string Icon,

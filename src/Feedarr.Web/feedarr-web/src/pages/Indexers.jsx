@@ -5,7 +5,6 @@ import { useSubbarSetter } from "../layout/useSubbar.js";
 import SubAction from "../ui/SubAction.jsx";
 import Modal from "../ui/Modal.jsx";
 import AppIcon from "../ui/AppIcon.jsx";
-import ToggleSwitch from "../ui/ToggleSwitch.jsx";
 import { startNewIndexerTest, completeNewIndexerTest } from "../tasks/indexerTasks.js";
 import { startCapsRefresh, completeCapsRefresh } from "../tasks/categoriesTasks.js";
 import ItemRow, { CategoryBubble } from "../ui/ItemRow.jsx";
@@ -18,6 +17,8 @@ import {
   getSourceColor,
   normalizeHexColor,
 } from "../utils/sourceColors.js";
+import FlatCategorySelector from "../components/shared/FlatCategorySelector.jsx";
+import { filterLeafOnly, getAllowedCategoryIds } from "../components/shared/categorySelectionUtils.js";
 
 const UNIFIED_PRIORITY = ["series", "anime", "films", "games", "spectacle", "shows", "audio", "books", "comics"];
 const MANUAL_INDEXER_VALUE = "__manual__";
@@ -47,6 +48,30 @@ function dedupeCategoriesById(categories) {
   return Array.from(map.values());
 }
 
+/**
+ * Déduplique un tableau de catégories par unifiedKey pour l'affichage des bulles sur la carte.
+ * Garde la première occurrence par clé (l'ordre en entrée est donc le tri de référence).
+ * Clé principale : cat.unifiedKey (non vide) ; fallback : (unifiedLabel || name).toLowerCase().
+ */
+function dedupeBubblesByUnifiedKey(categories) {
+  const seen = new Set();
+  const result = [];
+  for (const cat of categories) {
+    const key = cat?.unifiedKey?.trim()
+      ? cat.unifiedKey.toLowerCase()
+      : (cat?.unifiedLabel || cat?.name || "").toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(cat);
+  }
+  return result;
+}
+
+/** Normalise une URL pour comparaison : lowercase + suppression du slash final. */
+function normalizeUrl(url) {
+  return (url || "").trim().toLowerCase().replace(/\/+$/, "");
+}
+
 function areSetsEqual(a, b) {
   if (a === b) return true;
   if (!a || !b) return false;
@@ -68,7 +93,6 @@ export default function Indexers() {
   const [capsError, setCapsError] = useState("");
   const [capsWarning, setCapsWarning] = useState("");
   const [capsCategories, setCapsCategories] = useState([]);
-  const [useRecommendedFilter, setUseRecommendedFilter] = useState(true);
   const [selectedCategoryIds, setSelectedCategoryIds] = useState(() => new Set());
   const [providerOptions, setProviderOptions] = useState([]);
   const [providerOptionsLoading, setProviderOptionsLoading] = useState(false);
@@ -239,7 +263,6 @@ export default function Indexers() {
     setCapsError("");
     setCapsWarning("");
     setCapsCategories([]);
-    setUseRecommendedFilter(true);
     setSelectedCategoryIds(new Set());
     setProviderOptions([]);
     setProviderOptionsWarning("");
@@ -278,7 +301,6 @@ export default function Indexers() {
     setCapsError("");
     setCapsWarning("");
     setCapsCategories([]);
-    setUseRecommendedFilter(true);
     setSelectedCategoryIds(new Set());
     setSelectedProviderId("");
     setSelectedIndexerId("");
@@ -288,7 +310,6 @@ export default function Indexers() {
     setCapsError("");
     setCapsWarning("");
     setCapsCategories([]);
-    setUseRecommendedFilter(true);
     setSelectedCategoryIds(new Set());
     setSelectedProviderId("");
     setSelectedIndexerId("");
@@ -350,12 +371,14 @@ export default function Indexers() {
 
     try {
       const res = editing?.id
-        ? await apiGet(`/api/categories/caps?sourceId=${editing.id}`)
+        ? await apiGet(`/api/categories/caps?sourceId=${editing.id}&includeStandardCatalog=true&includeSpecific=true`)
         : await apiPost("/api/categories/caps/provider", {
-          providerId: Number(selectedProviderId),
-          torznabUrl: payload.torznabUrl,
-          indexerName: payload.indexerName,
-          indexerId: isManualIndexer ? null : (selectedIndexerId || null),
+          providerId:   Number(selectedProviderId),
+          torznabUrl:   payload.torznabUrl,
+          indexerName:  payload.indexerName,
+          indexerId:    isManualIndexer ? null : (selectedIndexerId || null),
+          includeStandardCatalog: true,
+          includeSpecific: true,
         });
 
       const cats = Array.isArray(res?.categories) ? res.categories : [];
@@ -370,6 +393,8 @@ export default function Indexers() {
         setCapsWarning("Aucune catégorie disponible.");
       }
 
+      const allowedIds = getAllowedCategoryIds(uniqueCats);
+
       if (editing?.id) {
         const existing = await apiGet(`/api/categories/${editing.id}`);
         const existingIds = new Set(
@@ -377,17 +402,13 @@ export default function Indexers() {
             .map((row) => Number(row?.id))
             .filter((id) => Number.isFinite(id) && id > 0)
         );
-        const selected = uniqueCats
-          .filter((c) => existingIds.has(c.id))
-          .map((c) => c.id);
-        const selectedSet = new Set(selected);
+        const selected = [...allowedIds].filter((id) => existingIds.has(id));
+        const selectedSet = filterLeafOnly(selected, uniqueCats);
         setSelectedCategoryIds(selectedSet);
         initialCategoryIdsRef.current = new Set(selectedSet);
         setModalStep(2);
       } else {
-        const recommended = uniqueCats.filter((c) => c?.isRecommended);
-        const base = recommended.length > 0 ? recommended : uniqueCats;
-        setSelectedCategoryIds(new Set(base.map((c) => c.id)));
+        setSelectedCategoryIds(new Set());
         // Capture the source ID if the backend created one during test
         if (res?.sourceId) {
           setTestSourceId(res.sourceId);
@@ -433,13 +454,22 @@ export default function Indexers() {
     };
 
     try {
+      const buildSelectedLeafCategories = () => {
+        const allowedIds = getAllowedCategoryIds(capsCategories);
+        const leafOnlyIds = filterLeafOnly(selectedCategoryIds, capsCategories);
+        const selectedSupported = dedupeCategoriesById(
+          capsCategories.filter((c) =>
+            leafOnlyIds.has(c.id) && allowedIds.has(c.id)
+          )
+        );
+        return selectedSupported;
+      };
+
       if (editing?.id) {
         if (modalStep === 2) {
           await apiPut(`/api/sources/${editing.id}`, payload);
           await apiPut(`/api/sources/${editing.id}/enabled`, { enabled });
-          const selected = dedupeCategoriesById(
-            capsCategories.filter((c) => selectedCategoryIds.has(c.id))
-          );
+          const selected = buildSelectedLeafCategories();
           if (selected.length === 0) {
             setCapsError("Selectionne au moins une categorie.");
             return;
@@ -460,9 +490,7 @@ export default function Indexers() {
         }
       } else {
         if (modalStep !== 2) return;
-        const selected = dedupeCategoriesById(
-          capsCategories.filter((c) => selectedCategoryIds.has(c.id))
-        );
+        const selected = buildSelectedLeafCategories();
         if (selected.length === 0) {
           setCapsError("Selectionne au moins une categorie.");
           return;
@@ -598,12 +626,13 @@ export default function Indexers() {
   const capsCount = capsCategories.length;
 
   // Filter out indexers that are already added (but always keep the currently selected one)
+  // Normalisation URL des deux côtés (trailing slash, casse) pour éviter les faux négatifs.
   const existingIndexerUrls = useMemo(
-    () => new Set((items || []).map((s) => s.torznabUrl).filter(Boolean)),
+    () => new Set((items || []).map((s) => normalizeUrl(s.torznabUrl)).filter(Boolean)),
     [items]
   );
   const availableIndexerOptions = useMemo(() => {
-    const filtered = (indexerOptions || []).filter((opt) => !existingIndexerUrls.has(opt.torznabUrl));
+    const filtered = (indexerOptions || []).filter((opt) => !existingIndexerUrls.has(normalizeUrl(opt.torznabUrl)));
     // Always include the currently selected indexer (in case it was saved during test)
     if (selectedIndexerId) {
       const alreadyIncluded = filtered.some((opt) => String(opt.id) === String(selectedIndexerId));
@@ -614,26 +643,6 @@ export default function Indexers() {
     }
     return filtered;
   }, [indexerOptions, existingIndexerUrls, selectedIndexerId]);
-
-  const allCategories = useMemo(() => capsCategories || [], [capsCategories]);
-  const recommendedCategories = useMemo(
-    () => (capsCategories || []).filter((c) => c?.isRecommended),
-    [capsCategories]
-  );
-  const visibleCategories = useMemo(
-    () => (useRecommendedFilter ? recommendedCategories : allCategories),
-    [useRecommendedFilter, recommendedCategories, allCategories]
-  );
-
-  useEffect(() => {
-    if (!useRecommendedFilter) return;
-    if (allCategories.length > 0 && recommendedCategories.length === 0) {
-      setUseRecommendedFilter(false);
-      setCapsWarning((prev) =>
-        prev || "Aucune catégorie recommandée. Affichage complet activé."
-      );
-    }
-  }, [useRecommendedFilter, recommendedCategories.length, allCategories.length]);
 
   return (
     <div className="page page--indexers">
@@ -669,22 +678,21 @@ export default function Indexers() {
               syncStatusById[s.id] === "error" && "sync-err",
             ].filter(Boolean).join(" ");
 
-            // Categories as badges
-            const categoryBadges = (categoriesById[s.id] || [])
-              .slice()
-              .sort((a, b) => {
+            // Categories as badges — 1 bulle par unifiedKey distinct
+            const categoryBadges = dedupeBubblesByUnifiedKey(
+              (categoriesById[s.id] || []).slice().sort((a, b) => {
                 const orderA = UNIFIED_PRIORITY.indexOf(a.unifiedKey);
                 const orderB = UNIFIED_PRIORITY.indexOf(b.unifiedKey);
                 return (orderA === -1 ? 999 : orderA) - (orderB === -1 ? 999 : orderB);
               })
-              .map((cat) => (
-                <CategoryBubble
-                  key={cat.id}
-                  unifiedKey={cat.unifiedKey}
-                  label={cat.unifiedLabel || cat.name}
-                  title={`${cat.name} (${cat.id})`}
-                />
-              ));
+            ).map((cat) => (
+              <CategoryBubble
+                key={cat.unifiedKey || cat.id}
+                unifiedKey={cat.unifiedKey}
+                label={cat.unifiedLabel || cat.name}
+                title={`${cat.name} (${cat.id})`}
+              />
+            ));
 
             return (
               <ItemRow
@@ -783,7 +791,7 @@ export default function Indexers() {
         open={modalOpen}
         title={editing ? `Modifier : ${editing?.name ?? editing?.id}` : "Ajouter une source"}
         onClose={closeModal}
-        width={650}
+        width={720}
       >
         <form onSubmit={(e) => e.preventDefault()} className="formgrid formgrid--edit">
           {/* Step 1 fields - hidden in step 2 for add mode */}
@@ -806,7 +814,6 @@ export default function Indexers() {
                       setCapsError("");
                       setCapsWarning("");
                       setCapsCategories([]);
-                      setUseRecommendedFilter(true);
                       setSelectedCategoryIds(new Set());
                       setTestPassed(false);
                       setTestSourceId(null);
@@ -1014,42 +1021,21 @@ export default function Indexers() {
 
           {modalStep === 2 && (
             <div className="field" style={{ gridColumn: "1 / -1" }}>
-              <label className="muted">Categories retenues ({selectedCount}/{capsCount || allCategories.length})</label>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "6px 0 10px" }}>
-                <span className="muted">Afficher seulement les catégories recommandées</span>
-                <ToggleSwitch
-                  checked={useRecommendedFilter}
-                  onIonChange={(e) => setUseRecommendedFilter(e.detail.checked)}
-                  className="settings-toggle settings-toggle--sm"
+              <label className="muted">Catégories retenues ({selectedCount}/{capsCount})</label>
+              <div style={{ marginTop: 8 }}>
+                <FlatCategorySelector
+                  categories={capsCategories}
+                  selectedIds={selectedCategoryIds}
+                  onToggleId={(id, checked) => {
+                    setSelectedCategoryIds((prev) => {
+                      const next = new Set(prev);
+                      if (checked) next.add(id);
+                      else next.delete(id);
+                      return filterLeafOnly(next, capsCategories);
+                    });
+                  }}
+                  onSetIds={(ids) => setSelectedCategoryIds(filterLeafOnly(ids, capsCategories))}
                 />
-              </div>
-              <div className="category-picker">
-                {visibleCategories.map((cat) => (
-                  <div key={cat.id} className="category-row">
-                    <ToggleSwitch
-                      checked={selectedCategoryIds.has(cat.id)}
-                      onIonChange={(e) => {
-                        const checked = e.detail.checked;
-                        setSelectedCategoryIds((prev) => {
-                          const next = new Set(prev);
-                          if (checked) next.add(cat.id);
-                          else next.delete(cat.id);
-                          return next;
-                        });
-                      }}
-                      className="settings-toggle settings-toggle--sm"
-                    />
-                    <span className="category-id">{cat.id}</span>
-                    <span className="category-name">{cat.name}</span>
-                    <span className="category-pill">{cat.unifiedLabel}</span>
-                  </div>
-                ))}
-                {visibleCategories.length === 0 && useRecommendedFilter && (
-                  <div className="muted">Aucune catégorie recommandée. Désactive le filtre pour tout voir.</div>
-                )}
-                {allCategories.length === 0 && (
-                  <div className="muted">Aucune catégorie disponible.</div>
-                )}
               </div>
             </div>
           )}

@@ -260,14 +260,14 @@ public sealed class SourcesController : ControllerBase
         if (dto.Categories is not null && dto.Categories.Count > 0)
         {
             filtered = dto.Categories
-                .Where(c => c.Id > 0 && !string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.UnifiedKey))
+                .Where(c => c.Id > 0 && !string.IsNullOrWhiteSpace(c.Name))
                 .Select(c => new SourceRepository.SourceCategoryInput
                 {
                     Id = c.Id,
                     Name = c.Name.Trim(),
                     IsSub = c.IsSub,
                     ParentId = c.ParentId,
-                    UnifiedKey = c.UnifiedKey.Trim(),
+                    UnifiedKey = string.IsNullOrWhiteSpace(c.UnifiedKey) ? null : c.UnifiedKey.Trim(),
                     UnifiedLabel = string.IsNullOrWhiteSpace(c.UnifiedLabel) ? null : c.UnifiedLabel.Trim()
                 })
                 .ToList();
@@ -474,14 +474,14 @@ public sealed class SourcesController : ControllerBase
         if (src is null) return NotFound(new { error = "source not found" });
 
         var filtered = (dto?.Categories ?? new List<SourceCategorySelectionDto>())
-            .Where(c => c.Id > 0 && !string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.UnifiedKey))
+            .Where(c => c.Id > 0 && !string.IsNullOrWhiteSpace(c.Name))
             .Select(c => new SourceRepository.SourceCategoryInput
             {
                 Id = c.Id,
                 Name = c.Name.Trim(),
                 IsSub = c.IsSub,
                 ParentId = c.ParentId,
-                UnifiedKey = c.UnifiedKey.Trim(),
+                UnifiedKey = string.IsNullOrWhiteSpace(c.UnifiedKey) ? null : c.UnifiedKey.Trim(),
                 UnifiedLabel = string.IsNullOrWhiteSpace(c.UnifiedLabel) ? null : c.UnifiedLabel.Trim()
             })
             .ToList();

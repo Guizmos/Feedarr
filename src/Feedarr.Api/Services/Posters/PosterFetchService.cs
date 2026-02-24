@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Models;
 using Feedarr.Api.Options;
@@ -12,6 +13,9 @@ using Feedarr.Api.Services.Igdb;
 using Feedarr.Api.Services.Matching;
 using Feedarr.Api.Services.Jikan;
 using Feedarr.Api.Services.ComicVine;
+using Feedarr.Api.Services.MusicBrainz;
+using Feedarr.Api.Services.OpenLibrary;
+using Feedarr.Api.Services.Rawg;
 using Feedarr.Api.Services.TheAudioDb;
 using Feedarr.Api.Services.Tmdb;
 using Feedarr.Api.Services.TvMaze;
@@ -43,7 +47,10 @@ public sealed class PosterFetchService
     private readonly JikanClient _jikan;
     private readonly TheAudioDbClient _theAudioDb;
     private readonly GoogleBooksClient _googleBooks;
+    private readonly OpenLibraryClient _openLibrary;
+    private readonly RawgClient _rawg;
     private readonly ComicVineClient _comicVine;
+    private readonly MusicBrainzClient _musicBrainz;
     private readonly PosterMatchCacheService _matchCache;
     private readonly AppOptions _opt;
     private readonly IWebHostEnvironment _env;
@@ -60,7 +67,10 @@ public sealed class PosterFetchService
         JikanClient jikan,
         TheAudioDbClient theAudioDb,
         GoogleBooksClient googleBooks,
+        OpenLibraryClient openLibrary,
+        RawgClient rawg,
         ComicVineClient comicVine,
+        MusicBrainzClient musicBrainz,
         PosterMatchCacheService matchCache,
         IOptions<AppOptions> opt,
         IWebHostEnvironment env,
@@ -76,7 +86,10 @@ public sealed class PosterFetchService
         _jikan = jikan;
         _theAudioDb = theAudioDb;
         _googleBooks = googleBooks;
+        _openLibrary = openLibrary;
+        _rawg = rawg;
         _comicVine = comicVine;
+        _musicBrainz = musicBrainz;
         _matchCache = matchCache;
         _opt = opt.Value;
         _env = env;
@@ -209,6 +222,31 @@ public sealed class PosterFetchService
         return $"/api/posters/release/{id}?v={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
     }
 
+    public async Task<string?> SaveRawgPosterAsync(long id, int rawgId, string coverUrl, CancellationToken ct, bool logSingle = true)
+    {
+        if (rawgId <= 0 || string.IsNullOrWhiteSpace(coverUrl)) return null;
+
+        Directory.CreateDirectory(PostersDirAbs);
+
+        var bytes = await _rawg.DownloadCoverAsync(coverUrl, ct);
+        if (bytes is null || bytes.Length == 0) return null;
+
+        var file = $"rawg-{rawgId}-manual.jpg";
+        var full = Path.Combine(PostersDirAbs, file);
+        await System.IO.File.WriteAllBytesAsync(full, bytes, ct);
+
+        _releases.SavePoster(id, null, coverUrl, file);
+        _releases.UpdateExternalDetails(id, ExternalProviderKeys.Rawg, rawgId.ToString(CultureInfo.InvariantCulture),
+            null, null, null, null, null, null, null, null, null, null, null);
+        var hash = ComputeSha256Hex(bytes);
+        PosterAudit.UpdateAttemptSuccess(_releases, id, "rawg", rawgId.ToString(CultureInfo.InvariantCulture), null, null, hash);
+
+        if (logSingle)
+            LogActivity(null, "info", "poster_fetch", "Poster set manually (RAWG)", new { releaseId = id, rawgId, coverUrl, posterFile = file });
+
+        return $"/api/posters/release/{id}?v={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+    }
+
     public async Task<string?> SaveTheAudioDbPosterAsync(long id, string? providerId, string posterUrl, CancellationToken ct, bool logSingle = true)
     {
         if (string.IsNullOrWhiteSpace(posterUrl)) return null;
@@ -256,6 +294,174 @@ public sealed class PosterFetchService
         if (logSingle)
         {
             LogActivity(null, "info", "poster_fetch", "Poster set manually (TheAudioDB)", new
+            {
+                releaseId = id,
+                providerId = providerId?.Trim(),
+                posterUrl,
+                posterFile = file
+            });
+        }
+
+        return $"/api/posters/release/{id}?v={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+    }
+
+    public async Task<string?> SaveGoogleBooksPosterAsync(long id, string? providerId, string posterUrl, CancellationToken ct, bool logSingle = true)
+    {
+        if (string.IsNullOrWhiteSpace(posterUrl)) return null;
+
+        Directory.CreateDirectory(PostersDirAbs);
+
+        var bytes = await _googleBooks.DownloadImageAsync(posterUrl, ct);
+        if (bytes is null || bytes.Length == 0) return null;
+
+        var ext = InferFileExtensionFromUrl(posterUrl, ".jpg");
+        var normalizedProviderId = string.IsNullOrWhiteSpace(providerId)
+            ? Guid.NewGuid().ToString("N")
+            : SanitizeForFile(providerId);
+        var file = $"googlebooks-{normalizedProviderId}-manual{ext}";
+        var full = Path.Combine(PostersDirAbs, file);
+        await System.IO.File.WriteAllBytesAsync(full, bytes, ct);
+
+        _releases.SavePoster(id, null, posterUrl, file);
+        _releases.UpdateExternalDetails(
+            id,
+            ExternalProviderKeys.GoogleBooks,
+            providerId?.Trim() ?? normalizedProviderId,
+            null, null, null, null, null, null, null, null, null, null, null);
+
+        var hash = ComputeSha256Hex(bytes);
+        PosterAudit.UpdateAttemptSuccess(_releases, id, ExternalProviderKeys.GoogleBooks,
+            providerId?.Trim() ?? normalizedProviderId, null, "manual", hash);
+
+        if (logSingle)
+        {
+            LogActivity(null, "info", "poster_fetch", "Poster set manually (Google Books)", new
+            {
+                releaseId = id,
+                providerId = providerId?.Trim(),
+                posterUrl,
+                posterFile = file
+            });
+        }
+
+        return $"/api/posters/release/{id}?v={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+    }
+
+    public async Task<string?> SaveOpenLibraryPosterAsync(long id, string? providerId, string posterUrl, CancellationToken ct, bool logSingle = true)
+    {
+        if (string.IsNullOrWhiteSpace(posterUrl)) return null;
+
+        Directory.CreateDirectory(PostersDirAbs);
+
+        var bytes = await _openLibrary.DownloadImageAsync(posterUrl, ct);
+        if (bytes is null || bytes.Length == 0) return null;
+
+        var normalizedProviderId = string.IsNullOrWhiteSpace(providerId)
+            ? Guid.NewGuid().ToString("N")
+            : SanitizeForFile(providerId);
+        var file = $"openlibrary-{normalizedProviderId}-manual.jpg";
+        var full = Path.Combine(PostersDirAbs, file);
+        await System.IO.File.WriteAllBytesAsync(full, bytes, ct);
+
+        _releases.SavePoster(id, null, posterUrl, file);
+        _releases.UpdateExternalDetails(
+            id,
+            ExternalProviderKeys.OpenLibrary,
+            providerId?.Trim() ?? normalizedProviderId,
+            null, null, null, null, null, null, null, null, null, null, null);
+
+        var hash = ComputeSha256Hex(bytes);
+        PosterAudit.UpdateAttemptSuccess(_releases, id, ExternalProviderKeys.OpenLibrary,
+            providerId?.Trim() ?? normalizedProviderId, null, "manual", hash);
+
+        if (logSingle)
+        {
+            LogActivity(null, "info", "poster_fetch", "Poster set manually (Open Library)", new
+            {
+                releaseId = id,
+                providerId = providerId?.Trim(),
+                posterUrl,
+                posterFile = file
+            });
+        }
+
+        return $"/api/posters/release/{id}?v={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+    }
+
+    public async Task<string?> SaveComicVinePosterAsync(long id, string? providerId, string posterUrl, CancellationToken ct, bool logSingle = true)
+    {
+        if (string.IsNullOrWhiteSpace(posterUrl)) return null;
+
+        Directory.CreateDirectory(PostersDirAbs);
+
+        var bytes = await _comicVine.DownloadImageAsync(posterUrl, ct);
+        if (bytes is null || bytes.Length == 0) return null;
+
+        var ext = InferFileExtensionFromUrl(posterUrl, ".jpg");
+        var normalizedProviderId = string.IsNullOrWhiteSpace(providerId)
+            ? Guid.NewGuid().ToString("N")
+            : SanitizeForFile(providerId);
+        var file = $"comicvine-{normalizedProviderId}-manual{ext}";
+        var full = Path.Combine(PostersDirAbs, file);
+        await System.IO.File.WriteAllBytesAsync(full, bytes, ct);
+
+        _releases.SavePoster(id, null, posterUrl, file);
+        _releases.UpdateExternalDetails(
+            id,
+            ExternalProviderKeys.ComicVine,
+            providerId?.Trim() ?? normalizedProviderId,
+            null, null, null, null, null, null, null, null, null, null, null);
+
+        var hash = ComputeSha256Hex(bytes);
+        PosterAudit.UpdateAttemptSuccess(_releases, id, ExternalProviderKeys.ComicVine,
+            providerId?.Trim() ?? normalizedProviderId, null, "manual", hash);
+
+        if (logSingle)
+        {
+            LogActivity(null, "info", "poster_fetch", "Poster set manually (ComicVine)", new
+            {
+                releaseId = id,
+                providerId = providerId?.Trim(),
+                posterUrl,
+                posterFile = file
+            });
+        }
+
+        return $"/api/posters/release/{id}?v={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+    }
+
+    public async Task<string?> SaveMusicBrainzPosterAsync(long id, string? providerId, string posterUrl, CancellationToken ct, bool logSingle = true)
+    {
+        if (string.IsNullOrWhiteSpace(posterUrl)) return null;
+
+        Directory.CreateDirectory(PostersDirAbs);
+
+        var bytes = await _musicBrainz.DownloadImageAsync(posterUrl, ct);
+        if (bytes is null || bytes.Length == 0) return null;
+
+        var ext = InferFileExtensionFromUrl(posterUrl, ".jpg");
+        var normalizedProviderId = string.IsNullOrWhiteSpace(providerId)
+            ? Guid.NewGuid().ToString("N")
+            : SanitizeForFile(providerId);
+
+        var file = $"musicbrainz-{normalizedProviderId}-manual{ext}";
+        var full = Path.Combine(PostersDirAbs, file);
+        await System.IO.File.WriteAllBytesAsync(full, bytes, ct);
+
+        _releases.SavePoster(id, null, posterUrl, file);
+        _releases.UpdateExternalDetails(
+            id,
+            ExternalProviderKeys.MusicBrainz,
+            providerId?.Trim() ?? normalizedProviderId,
+            null, null, null, null, null, null, null, null, null, null, null);
+
+        var hash = ComputeSha256Hex(bytes);
+        PosterAudit.UpdateAttemptSuccess(_releases, id, ExternalProviderKeys.MusicBrainz,
+            providerId?.Trim() ?? normalizedProviderId, null, "manual", hash);
+
+        if (logSingle)
+        {
+            LogActivity(null, "info", "poster_fetch", "Poster set manually (MusicBrainz)", new
             {
                 releaseId = id,
                 providerId = providerId?.Trim(),
@@ -589,78 +795,71 @@ public sealed class PosterFetchService
         if (isGame)
         {
             var igdbQuery = QuerySanitizeGame(title);
-            LogProviderAttempted(sourceId, logSingle, "igdb", new { releaseId = id, query = igdbQuery, title, year });
-            var igdbMatch = await _igdb.SearchGameCoverAsync(igdbQuery, year, ct);
-            if (igdbMatch is null)
+            var igdbEnabled = _activeConfigResolver.GetActiveEnabled(ExternalProviderKeys.Igdb);
+            var rawgEnabled = _rawg.IsConfigured();
+
+            if (!igdbEnabled && !rawgEnabled)
             {
                 if (logSingle)
-                {
-                    LogActivity(sourceId, "warn", "poster_fetch", "Poster fetch failed: no IGDB match", new { releaseId = id, title, year, categoryName });
-                }
-                PosterAudit.UpdateAttemptFailure(_releases, id, "igdb", null, null, null, "no igdb match");
-                return new PosterFetchResult(false, 404, new { error = "no igdb match", title, year }, sourceId);
+                    LogActivity(sourceId, "warn", "poster_fetch", "Poster fetch failed: no game provider configured", new { releaseId = id, title, year, categoryName });
+                return new PosterFetchResult(false, 404, new { error = "no game provider configured", title, year }, sourceId);
             }
 
-            var bytes = await _igdb.DownloadCoverAsync(igdbMatch.Value.coverUrl, ct);
-            if (bytes is null || bytes.Length == 0)
+            // ── IGDB (primary) ────────────────────────────────────────────
+            if (igdbEnabled)
             {
-                if (logSingle)
+                LogProviderAttempted(sourceId, logSingle, "igdb", new { releaseId = id, query = igdbQuery, title, year });
+                var igdbMatch = await _igdb.SearchGameCoverAsync(igdbQuery, year, ct);
+                if (igdbMatch is not null)
                 {
-                    LogActivity(sourceId, "error", "poster_fetch", "Poster fetch failed: IGDB download error", new { releaseId = id, title, year, igdbMatch.Value.igdbId });
+                    var bytes = await _igdb.DownloadCoverAsync(igdbMatch.Value.coverUrl, ct);
+                    if (bytes is not null && bytes.Length > 0)
+                    {
+                        var file = $"igdb-{igdbMatch.Value.igdbId}-cover.jpg";
+                        var full = Path.Combine(PostersDirAbs, file);
+                        await System.IO.File.WriteAllBytesAsync(full, bytes, ct);
+                        _releases.SavePoster(id, igdbMatch.Value.igdbId, igdbMatch.Value.coverUrl, file);
+                        await UpdateExternalDetailsFromIgdbAsync(id, igdbMatch.Value.igdbId, ct);
+                        var hash = ComputeSha256Hex(bytes);
+                        var size = InferIgdbSize(igdbMatch.Value.coverUrl);
+                        PosterAudit.UpdateAttemptSuccess(_releases, id, "igdb", igdbMatch.Value.igdbId.ToString(CultureInfo.InvariantCulture), null, size, hash);
+                        var igdbIds = new PosterMatchIds(null, null, null, igdbMatch.Value.igdbId, null);
+                        _matchCache.Upsert(new PosterMatch(
+                            fingerprint, mediaType, normalizedTitle, year, season, episode,
+                            PosterMatchCacheService.SerializeIds(igdbIds), 0.85, "igdb", file,
+                            "igdb", igdbMatch.Value.igdbId.ToString(CultureInfo.InvariantCulture),
+                            null, size,
+                            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                            null, null));
+                        if (logSingle)
+                            LogActivity(sourceId, "info", "poster_fetch", "Poster fetched (IGDB)", new { releaseId = id, title, year, igdbId = igdbMatch.Value.igdbId, posterFile = file });
+                        return new PosterFetchResult(true, 200, new { ok = true, igdbId = igdbMatch.Value.igdbId, posterFile = file, posterUrl = $"/api/posters/release/{id}" }, sourceId);
+                    }
+                    PosterAudit.UpdateAttemptFailure(_releases, id, "igdb", igdbMatch.Value.igdbId.ToString(CultureInfo.InvariantCulture), null, null, "igdb cover download failed");
                 }
-                PosterAudit.UpdateAttemptFailure(_releases, id, "igdb", igdbMatch.Value.igdbId.ToString(CultureInfo.InvariantCulture), null, null, "igdb cover download failed");
-                return new PosterFetchResult(false, 502, new { error = "igdb cover download failed" }, sourceId);
+                else
+                {
+                    PosterAudit.UpdateAttemptFailure(_releases, id, "igdb", null, null, null, "no igdb match");
+                }
+
+                if (!rawgEnabled)
+                {
+                    if (logSingle)
+                        LogActivity(sourceId, "warn", "poster_fetch", "Poster fetch failed: no IGDB match", new { releaseId = id, title, year, categoryName });
+                    return new PosterFetchResult(false, 404, new { error = "no igdb match", title, year }, sourceId);
+                }
+                if (logSingle)
+                    LogActivity(sourceId, "info", "poster_fetch", "IGDB failed, falling back to RAWG", new { releaseId = id, title, year });
             }
 
-            var file = $"igdb-{igdbMatch.Value.igdbId}-cover.jpg";
-            var full = Path.Combine(PostersDirAbs, file);
-            await System.IO.File.WriteAllBytesAsync(full, bytes, ct);
-
-            _releases.SavePoster(id, igdbMatch.Value.igdbId, igdbMatch.Value.coverUrl, file);
-            await UpdateExternalDetailsFromIgdbAsync(id, igdbMatch.Value.igdbId, ct);
-            var hash = ComputeSha256Hex(bytes);
-            var size = InferIgdbSize(igdbMatch.Value.coverUrl);
-            PosterAudit.UpdateAttemptSuccess(_releases, id, "igdb", igdbMatch.Value.igdbId.ToString(CultureInfo.InvariantCulture), null, size, hash);
-            var igdbIds = new PosterMatchIds(null, null, null, igdbMatch.Value.igdbId, null);
-            _matchCache.Upsert(new PosterMatch(
-                fingerprint,
-                mediaType,
-                normalizedTitle,
-                year,
-                season,
-                episode,
-                PosterMatchCacheService.SerializeIds(igdbIds),
-                0.85,
-                "igdb",
-                file,
-                "igdb",
-                igdbMatch.Value.igdbId.ToString(CultureInfo.InvariantCulture),
-                null,
-                size,
-                DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                null,
-                null));
+            // ── RAWG (fallback or primary) ────────────────────────────────
+            var rawgResult = await TryFetchFromRawgAsync(id, igdbQuery, year, fingerprint, mediaType, normalizedTitle, season, episode, sourceId, logSingle, ct);
+            if (rawgResult is not null) return rawgResult;
 
             if (logSingle)
-            {
-                LogActivity(sourceId, "info", "poster_fetch", "Poster fetched (IGDB)", new
-                {
-                    releaseId = id,
-                    title,
-                    year,
-                    igdbId = igdbMatch.Value.igdbId,
-                    posterFile = file
-                });
-            }
-
-            return new PosterFetchResult(true, 200, new
-            {
-                ok = true,
-                igdbId = igdbMatch.Value.igdbId,
-                posterFile = file,
-                posterUrl = $"/api/posters/release/{id}"
-            }, sourceId);
+                LogActivity(sourceId, "warn", "poster_fetch", "Poster fetch failed: no RAWG match", new { releaseId = id, title, year, categoryName });
+            return new PosterFetchResult(false, 404, new { error = "no rawg match", title, year }, sourceId);
         }
 
         var shouldTryTvmaze = tvmazeEnabled && mediaType == "series" &&
@@ -1140,8 +1339,70 @@ public sealed class PosterFetchService
         var match = await _theAudioDb.SearchAudioAsync(query, artist, year, ct);
         if (match is null)
         {
+            // Fallback to MusicBrainz if TheAudioDB found nothing
+            LogProviderAttempted(sourceId, logSingle, ExternalProviderKeys.MusicBrainz, new { releaseId = id, query, artist, year });
+            var mbMatch = await _musicBrainz.SearchReleaseAsync(query, artist, year, ct);
+            if (mbMatch is not null && !string.IsNullOrWhiteSpace(mbMatch.CoverUrl))
+            {
+                var mbBytes = await _musicBrainz.DownloadImageAsync(mbMatch.CoverUrl, ct);
+                if (mbBytes is not null && mbBytes.Length > 0)
+                {
+                    var mbExt = InferFileExtensionFromUrl(mbMatch.CoverUrl, ".jpg");
+                    var mbFile = $"musicbrainz-{mbMatch.Mbid}{mbExt}";
+                    await SavePosterFileAsync(mbFile, mbBytes, ct);
+
+                    _releases.SavePoster(id, null, mbMatch.CoverUrl, mbFile);
+                    _releases.UpdateExternalDetails(
+                        id,
+                        ExternalProviderKeys.MusicBrainz,
+                        mbMatch.Mbid,
+                        mbMatch.Title,
+                        null,
+                        null,
+                        null,
+                        mbMatch.Released,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        mbMatch.Artist);
+
+                    var mbHash = ComputeSha256Hex(mbBytes);
+                    PosterAudit.UpdateAttemptSuccess(_releases, id, ExternalProviderKeys.MusicBrainz, mbMatch.Mbid, null, "original", mbHash);
+                    _matchCache.Upsert(new PosterMatch(
+                        context.Fingerprint,
+                        context.MediaType,
+                        context.NormalizedTitle,
+                        context.Year,
+                        context.Season,
+                        context.Episode,
+                        null,
+                        0.60,
+                        ExternalProviderKeys.MusicBrainz,
+                        mbFile,
+                        ExternalProviderKeys.MusicBrainz,
+                        mbMatch.Mbid,
+                        null,
+                        "original",
+                        DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                        DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                        null,
+                        null));
+
+                    return new PosterFetchResult(true, 200, new
+                    {
+                        ok = true,
+                        provider = ExternalProviderKeys.MusicBrainz,
+                        providerId = mbMatch.Mbid,
+                        posterFile = mbFile,
+                        posterUrl = $"/api/posters/release/{id}"
+                    }, sourceId);
+                }
+            }
+
             if (logSingle)
-                LogActivity(sourceId, "warn", "poster_fetch", "Poster fetch failed: no TheAudioDB match", new { releaseId = id, title, year });
+                LogActivity(sourceId, "warn", "poster_fetch", "Poster fetch failed: no TheAudioDB or MusicBrainz match", new { releaseId = id, title, year });
 
             PosterAudit.UpdateAttemptFailure(_releases, id, ExternalProviderKeys.TheAudioDb, null, null, null, "no theaudiodb match");
             return new PosterFetchResult(false, 404, new { error = "no theaudiodb match", title, year }, sourceId);
@@ -1230,23 +1491,40 @@ public sealed class PosterFetchService
         CancellationToken ct)
     {
         var id = context.ReleaseId;
-        var title = context.Title;
+        var rawTitle = context.Title;
         var year = context.Year;
         var sourceId = context.SourceId;
         var logSingle = context.LogSingle;
 
-        var isbn = TryExtractIsbn(title);
-        LogProviderAttempted(sourceId, logSingle, ExternalProviderKeys.GoogleBooks, new { releaseId = id, query = title, isbn });
-        var match = await _googleBooks.SearchBookAsync(title, isbn, ct);
+        // Clean the release title_clean before querying metadata providers
+        var (author, title) = ParseBookQuery(rawTitle);
+        var isbn = TryExtractIsbn(rawTitle);
+
+        LogProviderAttempted(sourceId, logSingle, ExternalProviderKeys.GoogleBooks, new { releaseId = id, query = title, author, isbn });
+        var match = await _googleBooks.SearchBookAsync(title, isbn, ct, author);
         if (match is null)
         {
             PosterAudit.UpdateAttemptFailure(_releases, id, ExternalProviderKeys.GoogleBooks, null, null, null, "no google books match");
+
+            // Open Library fallback
+            LogProviderAttempted(sourceId, logSingle, ExternalProviderKeys.OpenLibrary, new { releaseId = id, query = title, isbn });
+            var olFallback = await TryOpenLibraryBookFallbackAsync(context, title, isbn, ct);
+            if (olFallback is not null)
+                return olFallback;
+
             return new PosterFetchResult(false, 404, new { error = "no google books match", title, year }, sourceId);
         }
 
         if (string.IsNullOrWhiteSpace(match.ThumbnailUrl))
         {
             PosterAudit.UpdateAttemptFailure(_releases, id, ExternalProviderKeys.GoogleBooks, match.VolumeId, null, null, "missing google books image");
+
+            // Open Library fallback
+            LogProviderAttempted(sourceId, logSingle, ExternalProviderKeys.OpenLibrary, new { releaseId = id, query = title, isbn });
+            var olFallback = await TryOpenLibraryBookFallbackAsync(context, title, isbn, ct);
+            if (olFallback is not null)
+                return olFallback;
+
             return new PosterFetchResult(false, 404, new { error = "missing google books image", title, year }, sourceId);
         }
 
@@ -1305,6 +1583,130 @@ public sealed class PosterFetchService
             ok = true,
             provider = ExternalProviderKeys.GoogleBooks,
             providerId = match.VolumeId,
+            posterFile = file,
+            posterUrl = $"/api/posters/release/{id}"
+        }, sourceId);
+    }
+
+    private async Task<PosterFetchResult?> TryOpenLibraryBookFallbackAsync(
+        PosterFetchRoutingContext context,
+        string title,
+        string? isbn,
+        CancellationToken ct)
+    {
+        var olMatch = await _openLibrary.SearchBookAsync(title, isbn, ct);
+        if (olMatch is null || string.IsNullOrWhiteSpace(olMatch.CoverUrl))
+            return null;
+
+        var olBytes = await _openLibrary.DownloadImageAsync(olMatch.CoverUrl, ct);
+        if (olBytes is null || olBytes.Length == 0)
+            return null;
+
+        var olFile = $"openlibrary-{SanitizeForFile(olMatch.WorkId)}.jpg";
+        await SavePosterFileAsync(olFile, olBytes, ct);
+
+        _releases.SavePoster(context.ReleaseId, null, olMatch.CoverUrl, olFile);
+        _releases.UpdateExternalDetails(
+            context.ReleaseId,
+            ExternalProviderKeys.OpenLibrary,
+            olMatch.WorkId,
+            olMatch.Title,
+            null, null, null,
+            olMatch.PublishedYear,
+            null, null, null, null, null, null);
+
+        var hash = ComputeSha256Hex(olBytes);
+        PosterAudit.UpdateAttemptSuccess(_releases, context.ReleaseId, ExternalProviderKeys.OpenLibrary,
+            olMatch.WorkId, null, "cover", hash);
+
+        _matchCache.Upsert(new PosterMatch(
+            context.Fingerprint,
+            context.MediaType,
+            context.NormalizedTitle,
+            context.Year,
+            context.Season,
+            context.Episode,
+            null,
+            0.60,
+            ExternalProviderKeys.OpenLibrary,
+            olFile,
+            ExternalProviderKeys.OpenLibrary,
+            olMatch.WorkId,
+            null,
+            "cover",
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            null,
+            null));
+
+        return new PosterFetchResult(true, 200, new
+        {
+            ok = true,
+            provider = ExternalProviderKeys.OpenLibrary,
+            providerId = olMatch.WorkId,
+            posterFile = olFile,
+            posterUrl = $"/api/posters/release/{context.ReleaseId}"
+        }, context.SourceId);
+    }
+
+    private async Task<PosterFetchResult?> TryFetchFromRawgAsync(
+        long id,
+        string query,
+        int? year,
+        string fingerprint,
+        string mediaType,
+        string normalizedTitle,
+        int? season,
+        int? episode,
+        long? sourceId,
+        bool logSingle,
+        CancellationToken ct)
+    {
+        LogProviderAttempted(sourceId, logSingle, ExternalProviderKeys.Rawg, new { releaseId = id, query, year });
+        var rawgMatch = await _rawg.SearchGameAsync(query, year, ct);
+        if (rawgMatch is null || string.IsNullOrWhiteSpace(rawgMatch.Value.coverUrl))
+        {
+            PosterAudit.UpdateAttemptFailure(_releases, id, "rawg", null, null, null, "no rawg match");
+            return null;
+        }
+
+        var bytes = await _rawg.DownloadCoverAsync(rawgMatch.Value.coverUrl, ct);
+        if (bytes is null || bytes.Length == 0)
+        {
+            PosterAudit.UpdateAttemptFailure(_releases, id, "rawg", rawgMatch.Value.rawgId.ToString(CultureInfo.InvariantCulture), null, null, "rawg cover download failed");
+            return null;
+        }
+
+        var file = $"rawg-{rawgMatch.Value.rawgId}-cover.jpg";
+        var full = Path.Combine(PostersDirAbs, file);
+        await System.IO.File.WriteAllBytesAsync(full, bytes, ct);
+
+        _releases.SavePoster(id, null, rawgMatch.Value.coverUrl, file);
+        _releases.UpdateExternalDetails(id, ExternalProviderKeys.Rawg,
+            rawgMatch.Value.rawgId.ToString(CultureInfo.InvariantCulture),
+            rawgMatch.Value.title, null, null, null,
+            rawgMatch.Value.year?.ToString(CultureInfo.InvariantCulture),
+            null, null, null, null, null, null);
+
+        var hash = ComputeSha256Hex(bytes);
+        PosterAudit.UpdateAttemptSuccess(_releases, id, "rawg", rawgMatch.Value.rawgId.ToString(CultureInfo.InvariantCulture), null, "cover", hash);
+
+        _matchCache.Upsert(new PosterMatch(
+            fingerprint, mediaType, normalizedTitle, year, season, episode,
+            null, 0.80, ExternalProviderKeys.Rawg, file,
+            ExternalProviderKeys.Rawg, rawgMatch.Value.rawgId.ToString(CultureInfo.InvariantCulture),
+            null, "cover",
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            null, null));
+
+        if (logSingle)
+            LogActivity(sourceId, "info", "poster_fetch", "Poster fetched (RAWG)", new { releaseId = id, query, year, rawgId = rawgMatch.Value.rawgId, posterFile = file });
+
+        return new PosterFetchResult(true, 200, new
+        {
+            ok = true,
+            rawgId = rawgMatch.Value.rawgId,
             posterFile = file,
             posterUrl = $"/api/posters/release/{id}"
         }, sourceId);
@@ -1940,20 +2342,161 @@ public sealed class PosterFetchService
         if (string.IsNullOrWhiteSpace(raw))
             return (null, "");
 
-        var separators = new[] { " - ", " – ", " — ", " | ", " : " };
+        // Pre-clean: strip format/scene noise before separator detection
+        var cleaned = CleanAudioTitle(raw);
+
+        var separators = new[] { " - ", " – ", " — ", " | ", " : ", ", " };
         foreach (var separator in separators)
         {
-            var idx = raw.IndexOf(separator, StringComparison.Ordinal);
-            if (idx <= 0 || idx >= raw.Length - separator.Length)
+            var idx = cleaned.IndexOf(separator, StringComparison.Ordinal);
+            if (idx <= 0 || idx >= cleaned.Length - separator.Length)
                 continue;
 
-            var artist = raw[..idx].Trim();
-            var title = raw[(idx + separator.Length)..].Trim();
+            var artist = cleaned[..idx].Trim();
+            var title = cleaned[(idx + separator.Length)..].Trim();
             if (!string.IsNullOrWhiteSpace(artist) && !string.IsNullOrWhiteSpace(title))
                 return (artist, title);
         }
 
-        return (null, raw);
+        // Compact hyphen separator: "Artist-Album" (no spaces around hyphen).
+        // Only split when the left part is a single word (most common scene/web style).
+        // Example: "Alkpote-Les Ultimes Marches" → ("Alkpote", "Les Ultimes Marches")
+        var compactHyphen = cleaned.IndexOf('-');
+        if (compactHyphen > 0 && compactHyphen < cleaned.Length - 1)
+        {
+            var leftPart = cleaned[..compactHyphen].Trim();
+            var rightPart = cleaned[(compactHyphen + 1)..].Trim();
+            if (!leftPart.Contains(' ') && !string.IsNullOrWhiteSpace(rightPart) && rightPart.Length > 2)
+                return (leftPart, rightPart);
+        }
+
+        return (null, cleaned);
+    }
+
+    /// <summary>
+    /// Strips scene-style noise from audio release names:
+    /// dot-separated words, format/quality suffixes, embedded years, Remastered tags, release group tags.
+    /// Example: "ACDC.Black.Ice.2008.FLAC[16bit.44.1kHz]-RmKv" → "ACDC Black Ice"
+    /// Example: "Alkpote-Les Ultimes Marches-16BIT-44kHz-WEB" → "Alkpote-Les Ultimes Marches"
+    /// </summary>
+    private static string CleanAudioTitle(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return input ?? "";
+
+        var s = input.Trim();
+        var wasSceneName = false;
+
+        // 1. Dot-to-space for scene-style names (≥3 dots AND ≤1 space)
+        if (s.Count(c => c == '.') >= 3 && s.Count(c => c == ' ') <= 1)
+        {
+            s = s.Replace('.', ' ').Trim();
+            wasSceneName = true;
+        }
+
+        // 1b. Strip compact hyphenated format/quality/source chain (no spaces around hyphens).
+        //     Examples: "-16BIT-44kHz-WEB-FLAC", "-24BIT-96KHZ-CD", "-FLAC-RmKv"
+        //     Trigger on an unambiguous audio technical marker preceded by a hyphen.
+        s = Regex.Replace(s,
+            @"-(?:\d+(?:[.,]\d+)?[Kk][Hh][Zz]|\d+BIT|FLAC|MP3|AAC|ALAC|OGG|SACD|WEB|VINYL).*$",
+            "", RegexOptions.IgnoreCase).Trim();
+
+        // 2. Strip audio format/quality suffix (truncates at first space/bracket marker)
+        s = StripAudioFormatSuffix(s);
+
+        // 3. Strip trailing year: "Black Ice 2008" → "Black Ice"
+        s = Regex.Replace(s, @"\s*[\(\[]?\s*\b(19|20)\d{2}\b\s*[\)\]]?\s*$", "").Trim();
+
+        // 4. Strip "Remastered" suffix
+        s = Regex.Replace(s, @"\s+Remaster(?:ed|ised?)?\s*\d{0,4}\s*$", "", RegexOptions.IgnoreCase).Trim();
+
+        // 5. Strip scene release group tag (e.g. "-RmKv", "-NOTAG") — only for scene-style names
+        //    and only when no standard artist/title separator is present
+        if (wasSceneName &&
+            !s.Contains(" - ", StringComparison.Ordinal) &&
+            !s.Contains(" – ", StringComparison.Ordinal) &&
+            !s.Contains(" — ", StringComparison.Ordinal))
+        {
+            s = Regex.Replace(s, @"\s*-[A-Za-z0-9]{4,12}\s*$", "").Trim();
+        }
+
+        // 5b. Strip trailing ALL-CAPS hyphenated release group tag (e.g. "-EICHBAUM", "-NOTAG")
+        //     regardless of scene-name detection — ALL-CAPS ≥ 4 chars after a hyphen = group tag
+        s = Regex.Replace(s, @"-[A-Z][A-Z0-9]{3,11}\s*$", "").Trim();
+
+        return s;
+    }
+
+    private static string StripAudioFormatSuffix(string s)
+    {
+        // Truncate at the earliest audio format marker found
+        var markers = new[]
+        {
+            " FLAC", "[FLAC", "(FLAC", ".FLAC",
+            " MP3",  "[MP3",  "(MP3",  ".MP3",
+            " WEB-", "[WEB-", ".WEB-",
+            " SACD", " AAC",  " ALAC", " OGG",
+            "[16bit", "(16bit", ".16bit",
+            "[24bit", "(24bit", ".24bit",
+            " 320kbps", " 256kbps", " 192kbps", " 128kbps",
+        };
+
+        var earliest = -1;
+        foreach (var marker in markers)
+        {
+            var idx = s.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (idx > 0 && (earliest < 0 || idx < earliest))
+                earliest = idx;
+        }
+
+        return earliest > 0 ? s[..earliest].Trim() : s;
+    }
+
+    /// <summary>
+    /// Cleans a book release title_clean for use as a metadata search query.
+    /// Returns (author, cleanTitle) where author may be null if no "Author - Title" pattern found.
+    /// Strips: format extensions (epub/pdf/mobi), language markers (FRENCH/FR),
+    /// release group tags (-NOTAG/-RiD), tome/volume markers (T1/Tome 2), trailing year.
+    /// </summary>
+    private static (string? author, string title) ParseBookQuery(string input)
+    {
+        var s = (input ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(s))
+            return (null, s);
+
+        // 1. Strip format extensions (whole-word, case-insensitive)
+        s = Regex.Replace(s, @"\b(epub|pdf|mobi|azw3?|cbz|cbr|djvu|lit)\b", " ", RegexOptions.IgnoreCase);
+
+        // 2. Strip language markers (whole-word)
+        s = Regex.Replace(s, @"\b(FRENCH|FRANCAIS|ANGLAIS|ENGLISH|VOSTFR|VF|VO)\b", " ", RegexOptions.IgnoreCase);
+
+        // 3. Strip release group tags attached with hyphen at end: "-NOTAG", "-RiD", etc.
+        //    Match: hyphen + 2-12 alphanums at end-of-string
+        s = Regex.Replace(s, @"-[A-Za-z][A-Za-z0-9]{1,11}\s*$", "");
+
+        // 4. Strip tome/volume markers
+        //    T1, T01..T99 as standalone token (not part of a longer word)
+        s = Regex.Replace(s, @"(?<![A-Za-z])\bT\d{1,2}\b(?![A-Za-z])", " ", RegexOptions.IgnoreCase);
+        //    "Tome 3", "Vol 2", "Volume 12"
+        s = Regex.Replace(s, @"\b(Tome|Vol\.?|Volume)\s*\d+\b", " ", RegexOptions.IgnoreCase);
+
+        // 5. Strip trailing year
+        s = Regex.Replace(s, @"\s*[\(\[]?\s*\b(19|20)\d{2}\b\s*[\)\]]?\s*$", "");
+
+        // 6. Collapse multiple spaces
+        s = Regex.Replace(s, @"\s{2,}", " ").Trim();
+
+        // 7. Split "Author - Title" on " - " separator → use title, keep author as hint
+        var dashIdx = s.IndexOf(" - ", StringComparison.Ordinal);
+        if (dashIdx > 2 && dashIdx < s.Length - 3)
+        {
+            var leftPart = s[..dashIdx].Trim();
+            var rightPart = s[(dashIdx + 3)..].Trim();
+            if (!string.IsNullOrWhiteSpace(leftPart) && !string.IsNullOrWhiteSpace(rightPart))
+                return (leftPart, rightPart);
+        }
+
+        return (null, s);
     }
 
     private static string? TryExtractIsbn(string input)

@@ -8,6 +8,7 @@ using Feedarr.Api.Dtos.System;
 using Feedarr.Api.Options;
 using Feedarr.Api.Services;
 using Feedarr.Api.Services.Backup;
+using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services.Diagnostics;
 using Feedarr.Api.Services.Security;
 using Microsoft.Extensions.Caching.Memory;
@@ -622,7 +623,7 @@ public sealed class SystemController : ControllerBase
     [HttpGet("stats/releases")]
     public IActionResult StatsReleases()
     {
-        const string cacheKey = "system:stats:releases:v1";
+        const string cacheKey = "system:stats:releases:v2";
         if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
             return Ok(cached);
 
@@ -639,11 +640,26 @@ public sealed class SystemController : ControllerBase
             """);
         var missingPoster = releasesCount - withPoster;
 
-        var releasesByCategory = conn.Query<(int categoryId, int count)>(
-            @"SELECT category_id, COUNT(*) as count
-              FROM releases WHERE category_id IS NOT NULL
-              GROUP BY category_id ORDER BY count DESC LIMIT 15"
-        ).Select(r => new { categoryId = r.categoryId, count = r.count }).ToList();
+        var releasesByCategory = conn.Query<(string unifiedCategory, int count)>(
+            """
+            SELECT TRIM(unified_category) as unifiedCategory, COUNT(*) as count
+            FROM releases
+            WHERE unified_category IS NOT NULL
+              AND TRIM(unified_category) <> ''
+            GROUP BY TRIM(unified_category)
+            ORDER BY count DESC
+            LIMIT 15
+            """
+        ).Select(r =>
+        {
+            var key = (r.unifiedCategory ?? string.Empty).Trim();
+            return new
+            {
+                key,
+                label = ToUnifiedCategoryLabel(key),
+                count = r.count
+            };
+        }).ToList();
 
         var sizeDistribution = conn.Query<(string range, int count)>(
             @"SELECT
@@ -677,13 +693,25 @@ public sealed class SystemController : ControllerBase
               ORDER BY MIN(COALESCE(seeders, -1))"
         ).Select(r => new { range = r.range, count = r.count }).ToList();
 
-        var topGrabbed = conn.Query<(string title, int grabs, int? seeders, long? sizeBytes, int? categoryId)>(
-            @"SELECT title, grabs, seeders, size_bytes as sizeBytes, category_id as categoryId
+        var topGrabbed = conn.Query<(string title, int grabs, int? seeders, long? sizeBytes, string? unifiedCategory)>(
+            @"SELECT title, grabs, seeders, size_bytes as sizeBytes, unified_category as unifiedCategory
               FROM releases
               WHERE grabs IS NOT NULL AND grabs > 0
               ORDER BY grabs DESC
               LIMIT 20"
-        ).Select(r => new { title = r.title, grabs = r.grabs, seeders = r.seeders ?? 0, sizeBytes = r.sizeBytes ?? 0, categoryId = r.categoryId ?? 0 }).ToList();
+        ).Select(r =>
+        {
+            var key = (r.unifiedCategory ?? string.Empty).Trim();
+            return new
+            {
+                title = r.title,
+                grabs = r.grabs,
+                seeders = r.seeders ?? 0,
+                sizeBytes = r.sizeBytes ?? 0,
+                categoryKey = key,
+                categoryLabel = ToUnifiedCategoryLabel(key)
+            };
+        }).ToList();
 
         var payload = new
         {
@@ -693,6 +721,20 @@ public sealed class SystemController : ControllerBase
 
         _cache.Set(cacheKey, payload, StatsCacheDuration);
         return Ok(payload);
+    }
+
+    private static string ToUnifiedCategoryLabel(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            return "Autre";
+
+        if (UnifiedCategoryMappings.TryParse(key, out var parsed))
+            return UnifiedCategoryMappings.ToLabel(parsed);
+
+        if (UnifiedCategoryMappings.TryParseKey(key, out var parsedFromKey))
+            return UnifiedCategoryMappings.ToLabel(parsedFromKey);
+
+        return key;
     }
 
     // GET /api/system/stats - Extended statistics for dashboard (legacy)

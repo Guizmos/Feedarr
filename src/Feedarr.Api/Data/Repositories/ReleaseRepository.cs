@@ -132,16 +132,22 @@ public sealed class ReleaseRepository
                     categoryIds.Add(it.CategoryId.Value);
 
                 var distinctIds = categoryIds.Distinct().ToList();
+                var normalizedIds = CategoryNormalizationService.NormalizeCategoryIds(distinctIds).ToList();
                 var (stdCategoryId, specCategoryId) = UnifiedCategoryResolver.ResolveStdSpec(
                     it.StdCategoryId,
                     it.SpecCategoryId,
-                    distinctIds);
+                    normalizedIds);
 
                 var primaryCategoryId = it.CategoryId ?? specCategoryId ?? stdCategoryId;
-                var unifiedCategory = ResolveUnifiedCategoryFromMap(categoryMap, distinctIds, primaryCategoryId);
+                var unifiedCategory = ResolveUnifiedCategoryFromMap(categoryMap, normalizedIds, primaryCategoryId);
                 if (unifiedCategory == UnifiedCategory.Autre)
                 {
-                    unifiedCategory = _resolver.Resolve(indexerKey, stdCategoryId, specCategoryId, distinctIds);
+                    unifiedCategory = _resolver.Resolve(indexerKey, stdCategoryId, specCategoryId, normalizedIds);
+                }
+                else
+                {
+                    // Si un enfant stdId (ex: 5070→Anime) est plus spécifique que la map (ex: 105000→Serie)
+                    unifiedCategory = UnifiedCategoryResolver.ApplyStdOverride(unifiedCategory, stdCategoryId);
                 }
                 var parsed = _parser.Parse(it.Title, unifiedCategory);
                 var stableGuid = BuildStableGuid(it, parsed.TitleClean);
@@ -185,13 +191,16 @@ public sealed class ReleaseRepository
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var existing = guidList.Count == 0
-            ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            : conn.Query<string>(
-                    "SELECT guid FROM releases WHERE source_id = @sid AND guid IN @guids",
-                    new { sid = sourceId, guids = guidList },
-                    tx)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // Chunked query pour éviter la limite SQLite ~999 items par clause IN
+        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var chunk in SqlChunkHelper.Chunk(guidList, 500))
+        {
+            var rows = conn.Query<string>(
+                "SELECT guid FROM releases WHERE source_id = @sid AND guid IN @guids",
+                new { sid = sourceId, guids = chunk },
+                tx);
+            foreach (var g in rows) existing.Add(g);
+        }
 
         var insertedNew = guidList.Count - existing.Count;
 
@@ -953,15 +962,24 @@ public sealed class ReleaseRepository
 
     private UnifiedCategory ResolveUnifiedCategory(RenameSeedRow seed)
     {
-        if (UnifiedCategoryMappings.TryParse(seed.UnifiedCategory, out var unifiedCategory) &&
-            unifiedCategory != UnifiedCategory.Autre)
+        var categoryIds   = ParseCategoryIds(seed.CategoryIds, seed.CategoryId);
+        var normalizedIds = CategoryNormalizationService.NormalizeCategoryIds(categoryIds).ToList();
+        var (stdId, specId) = UnifiedCategoryResolver.ResolveStdSpec(
+            seed.StdCategoryId, seed.SpecCategoryId, normalizedIds);
+
+        // Pipeline complet : même logique que UpsertMany (sans catMap — pas de source_categories ici)
+        var fromResolver = _resolver.Resolve(null, stdId, specId, normalizedIds);
+        if (fromResolver != UnifiedCategory.Autre)
+            return fromResolver;
+
+        // Si le resolver ne trouve rien, appliquer l'override std sur la catégorie stockée
+        if (UnifiedCategoryMappings.TryParse(seed.UnifiedCategory, out var existing) &&
+            existing != UnifiedCategory.Autre)
         {
-            return unifiedCategory;
+            return UnifiedCategoryResolver.ApplyStdOverride(existing, stdId);
         }
 
-        var categoryIds = ParseCategoryIds(seed.CategoryIds, seed.CategoryId);
-        var (stdId, specId) = UnifiedCategoryResolver.ResolveStdSpec(seed.StdCategoryId, seed.SpecCategoryId, categoryIds);
-        return _resolver.Resolve(null, stdId, specId, categoryIds);
+        return UnifiedCategory.Autre;
     }
 
     private static List<int> ParseCategoryIds(string? csv, int? primaryId)
@@ -1951,6 +1969,178 @@ LEFT JOIN media_entities me
 
         tx.Commit();
         return deleted;
+    }
+
+    /// <summary>
+    /// Recalcule unified_category pour toutes les releases existantes en appliquant
+    /// la logique courante (normalisation + ApplyStdOverride + resolver).
+    /// Pagination par curseur (id > lastId) — O(n log n) au lieu de O(n²) avec OFFSET.
+    /// Marque needs_rebind=1 pour les releases dont la catégorie a changé.
+    /// Retourne (processed, updated, markedRebind).
+    /// </summary>
+    public (int processed, int updated, int markedRebind) ReprocessCategories()
+    {
+        using var conn = _db.Open();
+
+        // Sources : id → indexerKey (nom)
+        var sources = conn.Query("SELECT id, name FROM sources")
+            .ToDictionary(r => (long)r.id, r => (string?)r.name);
+
+        // source_categories groupées par source_id
+        var allSrcCats = conn.Query(
+            "SELECT source_id, cat_id, unified_key, name FROM source_categories")
+            .GroupBy(r => (long)r.source_id)
+            .ToDictionary(
+                g => g.Key,
+                g => g.ToDictionary(
+                    r => (int)r.cat_id,
+                    r => (key: (string)r.unified_key, label: (string)r.name)));
+
+        var processed   = 0;
+        var updated     = 0;
+        var markedRebind = 0;
+        const int batchSize = 500;
+        long lastId = 0;
+
+        while (true)
+        {
+            // Curseur id > lastId : O(n log n) grâce à l'index PRIMARY KEY
+            var rows = conn.Query(
+                "SELECT id, source_id, category_ids, unified_category FROM releases WHERE id > @lastId ORDER BY id LIMIT @limit",
+                new { lastId, limit = batchSize }).ToList();
+
+            if (rows.Count == 0) break;
+            processed += rows.Count;
+
+            var changes = new List<(long id, string cat)>();
+            foreach (var r in rows)
+            {
+                var ids = ((string?)r.category_ids ?? "")
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(s => int.TryParse(s.Trim(), out var v) ? (int?)v : null)
+                    .Where(v => v.HasValue)
+                    .Select(v => v!.Value)
+                    .ToList();
+
+                if (ids.Count == 0) continue;
+
+                var srcId         = (long)r.source_id;
+                var normalizedIds = CategoryNormalizationService.NormalizeCategoryIds(ids).ToList();
+                var (stdId, specId) = UnifiedCategoryResolver.ResolveStdSpec(null, null, normalizedIds);
+                var catMap  = allSrcCats.GetValueOrDefault(srcId);
+                var idxKey  = sources.GetValueOrDefault(srcId);
+
+                var unified = ResolveUnifiedCategoryFromMap(catMap, normalizedIds, null);
+                if (unified == UnifiedCategory.Autre)
+                    unified = _resolver.Resolve(idxKey, stdId, specId, normalizedIds);
+                else
+                    unified = UnifiedCategoryResolver.ApplyStdOverride(unified, stdId);
+
+                var newCat = unified.ToString();
+                if (!string.Equals(newCat, (string?)r.unified_category, StringComparison.OrdinalIgnoreCase))
+                    changes.Add(((long)r.id, newCat));
+            }
+
+            if (changes.Count > 0)
+            {
+                using var tx = conn.BeginTransaction();
+                foreach (var (id, cat) in changes)
+                    // needs_rebind=1 : entity_id doit être recalculé via /api/maintenance/rebind-entities
+                    conn.Execute(
+                        "UPDATE releases SET unified_category = @cat, needs_rebind = 1 WHERE id = @id",
+                        new { id, cat }, tx);
+                tx.Commit();
+                updated      += changes.Count;
+                markedRebind += changes.Count;
+            }
+
+            lastId = (long)rows[^1].id;
+            if (rows.Count < batchSize) break;
+        }
+
+        return (processed, updated, markedRebind);
+    }
+
+    /// <summary>
+    /// Recalcule entity_id pour les releases marquées needs_rebind=1.
+    /// Upsert media_entity selon (unified_category, title_clean, year) puis rebind.
+    /// Retourne (processed, rebound).
+    /// </summary>
+    public (int processed, int rebound) RebindEntities(int batchSize = 200)
+    {
+        using var conn = _db.Open();
+        var now   = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var limit = Math.Clamp(batchSize, 1, 1000);
+        var processed = 0;
+        var rebound   = 0;
+        long lastId   = 0;
+
+        while (true)
+        {
+            var rows = conn.Query<(long Id, string? UnifiedCategory, string? TitleClean, int? Year)>(
+                """
+                SELECT id AS Id, unified_category AS UnifiedCategory, title_clean AS TitleClean, year AS Year
+                FROM releases
+                WHERE needs_rebind = 1
+                  AND id > @lastId
+                  AND unified_category IS NOT NULL AND unified_category <> ''
+                  AND title_clean IS NOT NULL AND title_clean <> ''
+                ORDER BY id
+                LIMIT @limit
+                """,
+                new { lastId, limit }
+            ).AsList();
+
+            if (rows.Count == 0) break;
+            processed += rows.Count;
+
+            var ids = rows.Select(r => r.Id).ToList();
+
+            using var tx = conn.BeginTransaction();
+
+            // 1. Upsert media_entities pour les catégories recalculées
+            conn.Execute(
+                """
+                INSERT INTO media_entities(
+                  unified_category, title_clean, year,
+                  created_at_ts, updated_at_ts
+                )
+                SELECT DISTINCT
+                  r.unified_category, r.title_clean, r.year,
+                  @now, @now
+                FROM releases r
+                WHERE r.id IN @ids
+                ON CONFLICT(unified_category, title_clean, IFNULL(year, -1)) DO UPDATE SET
+                  updated_at_ts = excluded.updated_at_ts;
+                """,
+                new { ids, now }, tx
+            );
+
+            // 2. Rebind entity_id + clear flag
+            conn.Execute(
+                """
+                UPDATE releases
+                SET entity_id = (
+                    SELECT me.id
+                    FROM media_entities me
+                    WHERE me.unified_category = releases.unified_category
+                      AND me.title_clean = releases.title_clean
+                      AND IFNULL(me.year, -1) = IFNULL(releases.year, -1)
+                    LIMIT 1
+                ),
+                needs_rebind = 0
+                WHERE id IN @ids;
+                """,
+                new { ids }, tx
+            );
+
+            tx.Commit();
+            rebound += rows.Count;
+            lastId   = rows[^1].Id;
+            if (rows.Count < limit) break;
+        }
+
+        return (processed, rebound);
     }
 
 }

@@ -13,7 +13,7 @@ public static class UnifiedCategoryMappings
             UnifiedCategory.Emission => "shows",
             UnifiedCategory.Spectacle => "spectacle",
             UnifiedCategory.JeuWindows => "games",
-            UnifiedCategory.Animation => "anime",
+            UnifiedCategory.Animation => "animation",
             UnifiedCategory.Anime => "anime",
             UnifiedCategory.Audio => "audio",
             UnifiedCategory.Book => "books",
@@ -92,6 +92,9 @@ public static class UnifiedCategoryMappings
                 return true;
             case "games":
                 category = UnifiedCategory.JeuWindows;
+                return true;
+            case "animation":
+                category = UnifiedCategory.Animation;
                 return true;
             case "anime":
                 category = UnifiedCategory.Anime;

@@ -23,6 +23,7 @@ public sealed class ExternalProviderInstanceRepository
     private readonly ExternalProviderRegistry _registry;
     private readonly ILogger<ExternalProviderInstanceRepository> _logger;
     private readonly SemaphoreSlim _legacyProjectionLock = new(1, 1);
+    private readonly SemaphoreSlim _seedFreeLock = new(1, 1);
 
     public ExternalProviderInstanceRepository(
         Db db,
@@ -299,6 +300,74 @@ public sealed class ExternalProviderInstanceRepository
         finally
         {
             _legacyProjectionLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Auto-creates instances for providers that require no API key (or have a known public key).
+    /// Idempotent — only inserts if no instance already exists for that provider key.
+    /// </summary>
+    public void SeedFreeProviders()
+    {
+        _seedFreeLock.Wait();
+        try
+        {
+            using var conn = _db.Open();
+            using var tx = conn.BeginTransaction();
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+            // Providers seeded automatically: key → default auth (empty = no auth needed)
+            var freeProviders = new (string Key, Dictionary<string, string?> Auth)[]
+            {
+                (ExternalProviderKeys.Tvmaze,     new(StringComparer.OrdinalIgnoreCase)),
+                (ExternalProviderKeys.Jikan,      new(StringComparer.OrdinalIgnoreCase)),
+                (ExternalProviderKeys.MusicBrainz, new(StringComparer.OrdinalIgnoreCase)),
+                (ExternalProviderKeys.GoogleBooks,  new(StringComparer.OrdinalIgnoreCase)),
+                (ExternalProviderKeys.OpenLibrary,  new(StringComparer.OrdinalIgnoreCase)),
+                (ExternalProviderKeys.TheAudioDb,   new(StringComparer.OrdinalIgnoreCase) { ["apiKey"] = "123" }),
+            };
+
+            foreach (var (providerKey, defaultAuth) in freeProviders)
+            {
+                if (!_registry.TryGet(providerKey, out var definition))
+                    continue;
+
+                var exists = conn.ExecuteScalar<long>(
+                    "SELECT COUNT(1) FROM external_provider_instances WHERE LOWER(provider_key) = LOWER(@providerKey);",
+                    new { providerKey }, tx);
+
+                if (exists > 0)
+                    continue;
+
+                var auth = PrepareAuthForPersist(
+                    definition,
+                    requestedAuth: defaultAuth,
+                    existingAuth: new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase),
+                    isCreate: true);
+
+                conn.Execute(
+                    """
+                    INSERT INTO external_provider_instances(
+                      instance_id, provider_key, display_name, enabled,
+                      base_url, auth_json, options_json, created_at_ts, updated_at_ts
+                    )
+                    VALUES (@instanceId, @providerKey, NULL, 1, NULL, @authJson, '{}', @now, @now);
+                    """,
+                    new
+                    {
+                        instanceId = Guid.NewGuid().ToString(),
+                        providerKey,
+                        authJson = SerializeAuth(auth),
+                        now
+                    },
+                    tx);
+            }
+
+            tx.Commit();
+        }
+        finally
+        {
+            _seedFreeLock.Release();
         }
     }
 

@@ -6,4 +6,6 @@ public sealed class ProviderCapsRequestDto
     public string? TorznabUrl { get; set; }
     public string? IndexerName { get; set; }
     public string? IndexerId { get; set; }
+    public bool IncludeStandardCatalog { get; set; } = true;
+    public bool IncludeSpecific { get; set; } = true;
 }

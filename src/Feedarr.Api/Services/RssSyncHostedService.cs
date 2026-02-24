@@ -332,6 +332,28 @@ public sealed class RssSyncHostedService : BackgroundService
                         }
 
                         var intersects = ids.Any(selectedSet.Contains);
+
+                        // Safety net: if the item matches ONLY via a round-thousand standard parent
+                        // category (e.g. 5000 = TV, 7000 = Books) and it also has more specific
+                        // sub-categories that are NOT in selectedSet, reject the item.
+                        // This prevents "slip-through" where selecting 5000 (parent) accidentally
+                        // accepts items from sub-cats like 5060/102581 that were not selected.
+                        if (intersects)
+                        {
+                            var matchedViaParentOnly = ids
+                                .Where(selectedSet.Contains)
+                                .All(id => id is >= 1000 and <= 8999 && id % 1000 == 0);
+
+                            if (matchedViaParentOnly)
+                            {
+                                var specificIds = ids
+                                    .Where(id => !(id is >= 1000 and <= 8999 && id % 1000 == 0))
+                                    .ToList();
+                                if (specificIds.Count > 0 && !specificIds.Any(selectedSet.Contains))
+                                    intersects = false;
+                            }
+                        }
+
                         var matchesUnified = false;
                         if (!intersects && selectedUnifiedKeys.Count > 0)
                         {

@@ -942,16 +942,18 @@ function ReleasesPanel({ refreshKey }) {
   if (error) return <div className="card" style={{ color: "red", fontWeight: 700 }}>Erreur: {error}</div>;
   if (!data) return <PanelLoading />;
 
-  // Aggregate categories by main name for donut
-  const catAgg = {};
-  (data.releasesByCategory || []).forEach(c => {
-    const info = getCategoryInfo(c.categoryId);
-    if (!catAgg[info.name]) catAgg[info.name] = { label: info.name, value: 0, color: info.color };
-    catAgg[info.name].value += c.count;
-  });
-  const donutData = Object.values(catAgg)
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 10);
+  const releaseCategoryPalette = ["#3b82f6", "#22c55e", "#f472b6", "#f59e0b", "#a855f7", "#06b6d4", "#ef4444", "#14b8a6", "#8b5cf6", "#94a3b8"];
+  const donutData = (data.releasesByCategory || [])
+    .slice()
+    .sort((a, b) => (b.count || 0) - (a.count || 0))
+    .slice(0, 10)
+    .map((category, index) => ({
+      key: category.key || "",
+      label: category.label || category.key || "Autre",
+      value: category.count || 0,
+      color: releaseCategoryPalette[index % releaseCategoryPalette.length]
+    }));
+  const releaseColorByKey = new Map(donutData.map(item => [String(item.key || "").toLowerCase(), item.color]));
 
   const sizeData = (data.sizeDistribution || []).filter(d => d.range !== "Inconnu");
   const seedData = (data.seedersDistribution || []).filter(d => d.range !== "Inconnu");
@@ -1002,11 +1004,13 @@ function ReleasesPanel({ refreshKey }) {
               </thead>
               <tbody>
                 {data.topGrabbed.map((r, i) => {
-                  const cat = getCategoryInfo(r.categoryId);
+                  const categoryKey = String(r.categoryKey || "").toLowerCase();
+                  const categoryLabel = r.categoryLabel || r.categoryKey || "Autre";
+                  const categoryColor = releaseColorByKey.get(categoryKey) || "var(--panel-border)";
                   return (
                     <tr key={i}>
                       <td style={{ maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.title}>{r.title}</td>
-                      <td><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: cat.color, display: "inline-block" }} />{cat.name}</span></td>
+                      <td><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: categoryColor, display: "inline-block" }} />{categoryLabel}</span></td>
                       <td style={{ fontWeight: 700, color: "var(--accent)" }}>{r.grabs}</td>
                       <td>{r.seeders}</td>
                       <td>{fmtBytes(r.sizeBytes)}</td>

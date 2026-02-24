@@ -406,4 +406,46 @@ public sealed class MaintenanceController : ControllerBase
             return StatusCode(500, new { error = "internal server error" });
         }
     }
+
+    // POST /api/maintenance/reprocess-categories
+    [HttpPost("reprocess-categories")]
+    public IActionResult ReprocessCategories()
+    {
+        try
+        {
+            var (processed, updated, markedRebind) = _releases.ReprocessCategories();
+
+            _activity.Add(null, "info", "maintenance", "Categories re-processed",
+                dataJson: $"{{\"processed\":{processed},\"updated\":{updated},\"markedRebind\":{markedRebind}}}");
+
+            return Ok(new { ok = true, processed, updated, markedRebind });
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Reprocess categories maintenance task failed");
+            return StatusCode(500, new { error = "internal server error" });
+        }
+    }
+
+    // POST /api/maintenance/rebind-entities?batchSize=200
+    // À appeler après reprocess-categories pour corriger entity_id des releases recatégorisées.
+    // Traite les releases WHERE needs_rebind=1 par batch (curseur id) et recalcule entity_id.
+    [HttpPost("rebind-entities")]
+    public IActionResult RebindEntities([FromQuery] int batchSize = 200)
+    {
+        try
+        {
+            var (processed, rebound) = _releases.RebindEntities(batchSize);
+
+            _activity.Add(null, "info", "maintenance", "Entity rebind completed",
+                dataJson: $"{{\"processed\":{processed},\"rebound\":{rebound}}}");
+
+            return Ok(new { ok = true, processed, rebound });
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Rebind entities maintenance task failed");
+            return StatusCode(500, new { error = "internal server error" });
+        }
+    }
 }

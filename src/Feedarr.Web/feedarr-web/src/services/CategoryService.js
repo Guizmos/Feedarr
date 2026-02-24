@@ -89,30 +89,9 @@ const EXCLUDED_TOKENS = [
   "divers",
 ];
 
-const LEGACY_INDEXER_CATEGORY_MAP = {
-  C411: {
-    102000: "films",
-    105000: "series",
-    105080: "shows",
-  },
-  YGEGE: {
-    102183: "films",
-    102178: "anime",
-    102184: "series",
-    102185: "spectacle",
-    102182: "shows",
-    102161: "games",
-  },
-  LACALE: {
-    131681: "films",
-    117804: "series",
-    4050: "games",
-  },
-  TOS: {
-    100001: "films",
-    100002: "series",
-  },
-};
+// DEPRECATED (unused): runtime category mapping is now backend-driven.
+// Keep the export surface for compatibility, but neutralize legacy hardcoded maps.
+const LEGACY_INDEXER_CATEGORY_MAP = {};
 
 function normalizeIndexerKey(value) {
   return String(value || "")
@@ -363,22 +342,6 @@ export function decorateCategories(categories, context = {}) {
       };
     })
     .filter(Boolean);
-}
-
-export function applyRecommendedFilter(categories, context = {}) {
-  const decorated = decorateCategories(categories, context);
-  const recommendedKeys = new Set(["films", "series", "anime", "games", "spectacle", "shows", "audio", "books", "comics"]);
-  const filtered = decorated.filter((cat) => {
-    const unifiedKey = String(cat.unifiedKey || "");
-    if (!recommendedKeys.has(unifiedKey)) return false;
-    const tokens = tokenizeLabel(cat.name);
-    if (unifiedKey === "games") {
-      if (!isPcWindowsGameTokens(tokens)) return false;
-      return !isBlacklistedTokens(tokens, ["windows", "win32", "win64"]);
-    }
-    return !isBlacklistedTokens(tokens);
-  });
-  return { decorated, filtered };
 }
 
 export { UNIFIED_LABELS, UNIFIED_PRIORITY };

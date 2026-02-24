@@ -50,7 +50,7 @@ public sealed class GoogleBooksClient
         return resp.IsSuccessStatusCode;
     }
 
-    public async Task<BookResult?> SearchBookAsync(string title, string? isbn, CancellationToken ct)
+    public async Task<BookResult?> SearchBookAsync(string title, string? isbn, CancellationToken ct, string? author = null)
     {
         var active = _resolver.Resolve(ExternalProviderKeys.GoogleBooks);
         if (!active.Enabled)
@@ -58,12 +58,17 @@ public sealed class GoogleBooksClient
 
         var trimmedTitle = (title ?? "").Trim();
         var trimmedIsbn = (isbn ?? "").Trim();
+        var trimmedAuthor = (author ?? "").Trim();
         if (string.IsNullOrWhiteSpace(trimmedTitle) && string.IsNullOrWhiteSpace(trimmedIsbn))
             return null;
 
-        var query = !string.IsNullOrWhiteSpace(trimmedIsbn)
-            ? $"isbn:{trimmedIsbn}"
-            : $"intitle:{trimmedTitle}";
+        string query;
+        if (!string.IsNullOrWhiteSpace(trimmedIsbn))
+            query = $"isbn:{trimmedIsbn}";
+        else if (!string.IsNullOrWhiteSpace(trimmedAuthor))
+            query = $"intitle:{trimmedTitle}+inauthor:{trimmedAuthor}";
+        else
+            query = $"intitle:{trimmedTitle}";
 
         var endpoint = BuildVolumesEndpoint(query, active.Auth.TryGetValue("apiKey", out var apiKey) ? apiKey : null);
         using var resp = await GetTrackedAsync(endpoint, ct);

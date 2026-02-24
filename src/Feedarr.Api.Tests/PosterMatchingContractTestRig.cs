@@ -15,7 +15,10 @@ using Feedarr.Api.Services.Fanart;
 using Feedarr.Api.Services.GoogleBooks;
 using Feedarr.Api.Services.Igdb;
 using Feedarr.Api.Services.Jikan;
+using Feedarr.Api.Services.MusicBrainz;
+using Feedarr.Api.Services.OpenLibrary;
 using Feedarr.Api.Services.Posters;
+using Feedarr.Api.Services.Rawg;
 using Feedarr.Api.Services.Security;
 using Feedarr.Api.Services.TheAudioDb;
 using Feedarr.Api.Services.Titles;
@@ -113,6 +116,10 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             new AudioMatchingStrategy(),
             new GenericMatchingStrategy());
 
+        var openLibrary = new OpenLibraryClient(new HttpClient(new NullHttpHandler()), stats);
+        var rawg = new RawgClient(new HttpClient(new NullHttpHandler()), stats, resolver);
+        var musicBrainz = new MusicBrainzClient(new HttpClient(new NullHttpHandler()), resolver, stats);
+
         _posters = new PosterFetchService(
             _releases,
             activity,
@@ -123,7 +130,10 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             jikan,
             theAudioDb,
             googleBooks,
+            openLibrary,
+            rawg,
             comicVine,
+            musicBrainz,
             matchCache,
             OptionsFactory.Create(new AppOptions
             {
@@ -812,5 +822,11 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             {
                 Content = new StringContent(json, Encoding.UTF8, "application/json")
             };
+    }
+
+    private sealed class NullHttpHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
     }
 }

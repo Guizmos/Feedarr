@@ -8,4 +8,5 @@ public sealed class ExternalProviderFieldSchemaDto
     public string? Placeholder { get; set; }
     public bool Required { get; set; }
     public bool Secret { get; set; }
+    public string? SecretPlaceholder { get; set; }
 }

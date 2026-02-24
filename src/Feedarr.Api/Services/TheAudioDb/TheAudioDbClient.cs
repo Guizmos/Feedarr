@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using Feedarr.Api.Services.ExternalProviders;
 using Feedarr.Api.Services;
 
@@ -56,14 +57,15 @@ public sealed class TheAudioDbClient
         if (string.IsNullOrWhiteSpace(apiKey))
             return null;
 
-        var safeTitle = (title ?? "").Trim();
+        var safeTitle = CleanTitle((title ?? "").Trim());
         var safeArtist = (artist ?? "").Trim();
         if (string.IsNullOrWhiteSpace(safeTitle) && string.IsNullOrWhiteSpace(safeArtist))
             return null;
 
-        if (!string.IsNullOrWhiteSpace(safeTitle))
+        // When artist is known: track search first (requires both s= and t= — free API)
+        if (!string.IsNullOrWhiteSpace(safeArtist) && !string.IsNullOrWhiteSpace(safeTitle))
         {
-            var trackEndpoint = BuildTrackSearchEndpoint(apiKey, safeTitle, safeArtist);
+            var trackEndpoint = BuildEndpoint(apiKey, $"searchtrack.php?s={Uri.EscapeDataString(safeArtist)}&t={Uri.EscapeDataString(safeTitle)}");
             using var trackResp = await GetTrackedAsync(trackEndpoint, ct);
             if (trackResp.IsSuccessStatusCode)
             {
@@ -77,17 +79,176 @@ public sealed class TheAudioDbClient
             }
         }
 
-        var albumEndpoint = BuildAlbumSearchEndpoint(apiKey, safeTitle, safeArtist);
-        using var albumResp = await GetTrackedAsync(albumEndpoint, ct);
-        if (!albumResp.IsSuccessStatusCode)
-            return null;
+        // When artist is known: album search (requires both s= and a= — free API)
+        if (!string.IsNullOrWhiteSpace(safeArtist))
+        {
+            var albumEndpoint = BuildEndpoint(apiKey, $"searchalbum.php?s={Uri.EscapeDataString(safeArtist)}&a={Uri.EscapeDataString(safeTitle)}");
+            using var albumResp = await GetTrackedAsync(albumEndpoint, ct);
+            if (albumResp.IsSuccessStatusCode)
+            {
+                var albumPayload = await DeserializePayloadAsync<AlbumSearchResponse>(albumResp, ct);
+                var best = albumPayload?.Album?
+                    .Where(a => !string.IsNullOrWhiteSpace(a.IdAlbum))
+                    .OrderByDescending(a => MatchScore(safeTitle, safeArtist, year, a.StrAlbum, a.StrArtist, a.IntYearReleased))
+                    .FirstOrDefault();
+                if (best is not null)
+                    return MapAlbum(best);
+            }
+        }
 
-        var albumPayload = await DeserializePayloadAsync<AlbumSearchResponse>(albumResp, ct);
-        var bestAlbum = albumPayload?.Album?
-            .Where(a => !string.IsNullOrWhiteSpace(a.IdAlbum))
-            .OrderByDescending(a => MatchScore(safeTitle, safeArtist, year, a.StrAlbum, a.StrArtist, a.IntYearReleased))
-            .FirstOrDefault();
-        return bestAlbum is null ? null : MapAlbum(bestAlbum);
+        // No artist: try progressive split (N first words = artist, rest = album).
+        // Handles scene-style titles like "ACDC Back In Black" or "The Cure Greatest Hits".
+        // Note: searchtrack/searchalbum without s= are premium-only and intentionally NOT called here.
+        if (string.IsNullOrWhiteSpace(safeArtist) && !string.IsNullOrWhiteSpace(safeTitle))
+        {
+            var words = safeTitle.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            AudioAlbumItem? splitBest = null;
+            int splitBestScore = -1;
+
+            for (int n = 1; n <= Math.Min(4, words.Length - 1); n++)
+            {
+                var tryArtist = string.Join(" ", words[..n]);
+                var tryAlbum = string.Join(" ", words[n..]);
+                if (string.IsNullOrWhiteSpace(tryAlbum)) continue;
+
+                var endpoint = BuildEndpoint(apiKey, $"searchalbum.php?s={Uri.EscapeDataString(tryArtist)}&a={Uri.EscapeDataString(tryAlbum)}");
+                using var resp = await GetTrackedAsync(endpoint, ct);
+                if (!resp.IsSuccessStatusCode) continue;
+
+                var payload = await DeserializePayloadAsync<AlbumSearchResponse>(resp, ct);
+                if (payload?.Album is null) continue;
+
+                var candidate = payload.Album
+                    .Where(a => !string.IsNullOrWhiteSpace(a.IdAlbum))
+                    .OrderByDescending(a => MatchScore(tryAlbum, tryArtist, year, a.StrAlbum, a.StrArtist, a.IntYearReleased))
+                    .FirstOrDefault();
+                if (candidate is null) continue;
+
+                var score = MatchScore(tryAlbum, tryArtist, year, candidate.StrAlbum, candidate.StrArtist, candidate.IntYearReleased);
+                if (score > splitBestScore)
+                {
+                    splitBestScore = score;
+                    splitBest = candidate;
+                }
+            }
+
+            if (splitBest is not null)
+                return MapAlbum(splitBest);
+
+            // Final fallback: treat entire query as artist name (e.g., typing "Genesis" to find all albums)
+            var artistEndpoint = BuildEndpoint(apiKey, $"searchalbum.php?s={Uri.EscapeDataString(safeTitle)}");
+            using var artistResp = await GetTrackedAsync(artistEndpoint, ct);
+            if (artistResp.IsSuccessStatusCode)
+            {
+                var artistPayload = await DeserializePayloadAsync<AlbumSearchResponse>(artistResp, ct);
+                return artistPayload?.Album?
+                    .Where(a => !string.IsNullOrWhiteSpace(a.IdAlbum))
+                    .OrderByDescending(a => !string.IsNullOrWhiteSpace(a.StrAlbumThumb) ? 1 : 0)
+                    .Select(MapAlbum)
+                    .FirstOrDefault();
+            }
+        }
+
+        return null;
+    }
+
+    // Returns all matching audio results (tracks + albums) for manual poster search
+    public async Task<List<AudioResult>> SearchAudioListAsync(string title, string? artist, int? year, CancellationToken ct)
+    {
+        var apiKey = ResolveCreds();
+        if (string.IsNullOrWhiteSpace(apiKey))
+            return [];
+
+        var safeTitle = CleanTitle((title ?? "").Trim());
+        var safeArtist = (artist ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(safeTitle) && string.IsNullOrWhiteSpace(safeArtist))
+            return [];
+
+        var results = new List<AudioResult>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Artist known: track search (s= + t= — free API)
+        if (!string.IsNullOrWhiteSpace(safeArtist) && !string.IsNullOrWhiteSpace(safeTitle))
+        {
+            var trackEndpoint = BuildEndpoint(apiKey, $"searchtrack.php?s={Uri.EscapeDataString(safeArtist)}&t={Uri.EscapeDataString(safeTitle)}");
+            using var trackResp = await GetTrackedAsync(trackEndpoint, ct);
+            if (trackResp.IsSuccessStatusCode)
+            {
+                var payload = await DeserializePayloadAsync<TrackSearchResponse>(trackResp, ct);
+                foreach (var t in (payload?.Track ?? [])
+                    .Where(t => !string.IsNullOrWhiteSpace(t.IdTrack))
+                    .OrderByDescending(t => MatchScore(safeTitle, safeArtist, year, t.StrTrack, t.StrArtist, t.IntYearReleased)))
+                {
+                    var mapped = MapTrack(t);
+                    if (!string.IsNullOrWhiteSpace(mapped.PosterUrl) && seen.Add(mapped.ProviderId))
+                        results.Add(mapped);
+                }
+            }
+        }
+
+        // Artist known: album search (s= + a= — free API)
+        if (!string.IsNullOrWhiteSpace(safeArtist))
+        {
+            var albumEndpoint = BuildEndpoint(apiKey, $"searchalbum.php?s={Uri.EscapeDataString(safeArtist)}&a={Uri.EscapeDataString(safeTitle)}");
+            using var albumResp = await GetTrackedAsync(albumEndpoint, ct);
+            if (albumResp.IsSuccessStatusCode)
+            {
+                var payload = await DeserializePayloadAsync<AlbumSearchResponse>(albumResp, ct);
+                foreach (var a in (payload?.Album ?? [])
+                    .Where(a => !string.IsNullOrWhiteSpace(a.IdAlbum))
+                    .OrderByDescending(a => MatchScore(safeTitle, safeArtist, year, a.StrAlbum, a.StrArtist, a.IntYearReleased)))
+                {
+                    var mapped = MapAlbum(a);
+                    if (seen.Add(mapped.ProviderId))
+                        results.Add(mapped);
+                }
+            }
+        }
+
+        // No artist: progressive split (N first words = artist, rest = album)
+        // + full-title artist search (e.g., "Genesis" → all Genesis albums)
+        if (string.IsNullOrWhiteSpace(safeArtist) && !string.IsNullOrWhiteSpace(safeTitle))
+        {
+            var words = safeTitle.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            for (int n = 1; n <= Math.Min(4, words.Length - 1); n++)
+            {
+                var tryArtist = string.Join(" ", words[..n]);
+                var tryAlbum = string.Join(" ", words[n..]);
+                if (string.IsNullOrWhiteSpace(tryAlbum)) continue;
+
+                var endpoint = BuildEndpoint(apiKey, $"searchalbum.php?s={Uri.EscapeDataString(tryArtist)}&a={Uri.EscapeDataString(tryAlbum)}");
+                using var resp = await GetTrackedAsync(endpoint, ct);
+                if (!resp.IsSuccessStatusCode) continue;
+
+                var payload = await DeserializePayloadAsync<AlbumSearchResponse>(resp, ct);
+                foreach (var a in (payload?.Album ?? [])
+                    .Where(a => !string.IsNullOrWhiteSpace(a.IdAlbum))
+                    .OrderByDescending(a => MatchScore(tryAlbum, tryArtist, year, a.StrAlbum, a.StrArtist, a.IntYearReleased)))
+                {
+                    var mapped = MapAlbum(a);
+                    if (seen.Add(mapped.ProviderId))
+                        results.Add(mapped);
+                }
+            }
+
+            // Full title as artist name (returns the whole discography — useful for manual search)
+            var artistEndpoint = BuildEndpoint(apiKey, $"searchalbum.php?s={Uri.EscapeDataString(safeTitle)}");
+            using var artistResp = await GetTrackedAsync(artistEndpoint, ct);
+            if (artistResp.IsSuccessStatusCode)
+            {
+                var artistPayload = await DeserializePayloadAsync<AlbumSearchResponse>(artistResp, ct);
+                foreach (var a in (artistPayload?.Album ?? [])
+                    .Where(a => !string.IsNullOrWhiteSpace(a.IdAlbum))
+                    .OrderByDescending(a => !string.IsNullOrWhiteSpace(a.StrAlbumThumb) ? 1 : 0))
+                {
+                    var mapped = MapAlbum(a);
+                    if (seen.Add(mapped.ProviderId))
+                        results.Add(mapped);
+                }
+            }
+        }
+
+        return results;
     }
 
     public async Task<byte[]?> DownloadImageAsync(string? url, CancellationToken ct)
@@ -119,21 +280,6 @@ public sealed class TheAudioDbClient
         return key;
     }
 
-    private string BuildTrackSearchEndpoint(string apiKey, string title, string artist)
-    {
-        var query = string.IsNullOrWhiteSpace(artist)
-            ? $"searchtrack.php?t={Uri.EscapeDataString(title)}"
-            : $"searchtrack.php?s={Uri.EscapeDataString(artist)}&t={Uri.EscapeDataString(title)}";
-        return BuildEndpoint(apiKey, query);
-    }
-
-    private string BuildAlbumSearchEndpoint(string apiKey, string title, string artist)
-    {
-        var query = string.IsNullOrWhiteSpace(artist)
-            ? $"searchalbum.php?a={Uri.EscapeDataString(title)}"
-            : $"searchalbum.php?s={Uri.EscapeDataString(artist)}&a={Uri.EscapeDataString(title)}";
-        return BuildEndpoint(apiKey, query);
-    }
 
     private string BuildEndpoint(string apiKey, string relativePath)
     {
@@ -150,6 +296,70 @@ public sealed class TheAudioDbClient
 
         var fullPath = $"{apiKey.Trim().Trim('/')}/{relativePath.TrimStart('/')}";
         return new Uri(new Uri(normalized, UriKind.Absolute), fullPath).ToString();
+    }
+
+    /// <summary>
+    /// Strips scene-style noise from audio release names before querying TheAudioDB.
+    /// Example: "ACDC.Black.Ice.2008.FLAC[16bit.44.1kHz]-RmKv" → "ACDC Black Ice"
+    /// </summary>
+    private static string CleanTitle(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return input ?? "";
+
+        var s = input.Trim();
+        var wasSceneName = false;
+
+        // 1. Dot-to-space for scene-style names (≥3 dots AND ≤1 space)
+        if (s.Count(c => c == '.') >= 3 && s.Count(c => c == ' ') <= 1)
+        {
+            s = s.Replace('.', ' ').Trim();
+            wasSceneName = true;
+        }
+
+        // 2. Strip audio format/quality suffix
+        s = StripFormatSuffix(s);
+
+        // 3. Strip trailing year
+        s = Regex.Replace(s, @"\s*[\(\[]?\s*\b(19|20)\d{2}\b\s*[\)\]]?\s*$", "").Trim();
+
+        // 4. Strip "Remastered" suffix
+        s = Regex.Replace(s, @"\s+Remaster(?:ed|ised?)?\s*\d{0,4}\s*$", "", RegexOptions.IgnoreCase).Trim();
+
+        // 5. Strip scene release group tag (e.g. "-RmKv", "-NOTAG") — only for scene-style names
+        if (wasSceneName &&
+            !s.Contains(" - ", StringComparison.Ordinal) &&
+            !s.Contains(" – ", StringComparison.Ordinal) &&
+            !s.Contains(" — ", StringComparison.Ordinal))
+        {
+            s = Regex.Replace(s, @"\s*-[A-Za-z0-9]{4,12}\s*$", "").Trim();
+        }
+
+        return s;
+    }
+
+    private static string StripFormatSuffix(string s)
+    {
+        var markers = new[]
+        {
+            " FLAC", "[FLAC", "(FLAC", ".FLAC",
+            " MP3",  "[MP3",  "(MP3",  ".MP3",
+            " WEB-", "[WEB-", ".WEB-",
+            " SACD", " AAC",  " ALAC", " OGG",
+            "[16bit", "(16bit", ".16bit",
+            "[24bit", "(24bit", ".24bit",
+            " 320kbps", " 256kbps", " 192kbps", " 128kbps",
+        };
+
+        var earliest = -1;
+        foreach (var marker in markers)
+        {
+            var idx = s.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (idx > 0 && (earliest < 0 || idx < earliest))
+                earliest = idx;
+        }
+
+        return earliest > 0 ? s[..earliest].Trim() : s;
     }
 
     private static int MatchScore(string title, string artist, int? year, string? candidateTitle, string? candidateArtist, string? releasedYear)
@@ -248,7 +458,9 @@ public sealed class TheAudioDbClient
     private static async Task<TPayload?> DeserializePayloadAsync<TPayload>(HttpResponseMessage response, CancellationToken ct)
         where TPayload : class
     {
-        var payload = await response.Content.ReadAsStringAsync(ct);
+        var raw = await response.Content.ReadAsStringAsync(ct);
+        // Strip BOM (\uFEFF) that TheAudioDB occasionally returns for empty responses
+        var payload = raw?.TrimStart('\uFEFF').Trim();
         if (string.IsNullOrWhiteSpace(payload))
             return null;
 

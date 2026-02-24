@@ -52,6 +52,9 @@ public sealed class ExternalProviderTestService
                 ExternalProviderKeys.Jikan => await TestJikanAsync(baseUrl, ct),
                 ExternalProviderKeys.GoogleBooks => await TestGoogleBooksAsync(baseUrl, auth, ct),
                 ExternalProviderKeys.TheAudioDb => await TestTheAudioDbAsync(baseUrl, auth, ct),
+                ExternalProviderKeys.MusicBrainz => await TestMusicBrainzAsync(baseUrl, auth, ct),
+                ExternalProviderKeys.OpenLibrary => await TestOpenLibraryAsync(baseUrl, ct),
+                ExternalProviderKeys.Rawg => await TestRawgAsync(baseUrl, auth, ct),
                 _ => false
             };
 
@@ -190,6 +193,57 @@ public sealed class ExternalProviderTestService
         var sw = Stopwatch.StartNew();
         using var resp = await client.GetAsync(url, ct);
         _stats.RecordExternal(ExternalProviderKeys.TheAudioDb, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+        return resp.IsSuccessStatusCode;
+    }
+
+    private async Task<bool> TestOpenLibraryAsync(string? baseUrl, CancellationToken ct)
+    {
+        var client = _httpClientFactory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(20);
+        var baseUri = BuildBaseUri(baseUrl, "https://openlibrary.org/");
+        var url = new Uri(baseUri, "search.json?title=Harry+Potter&limit=1&fields=title,cover_i");
+        var sw = Stopwatch.StartNew();
+        using var resp = await client.GetAsync(url, ct);
+        _stats.RecordExternal(ExternalProviderKeys.OpenLibrary, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+        return resp.IsSuccessStatusCode;
+    }
+
+    private async Task<bool> TestMusicBrainzAsync(string? baseUrl, IReadOnlyDictionary<string, string?> auth, CancellationToken ct)
+    {
+        var client = _httpClientFactory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(20);
+        if (client.DefaultRequestHeaders.UserAgent.Count == 0)
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0 ( https://github.com/Guizmos/feedarr )");
+
+        var baseUri = BuildBaseUri(baseUrl, "https://musicbrainz.org/ws/2/");
+        var query = Uri.EscapeDataString("release:\"Abbey Road\" AND artist:\"The Beatles\"");
+        var url = new Uri(baseUri, $"release/?query={query}&fmt=json&limit=1");
+
+        var sw = Stopwatch.StartNew();
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        var clientId = GetAuthValue(auth, "clientId");
+        if (!string.IsNullOrWhiteSpace(clientId))
+            req.Headers.TryAddWithoutValidation("X-Application", clientId);
+
+        using var resp = await client.SendAsync(req, ct);
+        _stats.RecordExternal(ExternalProviderKeys.MusicBrainz, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+        return resp.IsSuccessStatusCode;
+    }
+
+    private async Task<bool> TestRawgAsync(string? baseUrl, IReadOnlyDictionary<string, string?> auth, CancellationToken ct)
+    {
+        var apiKey = GetAuthValue(auth, "apiKey");
+        if (string.IsNullOrWhiteSpace(apiKey))
+            return false;
+
+        var client = _httpClientFactory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(20);
+        var baseUri = BuildBaseUri(baseUrl, "https://api.rawg.io/api/");
+        var url = new Uri(baseUri, $"games?key={Uri.EscapeDataString(apiKey)}&page_size=1&search=halo");
+
+        var sw = Stopwatch.StartNew();
+        using var resp = await client.GetAsync(url, ct);
+        _stats.RecordExternal(ExternalProviderKeys.Rawg, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
         return resp.IsSuccessStatusCode;
     }
 

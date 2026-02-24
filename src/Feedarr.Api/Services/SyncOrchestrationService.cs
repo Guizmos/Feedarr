@@ -228,6 +228,11 @@ public sealed class SyncOrchestrationService
                     }
 
                     var intersects = ids.Any(selectedSet.Contains);
+                    if (intersects && ShouldRejectParentOnlyMatch(ids, selectedSet))
+                    {
+                        intersects = false;
+                    }
+
                     var matchesUnified = false;
                     if (!intersects && selectedUnifiedKeys.Count > 0)
                     {
@@ -420,6 +425,35 @@ public sealed class SyncOrchestrationService
         if (item.CategoryIds is { Count: > 0 })
             return item.CategoryIds;
         return item.CategoryId.HasValue ? new List<int> { item.CategoryId.Value } : new List<int>();
+    }
+
+    // Keep manual sync behavior aligned with auto-sync parent-only safety net.
+    public static bool ShouldRejectParentOnlyMatch(
+        IReadOnlyCollection<int> ids,
+        IReadOnlyCollection<int> selectedCategoryIds)
+    {
+        if (ids is null || ids.Count == 0 || selectedCategoryIds is null || selectedCategoryIds.Count == 0)
+            return false;
+
+        var selectedSet = selectedCategoryIds is HashSet<int> hs
+            ? hs
+            : new HashSet<int>(selectedCategoryIds);
+
+        if (!ids.Any(selectedSet.Contains))
+            return false;
+
+        var matchedViaParentOnly = ids
+            .Where(selectedSet.Contains)
+            .All(id => id is >= 1000 and <= 8999 && id % 1000 == 0);
+
+        if (!matchedViaParentOnly)
+            return false;
+
+        var specificIds = ids
+            .Where(id => !(id is >= 1000 and <= 8999 && id % 1000 == 0))
+            .ToList();
+
+        return specificIds.Count > 0 && !specificIds.Any(selectedSet.Contains);
     }
 
     private static string BuildCategoryLogTitle(string? title)

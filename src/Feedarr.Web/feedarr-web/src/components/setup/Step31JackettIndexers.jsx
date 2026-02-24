@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import ItemRow from "../../ui/ItemRow.jsx";
 import Modal from "../../ui/Modal.jsx";
-import ToggleSwitch from "../../ui/ToggleSwitch.jsx";
 import { apiDelete, apiGet, apiPost, apiPut } from "../../api/client.js";
 import { tr } from "../../app/uiText.js";
+import FlatCategorySelector from "../shared/FlatCategorySelector.jsx";
+import { filterLeafOnly, getAllowedCategoryIds } from "../shared/categorySelectionUtils.js";
 
 const STORAGE_KEYS = {
   jackett: {
@@ -53,6 +54,12 @@ function getProviderLabel(providerKey) {
   return PROVIDERS.find((p) => p.key === providerKey)?.label || tr("Fournisseur", "Provider");
 }
 
+function filterLeafCategories(categories, selectedIds) {
+  const allowedIds = getAllowedCategoryIds(categories);
+  const leafOnlyIds = filterLeafOnly(selectedIds, categories);
+  return categories.filter((c) => leafOnlyIds.has(c.id) && allowedIds.has(c.id));
+}
+
 export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jackettConfig }) {
   const [providerConfigs, setProviderConfigs] = useState({
     jackett: { ...EMPTY_CONFIG },
@@ -76,7 +83,6 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
   const [capsOk, setCapsOk] = useState("");
   const [capsWarning, setCapsWarning] = useState("");
   const [capsCategories, setCapsCategories] = useState([]);
-  const [useRecommendedFilter, setUseRecommendedFilter] = useState(true);
   const [selectedCategoryIds, setSelectedCategoryIds] = useState(() => new Set());
   const [saving, setSaving] = useState(false);
   const [busySourceId, setBusySourceId] = useState(null);
@@ -254,7 +260,6 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
     setCapsOk("");
     setCapsWarning("");
     setCapsCategories([]);
-    setUseRecommendedFilter(true);
     setSelectedCategoryIds(new Set());
     setSelectedIndexer(null);
     setEditingSource(null);
@@ -333,6 +338,8 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
         torznabUrl: indexer.torznabUrl,
         indexerId: indexer?.id,
         indexerName: indexer?.name,
+        includeStandardCatalog: true,
+        includeSpecific: true,
       });
 
       const cats = Array.isArray(res?.categories) ? res.categories : [];
@@ -343,11 +350,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
 
       setCapsCategories(cats);
 
-      const recommended = cats.filter((c) => c?.isRecommended);
-      const base = recommended.length > 0 ? recommended : cats;
-      if (base.length > 0) {
-        setSelectedCategoryIds(new Set(base.map((c) => c.id)));
-      }
+      setSelectedCategoryIds(new Set());
 
       if (cats.length > 0) {
         setCapsOk(tr("Categories chargees.", "Categories loaded."));
@@ -395,7 +398,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
         }
       : selectedIndexer;
 
-    const selected = allCategories.filter((c) => selectedCategoryIds.has(c.id));
+    const selected = filterLeafCategories(allCategories, selectedCategoryIds);
     if (!indexer?.torznabUrl || !normalizeUrl(indexer?.torznabUrl)) {
       setCapsError(manualMode ? tr("URL Torznab requise.", "Torznab URL required.") : tr("Indexeur invalide.", "Invalid indexer."));
       return;
@@ -466,6 +469,8 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
       const res = await apiGet(buildCapsQuery({
         sourceId: source.id,
         indexerName: source?.name,
+        includeStandardCatalog: true,
+        includeSpecific: true,
       }));
 
       let cats = Array.isArray(res?.categories) ? res.categories : [];
@@ -477,6 +482,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
       }
 
       setCapsCategories(cats);
+      const allowedIds = getAllowedCategoryIds(cats);
 
       try {
         existing = await apiGet(`/api/categories/${source.id}`);
@@ -490,15 +496,12 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
           .filter((id) => Number.isFinite(id) && id > 0)
       );
 
-      if (existingIds.size > 0) {
-        setSelectedCategoryIds(
-          new Set(cats.filter((c) => existingIds.has(c.id)).map((c) => c.id))
-        );
-      } else {
-        const recommended = cats.filter((c) => c?.isRecommended);
-        const base = recommended.length > 0 ? recommended : cats;
-        setSelectedCategoryIds(new Set(base.map((c) => c.id)));
-      }
+      setSelectedCategoryIds(
+        filterLeafOnly(
+          [...allowedIds].filter((id) => existingIds.has(id)),
+          cats
+        )
+      );
 
       if (cats.length > 0) {
         setCapsOk(tr("Categories chargees.", "Categories loaded."));
@@ -514,7 +517,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
 
   async function saveCategories() {
     if (!editingSource?.id) return;
-    const selected = allCategories.filter((c) => selectedCategoryIds.has(c.id));
+    const selected = filterLeafCategories(allCategories, selectedCategoryIds);
     if (selected.length === 0) {
       setCapsError(tr("Selectionne au moins une categorie.", "Select at least one category."));
       return;
@@ -552,41 +555,12 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
   }
 
   const allCategories = useMemo(() => capsCategories || [], [capsCategories]);
-  const recommendedCategories = useMemo(
-    () => (capsCategories || []).filter((c) => c?.isRecommended),
-    [capsCategories]
-  );
-  const visibleCategories = useMemo(
-    () => (useRecommendedFilter ? recommendedCategories : allCategories),
-    [useRecommendedFilter, recommendedCategories, allCategories]
-  );
-  const visibleIds = useMemo(
-    () => new Set(visibleCategories.map((c) => c.id)),
-    [visibleCategories]
-  );
   const selectedCount = selectedCategoryIds.size;
-  const hiddenSelectedCount = useMemo(() => {
-    let hidden = 0;
-    selectedCategoryIds.forEach((id) => {
-      if (!visibleIds.has(id)) hidden++;
-    });
-    return hidden;
-  }, [selectedCategoryIds, visibleIds]);
   const canSubmitAdd = useMemo(() => {
     if (manualMode && !normalizeUrl(manualTorznabUrl)) return false;
     return allCategories.length === 0 ? true : selectedCount > 0;
   }, [manualMode, manualTorznabUrl, allCategories.length, selectedCount]);
   const canSubmitEdit = selectedCount > 0;
-
-  useEffect(() => {
-    if (!useRecommendedFilter) return;
-    if (allCategories.length > 0 && recommendedCategories.length === 0) {
-      setUseRecommendedFilter(false);
-      setCapsWarning((prev) =>
-        prev || tr("Aucune categorie recommandee. Affichage complet active.", "No recommended category. Full list enabled.")
-      );
-    }
-  }, [useRecommendedFilter, recommendedCategories.length, allCategories.length]);
 
   const hasSelectedProvider = !!selectedProviderKey;
   const modalProviderLabel = hasSelectedProvider ? getProviderLabel(selectedProviderKey) : "";
@@ -713,7 +687,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
         open={modalOpen}
         title={modalTitle}
         onClose={closeModal}
-        width={720}
+        width={780}
       >
         {manualMode && !editingSource && (
           <div className="formgrid formgrid--edit" style={{ marginBottom: 12 }}>
@@ -768,52 +742,36 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
 
         {allCategories.length > 0 && (
           <div className="setup-jackett__categories">
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-              <span className="muted">{tr("Afficher seulement les categories recommandees", "Show only recommended categories")}</span>
-              <ToggleSwitch
-                checked={useRecommendedFilter}
-                onIonChange={(e) => setUseRecommendedFilter(e.detail.checked)}
-                className="settings-toggle settings-toggle--sm"
-              />
-            </div>
-            <div className="category-picker" style={{ maxHeight: 260 }}>
-              {visibleCategories.map((cat) => (
-                <label key={cat.id} className="category-row">
-                  <input
-                    type="checkbox"
-                    checked={selectedCategoryIds.has(cat.id)}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setSelectedCategoryIds((prev) => {
-                        const next = new Set(prev);
-                        if (checked) next.add(cat.id);
-                        else next.delete(cat.id);
-                        return next;
-                      });
-                    }}
-                  />
-                  <span className="category-id">{cat.id}</span>
-                  <span className="category-name">{cat.name}</span>
-                  <span className="category-pill">{cat.unifiedLabel}</span>
-                </label>
-              ))}
-              {visibleCategories.length === 0 && useRecommendedFilter && (
-                <div className="muted">{tr("Aucune categorie recommandee. Desactive le filtre pour tout voir.", "No recommended category. Disable the filter to show all.")}</div>
-              )}
-            </div>
+            <FlatCategorySelector
+              categories={capsCategories}
+              selectedIds={selectedCategoryIds}
+              onToggleId={(id, checked) => {
+                setSelectedCategoryIds((prev) => {
+                  const next = new Set(prev);
+                  if (checked) next.add(id);
+                  else next.delete(id);
+                  return filterLeafOnly(next, capsCategories);
+                });
+              }}
+              onSetIds={(ids) => setSelectedCategoryIds(filterLeafOnly(ids, capsCategories))}
+            />
             <div className="muted" style={{ marginTop: 8 }}>
               {tr(
                 `${selectedCount} categorie${selectedCount > 1 ? "s" : ""} selectionnee${selectedCount > 1 ? "s" : ""}`,
                 `${selectedCount} selected categor${selectedCount > 1 ? "ies" : "y"}`
               )}
-              {useRecommendedFilter && hiddenSelectedCount > 0
-                ? tr(` (dont ${hiddenSelectedCount} hors filtre)`, ` (${hiddenSelectedCount} hidden by filter)`)
-                : ""}
             </div>
           </div>
         )}
 
         <div className="setup-jackett__actions setup-jackett__footer">
+          <div className="setup-jackett__footer-note" role="note">
+            <span className="setup-jackett__footer-note-icon" aria-hidden="true">i</span>
+            <span>
+              Choisissez de preference les categories specifiques, plus pertinentes. Les categories
+              "parents" incluent souvent des sous-categories qui peuvent provoquer un mauvais tri.
+            </span>
+          </div>
           {editingSource ? (
             <button
               className="btn btn-accent"

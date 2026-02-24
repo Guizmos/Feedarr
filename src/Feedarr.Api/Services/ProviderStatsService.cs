@@ -30,7 +30,10 @@ public sealed class ProviderStatsService
         ExternalProviderKeys.Jikan,
         ExternalProviderKeys.GoogleBooks,
         ExternalProviderKeys.TheAudioDb,
-        ExternalProviderKeys.ComicVine
+        ExternalProviderKeys.ComicVine,
+        ExternalProviderKeys.MusicBrainz,
+        ExternalProviderKeys.OpenLibrary,
+        ExternalProviderKeys.Rawg
     };
 
     private readonly StatsRepository _repo;

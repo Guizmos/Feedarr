@@ -884,6 +884,26 @@ export default function Library() {
         const posterPath = result.posterPath || result.posterUrl;
         if (!posterPath) return;
         payload = { provider: "theaudiodb", providerId: result.providerId || null, posterPath };
+      } else if (provider === "googlebooks") {
+        const posterPath = result.posterPath || result.posterUrl;
+        if (!posterPath) return;
+        payload = { provider: "googlebooks", providerId: result.providerId || null, posterPath };
+      } else if (provider === "comicvine") {
+        const posterPath = result.posterPath || result.posterUrl;
+        if (!posterPath) return;
+        payload = { provider: "comicvine", providerId: result.providerId || null, posterPath };
+      } else if (provider === "musicbrainz") {
+        const posterPath = result.posterPath || result.posterUrl;
+        if (!posterPath) return;
+        payload = { provider: "musicbrainz", providerId: result.providerId || null, posterPath };
+      } else if (provider === "openlibrary") {
+        const posterPath = result.posterPath || result.posterUrl;
+        if (!posterPath) return;
+        payload = { provider: "openlibrary", providerId: result.providerId || null, posterPath };
+      } else if (provider === "rawg") {
+        const posterPath = result.posterPath || result.posterUrl;
+        if (!posterPath) return;
+        payload = { provider: "rawg", providerId: result.providerId || null, posterPath };
       } else {
         if (!result.posterPath) return;
         payload = { provider: "tmdb", tmdbId: result.tmdbId, posterPath: result.posterPath };

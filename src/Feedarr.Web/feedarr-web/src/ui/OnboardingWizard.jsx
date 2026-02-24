@@ -1,59 +1,14 @@
 import React, { useEffect, useState } from "react";
 import Modal from "./Modal.jsx";
 import { apiPost, apiPut } from "../api/client.js";
+import FlatCategorySelector from "../components/shared/FlatCategorySelector.jsx";
+import { filterLeafOnly, getAllowedCategoryIds } from "../components/shared/categorySelectionUtils.js";
 
 // TODO(metadata-providers-step1): This legacy wizard duplicates metadata provider logic
 // from setup Step2/settings (state + test/save flow via /api/settings/external).
 // Keep for compatibility, but migrate to shared useExternalProviderInstances + shared UI flow.
 
-// --- Category helpers (copié depuis Indexers.jsx) ---
-const UNIFIED_LABELS = {
-  films: "Films",
-  series: "Series TV",
-  anime: "Animation",
-  games: "Jeux PC",
-  spectacle: "Spectacle",
-  shows: "Emissions",
-};
-
 const INDEXER_OPTIONS = ["C411", "YGEGE", "LA-CALE", "TOS"];
-const INDEXER_CATEGORY_MAP = {
-  C411: {
-    102000: "films",
-    105000: "series",
-    105080: "shows",
-  },
-  YGEGE: {
-    102183: "films",
-    102178: "anime",
-    102184: "series",
-    102185: "spectacle",
-    102182: "shows",
-    102161: "games",
-  },
-  LACALE: {
-    131681: "films",
-    117804: "series",
-    4050: "games",
-  },
-  TOS: {
-    100001: "films",
-    100002: "series",
-  },
-};
-
-function normalizeIndexerKey(value) {
-  return String(value || "")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "");
-}
-
-function getAllowedCategoryMap(indexerName) {
-  const key = normalizeIndexerKey(indexerName);
-  return INDEXER_CATEGORY_MAP[key] || null;
-}
-
-// --- Fin category helpers ---
 
 export default function OnboardingWizard({ open, status, onClose, onComplete }) {
   const [idxName, setIdxName] = useState("");
@@ -67,8 +22,9 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
   const [idxTested, setIdxTested] = useState(false);
 
   // Category states
-  const [filteredCategories, setFilteredCategories] = useState([]);
+  const [capsCategories, setCapsCategories] = useState([]);
   const [selectedCategoryIds, setSelectedCategoryIds] = useState(() => new Set());
+
 
   const [provTmdb, setProvTmdb] = useState("");
   const [provTvmaze, setProvTvmaze] = useState("");
@@ -106,36 +62,32 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
         return;
       }
 
-      const cats = Array.isArray(res?.caps?.categories) ? res.caps.categories : [];
-      const allowedMap = getAllowedCategoryMap(idxName);
-      if (!allowedMap) {
-        setIdxErr("Nom d'indexeur non reconnu pour le mapping des catégories.");
+      // Récupérer les catégories brutes depuis le backend (liste plate).
+      let capsRes;
+      try {
+        capsRes = await apiPost("/api/categories/caps", {
+          torznabUrl:   idxUrl.trim(),
+          apiKey:       idxKey.trim(),
+          authMode:     idxAuthMode,
+          indexerName:  idxName.trim(),
+          includeStandardCatalog: true,
+          includeSpecific: true,
+        });
+      } catch (capsErr) {
+        setIdxErr("Connexion réussie, mais la récupération des catégories a échoué : " + (capsErr?.message || "erreur inconnue"));
         return;
       }
 
-      const filtered = cats
-        .map((cat) => {
-          const unifiedKey = allowedMap[cat?.id];
-          if (!unifiedKey) return null;
-          return {
-            id: cat.id,
-            name: cat.name,
-            isSub: !!cat.isSub,
-            parentId: cat.parentId ?? null,
-            unifiedKey,
-            unifiedLabel: UNIFIED_LABELS[unifiedKey] || unifiedKey,
-            autoSelected: true,
-          };
-        })
-        .filter(Boolean);
+      const categories = Array.isArray(capsRes?.categories) ? capsRes.categories : [];
 
-      if (filtered.length === 0) {
-        setIdxErr("Aucune catégorie compatible détectée.");
+      if (categories.length === 0) {
+        setIdxErr("Connexion réussie, mais aucune catégorie compatible n'a été détectée. Vérifiez l'URL Torznab.");
         return;
       }
 
-      setFilteredCategories(filtered);
-      setSelectedCategoryIds(new Set(filtered.map((c) => c.id)));
+      setCapsCategories(categories);
+
+      setSelectedCategoryIds(new Set());
       setIdxTested(true);
       setIdxOk("Connexion réussie ! Passez à l'étape suivante.");
     } catch (e) {
@@ -150,7 +102,11 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
     setIdxErr("");
     setIdxOk("");
 
-    const selected = filteredCategories.filter((c) => selectedCategoryIds.has(c.id));
+    const allowedIds = getAllowedCategoryIds(capsCategories);
+    const leafOnlyIds = filterLeafOnly(selectedCategoryIds, capsCategories);
+    const selected = (capsCategories || []).filter((c) =>
+      leafOnlyIds.has(c.id) && allowedIds.has(c.id)
+    );
     if (selected.length === 0) {
       setIdxErr("Sélectionne au moins une catégorie.");
       return;
@@ -186,7 +142,12 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
       // Passer à l'étape suivante
       next();
     } catch (e) {
-      setIdxErr(e?.message || "Erreur ajout indexeur");
+      const msg = e?.message || "";
+      if (msg.toLowerCase().includes("already exists") || msg.includes("409")) {
+        setIdxErr("Cet indexeur est déjà ajouté (URL Torznab déjà utilisée).");
+      } else {
+        setIdxErr(msg || "Erreur ajout indexeur");
+      }
     } finally {
       setIdxSaving(false);
     }
@@ -214,13 +175,18 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
     const results = { tmdb: null, tvmaze: null, fanart: null, igdb: null };
 
     try {
-      // D'abord sauvegarder les clés temporairement pour les tester
+      // Sauvegarder les clés avec tous les providers DÉSACTIVÉS pour éviter d'activer une clé non testée.
+      // saveProviders() réactivera uniquement les providers dont le test a réussi.
       const payload = {
         tmdbApiKey: provTmdb.trim() || null,
         tvmazeApiKey: provTvmaze.trim() || null,
         fanartApiKey: provFanart.trim() || null,
         igdbClientId: provIgdbId.trim() || null,
         igdbClientSecret: provIgdbSecret.trim() || null,
+        tmdbEnabled: false,
+        tvmazeEnabled: false,
+        fanartEnabled: false,
+        igdbEnabled: false,
       };
       await apiPut("/api/settings/external", payload);
 
@@ -350,20 +316,18 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
             <div className="formgrid">
               <div className="field">
                 <label>Nom</label>
-                <select
+                <input
+                  list="indexer-suggestions"
                   value={idxName}
                   onChange={(e) => setIdxName(e.target.value)}
+                  placeholder="Ex: C411, YGEGE, mon-indexeur…"
                   disabled={idxTested}
-                >
-                  <option value="" disabled>
-                    Choisir un indexeur...
-                  </option>
+                />
+                <datalist id="indexer-suggestions">
                   {INDEXER_OPTIONS.map((opt) => (
-                    <option key={opt} value={opt}>
-                      {opt}
-                    </option>
+                    <option key={opt} value={opt} />
                   ))}
-                </select>
+                </datalist>
               </div>
               <div className="field" style={{ gridColumn: "1 / -1" }}>
                 <label>URL Torznab</label>
@@ -404,7 +368,7 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
                   type="button"
                   onClick={() => {
                     setIdxTested(false);
-                    setFilteredCategories([]);
+                    setCapsCategories([]);
                     setSelectedCategoryIds(new Set());
                     setIdxOk("");
                   }}
@@ -425,30 +389,21 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
             Sélectionne les catégories à synchroniser depuis cet indexeur.
           </p>
           <div className="onboarding__inline">
-            {filteredCategories.length > 0 ? (
+            {capsCategories.length > 0 ? (
               <>
-                <div className="category-picker" style={{ maxHeight: 240 }}>
-                  {filteredCategories.map((cat) => (
-                    <label key={cat.id} className="category-row">
-                      <input
-                        type="checkbox"
-                        checked={selectedCategoryIds.has(cat.id)}
-                        onChange={(e) => {
-                          const checked = e.target.checked;
-                          setSelectedCategoryIds((prev) => {
-                            const next = new Set(prev);
-                            if (checked) next.add(cat.id);
-                            else next.delete(cat.id);
-                            return next;
-                          });
-                        }}
-                      />
-                      <span className="category-id">{cat.id}</span>
-                      <span className="category-name">{cat.name}</span>
-                      <span className="category-pill">{cat.unifiedLabel}</span>
-                    </label>
-                  ))}
-                </div>
+                <FlatCategorySelector
+                  categories={capsCategories}
+                  selectedIds={selectedCategoryIds}
+                  onToggleId={(id, checked) => {
+                    setSelectedCategoryIds((prev) => {
+                      const next = new Set(prev);
+                      if (checked) next.add(id);
+                      else next.delete(id);
+                      return filterLeafOnly(next, capsCategories);
+                    });
+                  }}
+                  onSetIds={(ids) => setSelectedCategoryIds(filterLeafOnly(ids, capsCategories))}
+                />
                 <div className="muted" style={{ marginTop: 8 }}>
                   {selectedCount} catégorie{selectedCount > 1 ? "s" : ""} sélectionnée{selectedCount > 1 ? "s" : ""}
                 </div>
@@ -640,7 +595,7 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
       setIdxSaving(false);
       setIdxTesting(false);
       setIdxTested(false);
-      setFilteredCategories([]);
+      setCapsCategories([]);
       setSelectedCategoryIds(new Set());
       // Reset provider states
       setProvTmdb("");
@@ -689,7 +644,7 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
       title={titleNode}
       titleClassName="onboarding__title"
       onClose={onClose}
-      width={760}
+      width={800}
     >
       <div className="onboarding">
         <div className="onboarding__stepper">

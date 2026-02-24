@@ -28,6 +28,7 @@ public sealed class ExternalProvidersController : ControllerBase
     public IActionResult Get()
     {
         _instances.UpsertFromLegacyDefaults();
+        _instances.SeedFreeProviders();
 
         var definitions = _registry.List().Select(MapDefinition).ToList();
         var definitionByKey = definitions.ToDictionary(d => d.ProviderKey, StringComparer.OrdinalIgnoreCase);
@@ -157,7 +158,8 @@ public sealed class ExternalProvidersController : ControllerBase
                     Type = field.Type,
                     Placeholder = field.Placeholder,
                     Required = field.Required,
-                    Secret = field.Secret
+                    Secret = field.Secret,
+                    SecretPlaceholder = field.SecretPlaceholder
                 })
                 .ToArray()
         };

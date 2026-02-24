@@ -10,4 +10,7 @@ public static class ExternalProviderKeys
     public const string GoogleBooks = "googlebooks";
     public const string TheAudioDb = "theaudiodb";
     public const string ComicVine = "comicvine";
+    public const string MusicBrainz = "musicbrainz";
+    public const string OpenLibrary = "openlibrary";
+    public const string Rawg = "rawg";
 }

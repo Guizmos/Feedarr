@@ -370,7 +370,7 @@ public sealed class FeedController : ControllerBase
         foreach (var row in rows)
         {
             var hasMappedKey = !string.IsNullOrWhiteSpace(row.UnifiedCategoryKey);
-            if (hasMappedKey && string.IsNullOrWhiteSpace(row.UnifiedCategoryLabel) &&
+            if (hasMappedKey &&
                 UnifiedCategoryMappings.TryParseKey(row.UnifiedCategoryKey, out var mappedFromKey))
             {
                 row.UnifiedCategoryLabel = UnifiedCategoryMappings.ToLabel(mappedFromKey);
@@ -518,6 +518,11 @@ public sealed class FeedController : ControllerBase
         foreach (var row in globalRows)
         {
             var hasMappedKey = !string.IsNullOrWhiteSpace(row.UnifiedCategoryKey);
+            if (hasMappedKey &&
+                UnifiedCategoryMappings.TryParseKey(row.UnifiedCategoryKey, out var mappedFromKey))
+            {
+                row.UnifiedCategoryLabel = UnifiedCategoryMappings.ToLabel(mappedFromKey);
+            }
             if (!hasMappedKey &&
                 UnifiedCategoryMappings.TryParse(row.UnifiedCategory, out var unifiedCategory) &&
                 unifiedCategory != UnifiedCategory.Autre)
@@ -630,7 +635,7 @@ public sealed class FeedController : ControllerBase
             foreach (var row in catRows)
             {
                 var hasMappedKey = !string.IsNullOrWhiteSpace(row.UnifiedCategoryKey);
-                if (hasMappedKey && string.IsNullOrWhiteSpace(row.UnifiedCategoryLabel) &&
+                if (hasMappedKey &&
                     UnifiedCategoryMappings.TryParseKey(row.UnifiedCategoryKey, out var mappedFromKey))
                 {
                     row.UnifiedCategoryLabel = UnifiedCategoryMappings.ToLabel(mappedFromKey);

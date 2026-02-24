@@ -16,6 +16,9 @@ using Feedarr.Api.Services.Prowlarr;
 using Feedarr.Api.Services.Posters;
 using Feedarr.Api.Services.ComicVine;
 using Feedarr.Api.Services.TheAudioDb;
+using Feedarr.Api.Services.MusicBrainz;
+using Feedarr.Api.Services.OpenLibrary;
+using Feedarr.Api.Services.Rawg;
 using Feedarr.Api.Services.Torznab;
 using Feedarr.Api.Services.Tmdb;
 using Feedarr.Api.Services.TvMaze;
@@ -257,6 +260,31 @@ builder.Services.AddHttpClient<ComicVineClient>(c =>
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
 }).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
+// Open Library — free, no API key required
+builder.Services.AddHttpClient<OpenLibraryClient>(c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(20);
+    c.BaseAddress = new Uri("https://openlibrary.org/");
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0 ( https://github.com/Guizmos/feedarr )");
+    c.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+
+// MusicBrainz — no API key required, User-Agent mandatory
+builder.Services.AddHttpClient<MusicBrainzClient>(c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(25);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0 ( https://github.com/Guizmos/feedarr )");
+    c.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+
+// RAWG — free tier API key required (rawg.io/apidocs)
+builder.Services.AddHttpClient<RawgClient>(c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(20);
+    c.BaseAddress = new Uri("https://api.rawg.io/api/");
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
+}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+
 // Sonarr
 builder.Services.AddHttpClient<SonarrClient>(c =>
 {
@@ -459,6 +487,14 @@ app.Services.GetRequiredService<MigrationsRunner>().Run();
 // Migrate existing API keys to encrypted format
 await app.Services.GetRequiredService<ApiKeyMigrationService>().MigrateAsync();
 app.Services.GetRequiredService<BackupService>().InitializeForStartup();
+
+// Build fingerprint — visible dans les logs au démarrage pour confirmer que le bon binaire tourne.
+// Chercher : [BUILD] CATS_STANDARDONLY_V2
+var _startupLog = app.Services.GetRequiredService<ILoggerFactory>()
+    .CreateLogger("Feedarr.Startup");
+var _asm = typeof(Feedarr.Api.Controllers.CategoriesController).Assembly;
+var _buildTs = System.IO.File.GetLastWriteTimeUtc(_asm.Location).ToString("yyyy-MM-dd HH:mm:ss UTC");
+_startupLog.LogInformation("[BUILD] Feedarr.Api built={T} — CATS_STANDARDONLY_V2", _buildTs);
 
 app.MapGet("/", () => Results.Text("Feedarr.Api OK"));
 app.MapControllers();
