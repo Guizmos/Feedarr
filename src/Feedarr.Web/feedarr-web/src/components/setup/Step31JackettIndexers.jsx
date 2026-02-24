@@ -86,8 +86,10 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
   const [saving, setSaving] = useState(false);
   const [reclassifying, setReclassifying] = useState(false);
   const [busySourceId, setBusySourceId] = useState(null);
+  const [loadErr, setLoadErr] = useState("");
 
   const loadProviderConfigs = useCallback(async () => {
+    setLoadErr("");
     const nextConfigs = {
       jackett: readProviderConfig("jackett"),
       prowlarr: readProviderConfig("prowlarr"),
@@ -161,7 +163,8 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
               nextWarnings[provider.key] =
                 `Récupération automatique indisponible pour ${provider.label}. Ajoute les indexeurs manuellement via "Copy Torznab Feed".`;
             }
-          } catch {
+          } catch (e) {
+            console.error(`[Step3 Indexers] Chargement indexeurs ${provider.label} échoué.`, e);
             const cached = Array.isArray(nextConfigs[provider.key]?.indexers)
               ? nextConfigs[provider.key].indexers
               : [];
@@ -177,8 +180,9 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
           }
         })
       );
-    } catch {
-      // Keep cached provider state from storage.
+    } catch (e) {
+      console.error("[Step3 Indexers] Impossible de charger les fournisseurs depuis l'API.", e);
+      setLoadErr("Impossible de charger les fournisseurs. La configuration locale est utilisée.");
     }
 
     setProviderConfigs(nextConfigs);
@@ -189,8 +193,10 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
     try {
       const data = await apiGet("/api/sources");
       setSources(Array.isArray(data) ? data : []);
-    } catch {
+    } catch (e) {
+      console.error("[Step3 Indexers] Impossible de charger les sources.", e);
       setSources([]);
+      setLoadErr("Erreur lors du chargement des sources.");
     }
   }, []);
 
@@ -525,7 +531,10 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
     try {
       await apiDelete(`/api/sources/${source.id}`);
       await loadSources();
-    } catch {}
+    } catch (e) {
+      console.error("[Step3 Indexers] Impossible de supprimer la source.", e);
+      setLoadErr("Impossible de supprimer la source.");
+    }
     setBusySourceId(null);
   }
 
@@ -569,6 +578,8 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
   return (
     <div className="setup-step setup-jackett">
       <h2>{tr("Indexeurs", "Indexers")}</h2>
+
+      {loadErr && <div className="onboarding__error">{loadErr}</div>}
 
       {!hasConfiguredProviders && (
         <div className="setup-jackett__guard">

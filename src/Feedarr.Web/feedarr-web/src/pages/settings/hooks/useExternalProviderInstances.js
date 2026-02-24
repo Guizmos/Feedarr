@@ -1,7 +1,15 @@
 import { useCallback, useMemo, useState } from "react";
-import { apiDelete, apiGet, apiPost, apiPut } from "../../../api/client.js";
+import { apiGet } from "../../../api/client.js";
 import { triggerPosterPolling } from "../../../hooks/usePosterPollingService.js";
 import { useRetroFetchProgress } from "../../../hooks/useRetroFetchProgress.js";
+import {
+  fetchProvidersConfig,
+  createProviderInstance,
+  updateProviderInstance,
+  deleteProviderInstance,
+  testProviderInstance,
+  toggleProviderInstance,
+} from "../../../domain/providers/index.js";
 
 const notifyOnboardingRefresh = () => {
   if (typeof window !== "undefined") {
@@ -137,17 +145,16 @@ export default function useExternalProviderInstances() {
   const loadExternalProviders = useCallback(async () => {
     setExternalLoading(true);
     setExternalError("");
-    try {
-      const data = await apiGet("/api/providers/external");
-      setDefinitions(Array.isArray(data?.definitions) ? data.definitions : []);
-      setInstances(Array.isArray(data?.instances) ? data.instances : []);
-    } catch (e) {
-      setExternalError(e?.message || "Erreur chargement providers metadata");
+    const result = await fetchProvidersConfig();
+    if (result.ok) {
+      setDefinitions(result.data.definitions);
+      setInstances(result.data.instances);
+    } else {
+      setExternalError(result.errorMessage);
       setDefinitions([]);
       setInstances([]);
-    } finally {
-      setExternalLoading(false);
     }
+    setExternalLoading(false);
   }, []);
 
   const loadProviderStats = useCallback(async () => {
@@ -313,16 +320,16 @@ export default function useExternalProviderInstances() {
     setExternalModalSaving(true);
     setExternalModalError("");
     try {
+      let result;
       if (externalModalMode === "add") {
-        const payload = {
+        result = await createProviderInstance({
           providerKey: externalModalProviderKey,
           displayName: displayName || null,
           enabled: externalModalEnabled,
           baseUrl: baseUrl || null,
           auth: authPayload,
           options: {},
-        };
-        await apiPost("/api/providers/external", payload);
+        });
       } else if (externalModalInstance?.instanceId) {
         const payload = {
           displayName: displayName || null,
@@ -333,7 +340,12 @@ export default function useExternalProviderInstances() {
         if (Object.keys(authPayload).length > 0) {
           payload.auth = authPayload;
         }
-        await apiPut(`/api/providers/external/${externalModalInstance.instanceId}`, payload);
+        result = await updateProviderInstance(externalModalInstance.instanceId, payload);
+      }
+
+      if (result && !result.ok) {
+        setExternalModalError(result.errorMessage);
+        return;
       }
 
       notifyOnboardingRefresh();
@@ -375,7 +387,8 @@ export default function useExternalProviderInstances() {
     if (!externalDeleteInstance?.instanceId) return;
     setExternalDeleteLoading(true);
     try {
-      await apiDelete(`/api/providers/external/${externalDeleteInstance.instanceId}`);
+      const result = await deleteProviderInstance(externalDeleteInstance.instanceId);
+      if (!result.ok) throw new Error(result.errorMessage);
       notifyOnboardingRefresh();
       closeExternalDelete();
       await loadExternalProviders();
@@ -399,9 +412,11 @@ export default function useExternalProviderInstances() {
   const confirmExternalToggle = useCallback(async () => {
     if (!externalToggleInstance?.instanceId) return;
     try {
-      await apiPut(`/api/providers/external/${externalToggleInstance.instanceId}`, {
-        enabled: !externalToggleInstance.enabled,
-      });
+      const result = await toggleProviderInstance(
+        externalToggleInstance.instanceId,
+        !externalToggleInstance.enabled
+      );
+      if (!result.ok) throw new Error(result.errorMessage);
       notifyOnboardingRefresh();
       closeExternalToggle();
       await loadExternalProviders();
@@ -416,36 +431,22 @@ export default function useExternalProviderInstances() {
     setTestingExternal(instanceId);
     setTestStatusByExternal((prev) => ({ ...prev, [instanceId]: "pending" }));
 
-    try {
-      const res = await apiPost(`/api/providers/external/${instanceId}/test`);
-      const elapsed = Date.now() - startedAt;
-      const wait = Math.max(2000 - elapsed, 0);
+    // testProviderInstance never throws — returns { ok, errorMessage? }
+    const result = await testProviderInstance(instanceId);
+    const elapsed = Date.now() - startedAt;
+    const wait = Math.max(2000 - elapsed, 0);
+
+    setTimeout(() => {
+      setTestStatusByExternal((prev) => ({ ...prev, [instanceId]: result.ok ? "ok" : "error" }));
       setTimeout(() => {
-        setTestStatusByExternal((prev) => ({ ...prev, [instanceId]: res?.ok ? "ok" : "error" }));
-        setTimeout(() => {
-          setTestStatusByExternal((prev) => {
-            const next = { ...prev };
-            delete next[instanceId];
-            return next;
-          });
-        }, 1600);
-        setTestingExternal(null);
-      }, wait);
-    } catch {
-      const elapsed = Date.now() - startedAt;
-      const wait = Math.max(2000 - elapsed, 0);
-      setTimeout(() => {
-        setTestStatusByExternal((prev) => ({ ...prev, [instanceId]: "error" }));
-        setTimeout(() => {
-          setTestStatusByExternal((prev) => {
-            const next = { ...prev };
-            delete next[instanceId];
-            return next;
-          });
-        }, 1600);
-        setTestingExternal(null);
-      }, wait);
-    }
+        setTestStatusByExternal((prev) => {
+          const next = { ...prev };
+          delete next[instanceId];
+          return next;
+        });
+      }, 1600);
+      setTestingExternal(null);
+    }, wait);
   }, []);
 
   const loadExternalFlags = useCallback(async () => {

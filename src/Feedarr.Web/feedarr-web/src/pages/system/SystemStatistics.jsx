@@ -17,15 +17,24 @@ function formatNumber(num) {
 
 const CATEGORY_COLOR_FALLBACK = "var(--cat-stats-unknown)";
 
+const cssVarCache = new Map();
+
+function getCssVar(name) {
+  if (cssVarCache.has(name)) return cssVarCache.get(name);
+  const value = getComputedStyle(document.documentElement)
+    .getPropertyValue(name)
+    .trim();
+  cssVarCache.set(name, value);
+  return value;
+}
+
 function getCategoryColor(key) {
   const normalized = String(key || "").trim().toLowerCase();
   if (!normalized) return CATEGORY_COLOR_FALLBACK;
   if (typeof window === "undefined" || typeof document === "undefined") {
     return `var(--cat-${normalized})`;
   }
-  const value = getComputedStyle(document.documentElement)
-    .getPropertyValue(`--cat-${normalized}`)
-    .trim();
+  const value = getCssVar(`--cat-${normalized}`);
   return value || CATEGORY_COLOR_FALLBACK;
 }
 

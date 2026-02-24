@@ -272,7 +272,10 @@ export default function Step4ArrApps() {
     try {
       await apiDelete(`/api/apps/${app.id}`);
       await loadApps();
-    } catch {}
+    } catch (e) {
+      console.error("[Step4 ArrApps] Impossible de supprimer l'application.", e);
+      setErr(e?.message || tr("Impossible de supprimer l'application.", "Failed to delete the application."));
+    }
   }
 
   const configTags = useMemo(

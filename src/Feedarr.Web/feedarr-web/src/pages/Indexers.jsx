@@ -121,7 +121,8 @@ export default function Indexers() {
                 CATEGORY_GROUP_LABELS[normalizeCategoryGroupKey(mapping?.groupKey || mapping?.unifiedKey)] ||
                 "",
             }));
-          } catch {
+          } catch (e) {
+            console.error(`[Indexers] Impossible de charger les catégories pour la source #${s.id}.`, e);
             catsMap[s.id] = [];
           }
         })

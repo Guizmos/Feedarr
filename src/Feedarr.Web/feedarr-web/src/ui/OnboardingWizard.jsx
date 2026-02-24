@@ -7,14 +7,13 @@ import {
   mapFromCapsAssignments,
   normalizeCategoryGroupKey,
 } from "../domain/categories/index.js";
-
-// TODO(metadata-providers-step1): This legacy wizard duplicates metadata provider logic
-// from setup Step2/settings (state + test/save flow via /api/settings/external).
-// Keep for compatibility, but migrate to shared useExternalProviderInstances + shared UI flow.
+import { useMetadataProviders, toggleProviderInstance } from "../domain/providers/index.js";
 
 const INDEXER_OPTIONS = ["C411", "YGEGE", "LA-CALE", "TOS"];
 
 export default function OnboardingWizard({ open, status, onClose, onComplete }) {
+  const providers = useMetadataProviders();
+
   const [idxName, setIdxName] = useState("");
   const [idxUrl, setIdxUrl] = useState("");
   const [idxKey, setIdxKey] = useState("");
@@ -41,6 +40,7 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
   const [provTesting, setProvTesting] = useState(false);
   const [provTested, setProvTested] = useState(false);
   const [provTestResults, setProvTestResults] = useState({ tmdb: null, tvmaze: null, fanart: null, igdb: null });
+  const [testedInstanceIds, setTestedInstanceIds] = useState({});
 
   // Test indexer function
   async function testIndexer() {
@@ -145,80 +145,53 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
   const canTestIndexer = idxName.trim() && idxUrl.trim() && idxKey.trim();
   const selectedCount = categoryMappings.size;
 
-  // Test providers function
+  // Test providers function — uses domain hook (/api/providers/external)
   async function testProviders() {
     setProvErr("");
     setProvOk("");
 
     const hasTmdb = !!provTmdb.trim();
-    const hasTvmaze = true;
     const hasFanart = !!provFanart.trim();
     const hasIgdb = !!provIgdbId.trim() && !!provIgdbSecret.trim();
 
-    if (!hasTmdb && !hasTvmaze && !hasFanart && !hasIgdb) {
-      setProvErr("Ajoute au moins une clé/provider complète.");
+    // TVmaze: always attempt (may not require a key depending on backend definition)
+    const providerInputs = [
+      { key: "tmdb",   active: hasTmdb,   auth: { apiKey: provTmdb.trim() } },
+      { key: "tvmaze", active: true,       auth: provTvmaze.trim() ? { apiKey: provTvmaze.trim() } : {} },
+      { key: "fanart", active: hasFanart,  auth: { apiKey: provFanart.trim() } },
+      { key: "igdb",   active: hasIgdb,    auth: { clientId: provIgdbId.trim(), clientSecret: provIgdbSecret.trim() } },
+    ];
+
+    const hasAnyInput = hasTmdb || hasFanart || hasIgdb;
+    if (!hasAnyInput) {
+      setProvErr("Ajoute au moins une clé provider complète.");
       return;
     }
 
     setProvTesting(true);
     const results = { tmdb: null, tvmaze: null, fanart: null, igdb: null };
+    const newInstanceIds = {};
 
     try {
-      // Sauvegarder les clés avec tous les providers DÉSACTIVÉS pour éviter d'activer une clé non testée.
-      // saveProviders() réactivera uniquement les providers dont le test a réussi.
-      const payload = {
-        tmdbApiKey: provTmdb.trim() || null,
-        tvmazeApiKey: provTvmaze.trim() || null,
-        fanartApiKey: provFanart.trim() || null,
-        igdbClientId: provIgdbId.trim() || null,
-        igdbClientSecret: provIgdbSecret.trim() || null,
-        tmdbEnabled: false,
-        tvmazeEnabled: false,
-        fanartEnabled: false,
-        igdbEnabled: false,
-      };
-      await apiPut("/api/settings/external", payload);
+      for (const { key, active, auth } of providerInputs) {
+        if (!active) continue;
 
-      // Tester chaque provider configuré
-      if (hasTmdb) {
-        try {
-          const res = await apiPost("/api/settings/external/test", { kind: "tmdb" });
-          results.tmdb = res?.ok ? "ok" : "error";
-        } catch {
-          results.tmdb = "error";
+        // Create or update instance as disabled, then test
+        const upsertResult = await providers.upsertDisabled(key, auth);
+        if (!upsertResult.ok || !upsertResult.instanceId) {
+          console.error(`[OnboardingWizard] upsertDisabled failed for ${key}`, upsertResult.errorMessage);
+          results[key] = "error";
+          continue;
         }
+
+        newInstanceIds[key] = upsertResult.instanceId;
+        const testResult = await providers.test(upsertResult.instanceId);
+        results[key] = testResult.ok ? "ok" : "error";
       }
 
-      if (hasTvmaze) {
-        try {
-          const res = await apiPost("/api/settings/external/test", { kind: "tvmaze" });
-          results.tvmaze = res?.ok ? "ok" : "error";
-        } catch {
-          results.tvmaze = "error";
-        }
-      }
-
-      if (hasFanart) {
-        try {
-          const res = await apiPost("/api/settings/external/test", { kind: "fanart" });
-          results.fanart = res?.ok ? "ok" : "error";
-        } catch {
-          results.fanart = "error";
-        }
-      }
-
-      if (hasIgdb) {
-        try {
-          const res = await apiPost("/api/settings/external/test", { kind: "igdb" });
-          results.igdb = res?.ok ? "ok" : "error";
-        } catch {
-          results.igdb = "error";
-        }
-      }
-
+      setTestedInstanceIds(newInstanceIds);
       setProvTestResults(results);
 
-      // Vérifier si au moins un test a réussi
       const hasSuccess = Object.values(results).some((r) => r === "ok");
       const hasError = Object.values(results).some((r) => r === "error");
 
@@ -233,42 +206,52 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
         setProvErr("Aucun provider n'a pu être testé avec succès.");
       }
     } catch (e) {
+      console.error("[OnboardingWizard] testProviders failed", e);
       setProvErr(e?.message || "Erreur test providers");
     } finally {
       setProvTesting(false);
     }
   }
 
-  // Save and activate providers
+  // Save and activate providers — enables only the instances that passed the test
   async function saveProviders() {
     setProvErr("");
     setProvOk("");
     setProvSaving(true);
 
     try {
-      const payload = {
-        tmdbApiKey: provTmdb.trim() || null,
-        tvmazeApiKey: provTvmaze.trim() || null,
-        fanartApiKey: provFanart.trim() || null,
-        igdbClientId: provIgdbId.trim() || null,
-        igdbClientSecret: provIgdbSecret.trim() || null,
-        // Activer les providers qui ont été testés avec succès
-        tmdbEnabled: provTestResults.tmdb === "ok",
-        tvmazeEnabled: provTestResults.tvmaze === "ok",
-        fanartEnabled: provTestResults.fanart === "ok",
-        igdbEnabled: provTestResults.igdb === "ok",
-      };
+      const toEnable = Object.entries(testedInstanceIds).filter(
+        ([key]) => provTestResults[key] === "ok"
+      );
 
-      await apiPut("/api/settings/external", payload);
+      if (toEnable.length === 0) {
+        setProvErr("Aucun provider valide à activer.");
+        return;
+      }
+
+      // Activate all tested-OK instances in parallel
+      const enableResults = await Promise.all(
+        toEnable.map(([, instanceId]) => toggleProviderInstance(instanceId, true))
+      );
+
+      const failures = enableResults.filter((r) => !r.ok);
+      if (failures.length > 0) {
+        const msgs = failures.map((r) => r.errorMessage).filter(Boolean).join(". ");
+        setProvErr(msgs || "Certains providers n'ont pas pu être activés.");
+        return;
+      }
+
+      // Reload domain state after batch enable
+      await providers.loadAll();
+
       setProvOk("Providers enregistrés et activés !");
-
       if (typeof window !== "undefined") {
         window.dispatchEvent(new Event("onboarding:refresh"));
       }
 
-      // Passer à l'étape suivante
       next();
     } catch (e) {
+      console.error("[OnboardingWizard] saveProviders failed", e);
       setProvErr(e?.message || "Erreur sauvegarde providers");
     } finally {
       setProvSaving(false);
@@ -599,7 +582,12 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
       setProvTesting(false);
       setProvTested(false);
       setProvTestResults({ tmdb: null, tvmaze: null, fanart: null, igdb: null });
+      setTestedInstanceIds({});
+      // Load provider definitions (needed by upsertDisabled)
+      providers.loadAll();
     }
+    // providers.loadAll is stable (useCallback with [] deps)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   function next() {
