@@ -26,11 +26,20 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Resolve app version
+      - name: Resolve app version (beta from manifest)
         id: app_version
         shell: bash
         run: |
-          echo "version=beta-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          SHA7="${GITHUB_SHA::7}"
+
+          # Lit la version depuis release-please manifest
+          BASE_VERSION=$(node -p "require('./.release-please-manifest.json').feedarr")
+
+          # Version affichée dans l'app
+          echo "version=${BASE_VERSION}-beta-sha.${SHA7}" >> "$GITHUB_OUTPUT"
+
+          # Tag docker compatible
+          echo "docker_tag=beta-${SHA7}" >> "$GITHUB_OUTPUT"
 
       - name: Docker meta (api)
         id: meta_api
@@ -39,7 +48,7 @@ jobs:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/feedarr-api
           tags: |
             type=raw,value=beta
-            type=sha,prefix=beta-
+            type=raw,value=${{ steps.app_version.outputs.docker_tag }}
 
       - name: Build & push (api)
         uses: docker/build-push-action@v6
@@ -61,7 +70,7 @@ jobs:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/feedarr-web
           tags: |
             type=raw,value=beta
-            type=sha,prefix=beta-
+            type=raw,value=${{ steps.app_version.outputs.docker_tag }}
 
       - name: Build & push (web)
         uses: docker/build-push-action@v6

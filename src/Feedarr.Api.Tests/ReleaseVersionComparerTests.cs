@@ -52,4 +52,13 @@ public sealed class ReleaseVersionComparerTests
         Assert.False(ReleaseVersionComparer.IsUpdateAvailable("1.2.3", "v1.2.3-rc.1", allowPrerelease: false));
         Assert.True(ReleaseVersionComparer.IsUpdateAvailable("1.2.2", "v1.2.3-rc.1", allowPrerelease: true));
     }
+
+    [Fact]
+    public void ToCanonicalString_Preserves_Prerelease_Segments()
+    {
+        var parsed = ReleaseVersionComparer.TryParse("v1.2.3-beta.7+sha.abc1234", out var version);
+
+        Assert.True(parsed);
+        Assert.Equal("1.2.3-beta.7", ReleaseVersionComparer.ToCanonicalString(version));
+    }
 }

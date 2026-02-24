@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Dapper;
 using System.Reflection;
-using System.Text.RegularExpressions;
 using Feedarr.Api.Data;
 using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Dtos.System;
@@ -14,6 +13,7 @@ using Feedarr.Api.Services.Security;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Data;
+using Feedarr.Api.Services.Updates;
 
 namespace Feedarr.Api.Controllers;
 
@@ -40,10 +40,6 @@ public sealed class SystemController : ControllerBase
     private static readonly object StorageRefreshLock = new();
     private static Task? StorageRefreshTask;
     private static StorageUsageSnapshot LastKnownStorageUsage = new(0, 0, 0, 0, 0, 0);
-    private static readonly Regex _semVerRegex = new(
-        @"(?<!\d)v?(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase
-    );
 
     private readonly Db _db;
     private readonly IWebHostEnvironment _env;
@@ -970,32 +966,41 @@ public sealed class SystemController : ControllerBase
         var infoVersion = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
         var asmVersion = asm.GetName().Version?.ToString();
 
-        if (TryExtractSemVer(envVersion, out var parsedEnv))
+        if (TryResolveVersion(envVersion, out var parsedEnv))
             return parsedEnv;
-        if (TryExtractSemVer(infoVersion, out var parsedInfo))
+        if (TryResolveVersion(infoVersion, out var parsedInfo))
             return parsedInfo;
-        if (TryExtractSemVer(asmVersion, out var parsedAsm))
+        if (TryResolveVersion(asmVersion, out var parsedAsm))
             return parsedAsm;
 
         return "0.0.0";
     }
 
-    private static bool TryExtractSemVer(string? value, out string version)
+    private static bool TryResolveVersion(string? value, out string version)
     {
         version = "";
         if (string.IsNullOrWhiteSpace(value))
             return false;
 
-        var match = _semVerRegex.Match(value);
-        if (!match.Success)
-            return false;
+        var trimmed = value.Trim();
+        if (ReleaseVersionComparer.TryParse(trimmed, out var parsed))
+        {
+            version = ReleaseVersionComparer.ToCanonicalString(parsed);
+            return true;
+        }
 
-        var major = match.Groups["major"].Value;
-        var minor = match.Groups["minor"].Value;
-        var patch = match.Groups["patch"].Value;
-        version = $"{major}.{minor}.{patch}";
-        return true;
+        if (IsBetaTrackVersion(trimmed))
+        {
+            version = trimmed;
+            return true;
+        }
+
+        return false;
     }
+
+    private static bool IsBetaTrackVersion(string? value)
+        => !string.IsNullOrWhiteSpace(value)
+        && value.Trim().StartsWith("beta-", StringComparison.OrdinalIgnoreCase);
 
     private IActionResult ToBackupErrorResult(BackupOperationException ex)
     {

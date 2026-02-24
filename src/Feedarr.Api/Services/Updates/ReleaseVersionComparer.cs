@@ -86,6 +86,15 @@ public static class ReleaseVersionComparer
         return 0;
     }
 
+    public static string ToCanonicalString(ReleaseSemVersion version)
+    {
+        var core = $"{version.Major}.{version.Minor}.{version.Patch}";
+        if (!version.IsPrerelease)
+            return core;
+
+        return $"{core}-{string.Join('.', version.PreReleaseSegments)}";
+    }
+
     public static bool IsUpdateAvailable(string? currentVersion, string? latestVersion, bool allowPrerelease)
     {
         if (!TryParse(currentVersion, out var current))

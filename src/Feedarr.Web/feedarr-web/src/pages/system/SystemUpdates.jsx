@@ -11,7 +11,8 @@ function fmtDate(value) {
 function fmtVersion(value) {
   const raw = String(value || "").trim();
   if (!raw) return "-";
-  if (/(^|-)v\d+\.\d+\.\d+/.test(raw)) return raw;
+  const semverLike = /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+  if (!semverLike.test(raw)) return raw;
   return raw.startsWith("v") ? raw : `v${raw}`;
 }
 
