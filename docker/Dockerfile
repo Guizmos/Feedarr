@@ -13,9 +13,10 @@ ENV ASPNETCORE_URLS=http://+:8080
 ARG FEEDARR_VERSION
 ENV FEEDARR_VERSION=$FEEDARR_VERSION
 
-# gosu pour drop privileges proprement
+# gosu : drop privileges proprement
+# passwd : usermod + groupmod pour remapper feedarr sur PUID/PGID à runtime
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends gosu ca-certificates \
+  && apt-get install -y --no-install-recommends gosu ca-certificates passwd \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /out ./
