@@ -1,6 +1,7 @@
 using Dapper;
 using Feedarr.Api.Data;
 using Feedarr.Api.Models;
+using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services.Security;
 
 namespace Feedarr.Api.Data.Repositories;
@@ -9,18 +10,6 @@ public sealed class SourceRepository
 {
     private readonly Db _db;
     private readonly IApiKeyProtectionService _keyProtection;
-    private static readonly Dictionary<string, string> GroupLabelsByKey = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["films"] = "Films",
-        ["series"] = "Série TV",
-        ["animation"] = "Animation",
-        ["anime"] = "Anime",
-        ["comics"] = "Comics",
-        ["books"] = "Livres",
-        ["audio"] = "Audio",
-        ["spectacle"] = "Spectacle",
-        ["emissions"] = "Emissions"
-    };
 
     public SourceRepository(Db db, IApiKeyProtectionService keyProtection)
     {
@@ -29,29 +18,16 @@ public sealed class SourceRepository
     }
 
     public static bool TryNormalizeGroupKey(string? value, out string normalizedKey)
-    {
-        normalizedKey = "";
-        if (string.IsNullOrWhiteSpace(value)) return false;
-
-        var candidate = value.Trim().ToLowerInvariant();
-        if (!GroupLabelsByKey.ContainsKey(candidate)) return false;
-
-        normalizedKey = candidate;
-        return true;
-    }
+        => CategoryGroupCatalog.TryNormalizeKey(value, out normalizedKey);
 
     public static bool IsAllowedGroupKey(string? value)
         => TryNormalizeGroupKey(value, out _);
 
     public static string GetGroupLabel(string key)
     {
-        if (TryNormalizeGroupKey(key, out var normalized) &&
-            GroupLabelsByKey.TryGetValue(normalized, out var label))
-        {
-            return label;
-        }
-
-        return key?.Trim() ?? "";
+        return TryNormalizeGroupKey(key, out var normalized)
+            ? CategoryGroupCatalog.LabelForKey(normalized)
+            : key?.Trim() ?? "";
     }
 
     public long Create(string name, string torznabUrl, string apiKey, string authMode, long? providerId = null, string? color = null)
@@ -357,9 +333,13 @@ public sealed class SourceRepository
         {
             var id = Convert.ToInt32(row.id);
             string key = row.groupKey ?? "";
-            string label = row.groupLabel ?? "";
-            if (id > 0 && !string.IsNullOrWhiteSpace(key))
-                map[id] = (key, string.IsNullOrWhiteSpace(label) ? GetGroupLabel(key) : label);
+            if (id <= 0)
+                continue;
+
+            if (!TryNormalizeGroupKey(key, out var normalizedKey))
+                continue;
+
+            map[id] = (normalizedKey, CategoryGroupCatalog.LabelForKey(normalizedKey));
         }
 
         return map;
@@ -409,9 +389,7 @@ public sealed class SourceRepository
             if (catId <= 0 || string.IsNullOrWhiteSpace(key)) continue;
             if (!TryNormalizeGroupKey(key, out string normalized)) continue;
 
-            var label = Convert.ToString(row.groupLabel);
-            if (string.IsNullOrWhiteSpace(label))
-                label = GetGroupLabel(normalized);
+            var label = CategoryGroupCatalog.LabelForKey(normalized);
 
             result.Add(new SourceCategoryMapping
             {
@@ -441,7 +419,7 @@ public sealed class SourceRepository
         var changed = 0;
         foreach (var patch in normalizedPatches)
         {
-            if (!TryNormalizeGroupKey(patch.GroupKey, out var normalizedKey))
+            if (string.IsNullOrWhiteSpace(patch.GroupKey))
             {
                 changed += conn.Execute(
                     """
@@ -455,7 +433,13 @@ public sealed class SourceRepository
                 continue;
             }
 
-            var label = GetGroupLabel(normalizedKey);
+            if (!TryNormalizeGroupKey(patch.GroupKey, out var normalizedKey))
+                throw new ArgumentException(
+                    $"Invalid category group key '{patch.GroupKey}' for catId={patch.CatId}.",
+                    nameof(mappings));
+
+            CategoryGroupCatalog.AssertCanonicalKey(normalizedKey);
+            var label = CategoryGroupCatalog.LabelForKey(normalizedKey);
             changed += conn.Execute(
                 """
                 INSERT INTO source_category_mappings(

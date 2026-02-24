@@ -1,42 +1,18 @@
 import React, { useEffect, useState } from "react";
 import Modal from "./Modal.jsx";
 import { apiPatch, apiPost, apiPut } from "../api/client.js";
-import CategoryMappingBoard, { FEEDARR_GROUPS } from "../components/shared/CategoryMappingBoard.jsx";
+import CategoryMappingBoard from "../components/shared/CategoryMappingBoard.jsx";
+import {
+  buildMappingsPayload,
+  mapFromCapsAssignments,
+  normalizeCategoryGroupKey,
+} from "../domain/categories/index.js";
 
 // TODO(metadata-providers-step1): This legacy wizard duplicates metadata provider logic
 // from setup Step2/settings (state + test/save flow via /api/settings/external).
 // Keep for compatibility, but migrate to shared useExternalProviderInstances + shared UI flow.
 
 const INDEXER_OPTIONS = ["C411", "YGEGE", "LA-CALE", "TOS"];
-const GROUP_LABELS = Object.fromEntries(FEEDARR_GROUPS.map((group) => [group.key, group.label]));
-
-function normalizeGroupKey(value) {
-  const key = String(value || "").trim().toLowerCase();
-  return GROUP_LABELS[key] ? key : null;
-}
-
-function mapFromCapsAssignments(categories) {
-  const map = new Map();
-  for (const category of Array.isArray(categories) ? categories : []) {
-    const id = Number(category?.id);
-    if (!Number.isFinite(id) || id <= 0) continue;
-    const key = normalizeGroupKey(category?.assignedGroupKey);
-    if (!key) continue;
-    map.set(id, key);
-  }
-  return map;
-}
-
-function buildMappingsPayload(map) {
-  const payload = [];
-  for (const [catId, groupKey] of map instanceof Map ? map.entries() : []) {
-    const normalized = normalizeGroupKey(groupKey);
-    const id = Number(catId);
-    if (!Number.isFinite(id) || id <= 0 || !normalized) continue;
-    payload.push({ catId: id, groupKey: normalized });
-  }
-  return payload;
-}
 
 export default function OnboardingWizard({ open, status, onClose, onComplete }) {
   const [idxName, setIdxName] = useState("");
@@ -409,7 +385,7 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
                   categories={capsCategories}
                   mappings={categoryMappings}
                   onChangeMapping={(catId, groupKey) => {
-                    const normalized = normalizeGroupKey(groupKey);
+                    const normalized = normalizeCategoryGroupKey(groupKey);
                     setCategoryMappings((prev) => {
                       const next = new Map(prev);
                       if (!normalized) next.delete(catId);

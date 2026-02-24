@@ -74,9 +74,10 @@ public static class UnifiedCategoryMappings
     public static bool TryParseKey(string? key, out UnifiedCategory category)
     {
         category = UnifiedCategory.Autre;
-        if (string.IsNullOrWhiteSpace(key)) return false;
+        if (!CategoryGroupCatalog.TryNormalizeKey(key, out var canonicalKey))
+            return false;
 
-        switch (key.Trim().ToLowerInvariant())
+        switch (canonicalKey)
         {
             case "films":
                 category = UnifiedCategory.Film;
@@ -85,9 +86,6 @@ public static class UnifiedCategoryMappings
                 category = UnifiedCategory.Serie;
                 return true;
             case "emissions":
-                category = UnifiedCategory.Emission;
-                return true;
-            case "shows":
                 category = UnifiedCategory.Emission;
                 return true;
             case "spectacle":

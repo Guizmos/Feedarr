@@ -4196,172 +4196,172 @@ body.modal-open .content{
   border-radius: 12px;
   font-size: 12px;
   font-weight: 600;
-  color: #374151;
-  background: rgba(156, 163, 175, 0.25);
-  border: 1px solid rgba(156, 163, 175, 0.3);
+  color: var(--cat-bubble-default-text);
+  background: var(--cat-bubble-default-bg);
+  border: 1px solid var(--cat-bubble-default-border);
 }
 
 /* Films = Jaune pastel */
 .cat-bubble--films{
-  background: rgba(251, 191, 36, 0.25);
-  border-color: rgba(251, 191, 36, 0.4);
-  color: #92400e;
+  background: var(--cat-bubble-films-bg);
+  border-color: var(--cat-bubble-films-border);
+  color: var(--cat-bubble-films-text);
 }
 
 /* Séries TV = Bleu pastel */
 .cat-bubble--series{
-  background: rgba(96, 165, 250, 0.25);
-  border-color: rgba(96, 165, 250, 0.4);
-  color: #1e40af;
+  background: var(--cat-bubble-series-bg);
+  border-color: var(--cat-bubble-series-border);
+  color: var(--cat-bubble-series-text);
 }
 
 /* Animation = Gris clair */
 .cat-bubble--animation{
-  background: rgba(203, 213, 225, 0.42);
-  border-color: rgba(148, 163, 184, 0.52);
-  color: #334155;
+  background: var(--cat-bubble-animation-bg);
+  border-color: var(--cat-bubble-animation-border);
+  color: var(--cat-bubble-animation-text);
 }
 
 /* Anime = Cyan pastel */
 .cat-bubble--anime{
-  background: rgba(34, 211, 238, 0.25);
-  border-color: rgba(34, 211, 238, 0.4);
-  color: #0e7490;
+  background: var(--cat-bubble-anime-bg);
+  border-color: var(--cat-bubble-anime-border);
+  color: var(--cat-bubble-anime-text);
 }
 
 /* Emissions = Vert pastel */
 .cat-bubble--shows{
-  background: rgba(74, 222, 128, 0.25);
-  border-color: rgba(74, 222, 128, 0.4);
-  color: #166534;
+  background: var(--cat-bubble-emissions-bg);
+  border-color: var(--cat-bubble-emissions-border);
+  color: var(--cat-bubble-emissions-text);
 }
 .cat-bubble--emissions{
-  background: rgba(74, 222, 128, 0.25);
-  border-color: rgba(74, 222, 128, 0.4);
-  color: #166534;
+  background: var(--cat-bubble-emissions-bg);
+  border-color: var(--cat-bubble-emissions-border);
+  color: var(--cat-bubble-emissions-text);
 }
 
 /* Spectacle = Orange pastel */
 .cat-bubble--spectacle{
-  background: rgba(251, 146, 60, 0.25);
-  border-color: rgba(251, 146, 60, 0.4);
-  color: #c2410c;
+  background: var(--cat-bubble-spectacle-bg);
+  border-color: var(--cat-bubble-spectacle-border);
+  color: var(--cat-bubble-spectacle-text);
 }
 
 /* Jeux PC = Violet pastel */
 .cat-bubble--games{
-  background: rgba(192, 132, 252, 0.25);
-  border-color: rgba(192, 132, 252, 0.4);
-  color: #7c3aed;
+  background: var(--cat-bubble-games-bg);
+  border-color: var(--cat-bubble-games-border);
+  color: var(--cat-bubble-games-text);
 }
 
 /* Audio = Rose pastel */
 .cat-bubble--audio{
-  background: rgba(244, 114, 182, 0.22);
-  border-color: rgba(244, 114, 182, 0.38);
-  color: #9d174d;
+  background: var(--cat-bubble-audio-bg);
+  border-color: var(--cat-bubble-audio-border);
+  color: var(--cat-bubble-audio-text);
 }
 
 /* Livres = Vert olive pastel */
 .cat-bubble--books{
-  background: rgba(163, 230, 53, 0.22);
-  border-color: rgba(163, 230, 53, 0.38);
-  color: #3f6212;
+  background: var(--cat-bubble-books-bg);
+  border-color: var(--cat-bubble-books-border);
+  color: var(--cat-bubble-books-text);
 }
 
 /* Comics = Rouge pastel */
 .cat-bubble--comics{
-  background: rgba(248, 113, 113, 0.22);
-  border-color: rgba(248, 113, 113, 0.38);
-  color: #991b1b;
+  background: var(--cat-bubble-comics-bg);
+  border-color: var(--cat-bubble-comics-border);
+  color: var(--cat-bubble-comics-text);
 }
 
 /* Aliases for provider metadata kinds */
 .cat-bubble--movie{
-  background: rgba(251, 191, 36, 0.25);
-  border-color: rgba(251, 191, 36, 0.4);
-  color: #92400e;
+  background: var(--cat-bubble-films-bg);
+  border-color: var(--cat-bubble-films-border);
+  color: var(--cat-bubble-films-text);
 }
 .cat-bubble--tv{
-  background: rgba(96, 165, 250, 0.25);
-  border-color: rgba(96, 165, 250, 0.4);
-  color: #1e40af;
+  background: var(--cat-bubble-series-bg);
+  border-color: var(--cat-bubble-series-border);
+  color: var(--cat-bubble-series-text);
 }
 .cat-bubble--game{
-  background: rgba(192, 132, 252, 0.25);
-  border-color: rgba(192, 132, 252, 0.4);
-  color: #7c3aed;
+  background: var(--cat-bubble-games-bg);
+  border-color: var(--cat-bubble-games-border);
+  color: var(--cat-bubble-games-text);
 }
 .cat-bubble--book{
-  background: rgba(163, 230, 53, 0.22);
-  border-color: rgba(163, 230, 53, 0.38);
-  color: #3f6212;
+  background: var(--cat-bubble-books-bg);
+  border-color: var(--cat-bubble-books-border);
+  color: var(--cat-bubble-books-text);
 }
 .cat-bubble--comic{
-  background: rgba(248, 113, 113, 0.22);
-  border-color: rgba(248, 113, 113, 0.38);
-  color: #991b1b;
+  background: var(--cat-bubble-comics-bg);
+  border-color: var(--cat-bubble-comics-border);
+  color: var(--cat-bubble-comics-text);
 }
 .cat-bubble--artwork{
-  background: rgba(99, 102, 241, 0.22);
-  border-color: rgba(99, 102, 241, 0.38);
-  color: #3730a3;
+  background: var(--cat-bubble-artwork-bg);
+  border-color: var(--cat-bubble-artwork-border);
+  color: var(--cat-bubble-artwork-text);
 }
 
 /* Dark theme: brighter text for category bubbles */
 :root[data-theme="dark"] .cat-bubble{
-  color: #e5e7eb;
+  color: var(--cat-bubble-default-text);
 }
 :root[data-theme="dark"] .cat-bubble--films{
-  color: #fde68a;
+  color: var(--cat-bubble-films-text-dark);
 }
 :root[data-theme="dark"] .cat-bubble--series{
-  color: #bfdbfe;
+  color: var(--cat-bubble-series-text-dark);
 }
 :root[data-theme="dark"] .cat-bubble--animation{
-  color: #e2e8f0;
+  color: var(--cat-bubble-animation-text-dark);
 }
 :root[data-theme="dark"] .cat-bubble--anime{
-  color: #a5f3fc;
+  color: var(--cat-bubble-anime-text-dark);
 }
 :root[data-theme="dark"] .cat-bubble--shows{
-  color: #bbf7d0;
+  color: var(--cat-bubble-emissions-text-dark);
 }
 :root[data-theme="dark"] .cat-bubble--emissions{
-  color: #bbf7d0;
+  color: var(--cat-bubble-emissions-text-dark);
 }
 :root[data-theme="dark"] .cat-bubble--spectacle{
-  color: #fed7aa;
+  color: var(--cat-bubble-spectacle-text-dark);
 }
 :root[data-theme="dark"] .cat-bubble--games{
-  color: #e9d5ff;
+  color: var(--cat-bubble-games-text-dark);
 }
 :root[data-theme="dark"] .cat-bubble--audio{
-  color: #fbcfe8;
+  color: var(--cat-bubble-audio-text-dark);
 }
 :root[data-theme="dark"] .cat-bubble--books{
-  color: #d9f99d;
+  color: var(--cat-bubble-books-text-dark);
 }
 :root[data-theme="dark"] .cat-bubble--comics{
-  color: #fecaca;
+  color: var(--cat-bubble-comics-text-dark);
 }
 :root[data-theme="dark"] .cat-bubble--movie{
-  color: #fde68a;
+  color: var(--cat-bubble-films-text-dark);
 }
 :root[data-theme="dark"] .cat-bubble--tv{
-  color: #bfdbfe;
+  color: var(--cat-bubble-series-text-dark);
 }
 :root[data-theme="dark"] .cat-bubble--game{
-  color: #e9d5ff;
+  color: var(--cat-bubble-games-text-dark);
 }
 :root[data-theme="dark"] .cat-bubble--book{
-  color: #d9f99d;
+  color: var(--cat-bubble-books-text-dark);
 }
 :root[data-theme="dark"] .cat-bubble--comic{
-  color: #fecaca;
+  color: var(--cat-bubble-comics-text-dark);
 }
 :root[data-theme="dark"] .cat-bubble--artwork{
-  color: #c7d2fe;
+  color: var(--cat-bubble-artwork-text-dark);
 }
 
 /* Color Slider - horizontal sliding picker */
@@ -4917,7 +4917,7 @@ body.modal-open .content{
 
 .category-mapping-board__groups{
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -4984,48 +4984,48 @@ body.modal-open .content{
 }
 
 .mapping-chip--films{
-  background: rgba(251, 191, 36, 0.18);
-  border-color: rgba(251, 191, 36, 0.34);
+  background: var(--cat-chip-films-bg);
+  border-color: var(--cat-chip-films-border);
 }
 
 .mapping-chip--series{
-  background: rgba(96, 165, 250, 0.18);
-  border-color: rgba(96, 165, 250, 0.34);
+  background: var(--cat-chip-series-bg);
+  border-color: var(--cat-chip-series-border);
 }
 
 .mapping-chip--animation{
-  background: rgba(203, 213, 225, 0.28);
-  border-color: rgba(148, 163, 184, 0.45);
+  background: var(--cat-chip-animation-bg);
+  border-color: var(--cat-chip-animation-border);
 }
 
 .mapping-chip--anime{
-  background: rgba(34, 211, 238, 0.18);
-  border-color: rgba(34, 211, 238, 0.34);
+  background: var(--cat-chip-anime-bg);
+  border-color: var(--cat-chip-anime-border);
 }
 
 .mapping-chip--comics{
-  background: rgba(248, 113, 113, 0.16);
-  border-color: rgba(248, 113, 113, 0.34);
+  background: var(--cat-chip-comics-bg);
+  border-color: var(--cat-chip-comics-border);
 }
 
 .mapping-chip--books{
-  background: rgba(163, 230, 53, 0.16);
-  border-color: rgba(163, 230, 53, 0.34);
+  background: var(--cat-chip-books-bg);
+  border-color: var(--cat-chip-books-border);
 }
 
 .mapping-chip--audio{
-  background: rgba(244, 114, 182, 0.16);
-  border-color: rgba(244, 114, 182, 0.34);
+  background: var(--cat-chip-audio-bg);
+  border-color: var(--cat-chip-audio-border);
 }
 
 .mapping-chip--spectacle{
-  background: rgba(251, 146, 60, 0.16);
-  border-color: rgba(251, 146, 60, 0.34);
+  background: var(--cat-chip-spectacle-bg);
+  border-color: var(--cat-chip-spectacle-border);
 }
 
 .mapping-chip--emissions{
-  background: rgba(74, 222, 128, 0.16);
-  border-color: rgba(74, 222, 128, 0.34);
+  background: var(--cat-chip-emissions-bg);
+  border-color: var(--cat-chip-emissions-border);
 }
 
 .mapping-chip__line{
@@ -5083,6 +5083,17 @@ body.modal-open .content{
   border-radius: 8px;
   box-shadow: var(--panel-shadow);
   padding: 6px;
+}
+
+.mapping-chip__menu--portal{
+  position: fixed;
+  right: auto;
+  top: auto;
+  z-index: 2105;
+}
+
+.mapping-chip__menu--portal.mapping-chip__menu--top{
+  transform: translateY(-100%);
 }
 
 .mapping-chip__menu-item{

@@ -11,6 +11,7 @@ import { triggerPosterPolling } from "@hooks/usePosterPollingService.js";
 import { normalizeRequestMode } from "@utils/appTypes.js";
 import { LayoutGrid } from "lucide-react";
 import { getActiveUiLanguage } from "../../app/locale.js";
+import { normalizeCategoryGroupKey } from "../../domain/categories/index.js";
 
 // Local imports
 import { fmtBytes, fmtDateFromTs } from "./utils/formatters.js";
@@ -842,7 +843,7 @@ export default function Library() {
     if (!it) return;
     const q = it.titleClean?.trim() ? it.titleClean : it.title;
     const rawMediaType = String(it.mediaType || "").trim().toLowerCase();
-    const unifiedKey = String(it.unifiedCategoryKey || "").trim().toLowerCase();
+    const unifiedKey = normalizeCategoryGroupKey(it.unifiedCategoryKey);
     let nextMediaType = rawMediaType;
     if (!nextMediaType || nextMediaType === "unknown") {
       if (isGameCategoryKey(unifiedKey)) nextMediaType = "game";
@@ -850,7 +851,7 @@ export default function Library() {
       else if (unifiedKey === "books" || unifiedKey === "book") nextMediaType = "book";
       else if (unifiedKey === "comics" || unifiedKey === "comic") nextMediaType = "comic";
       else if (unifiedKey === "anime") nextMediaType = "anime";
-      else if (unifiedKey === "series" || unifiedKey === "shows") nextMediaType = "series";
+      else if (unifiedKey === "series" || unifiedKey === "emissions") nextMediaType = "series";
       else nextMediaType = "movie";
     }
     setManualTarget(it);

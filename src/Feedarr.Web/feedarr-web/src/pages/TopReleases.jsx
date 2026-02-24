@@ -11,6 +11,7 @@ import useArrApps from "../hooks/useArrApps.js";
 import { normalizeRequestMode } from "../utils/appTypes.js";
 import { getSourceColor } from "../utils/sourceColors.js";
 import { getActiveUiLanguage } from "../app/locale.js";
+import { normalizeCategoryGroupKey } from "../domain/categories/index.js";
 import TopReleasesSubSelectIcon from "./topReleases/components/TopReleasesSubSelectIcon.jsx";
 import {
   TopReleasesBannerSection,
@@ -24,7 +25,7 @@ const CATEGORY_LABELS = {
   series: "Series TV",
   anime: "Anime",
   games: "Jeux PC",
-  shows: "Emissions",
+  emissions: "Emissions",
   spectacle: "Spectacle",
   audio: "Audio",
   books: "Livres",
@@ -163,9 +164,8 @@ function buildTopSummary(sortBy, totalCount, uiLanguage) {
 }
 
 function isSeriesItem(it) {
-  const raw = String(it?.mediaType || it?.unifiedCategoryKey || "").toLowerCase();
-  if (["tv", "series", "serie", "tv_series", "series_tv", "seriestv"].includes(raw)) return true;
-  return String(it?.unifiedCategoryKey || "").toLowerCase() === "series";
+  const canonical = normalizeCategoryGroupKey(it?.mediaType || it?.unifiedCategoryKey);
+  return canonical === "series" || canonical === "anime" || canonical === "emissions";
 }
 
 function isGameCategoryKey(key) {
@@ -262,7 +262,9 @@ export default function TopReleases() {
       setGlobalTop(mapItems(data?.global || []));
       const byCategory = {};
       Object.entries(data?.byCategory || {}).forEach(([key, items]) => {
-        byCategory[key] = mapItems(items);
+        const normalizedKey = normalizeCategoryGroupKey(key) || String(key || "").toLowerCase();
+        if (!byCategory[normalizedKey]) byCategory[normalizedKey] = [];
+        byCategory[normalizedKey].push(...mapItems(items));
       });
       setTopByCategory(byCategory);
     }, {

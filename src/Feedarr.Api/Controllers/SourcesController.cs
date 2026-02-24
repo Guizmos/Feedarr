@@ -543,8 +543,10 @@ public sealed class SourcesController : ControllerBase
             if (mapping.CatId <= 0)
                 return BadRequest(new { error = $"invalid catId: {mapping.CatId}" });
 
-            if (!string.IsNullOrWhiteSpace(mapping.GroupKey) &&
-                !SourceRepository.IsAllowedGroupKey(mapping.GroupKey))
+            if (string.IsNullOrWhiteSpace(mapping.GroupKey))
+                continue;
+
+            if (!CategoryGroupCatalog.TryNormalizeKey(mapping.GroupKey, out _))
             {
                 return BadRequest(new { error = $"invalid groupKey for catId={mapping.CatId}" });
             }
@@ -555,7 +557,9 @@ public sealed class SourcesController : ControllerBase
             rawMappings.Select(m => new SourceRepository.SourceCategoryMappingPatch
             {
                 CatId = m.CatId,
-                GroupKey = string.IsNullOrWhiteSpace(m.GroupKey) ? null : m.GroupKey!.Trim()
+                GroupKey = string.IsNullOrWhiteSpace(m.GroupKey)
+                    ? null
+                    : (CategoryGroupCatalog.TryNormalizeKey(m.GroupKey, out var canonicalKey) ? canonicalKey : null)
             }));
 
         _caps.InvalidateSource(id);

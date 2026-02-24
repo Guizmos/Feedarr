@@ -39,6 +39,10 @@ jobs:
         working-directory: src/Feedarr.Web/feedarr-web
         run: npm run test
 
+      - name: Run categories domain guard
+        working-directory: src/Feedarr.Web/feedarr-web
+        run: npm run check:categories-domain
+
       - name: Run frontend build
         working-directory: src/Feedarr.Web/feedarr-web
         run: npm run build

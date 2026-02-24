@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "test": "node ./scripts/run-tests.mjs",
+    "check:categories-domain": "node ./tools/check-categories-domain.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },

@@ -1,28 +1,24 @@
-using Feedarr.Api.Services;
+using Feedarr.Api.Services.Categories;
 
 namespace Feedarr.Api.Tests;
 
 public sealed class ManualSyncParentOnlySafetyNetTests
 {
     [Fact]
-    public void ShouldRejectParentOnlyMatch_ParentSelectedButOnlyUnselectedChildPresent_ReturnsTrue()
+    public void ParentAndLeafSelected_NormalizedSelectionIsDeterministic()
     {
-        var ids = new[] { 5000, 5030 };
-        var selected = new[] { 5000 };
+        var normalized = CategorySelection.NormalizeSelectedCategoryIds(new[] { 5000, 5050 });
 
-        var reject = SyncOrchestrationService.ShouldRejectParentOnlyMatch(ids, selected);
-
-        Assert.True(reject);
+        Assert.Equal(new[] { 5050 }, normalized.OrderBy(x => x).ToArray());
     }
 
     [Fact]
-    public void ShouldRejectParentOnlyMatch_ParentAndChildSelected_ReturnsFalse()
+    public void ParentOnlySelection_AllowsLeafFromSameStandardGroup()
     {
-        var ids = new[] { 5000, 5030 };
-        var selected = new[] { 5000, 5030 };
+        var matches = CategorySelection.MatchesSelectedCategoryIds(
+            itemCategoryIds: new[] { 5070 },
+            selectedCategoryIds: new[] { 5000 });
 
-        var reject = SyncOrchestrationService.ShouldRejectParentOnlyMatch(ids, selected);
-
-        Assert.False(reject);
+        Assert.True(matches);
     }
 }

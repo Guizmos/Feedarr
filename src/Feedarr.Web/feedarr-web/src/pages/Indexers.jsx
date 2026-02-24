@@ -17,77 +17,23 @@ import {
   getSourceColor,
   normalizeHexColor,
 } from "../utils/sourceColors.js";
-import CategoryMappingBoard, { FEEDARR_GROUPS } from "../components/shared/CategoryMappingBoard.jsx";
+import CategoryMappingBoard from "../components/shared/CategoryMappingBoard.jsx";
+import {
+  CATEGORY_GROUP_LABELS,
+  MAPPING_GROUP_PRIORITY,
+  buildMappingDiff,
+  buildMappingsPayload,
+  dedupeBubblesByUnifiedKey,
+  dedupeCategoriesById,
+  mapFromCapsAssignments,
+  normalizeCategoryGroupKey,
+} from "../domain/categories/index.js";
 
-const UNIFIED_PRIORITY = ["series", "anime", "films", "animation", "spectacle", "emissions", "audio", "books", "comics"];
 const MANUAL_INDEXER_VALUE = "__manual__";
-
-const GROUP_LABELS = Object.fromEntries(FEEDARR_GROUPS.map((group) => [group.key, group.label]));
-
-function dedupeCategoriesById(categories) {
-  if (!Array.isArray(categories)) return [];
-  const map = new Map();
-  const score = (cat) => {
-    let s = 0;
-    if (cat?.unifiedKey) s += 4;
-    if (cat?.unifiedLabel) s += 2;
-    if (cat?.parentId) s += 1;
-    if (cat?.isSub) s += 1;
-    return s;
-  };
-
-  for (const cat of categories) {
-    const id = Number(cat?.id);
-    if (!Number.isFinite(id) || id <= 0) continue;
-    const normalized = { ...cat, id };
-    const existing = map.get(id);
-    if (!existing || score(normalized) > score(existing)) {
-      map.set(id, normalized);
-    }
-  }
-
-  return Array.from(map.values());
-}
-
-/**
- * Déduplique un tableau de catégories par unifiedKey pour l'affichage des bulles sur la carte.
- * Garde la première occurrence par clé (l'ordre en entrée est donc le tri de référence).
- * Clé principale : cat.unifiedKey (non vide) ; fallback : (unifiedLabel || name).toLowerCase().
- */
-function dedupeBubblesByUnifiedKey(categories) {
-  const seen = new Set();
-  const result = [];
-  for (const cat of categories) {
-    const key = cat?.unifiedKey?.trim()
-      ? cat.unifiedKey.toLowerCase()
-      : (cat?.unifiedLabel || cat?.name || "").toLowerCase();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    result.push(cat);
-  }
-  return result;
-}
 
 /** Normalise une URL pour comparaison : lowercase + suppression du slash final. */
 function normalizeUrl(url) {
   return (url || "").trim().toLowerCase().replace(/\/+$/, "");
-}
-
-function normalizeGroupKey(value) {
-  const key = String(value || "").trim().toLowerCase();
-  return GROUP_LABELS[key] ? key : null;
-}
-
-function mapFromCapsAssignments(categories) {
-  const map = new Map();
-  for (const category of Array.isArray(categories) ? categories : []) {
-    const id = Number(category?.id);
-    if (!Number.isFinite(id) || id <= 0) continue;
-    const key = normalizeGroupKey(category?.assignedGroupKey);
-    if (!key) continue;
-    map.set(id, key);
-  }
-  return map;
 }
 
 function areMappingMapsEqual(a, b) {
@@ -98,20 +44,6 @@ function areMappingMapsEqual(a, b) {
     if (b.get(key) !== value) return false;
   }
   return true;
-}
-
-function buildMappingDiff(previous, next) {
-  const prev = previous instanceof Map ? previous : new Map();
-  const curr = next instanceof Map ? next : new Map();
-  const allIds = new Set([...prev.keys(), ...curr.keys()]);
-  const diff = [];
-  for (const id of allIds) {
-    const before = normalizeGroupKey(prev.get(id));
-    const after = normalizeGroupKey(curr.get(id));
-    if (before === after) continue;
-    diff.push({ catId: Number(id), groupKey: after || null });
-  }
-  return diff;
 }
 
 export default function Indexers() {
@@ -177,9 +109,17 @@ export default function Indexers() {
             const mappings = await apiGet(`/api/sources/${s.id}/category-mappings`);
             catsMap[s.id] = (Array.isArray(mappings) ? mappings : []).map((mapping) => ({
               id: Number(mapping?.catId),
-              unifiedKey: normalizeGroupKey(mapping?.groupKey),
-              unifiedLabel: mapping?.groupLabel || GROUP_LABELS[normalizeGroupKey(mapping?.groupKey)] || "",
-              name: mapping?.groupLabel || GROUP_LABELS[normalizeGroupKey(mapping?.groupKey)] || "",
+              unifiedKey: normalizeCategoryGroupKey(mapping?.groupKey || mapping?.unifiedKey),
+              unifiedLabel:
+                mapping?.groupLabel ||
+                mapping?.unifiedLabel ||
+                CATEGORY_GROUP_LABELS[normalizeCategoryGroupKey(mapping?.groupKey || mapping?.unifiedKey)] ||
+                "",
+              name:
+                mapping?.groupLabel ||
+                mapping?.unifiedLabel ||
+                CATEGORY_GROUP_LABELS[normalizeCategoryGroupKey(mapping?.groupKey || mapping?.unifiedKey)] ||
+                "",
             }));
           } catch {
             catsMap[s.id] = [];
@@ -323,7 +263,7 @@ export default function Indexers() {
       color: normalizeHexColor(initialColor) || SOURCE_COLOR_PALETTE[0],
     };
     const existingMappings = (categoriesById[s?.id] || [])
-      .map((row) => [Number(row?.id), normalizeGroupKey(row?.unifiedKey)])
+      .map((row) => [Number(row?.id), normalizeCategoryGroupKey(row?.unifiedKey)])
       .filter(([id, key]) => Number.isFinite(id) && id > 0 && !!key);
     initialCategoryMappingsRef.current = new Map(existingMappings);
 
@@ -485,7 +425,7 @@ export default function Indexers() {
     try {
       const normalizedMappings = new Map(
         [...categoryMappings.entries()]
-          .map(([catId, groupKey]) => [Number(catId), normalizeGroupKey(groupKey)])
+          .map(([catId, groupKey]) => [Number(catId), normalizeCategoryGroupKey(groupKey)])
           .filter(([catId, groupKey]) => Number.isFinite(catId) && catId > 0 && !!groupKey)
       );
 
@@ -503,10 +443,7 @@ export default function Indexers() {
         }
       } else {
         if (modalStep !== 2) return;
-        const mappingsPayload = [...normalizedMappings.entries()].map(([catId, groupKey]) => ({
-          catId,
-          groupKey,
-        }));
+        const mappingsPayload = buildMappingsPayload(normalizedMappings);
 
         let sourceId = testSourceId;
         // If source was already created during test, update it instead of creating
@@ -711,8 +648,8 @@ export default function Indexers() {
             // Categories as badges — 1 bulle par unifiedKey distinct
             const categoryBadges = dedupeBubblesByUnifiedKey(
               (categoriesById[s.id] || []).slice().sort((a, b) => {
-                const orderA = UNIFIED_PRIORITY.indexOf(a.unifiedKey);
-                const orderB = UNIFIED_PRIORITY.indexOf(b.unifiedKey);
+                const orderA = MAPPING_GROUP_PRIORITY.indexOf(a.unifiedKey);
+                const orderB = MAPPING_GROUP_PRIORITY.indexOf(b.unifiedKey);
                 return (orderA === -1 ? 999 : orderA) - (orderB === -1 ? 999 : orderB);
               })
             ).map((cat) => (
@@ -821,7 +758,7 @@ export default function Indexers() {
         open={modalOpen}
         title={editing ? `Modifier : ${editing?.name ?? editing?.id}` : "Ajouter une source"}
         onClose={closeModal}
-        width={720}
+        width={780}
       >
         <form onSubmit={(e) => e.preventDefault()} className="formgrid formgrid--edit">
           {/* Step 1 fields - hidden in step 2 */}
@@ -1057,7 +994,7 @@ export default function Indexers() {
                   categories={capsCategories}
                   mappings={categoryMappings}
                   onChangeMapping={(catId, groupKey) => {
-                    const normalized = normalizeGroupKey(groupKey);
+                    const normalized = normalizeCategoryGroupKey(groupKey);
                     setCategoryMappings((prev) => {
                       const next = new Map(prev);
                       if (!normalized) next.delete(catId);

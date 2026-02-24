@@ -4,6 +4,7 @@ import { RouterProvider } from "react-router-dom";
 import { router } from "./app/router.jsx";
 import { applyUiLanguage, getStoredUiLanguage } from "./app/locale.js";
 import { initRuntimeTranslation } from "./app/runtimeTranslation.js";
+import "./styles/tokens.css";
 import "./styles/styles.css";
 
 applyUiLanguage(getStoredUiLanguage());

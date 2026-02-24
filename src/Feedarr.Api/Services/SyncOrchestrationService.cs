@@ -105,7 +105,7 @@ public sealed class SyncOrchestrationService
             {
             }
 
-            var selectedCategoryIds = _sources.GetActiveCategoryIds(id);
+            var selectedCategoryIds = CategorySelection.NormalizeSelectedCategoryIds(_sources.GetActiveCategoryIds(id));
 
             var selectedUnifiedKeys = new HashSet<string>(
                 categoryMap.Values.Select(v => v.key).Where(k => !string.IsNullOrWhiteSpace(k)),
@@ -143,7 +143,7 @@ public sealed class SyncOrchestrationService
             {
                 if (rssItems.Count == 0 || fallbackCandidates.Count > 0)
                 {
-                    var fallbackCats = rssItems.Count == 0 ? selectedCategoryIds : fallbackCandidates.ToList();
+                    var fallbackCats = rssItems.Count == 0 ? selectedCategoryIds.ToList() : fallbackCandidates.ToList();
                     if (fallbackCats.Count > 0)
                     {
                         _log.LogInformation(
@@ -193,7 +193,7 @@ public sealed class SyncOrchestrationService
 
             if (selectedCategoryIds.Count > 0)
             {
-                var selectedSet = new HashSet<int>(selectedCategoryIds);
+                var selectedSet = selectedCategoryIds;
                 var fetchedCats = new HashSet<int>();
                 var keptCats = new HashSet<int>();
                 var droppedNotSelected = 0;
@@ -214,11 +214,7 @@ public sealed class SyncOrchestrationService
                         continue;
                     }
 
-                    var intersects = ids.Any(selectedSet.Contains);
-                    if (intersects && ShouldRejectParentOnlyMatch(ids, selectedSet))
-                    {
-                        intersects = false;
-                    }
+                    var intersects = CategorySelection.MatchesSelectedCategoryIds(ids, selectedSet);
 
                     var matchesUnified = false;
                     if (!intersects && selectedUnifiedKeys.Count > 0)
@@ -319,6 +315,13 @@ public sealed class SyncOrchestrationService
                             if (fallbackSamples.Count < 5)
                             {
                                 var intersections = ids.Where(selectedCategoryIds.Contains).Distinct().ToList();
+                                if (intersections.Count == 0)
+                                {
+                                    intersections = CategorySelection.ExpandCategoryIdsForMatching(ids)
+                                        .Where(selectedCategoryIds.Contains)
+                                        .Distinct()
+                                        .ToList();
+                                }
                                 fallbackSamples.Add(
                                     $"title={BuildCategoryLogTitle(item.Title)}, ids={string.Join("/", ids)}, selected={string.Join("/", intersections)}, picked={picked.Value}");
                             }
@@ -419,35 +422,6 @@ public sealed class SyncOrchestrationService
         return item.CategoryId.HasValue ? new List<int> { item.CategoryId.Value } : new List<int>();
     }
 
-    // Keep manual sync behavior aligned with auto-sync parent-only safety net.
-    public static bool ShouldRejectParentOnlyMatch(
-        IReadOnlyCollection<int> ids,
-        IReadOnlyCollection<int> selectedCategoryIds)
-    {
-        if (ids is null || ids.Count == 0 || selectedCategoryIds is null || selectedCategoryIds.Count == 0)
-            return false;
-
-        var selectedSet = selectedCategoryIds is HashSet<int> hs
-            ? hs
-            : new HashSet<int>(selectedCategoryIds);
-
-        if (!ids.Any(selectedSet.Contains))
-            return false;
-
-        var matchedViaParentOnly = ids
-            .Where(selectedSet.Contains)
-            .All(id => id is >= 1000 and <= 8999 && id % 1000 == 0);
-
-        if (!matchedViaParentOnly)
-            return false;
-
-        var specificIds = ids
-            .Where(id => !(id is >= 1000 and <= 8999 && id % 1000 == 0))
-            .ToList();
-
-        return specificIds.Count > 0 && !specificIds.Any(selectedSet.Contains);
-    }
-
     private static string BuildCategoryLogTitle(string? title)
     {
         if (string.IsNullOrWhiteSpace(title))
@@ -473,7 +447,7 @@ public sealed class SyncOrchestrationService
         foreach (var item in items)
         {
             var ids = GetRawCategoryIds(item);
-            foreach (var id in ids)
+            foreach (var id in CategorySelection.ExpandCategoryIdsForMatching(ids))
             {
                 if (id <= 0) continue;
                 countsById[id] = countsById.TryGetValue(id, out var current) ? current + 1 : 1;

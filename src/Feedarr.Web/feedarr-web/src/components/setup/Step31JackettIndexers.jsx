@@ -3,7 +3,13 @@ import ItemRow from "../../ui/ItemRow.jsx";
 import Modal from "../../ui/Modal.jsx";
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "../../api/client.js";
 import { tr } from "../../app/uiText.js";
-import CategoryMappingBoard, { FEEDARR_GROUPS } from "../shared/CategoryMappingBoard.jsx";
+import CategoryMappingBoard from "../shared/CategoryMappingBoard.jsx";
+import {
+  CATEGORY_GROUP_LABELS,
+  buildMappingsPayload,
+  mapFromCapsAssignments,
+  normalizeCategoryGroupKey,
+} from "../../domain/categories/index.js";
 
 const STORAGE_KEYS = {
   jackett: {
@@ -27,7 +33,6 @@ const PROVIDERS = [
 ];
 const EMPTY_CONFIG = { baseUrl: "", providerId: null, indexers: [], configured: false, manualOnly: false };
 const MANUAL_INDEXER_VALUE = "__manual__";
-const GROUP_LABELS = Object.fromEntries(FEEDARR_GROUPS.map((group) => [group.key, group.label]));
 
 function normalizeUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -52,34 +57,6 @@ function readProviderConfig(providerKey) {
 
 function getProviderLabel(providerKey) {
   return PROVIDERS.find((p) => p.key === providerKey)?.label || tr("Fournisseur", "Provider");
-}
-
-function normalizeGroupKey(value) {
-  const key = String(value || "").trim().toLowerCase();
-  return GROUP_LABELS[key] ? key : null;
-}
-
-function mapFromCapsAssignments(categories) {
-  const map = new Map();
-  for (const category of Array.isArray(categories) ? categories : []) {
-    const id = Number(category?.id);
-    if (!Number.isFinite(id) || id <= 0) continue;
-    const key = normalizeGroupKey(category?.assignedGroupKey);
-    if (!key) continue;
-    map.set(id, key);
-  }
-  return map;
-}
-
-function buildMappingsPayload(map) {
-  const payload = [];
-  for (const [catId, groupKey] of map instanceof Map ? map.entries() : []) {
-    const normalized = normalizeGroupKey(groupKey);
-    const id = Number(catId);
-    if (!Number.isFinite(id) || id <= 0 || !normalized) continue;
-    payload.push({ catId: id, groupKey: normalized });
-  }
-  return payload;
 }
 
 export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jackettConfig }) {
@@ -513,9 +490,15 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
       .map((category) => {
         const catId = Number(category?.id);
         if (!Number.isFinite(catId) || catId <= 0) return null;
+        const unifiedKey = normalizeCategoryGroupKey(categoryMappings.get(catId)) || null;
+        const unifiedLabel = unifiedKey ? CATEGORY_GROUP_LABELS[unifiedKey] || unifiedKey : null;
         return {
+          categoryId: catId,
+          unifiedKey,
+          unifiedLabel,
           catId,
-          groupKey: normalizeGroupKey(categoryMappings.get(catId)) || null,
+          groupKey: unifiedKey,
+          groupLabel: unifiedLabel,
         };
       })
       .filter(Boolean);
@@ -700,7 +683,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
         open={modalOpen}
         title={modalTitle}
         onClose={closeModal}
-        width={780}
+        width={840}
       >
         {manualMode && !editingSource && (
           <div className="formgrid formgrid--edit" style={{ marginBottom: 12 }}>
@@ -760,7 +743,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
               categories={capsCategories}
               mappings={categoryMappings}
               onChangeMapping={(catId, groupKey) => {
-                const normalized = normalizeGroupKey(groupKey);
+                const normalized = normalizeCategoryGroupKey(groupKey);
                 setCategoryMappings((prev) => {
                   const next = new Map(prev);
                   if (!normalized) next.delete(catId);

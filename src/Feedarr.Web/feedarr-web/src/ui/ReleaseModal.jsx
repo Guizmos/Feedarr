@@ -5,27 +5,22 @@ import Modal from "./Modal.jsx";
 import { buildIndexerPillStyle } from "../utils/sourceColors.js";
 import AppIcon from "./AppIcon.jsx";
 import { getAppLabel, normalizeRequestMode } from "../utils/appTypes.js";
+import { normalizeCategoryGroupKey } from "../domain/categories/index.js";
 
 /**
  * Determines if item should go to Sonarr (series/tv/anime/shows)
  */
 function isSonarrItem(item) {
-  const raw = String(item?.mediaType || item?.unifiedCategoryKey || "").toLowerCase();
-  if (["tv", "series", "serie", "tv_series", "series_tv", "seriestv", "anime", "show", "shows", "emission", "emissions"].includes(raw)) {
-    return true;
-  }
-  return String(item?.unifiedCategoryKey || "").toLowerCase() === "series";
+  const canonical = normalizeCategoryGroupKey(item?.mediaType || item?.unifiedCategoryKey);
+  return canonical === "series" || canonical === "anime" || canonical === "emissions";
 }
 
 /**
  * Determines if item should go to Radarr (movies/films/spectacle)
  */
 function isRadarrItem(item) {
-  const raw = String(item?.mediaType || item?.unifiedCategoryKey || "").toLowerCase();
-  if (["movie", "film", "films", "spectacle"].includes(raw)) {
-    return true;
-  }
-  return String(item?.unifiedCategoryKey || "").toLowerCase() === "films";
+  const canonical = normalizeCategoryGroupKey(item?.mediaType || item?.unifiedCategoryKey);
+  return canonical === "films" || canonical === "spectacle";
 }
 
 function formatSeasonEpisode(item) {
@@ -115,13 +110,18 @@ function getLanguagePillClass(languageLabel) {
 
 function getMediaTypeLabel(item) {
   const raw = String(item?.mediaType || item?.unifiedCategoryKey || "").toLowerCase();
+  const canonical = normalizeCategoryGroupKey(raw);
   if (!raw) return item?.unifiedCategoryLabel || "";
-  if (["movie", "film", "films"].includes(raw)) return "Films";
-  if (["tv", "series", "serie", "tv_series", "series_tv", "seriestv"].includes(raw)) return "Serie TV";
-  if (["anime"].includes(raw)) return "Anime";
-  if (["show", "shows", "emission", "emissions"].includes(raw)) return "Emission";
-  if (["game", "games"].includes(raw)) return "Jeu";
-  if (["spectacle"].includes(raw)) return "Spectacle";
+  if (canonical === "films") return "Films";
+  if (canonical === "series") return "Serie TV";
+  if (canonical === "anime") return "Anime";
+  if (canonical === "emissions") return "Emission";
+  if (canonical === "games") return "Jeu";
+  if (canonical === "spectacle") return "Spectacle";
+  if (canonical === "audio") return "Audio";
+  if (canonical === "books") return "Livre";
+  if (canonical === "comics") return "Comic";
+  if (canonical === "animation") return "Animation";
   if (["audio", "music"].includes(raw)) return "Audio";
   if (["book", "books", "livre", "livres"].includes(raw)) return "Livre";
   if (["comic", "comics", "bd", "manga"].includes(raw)) return "Comic";
@@ -144,8 +144,8 @@ function getExternalUrl(item) {
   if (provider === "igdb" && item.detailsProviderId) return null;
   const tmdb = Number(item.tmdbId);
   if (Number.isFinite(tmdb) && tmdb > 0) {
-    const raw = String(item.mediaType || item.unifiedCategoryKey || "").toLowerCase();
-    const isTv = ["tv", "series", "serie", "tv_series", "series_tv", "seriestv", "anime", "show", "shows", "emission", "emissions"].includes(raw);
+    const canonical = normalizeCategoryGroupKey(item.mediaType || item.unifiedCategoryKey);
+    const isTv = canonical === "series" || canonical === "anime" || canonical === "emissions";
     return isTv
       ? `https://www.themoviedb.org/tv/${tmdb}`
       : `https://www.themoviedb.org/movie/${tmdb}`;

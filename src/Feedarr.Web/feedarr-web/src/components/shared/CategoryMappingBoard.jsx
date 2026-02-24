@@ -1,23 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-
-export const FEEDARR_GROUPS = [
-  { key: "films", label: "Films" },
-  { key: "series", label: "Série TV" },
-  { key: "animation", label: "Animation" },
-  { key: "anime", label: "Anime" },
-  { key: "comics", label: "Comics" },
-  { key: "books", label: "Livres" },
-  { key: "audio", label: "Audio" },
-  { key: "spectacle", label: "Spectacle" },
-  { key: "emissions", label: "Emissions" },
-];
-
-const GROUP_LABELS = Object.fromEntries(FEEDARR_GROUPS.map((group) => [group.key, group.label]));
-
-function normalizeGroupKey(value) {
-  const key = String(value || "").trim().toLowerCase();
-  return GROUP_LABELS[key] ? key : null;
-}
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import {
+  CATEGORY_GROUPS,
+  CATEGORY_GROUP_LABELS,
+  normalizeCategoryGroupKey,
+} from "../../domain/categories/index.js";
 
 function normalizeCategories(categories) {
   const seen = new Map();
@@ -37,7 +24,7 @@ function normalizeCategories(categories) {
 }
 
 function categoryMatchesFilter(category, search, mode, mappings) {
-  const assigned = normalizeGroupKey(mappings.get(category.id));
+  const assigned = normalizeCategoryGroupKey(mappings.get(category.id));
   if (mode === "assigned" && !assigned) return false;
   if (mode === "unassigned" && assigned) return false;
   if (!search) return true;
@@ -50,25 +37,109 @@ export default function CategoryMappingBoard({ categories, mappings, onChangeMap
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState("all");
   const [openMenuId, setOpenMenuId] = useState(null);
+  const [menuPosition, setMenuPosition] = useState(null);
   const rootRef = useRef(null);
+  const assignButtonRefs = useRef(new Map());
 
   const map = mappings instanceof Map ? mappings : new Map();
   const normalizedCategories = useMemo(() => normalizeCategories(categories), [categories]);
+  const groupsByLabel = useMemo(
+    () => [...CATEGORY_GROUPS].sort((a, b) => a.label.localeCompare(b.label, "fr", { sensitivity: "base" })),
+    []
+  );
+
+  const closeMenu = useCallback(() => {
+    setOpenMenuId(null);
+    setMenuPosition(null);
+  }, []);
+
+  const registerAssignButton = useCallback((id, node) => {
+    if (node) assignButtonRefs.current.set(id, node);
+    else assignButtonRefs.current.delete(id);
+  }, []);
+
+  const resolveMenuPosition = useCallback((id) => {
+    const anchor = assignButtonRefs.current.get(id);
+    if (!anchor) return null;
+
+    const rect = anchor.getBoundingClientRect();
+    const menuWidth = 180;
+    const estimatedMenuHeight = CATEGORY_GROUPS.length * 34 + 44;
+    const viewportPadding = 8;
+    const offset = 6;
+
+    let left = rect.right - menuWidth;
+    left = Math.max(viewportPadding, left);
+    left = Math.min(left, window.innerWidth - menuWidth - viewportPadding);
+
+    const spaceAbove = rect.top - viewportPadding;
+    const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
+    const shouldOpenTop =
+      spaceBelow < estimatedMenuHeight && spaceAbove > spaceBelow;
+
+    const placement = shouldOpenTop ? "top" : "bottom";
+    const top = shouldOpenTop
+      ? rect.top - offset
+      : rect.bottom + offset;
+
+    return { top, left, placement };
+  }, []);
+
+  const toggleMenu = useCallback((id) => {
+    if (openMenuId === id) {
+      closeMenu();
+      return;
+    }
+    const nextPosition = resolveMenuPosition(id);
+    if (!nextPosition) {
+      closeMenu();
+      return;
+    }
+    setOpenMenuId(id);
+    setMenuPosition(nextPosition);
+  }, [closeMenu, openMenuId, resolveMenuPosition]);
 
   useEffect(() => {
     const onDocPointerDown = (event) => {
       if (!rootRef.current) return;
+      if (event.target?.closest?.("[data-mapping-menu-root='true']")) return;
       if (rootRef.current.contains(event.target)) return;
-      setOpenMenuId(null);
+      closeMenu();
     };
     document.addEventListener("mousedown", onDocPointerDown);
     return () => document.removeEventListener("mousedown", onDocPointerDown);
-  }, []);
+  }, [closeMenu]);
+
+  useEffect(() => {
+    if (!openMenuId) return undefined;
+
+    const updateMenuPosition = () => {
+      const nextPosition = resolveMenuPosition(openMenuId);
+      if (!nextPosition) {
+        closeMenu();
+        return;
+      }
+      setMenuPosition(nextPosition);
+    };
+
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") closeMenu();
+    };
+
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [closeMenu, openMenuId, resolveMenuPosition]);
 
   const groupCounts = useMemo(() => {
-    const counts = Object.fromEntries(FEEDARR_GROUPS.map((group) => [group.key, 0]));
+    const counts = Object.fromEntries(CATEGORY_GROUPS.map((group) => [group.key, 0]));
     for (const category of normalizedCategories) {
-      const normalized = normalizeGroupKey(map.get(category.id));
+      const normalized = normalizeCategoryGroupKey(map.get(category.id));
       if (!normalized) continue;
       counts[normalized] += 1;
     }
@@ -83,9 +154,16 @@ export default function CategoryMappingBoard({ categories, mappings, onChangeMap
     [normalizedCategories, query, mode, map]
   );
 
+  useEffect(() => {
+    if (!openMenuId) return;
+    if (filtered.some((category) => category.id === openMenuId)) return;
+    closeMenu();
+  }, [closeMenu, filtered, openMenuId]);
+
   const standardCategories = filtered.filter((category) => category.isStandard);
   const specificCategories = filtered.filter((category) => !category.isStandard);
   const boardClassName = `category-mapping-board${variant === "wizard" ? " category-mapping-board--wizard" : ""}`;
+  const currentAssignedKey = openMenuId ? normalizeCategoryGroupKey(map.get(openMenuId)) : null;
 
   return (
     <div className={boardClassName} ref={rootRef}>
@@ -122,7 +200,7 @@ export default function CategoryMappingBoard({ categories, mappings, onChangeMap
       </div>
 
       <div className="category-mapping-board__groups">
-        {FEEDARR_GROUPS.map((group) => (
+        {groupsByLabel.map((group) => (
           <div key={group.key} className={`category-group-card cat-bubble--${group.key}`}>
             <div className="category-group-card__label">{group.label}</div>
             <div className="category-group-card__count">{groupCounts[group.key] || 0}</div>
@@ -136,31 +214,46 @@ export default function CategoryMappingBoard({ categories, mappings, onChangeMap
           categories={standardCategories}
           mappings={map}
           openMenuId={openMenuId}
-          onToggleMenu={setOpenMenuId}
-          onChangeMapping={onChangeMapping}
+          onToggleMenu={toggleMenu}
+          registerAssignButton={registerAssignButton}
         />
         <MappingColumn
           title="Spécifiques"
           categories={specificCategories}
           mappings={map}
           openMenuId={openMenuId}
-          onToggleMenu={setOpenMenuId}
-          onChangeMapping={onChangeMapping}
+          onToggleMenu={toggleMenu}
+          registerAssignButton={registerAssignButton}
         />
       </div>
+      {openMenuId && menuPosition && (
+        <MappingMenuPortal
+          groups={groupsByLabel}
+          position={menuPosition}
+          assignedKey={currentAssignedKey}
+          onAssign={(groupKey) => {
+            onChangeMapping?.(openMenuId, groupKey);
+            closeMenu();
+          }}
+          onClear={() => {
+            onChangeMapping?.(openMenuId, null);
+            closeMenu();
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function MappingColumn({ title, categories, mappings, openMenuId, onToggleMenu, onChangeMapping }) {
+function MappingColumn({ title, categories, mappings, openMenuId, onToggleMenu, registerAssignButton }) {
   return (
     <div className="category-mapping-board__column">
       <div className="category-mapping-board__column-title">{title}</div>
       <div className="category-mapping-board__chips">
         {categories.length === 0 && <div className="muted">Aucune catégorie.</div>}
         {categories.map((category) => {
-          const assignedKey = normalizeGroupKey(mappings.get(category.id));
-          const assignedLabel = assignedKey ? GROUP_LABELS[assignedKey] : "—";
+          const assignedKey = normalizeCategoryGroupKey(mappings.get(category.id));
+          const assignedLabel = assignedKey ? CATEGORY_GROUP_LABELS[assignedKey] : "—";
           const menuOpen = openMenuId === category.id;
           return (
             <div
@@ -175,42 +268,52 @@ function MappingColumn({ title, categories, mappings, openMenuId, onToggleMenu, 
                 <button
                   type="button"
                   className="mapping-chip__assign"
-                  onClick={() => onToggleMenu(menuOpen ? null : category.id)}
+                  ref={(node) => registerAssignButton(category.id, node)}
+                  onClick={() => onToggleMenu(category.id)}
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen ? "true" : "false"}
                 >
                   {assignedLabel}
                 </button>
-                {menuOpen && (
-                  <div className="mapping-chip__menu">
-                    {FEEDARR_GROUPS.map((group) => (
-                      <button
-                        key={group.key}
-                        type="button"
-                        className={`mapping-chip__menu-item${assignedKey === group.key ? " is-active" : ""}`}
-                        onClick={() => {
-                          onChangeMapping?.(category.id, group.key);
-                          onToggleMenu(null);
-                        }}
-                      >
-                        {group.label}
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      className="mapping-chip__menu-item"
-                      onClick={() => {
-                        onChangeMapping?.(category.id, null);
-                        onToggleMenu(null);
-                      }}
-                    >
-                      Retirer
-                    </button>
-                  </div>
-                )}
               </div>
             </div>
           );
         })}
       </div>
     </div>
+  );
+}
+
+function MappingMenuPortal({ groups, position, assignedKey, onAssign, onClear }) {
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      className={`mapping-chip__menu mapping-chip__menu--portal${
+        position.placement === "top" ? " mapping-chip__menu--top" : ""
+      }`}
+      data-mapping-menu-root="true"
+      style={{ top: `${position.top}px`, left: `${position.left}px` }}
+      role="menu"
+    >
+      {groups.map((group) => (
+        <button
+          key={group.key}
+          type="button"
+          className={`mapping-chip__menu-item${assignedKey === group.key ? " is-active" : ""}`}
+          onClick={() => onAssign(group.key)}
+        >
+          {group.label}
+        </button>
+      ))}
+      <button
+        type="button"
+        className="mapping-chip__menu-item"
+        onClick={onClear}
+      >
+        Retirer
+      </button>
+    </div>,
+    document.body
   );
 }

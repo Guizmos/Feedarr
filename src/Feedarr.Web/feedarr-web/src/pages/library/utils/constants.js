@@ -13,7 +13,7 @@ export const UNIFIED_CATEGORY_OPTIONS = [
   { key: "anime", label: "Anime" },
   { key: "audio", label: "Audio" },
   { key: "comics", label: "Comics" },
-  { key: "shows", label: "Emissions" },
+  { key: "emissions", label: "Emissions" },
   { key: "films", label: "Films" },
   { key: "games", label: "Jeux" },
   { key: "books", label: "Livres" },

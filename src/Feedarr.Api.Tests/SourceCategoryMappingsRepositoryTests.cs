@@ -50,6 +50,53 @@ public sealed class SourceCategoryMappingsRepositoryTests
         Assert.Equal(5050, remaining[0]);
     }
 
+    [Fact]
+    public void PatchMappings_AliasKeys_AreStoredCanonical()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var repository = new SourceRepository(db, new PassthroughProtectionService());
+        var sourceId = repository.Create("Alias source", "http://localhost:9117/api", "key", "query");
+
+        repository.PatchCategoryMappings(
+            sourceId,
+            new[]
+            {
+                new SourceRepository.SourceCategoryMappingPatch { CatId = 2020, GroupKey = "film" },
+                new SourceRepository.SourceCategoryMappingPatch { CatId = 5050, GroupKey = "shows" },
+                new SourceRepository.SourceCategoryMappingPatch { CatId = 4050, GroupKey = "game" }
+            });
+
+        var map = repository.GetCategoryMappingMap(sourceId);
+        Assert.Equal("films", map[2020].key);
+        Assert.Equal("emissions", map[5050].key);
+        Assert.Equal("games", map[4050].key);
+        Assert.Equal("Jeux PC", map[4050].label);
+    }
+
+    [Fact]
+    public void PatchMappings_InvalidKey_Throws()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var repository = new SourceRepository(db, new PassthroughProtectionService());
+        var sourceId = repository.Create("Invalid source", "http://localhost:9117/api", "key", "query");
+
+        var ex = Assert.Throws<ArgumentException>(() =>
+            repository.PatchCategoryMappings(
+                sourceId,
+                new[]
+                {
+                    new SourceRepository.SourceCategoryMappingPatch { CatId = 2020, GroupKey = "other" }
+                }));
+
+        Assert.Contains("Invalid category group key", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static Db CreateDb(TestWorkspace workspace)
     {
         var options = OptionsFactory.Create(new AppOptions

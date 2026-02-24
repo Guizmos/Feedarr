@@ -1,17 +1,15 @@
+import {
+  CATEGORY_GROUP_LABELS,
+  RELEASES_GROUP_PRIORITY,
+  normalizeCategoryGroupKey,
+} from "../domain/categories/index.js";
+
 const UNIFIED_LABELS = {
-  films: "Films",
-  series: "Series TV",
-  anime: "Anime",
-  games: "Jeux PC",
-  spectacle: "Spectacle",
-  shows: "Emissions",
-  audio: "Audio",
-  books: "Livres",
-  comics: "Comics",
+  ...CATEGORY_GROUP_LABELS,
   other: "Autre",
 };
 
-const UNIFIED_PRIORITY = ["series", "anime", "films", "games", "spectacle", "shows", "audio", "books", "comics", "other"];
+const CATEGORY_CLASSIFICATION_PRIORITY = RELEASES_GROUP_PRIORITY;
 
 const EXCLUDED_TOKENS = [
   "application",
@@ -158,7 +156,7 @@ function classifyByTokens(tokens) {
     anime: 0,
     games: 0,
     spectacle: 0,
-    shows: 0,
+    emissions: 0,
     audio: 0,
     books: 0,
     comics: 0,
@@ -225,7 +223,7 @@ function classifyByTokens(tokens) {
     "enquete",
     "quotidien",
     "quotidienne",
-  ])) scores.shows = 4;
+  ])) scores.emissions = 4;
 
   const hasPc = hasAnyToken(tokens, ["pc", "windows", "win32", "win64"]);
   const hasGame = hasAnyToken(tokens, ["jeu", "jeux", "game", "games"]);
@@ -239,7 +237,7 @@ function classifyByTokens(tokens) {
   const maxScore = Math.max(...Object.values(scores));
   if (maxScore < 3) return null;
 
-  return UNIFIED_PRIORITY.find((key) => scores[key] === maxScore) || null;
+  return CATEGORY_CLASSIFICATION_PRIORITY.find((key) => scores[key] === maxScore) || null;
 }
 
 function classifyById(id, tokens) {
@@ -316,19 +314,22 @@ export function decorateCategories(categories, context = {}) {
       if (!Number.isFinite(id) || !name) return null;
 
       const existingKey = String(cat.unifiedKey || "").trim().toLowerCase();
-      if (existingKey) {
+      const normalizedExistingKey =
+        normalizeCategoryGroupKey(existingKey) || (existingKey === "other" ? "other" : null);
+      if (normalizedExistingKey) {
         return {
           ...cat,
           id,
           name,
-          unifiedKey: existingKey,
-          unifiedLabel: cat.unifiedLabel || UNIFIED_LABELS[existingKey] || existingKey,
+          unifiedKey: normalizedExistingKey,
+          unifiedLabel: cat.unifiedLabel || UNIFIED_LABELS[normalizedExistingKey] || normalizedExistingKey,
         };
       }
 
       const tokens = tokenizeLabel(name);
       const normalizedId = normalizeCategoryId(id);
-      const legacyKey = legacyMap ? (legacyMap[id] || legacyMap[normalizedId]) : null;
+      const legacyKeyRaw = legacyMap ? (legacyMap[id] || legacyMap[normalizedId]) : null;
+      const legacyKey = normalizeCategoryGroupKey(legacyKeyRaw) || (legacyKeyRaw === "other" ? "other" : null);
       const byId = classifyById(normalizedId, tokens);
       const byLabel = classifyByTokens(tokens);
       const unifiedKey = legacyKey || byId || byLabel || "other";
@@ -344,4 +345,4 @@ export function decorateCategories(categories, context = {}) {
     .filter(Boolean);
 }
 
-export { UNIFIED_LABELS, UNIFIED_PRIORITY };
+export { UNIFIED_LABELS };

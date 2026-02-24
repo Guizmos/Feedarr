@@ -210,7 +210,7 @@ public sealed class RssSyncHostedService : BackgroundService
             try
             {
                 var categoryMap = sources.GetCategoryMappingMap(id);
-                var selectedCategoryIds = sources.GetActiveCategoryIds(id);
+                var selectedCategoryIds = CategorySelection.NormalizeSelectedCategoryIds(sources.GetActiveCategoryIds(id));
                 var selectedUnifiedKeys = new HashSet<string>(
                     categoryMap.Values.Select(v => v.key).Where(k => !string.IsNullOrWhiteSpace(k)),
                     StringComparer.OrdinalIgnoreCase);
@@ -245,7 +245,7 @@ public sealed class RssSyncHostedService : BackgroundService
                 {
                     if (rssItems.Count == 0 || fallbackCandidates.Count > 0)
                     {
-                        var fallbackCats = rssItems.Count == 0 ? selectedCategoryIds : fallbackCandidates.ToList();
+                        var fallbackCats = rssItems.Count == 0 ? selectedCategoryIds.ToList() : fallbackCandidates.ToList();
                         if (fallbackCats.Count > 0)
                         {
                             _log.LogInformation(
@@ -298,7 +298,7 @@ public sealed class RssSyncHostedService : BackgroundService
 
                 if (selectedCategoryIds.Count > 0)
                 {
-                    var selectedSet = new HashSet<int>(selectedCategoryIds);
+                    var selectedSet = selectedCategoryIds;
                     var fetchedCats = new HashSet<int>();
                     var keptCats = new HashSet<int>();
                     var droppedNotSelected = 0;
@@ -319,28 +319,7 @@ public sealed class RssSyncHostedService : BackgroundService
                             continue;
                         }
 
-                        var intersects = ids.Any(selectedSet.Contains);
-
-                        // Safety net: if the item matches ONLY via a round-thousand standard parent
-                        // category (e.g. 5000 = TV, 7000 = Books) and it also has more specific
-                        // sub-categories that are NOT in selectedSet, reject the item.
-                        // This prevents "slip-through" where selecting 5000 (parent) accidentally
-                        // accepts items from sub-cats like 5060/102581 that were not selected.
-                        if (intersects)
-                        {
-                            var matchedViaParentOnly = ids
-                                .Where(selectedSet.Contains)
-                                .All(id => id is >= 1000 and <= 8999 && id % 1000 == 0);
-
-                            if (matchedViaParentOnly)
-                            {
-                                var specificIds = ids
-                                    .Where(id => !(id is >= 1000 and <= 8999 && id % 1000 == 0))
-                                    .ToList();
-                                if (specificIds.Count > 0 && !specificIds.Any(selectedSet.Contains))
-                                    intersects = false;
-                            }
-                        }
+                        var intersects = CategorySelection.MatchesSelectedCategoryIds(ids, selectedSet);
 
                         var matchesUnified = false;
                         if (!intersects && selectedUnifiedKeys.Count > 0)
@@ -408,6 +387,13 @@ public sealed class RssSyncHostedService : BackgroundService
                                 if (fallbackSamples.Count < 5)
                                 {
                                     var intersections = ids.Where(selectedCategoryIds.Contains).Distinct().ToList();
+                                    if (intersections.Count == 0)
+                                    {
+                                        intersections = CategorySelection.ExpandCategoryIdsForMatching(ids)
+                                            .Where(selectedCategoryIds.Contains)
+                                            .Distinct()
+                                            .ToList();
+                                    }
                                     fallbackSamples.Add(
                                         $"title={BuildCategoryLogTitle(it.Title)}, ids={string.Join("/", ids)}, selected={string.Join("/", intersections)}, picked={picked.Value}");
                                 }
@@ -545,7 +531,7 @@ public sealed class RssSyncHostedService : BackgroundService
         foreach (var it in items)
         {
             var ids = GetRawCategoryIds(it);
-            foreach (var id in ids)
+            foreach (var id in CategorySelection.ExpandCategoryIdsForMatching(ids))
             {
                 if (id <= 0) continue;
                 countsById[id] = countsById.TryGetValue(id, out var current) ? current + 1 : 1;

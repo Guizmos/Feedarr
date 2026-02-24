@@ -8,10 +8,13 @@ import AppIcon from "../ui/AppIcon.jsx";
 import { buildIndexerPillStyle, getSourceColor } from "../utils/sourceColors.js";
 import { getActiveUiLanguage } from "../app/locale.js";
 import { tr } from "../app/uiText.js";
+import {
+  CATEGORY_GROUP_LABELS,
+  RELEASES_GROUP_PRIORITY,
+  normalizeCategoryGroupKey,
+} from "../domain/categories/index.js";
 
 const PAGE_SIZE = 15;
-
-const UNIFIED_PRIORITY = ["series", "anime", "films", "games", "spectacle", "shows", "audio", "books", "comics"];
 
 function fmtTs(tsSeconds) {
   if (!tsSeconds) return "-";
@@ -87,11 +90,11 @@ function extractCategoryIds(entry) {
 
 function resolveCategoryInfo(raw) {
   if (!raw) return null;
-  const unifiedKey = raw.unifiedKey || null;
+  const unifiedKey = normalizeCategoryGroupKey(raw.unifiedKey || raw.key) || null;
   if (unifiedKey) {
     return {
       key: unifiedKey,
-      label: raw.unifiedLabel || raw.name || unifiedKey,
+      label: CATEGORY_GROUP_LABELS[unifiedKey] || raw.unifiedLabel || raw.name || unifiedKey,
     };
   }
   if (raw.unifiedLabel) {
@@ -120,8 +123,8 @@ function buildCategoryList(catIds, lookup) {
   });
   const list = Array.from(unique.values());
   return list.sort((a, b) => {
-    const orderA = UNIFIED_PRIORITY.indexOf(a.key);
-    const orderB = UNIFIED_PRIORITY.indexOf(b.key);
+    const orderA = RELEASES_GROUP_PRIORITY.indexOf(a.key);
+    const orderB = RELEASES_GROUP_PRIORITY.indexOf(b.key);
     if (orderA !== -1 || orderB !== -1) {
       return (orderA === -1 ? 999 : orderA) - (orderB === -1 ? 999 : orderB);
     }

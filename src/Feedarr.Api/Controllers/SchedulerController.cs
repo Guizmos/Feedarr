@@ -114,14 +114,15 @@ public sealed class SchedulerController : ControllerBase
                 var nowTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 var name = Convert.ToString(full.Name) ?? "";
                 var categoryMap = _sources.GetCategoryMappingMap((long)full.Id);
-                var activeCategoryIds = _sources.GetActiveCategoryIds((long)full.Id);
+                var activeCategoryIds = CategorySelection.NormalizeSelectedCategoryIds(
+                    _sources.GetActiveCategoryIds((long)full.Id));
                 if (activeCategoryIds.Count == 0)
                 {
                     items = new List<TorznabItem>();
                 }
                 else
                 {
-                    var selectedSet = new HashSet<int>(activeCategoryIds);
+                    var selectedSet = activeCategoryIds;
                     items = items
                         .Select(item =>
                         {
@@ -129,7 +130,7 @@ public sealed class SchedulerController : ControllerBase
                                 ? item.CategoryIds
                                 : (item.CategoryId.HasValue ? new List<int> { item.CategoryId.Value } : new List<int>());
 
-                            if (!ids.Any(selectedSet.Contains))
+                            if (!CategorySelection.MatchesSelectedCategoryIds(ids, selectedSet))
                                 return null;
 
                             var picked = CategorySelection.PickBestCategoryId(ids, categoryMap);

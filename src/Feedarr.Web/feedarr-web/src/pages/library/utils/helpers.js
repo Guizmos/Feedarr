@@ -1,11 +1,12 @@
+import { normalizeCategoryGroupKey } from "../../../domain/categories/index.js";
+
 /**
  * Fonctions utilitaires pour la logique métier de la bibliothèque
  */
 
 export function isSeriesItem(it) {
-  const raw = String(it?.mediaType || it?.unifiedCategoryKey || "").toLowerCase();
-  if (["tv", "series", "serie", "tv_series", "series_tv", "seriestv", "anime", "show", "shows", "emission", "emissions"].includes(raw)) return true;
-  return String(it?.unifiedCategoryKey || "").toLowerCase() === "series";
+  const canonical = normalizeCategoryGroupKey(it?.mediaType || it?.unifiedCategoryKey);
+  return canonical === "series" || canonical === "anime" || canonical === "emissions";
 }
 
 export function scoreResolution(value) {

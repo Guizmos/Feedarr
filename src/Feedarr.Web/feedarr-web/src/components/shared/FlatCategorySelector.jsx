@@ -1,30 +1,12 @@
 import React, { useMemo } from "react";
 import ToggleSwitch from "../../ui/ToggleSwitch.jsx";
+import {
+  filterLeafOnly,
+  isStandardParentId,
+} from "../../domain/categories/index.js";
 
 function isSelectable(category) {
   return !(category?.isStandard && category?.isSupported === false);
-}
-
-function isStandardParentId(id) {
-  return Number.isFinite(id) && id >= 1000 && id <= 8999 && id % 1000 === 0;
-}
-
-function normalizeLeafOnly(ids, categories) {
-  const next = new Set(ids);
-  const byId = new Map(
-    (Array.isArray(categories) ? categories : [])
-      .map((cat) => [Number(cat?.id), cat])
-      .filter(([id]) => Number.isFinite(id) && id > 0)
-  );
-
-  for (const id of Array.from(next)) {
-    const cat = byId.get(id);
-    const isStandard = cat?.isStandard === true || (id >= 1000 && id <= 8999);
-    if (!isStandard || id % 1000 === 0) continue;
-    next.delete(Math.floor(id / 1000) * 1000);
-  }
-
-  return next;
 }
 
 export default function FlatCategorySelector({ categories, selectedIds, onToggleId, onSetIds }) {
@@ -73,7 +55,7 @@ export default function FlatCategorySelector({ categories, selectedIds, onToggle
   );
 
   const normalizedStandardIds = useMemo(
-    () => normalizeLeafOnly(selectableStandardIds, standardCategories),
+    () => filterLeafOnly(selectableStandardIds, standardCategories),
     [selectableStandardIds, standardCategories]
   );
 
