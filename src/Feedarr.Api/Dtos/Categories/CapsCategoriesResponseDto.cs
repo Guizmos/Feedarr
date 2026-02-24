@@ -12,4 +12,7 @@ public sealed class CapsCategoryDto
     public string Name { get; set; } = "";
     public bool IsStandard { get; set; }
     public bool IsSupported { get; set; }
+    public string? AssignedGroupKey { get; set; }
+    public string? AssignedGroupLabel { get; set; }
+    public bool IsAssigned { get; set; }
 }

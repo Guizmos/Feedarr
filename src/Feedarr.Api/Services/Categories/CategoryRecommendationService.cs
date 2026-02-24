@@ -98,13 +98,18 @@ public sealed class CategoryRecommendationService
             }
         }
 
+        var assignedById = sourceId.HasValue && sourceId.Value > 0
+            ? _sources.GetCategoryMappingMap(sourceId.Value)
+            : new Dictionary<int, (string key, string label)>();
+
         return new CapsCategoriesResponseDto
         {
             Categories = BuildFlatCategories(
                 capsById,
                 supportedIds,
-                includeStandardCatalog: true,
-                includeSpecific: true),
+                assignedById,
+                includeStandardCatalog: req.IncludeStandardCatalog,
+                includeSpecific: req.IncludeSpecific),
             Warnings = warnings
         };
     }
@@ -133,7 +138,7 @@ public sealed class CategoryRecommendationService
         if (!sourceId.HasValue || sourceId.Value <= 0)
             return (byId, supported);
 
-        var storedIds = _sources.GetSelectedCategoryIds(sourceId.Value);
+        var storedIds = _sources.GetActiveCategoryIds(sourceId.Value);
         foreach (var id in storedIds.Where(id => id > 0).Distinct())
         {
             supported.Add(id);
@@ -149,6 +154,7 @@ public sealed class CategoryRecommendationService
     private static List<CapsCategoryDto> BuildFlatCategories(
         IReadOnlyDictionary<int, string> capsById,
         IReadOnlyCollection<int> supportedIds,
+        IReadOnlyDictionary<int, (string key, string label)> assignedById,
         bool includeStandardCatalog,
         bool includeSpecific)
     {
@@ -167,13 +173,22 @@ public sealed class CategoryRecommendationService
                     Id = cat.Id,
                     Name = cat.Name,
                     IsStandard = true,
-                    IsSupported = supportedSet.Contains(cat.Id)
+                    IsSupported = supportedSet.Contains(cat.Id),
+                    AssignedGroupKey = assignedById.TryGetValue(cat.Id, out var assigned) ? assigned.key : null,
+                    AssignedGroupLabel = assignedById.TryGetValue(cat.Id, out var assignedLabel) ? assignedLabel.label : null,
+                    IsAssigned = assignedById.ContainsKey(cat.Id)
                 });
             }
         }
         else
         {
-            foreach (var id in supportedSet.Where(StandardCategoryCatalog.IsStandardId).OrderBy(id => id))
+            var standardIds = supportedSet
+                .Where(StandardCategoryCatalog.IsStandardId)
+                .Concat(assignedById.Keys.Where(StandardCategoryCatalog.IsStandardId))
+                .Distinct()
+                .OrderBy(id => id);
+
+            foreach (var id in standardIds)
             {
                 var name = StandardCategoryCatalog.TryGetStandardName(id, out var standardName)
                     ? standardName
@@ -184,23 +199,33 @@ public sealed class CategoryRecommendationService
                     Id = id,
                     Name = name,
                     IsStandard = true,
-                    IsSupported = true
+                    IsSupported = supportedSet.Contains(id),
+                    AssignedGroupKey = assignedById.TryGetValue(id, out var assigned) ? assigned.key : null,
+                    AssignedGroupLabel = assignedById.TryGetValue(id, out var assignedLabel) ? assignedLabel.label : null,
+                    IsAssigned = assignedById.ContainsKey(id)
                 });
             }
         }
 
         if (includeSpecific)
         {
-            foreach (var id in capsById.Keys
+            var specificIds = capsById.Keys
                 .Where(id => !StandardCategoryCatalog.IsStandardId(id))
-                .OrderBy(id => id))
+                .Concat(assignedById.Keys.Where(id => !StandardCategoryCatalog.IsStandardId(id)))
+                .Distinct()
+                .OrderBy(id => id);
+
+            foreach (var id in specificIds)
             {
                 result.Add(new CapsCategoryDto
                 {
                     Id = id,
-                    Name = capsById[id],
+                    Name = capsById.TryGetValue(id, out var name) ? name : $"Cat {id}",
                     IsStandard = false,
-                    IsSupported = true
+                    IsSupported = true,
+                    AssignedGroupKey = assignedById.TryGetValue(id, out var assigned) ? assigned.key : null,
+                    AssignedGroupLabel = assignedById.TryGetValue(id, out var assignedLabel) ? assignedLabel.label : null,
+                    IsAssigned = assignedById.ContainsKey(id)
                 });
             }
         }

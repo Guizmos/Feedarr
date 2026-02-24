@@ -19,6 +19,7 @@ public sealed class SourcesController : ControllerBase
     private readonly TorznabClient _torznab;
     private readonly SourceRepository _sources;
     private readonly ProviderRepository _providers;
+    private readonly ReleaseRepository _releases;
     private readonly ActivityRepository _activity;
     private readonly CategoryRecommendationService _caps;
     private readonly BackupExecutionCoordinator _backupCoordinator;
@@ -29,6 +30,7 @@ public sealed class SourcesController : ControllerBase
         TorznabClient torznab,
         SourceRepository sources,
         ProviderRepository providers,
+        ReleaseRepository releases,
         ActivityRepository activity,
         CategoryRecommendationService caps,
         BackupExecutionCoordinator backupCoordinator,
@@ -38,6 +40,7 @@ public sealed class SourcesController : ControllerBase
         _torznab = torznab;
         _sources = sources;
         _providers = providers;
+        _releases = releases;
         _activity = activity;
         _caps = caps;
         _backupCoordinator = backupCoordinator;
@@ -473,6 +476,10 @@ public sealed class SourcesController : ControllerBase
         var src = _sources.Get(id);
         if (src is null) return NotFound(new { error = "source not found" });
 
+        _log.LogWarning("Legacy endpoint PUT /api/sources/{SourceId}/categories called; category mappings remain source of truth.", id);
+
+        var existingMap = _sources.GetUnifiedCategoryMap(id);
+
         var filtered = (dto?.Categories ?? new List<SourceCategorySelectionDto>())
             .Where(c => c.Id > 0 && !string.IsNullOrWhiteSpace(c.Name))
             .Select(c => new SourceRepository.SourceCategoryInput
@@ -481,8 +488,12 @@ public sealed class SourcesController : ControllerBase
                 Name = c.Name.Trim(),
                 IsSub = c.IsSub,
                 ParentId = c.ParentId,
-                UnifiedKey = string.IsNullOrWhiteSpace(c.UnifiedKey) ? null : c.UnifiedKey.Trim(),
-                UnifiedLabel = string.IsNullOrWhiteSpace(c.UnifiedLabel) ? null : c.UnifiedLabel.Trim()
+                UnifiedKey = existingMap.TryGetValue(c.Id, out var entry)
+                    ? entry.key
+                    : (string.IsNullOrWhiteSpace(c.UnifiedKey) ? null : c.UnifiedKey.Trim()),
+                UnifiedLabel = existingMap.TryGetValue(c.Id, out var entry2)
+                    ? entry2.label
+                    : (string.IsNullOrWhiteSpace(c.UnifiedLabel) ? null : c.UnifiedLabel.Trim())
             })
             .ToList();
 
@@ -495,6 +506,105 @@ public sealed class SourcesController : ControllerBase
             dataJson: $"{{\"sourceId\":{id},\"categories\":{filtered.Count}}}");
 
         return Ok(new { id, categories = filtered.Count });
+    }
+
+    // GET /api/sources/{id}/category-mappings
+    [HttpGet("{id:long}/category-mappings")]
+    public IActionResult GetCategoryMappings([FromRoute] long id)
+    {
+        var src = _sources.Get(id);
+        if (src is null) return NotFound(new { error = "source not found" });
+
+        var mappings = _sources.GetCategoryMappings(id)
+            .Select(m => new SourceCategoryMappingDto
+            {
+                CatId = m.CatId,
+                GroupKey = m.GroupKey,
+                GroupLabel = m.GroupLabel
+            })
+            .ToList();
+
+        return Ok(mappings);
+    }
+
+    // PATCH /api/sources/{id}/category-mappings
+    [HttpPatch("{id:long}/category-mappings")]
+    public IActionResult PatchCategoryMappings([FromRoute] long id, [FromBody] SourceCategoryMappingsPatchDto? dto)
+    {
+        var src = _sources.Get(id);
+        if (src is null) return NotFound(new { error = "source not found" });
+
+        var rawMappings = (dto?.Mappings ?? new List<SourceCategoryMappingPatchItemDto>()).ToList();
+        if (rawMappings.Count == 0)
+            return BadRequest(new { error = "mappings missing" });
+
+        foreach (var mapping in rawMappings)
+        {
+            if (mapping.CatId <= 0)
+                return BadRequest(new { error = $"invalid catId: {mapping.CatId}" });
+
+            if (!string.IsNullOrWhiteSpace(mapping.GroupKey) &&
+                !SourceRepository.IsAllowedGroupKey(mapping.GroupKey))
+            {
+                return BadRequest(new { error = $"invalid groupKey for catId={mapping.CatId}" });
+            }
+        }
+
+        var changed = _sources.PatchCategoryMappings(
+            id,
+            rawMappings.Select(m => new SourceRepository.SourceCategoryMappingPatch
+            {
+                CatId = m.CatId,
+                GroupKey = string.IsNullOrWhiteSpace(m.GroupKey) ? null : m.GroupKey!.Trim()
+            }));
+
+        _caps.InvalidateSource(id);
+        _activity.Add(id, "info", "source", $"Source category mappings patched: {src.Name}",
+            dataJson: $"{{\"sourceId\":{id},\"changed\":{changed},\"patched\":{rawMappings.Count}}}");
+
+        var updated = _sources.GetCategoryMappings(id)
+            .Select(m => new SourceCategoryMappingDto
+            {
+                CatId = m.CatId,
+                GroupKey = m.GroupKey,
+                GroupLabel = m.GroupLabel
+            })
+            .ToList();
+
+        return Ok(new { changed, mappings = updated });
+    }
+
+    // POST /api/sources/{id}/reclassify
+    [HttpPost("{id:long}/reclassify")]
+    public IActionResult ReclassifySource([FromRoute] long id, [FromQuery] int batchSize = 200)
+    {
+        var src = _sources.Get(id);
+        if (src is null) return NotFound(new { error = "source not found" });
+
+        try
+        {
+            var (processed, updated, markedRebind) = _releases.ReprocessCategoriesForSource(id);
+            var (rebindProcessed, rebound) = _releases.RebindEntitiesForSource(id, batchSize);
+
+            _activity.Add(id, "info", "maintenance", "Source reclassify completed",
+                dataJson: $"{{\"sourceId\":{id},\"processed\":{processed},\"updated\":{updated},\"markedRebind\":{markedRebind},\"rebindProcessed\":{rebindProcessed},\"rebound\":{rebound}}}");
+
+            return Ok(new
+            {
+                ok = true,
+                sourceId = id,
+                processed,
+                updated,
+                markedRebind,
+                rebindProcessed,
+                rebound
+            });
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Source reclassify failed for sourceId={SourceId}", id);
+            return StatusCode(500, new { ok = false, error = "internal server error" });
+        }
     }
 
     // DELETE /api/sources/{id}

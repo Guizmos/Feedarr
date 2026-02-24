@@ -90,4 +90,5 @@ export async function apiGet(path, { signal, timeoutMs } = {}) {
 
 export const apiPost   = (path, body, opts) => apiSend("POST", path, body, opts);
 export const apiPut    = (path, body, opts) => apiSend("PUT", path, body, opts);
+export const apiPatch  = (path, body, opts) => apiSend("PATCH", path, body, opts);
 export const apiDelete = (path, opts)       => apiSend("DELETE", path, null, opts);

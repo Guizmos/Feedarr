@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiDelete, apiGet, apiPost, apiPut } from "../api/client.js";
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "../api/client.js";
 import Loader from "../ui/Loader.jsx";
 import { useSubbarSetter } from "../layout/useSubbar.js";
 import SubAction from "../ui/SubAction.jsx";
@@ -17,11 +17,12 @@ import {
   getSourceColor,
   normalizeHexColor,
 } from "../utils/sourceColors.js";
-import FlatCategorySelector from "../components/shared/FlatCategorySelector.jsx";
-import { filterLeafOnly, getAllowedCategoryIds } from "../components/shared/categorySelectionUtils.js";
+import CategoryMappingBoard, { FEEDARR_GROUPS } from "../components/shared/CategoryMappingBoard.jsx";
 
-const UNIFIED_PRIORITY = ["series", "anime", "films", "games", "spectacle", "shows", "audio", "books", "comics"];
+const UNIFIED_PRIORITY = ["series", "anime", "films", "animation", "spectacle", "emissions", "audio", "books", "comics"];
 const MANUAL_INDEXER_VALUE = "__manual__";
+
+const GROUP_LABELS = Object.fromEntries(FEEDARR_GROUPS.map((group) => [group.key, group.label]));
 
 function dedupeCategoriesById(categories) {
   if (!Array.isArray(categories)) return [];
@@ -72,14 +73,45 @@ function normalizeUrl(url) {
   return (url || "").trim().toLowerCase().replace(/\/+$/, "");
 }
 
-function areSetsEqual(a, b) {
+function normalizeGroupKey(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return GROUP_LABELS[key] ? key : null;
+}
+
+function mapFromCapsAssignments(categories) {
+  const map = new Map();
+  for (const category of Array.isArray(categories) ? categories : []) {
+    const id = Number(category?.id);
+    if (!Number.isFinite(id) || id <= 0) continue;
+    const key = normalizeGroupKey(category?.assignedGroupKey);
+    if (!key) continue;
+    map.set(id, key);
+  }
+  return map;
+}
+
+function areMappingMapsEqual(a, b) {
   if (a === b) return true;
-  if (!a || !b) return false;
+  if (!(a instanceof Map) || !(b instanceof Map)) return false;
   if (a.size !== b.size) return false;
-  for (const value of a) {
-    if (!b.has(value)) return false;
+  for (const [key, value] of a.entries()) {
+    if (b.get(key) !== value) return false;
   }
   return true;
+}
+
+function buildMappingDiff(previous, next) {
+  const prev = previous instanceof Map ? previous : new Map();
+  const curr = next instanceof Map ? next : new Map();
+  const allIds = new Set([...prev.keys(), ...curr.keys()]);
+  const diff = [];
+  for (const id of allIds) {
+    const before = normalizeGroupKey(prev.get(id));
+    const after = normalizeGroupKey(curr.get(id));
+    if (before === after) continue;
+    diff.push({ catId: Number(id), groupKey: after || null });
+  }
+  return diff;
 }
 
 export default function Indexers() {
@@ -93,7 +125,7 @@ export default function Indexers() {
   const [capsError, setCapsError] = useState("");
   const [capsWarning, setCapsWarning] = useState("");
   const [capsCategories, setCapsCategories] = useState([]);
-  const [selectedCategoryIds, setSelectedCategoryIds] = useState(() => new Set());
+  const [categoryMappings, setCategoryMappings] = useState(() => new Map());
   const [providerOptions, setProviderOptions] = useState([]);
   const [providerOptionsLoading, setProviderOptionsLoading] = useState(false);
   const [providerOptionsWarning, setProviderOptionsWarning] = useState("");
@@ -112,7 +144,8 @@ export default function Indexers() {
   const [testSourceId, setTestSourceId] = useState(null); // ID of source created during test
   const [syncModalOpen, setSyncModalOpen] = useState(false);
   const initialEditRef = useRef(null);
-  const initialCategoryIdsRef = useRef(null);
+  const initialCategoryMappingsRef = useRef(null);
+  const [reclassifying, setReclassifying] = useState(false);
 
   // form fields
   const [name, setName] = useState("");
@@ -141,8 +174,13 @@ export default function Indexers() {
         sources.map(async (s) => {
           if (!s?.id) return;
           try {
-            const cats = await apiGet(`/api/categories/${s.id}`);
-            catsMap[s.id] = Array.isArray(cats) ? cats : [];
+            const mappings = await apiGet(`/api/sources/${s.id}/category-mappings`);
+            catsMap[s.id] = (Array.isArray(mappings) ? mappings : []).map((mapping) => ({
+              id: Number(mapping?.catId),
+              unifiedKey: normalizeGroupKey(mapping?.groupKey),
+              unifiedLabel: mapping?.groupLabel || GROUP_LABELS[normalizeGroupKey(mapping?.groupKey)] || "",
+              name: mapping?.groupLabel || GROUP_LABELS[normalizeGroupKey(mapping?.groupKey)] || "",
+            }));
           } catch {
             catsMap[s.id] = [];
           }
@@ -263,7 +301,7 @@ export default function Indexers() {
     setCapsError("");
     setCapsWarning("");
     setCapsCategories([]);
-    setSelectedCategoryIds(new Set());
+    setCategoryMappings(new Map());
     setProviderOptions([]);
     setProviderOptionsWarning("");
     setSelectedProviderId("");
@@ -272,7 +310,7 @@ export default function Indexers() {
     setIndexerOptionsError("");
     setSelectedIndexerId("");
     initialEditRef.current = null;
-    initialCategoryIdsRef.current = null;
+    initialCategoryMappingsRef.current = null;
     loadProviders();
   }, [loadProviders]);
 
@@ -284,10 +322,10 @@ export default function Indexers() {
       torznabUrl: (s?.torznabUrl ?? "").trim(),
       color: normalizeHexColor(initialColor) || SOURCE_COLOR_PALETTE[0],
     };
-    const existing = (categoriesById[s?.id] || [])
-      .map((row) => Number(row?.id))
-      .filter((id) => Number.isFinite(id) && id > 0);
-    initialCategoryIdsRef.current = new Set(existing);
+    const existingMappings = (categoriesById[s?.id] || [])
+      .map((row) => [Number(row?.id), normalizeGroupKey(row?.unifiedKey)])
+      .filter(([id, key]) => Number.isFinite(id) && id > 0 && !!key);
+    initialCategoryMappingsRef.current = new Map(existingMappings);
 
     setName(s.name ?? "");
     setTorznabUrl(s.torznabUrl ?? "");
@@ -301,7 +339,7 @@ export default function Indexers() {
     setCapsError("");
     setCapsWarning("");
     setCapsCategories([]);
-    setSelectedCategoryIds(new Set());
+    setCategoryMappings(new Map());
     setSelectedProviderId("");
     setSelectedIndexerId("");
   }, [categoriesById]);
@@ -310,7 +348,7 @@ export default function Indexers() {
     setCapsError("");
     setCapsWarning("");
     setCapsCategories([]);
-    setSelectedCategoryIds(new Set());
+    setCategoryMappings(new Map());
     setSelectedProviderId("");
     setSelectedIndexerId("");
     setIndexerOptionsError("");
@@ -389,26 +427,17 @@ export default function Indexers() {
       }
 
       setCapsCategories(uniqueCats);
+      const mapped = mapFromCapsAssignments(uniqueCats);
+      setCategoryMappings(mapped);
       if (uniqueCats.length === 0 && warnings.length === 0) {
         setCapsWarning("Aucune catégorie disponible.");
       }
 
-      const allowedIds = getAllowedCategoryIds(uniqueCats);
-
       if (editing?.id) {
-        const existing = await apiGet(`/api/categories/${editing.id}`);
-        const existingIds = new Set(
-          (Array.isArray(existing) ? existing : [])
-            .map((row) => Number(row?.id))
-            .filter((id) => Number.isFinite(id) && id > 0)
-        );
-        const selected = [...allowedIds].filter((id) => existingIds.has(id));
-        const selectedSet = filterLeafOnly(selected, uniqueCats);
-        setSelectedCategoryIds(selectedSet);
-        initialCategoryIdsRef.current = new Set(selectedSet);
+        initialCategoryMappingsRef.current = new Map(mapped);
         setModalStep(2);
       } else {
-        setSelectedCategoryIds(new Set());
+        setCategoryMappings(new Map());
         // Capture the source ID if the backend created one during test
         if (res?.sourceId) {
           setTestSourceId(res.sourceId);
@@ -454,66 +483,45 @@ export default function Indexers() {
     };
 
     try {
-      const buildSelectedLeafCategories = () => {
-        const allowedIds = getAllowedCategoryIds(capsCategories);
-        const leafOnlyIds = filterLeafOnly(selectedCategoryIds, capsCategories);
-        const selectedSupported = dedupeCategoriesById(
-          capsCategories.filter((c) =>
-            leafOnlyIds.has(c.id) && allowedIds.has(c.id)
-          )
-        );
-        return selectedSupported;
-      };
+      const normalizedMappings = new Map(
+        [...categoryMappings.entries()]
+          .map(([catId, groupKey]) => [Number(catId), normalizeGroupKey(groupKey)])
+          .filter(([catId, groupKey]) => Number.isFinite(catId) && catId > 0 && !!groupKey)
+      );
 
       if (editing?.id) {
         if (modalStep === 2) {
           await apiPut(`/api/sources/${editing.id}`, payload);
           await apiPut(`/api/sources/${editing.id}/enabled`, { enabled });
-          const selected = buildSelectedLeafCategories();
-          if (selected.length === 0) {
-            setCapsError("Selectionne au moins une categorie.");
-            return;
+          const patch = buildMappingDiff(initialCategoryMappingsRef.current, normalizedMappings);
+          if (patch.length > 0) {
+            await apiPatch(`/api/sources/${editing.id}/category-mappings`, { mappings: patch });
           }
-          await apiPut(`/api/sources/${editing.id}/categories`, {
-            categories: selected.map((c) => ({
-              id: c.id,
-              name: c.name,
-              isSub: c.isSub,
-              parentId: c.parentId,
-              unifiedKey: c.unifiedKey,
-              unifiedLabel: c.unifiedLabel,
-            })),
-          });
         } else {
           await apiPut(`/api/sources/${editing.id}`, payload);
           await apiPut(`/api/sources/${editing.id}/enabled`, { enabled });
         }
       } else {
         if (modalStep !== 2) return;
-        const selected = buildSelectedLeafCategories();
-        if (selected.length === 0) {
-          setCapsError("Selectionne au moins une categorie.");
-          return;
-        }
-        const categoriesPayload = selected.map((c) => ({
-          id: c.id,
-          name: c.name,
-          isSub: c.isSub,
-          parentId: c.parentId,
-          unifiedKey: c.unifiedKey,
-          unifiedLabel: c.unifiedLabel,
+        const mappingsPayload = [...normalizedMappings.entries()].map(([catId, groupKey]) => ({
+          catId,
+          groupKey,
         }));
 
+        let sourceId = testSourceId;
         // If source was already created during test, update it instead of creating
-        if (testSourceId) {
-          await apiPut(`/api/sources/${testSourceId}`, payload);
-          await apiPut(`/api/sources/${testSourceId}/enabled`, { enabled });
-          await apiPut(`/api/sources/${testSourceId}/categories`, { categories: categoriesPayload });
+        if (sourceId) {
+          await apiPut(`/api/sources/${sourceId}`, payload);
+          await apiPut(`/api/sources/${sourceId}/enabled`, { enabled });
         } else {
-          await apiPost("/api/sources", {
+          const created = await apiPost("/api/sources", {
             ...payload,
-            categories: categoriesPayload,
           });
+          sourceId = Number(created?.id) || null;
+        }
+
+        if (sourceId && mappingsPayload.length > 0) {
+          await apiPatch(`/api/sources/${sourceId}/category-mappings`, { mappings: mappingsPayload });
         }
       }
 
@@ -537,6 +545,28 @@ export default function Indexers() {
       await load();
     } catch (e) {
       setErr(e?.message || "Erreur enable/disable");
+    }
+  }
+
+  async function reclassifyExisting() {
+    if (!editing?.id || reclassifying) return;
+    const confirmed =
+      typeof window === "undefined"
+        ? true
+        : window.confirm("Reclasser l'existant pour cette source ? Cette action peut prendre quelques instants.");
+    if (!confirmed) return;
+
+    setErr("");
+    setCapsError("");
+    setReclassifying(true);
+    try {
+      await apiPost(`/api/sources/${editing.id}/reclassify`);
+      await load();
+      setCapsWarning("Reclassement lancé avec succès pour cette source.");
+    } catch (e) {
+      setErr(e?.message || "Erreur reclassification");
+    } finally {
+      setReclassifying(false);
     }
   }
 
@@ -617,12 +647,12 @@ export default function Indexers() {
   }, [isEditing, name, torznabUrl, selectedColor, apiKey]);
   const categoriesDirty = useMemo(() => {
     if (!isEditing || modalStep !== 2) return false;
-    const initial = initialCategoryIdsRef.current;
+    const initial = initialCategoryMappingsRef.current;
     if (!initial) return false;
-    return !areSetsEqual(selectedCategoryIds, initial);
-  }, [isEditing, modalStep, selectedCategoryIds]);
+    return !areMappingMapsEqual(categoryMappings, initial);
+  }, [isEditing, modalStep, categoryMappings]);
   const canSaveEdit = isEditing && (editDirty || categoriesDirty);
-  const selectedCount = selectedCategoryIds.size;
+  const selectedCount = categoryMappings.size;
   const capsCount = capsCategories.length;
 
   // Filter out indexers that are already added (but always keep the currently selected one)
@@ -794,8 +824,8 @@ export default function Indexers() {
         width={720}
       >
         <form onSubmit={(e) => e.preventDefault()} className="formgrid formgrid--edit">
-          {/* Step 1 fields - hidden in step 2 for add mode */}
-          {(isEditing || modalStep === 1) && (
+          {/* Step 1 fields - hidden in step 2 */}
+          {modalStep === 1 && (
             <>
               {isAdding && (
                 <div className="field">
@@ -814,7 +844,7 @@ export default function Indexers() {
                       setCapsError("");
                       setCapsWarning("");
                       setCapsCategories([]);
-                      setSelectedCategoryIds(new Set());
+                      setCategoryMappings(new Map());
                       setTestPassed(false);
                       setTestSourceId(null);
                     }}
@@ -994,7 +1024,7 @@ export default function Indexers() {
             </div>
           )}
 
-          {isEditing && showAdvanced && (
+          {isEditing && showAdvanced && modalStep === 1 && (
             <div className="field" style={{ gridColumn: "1 / -1" }}>
               <div className="advanced-fields">
                 <div className="field">
@@ -1021,20 +1051,20 @@ export default function Indexers() {
 
           {modalStep === 2 && (
             <div className="field" style={{ gridColumn: "1 / -1" }}>
-              <label className="muted">Catégories retenues ({selectedCount}/{capsCount})</label>
+              <label className="muted">Catégories assignées ({selectedCount}/{capsCount})</label>
               <div style={{ marginTop: 8 }}>
-                <FlatCategorySelector
+                <CategoryMappingBoard
                   categories={capsCategories}
-                  selectedIds={selectedCategoryIds}
-                  onToggleId={(id, checked) => {
-                    setSelectedCategoryIds((prev) => {
-                      const next = new Set(prev);
-                      if (checked) next.add(id);
-                      else next.delete(id);
-                      return filterLeafOnly(next, capsCategories);
+                  mappings={categoryMappings}
+                  onChangeMapping={(catId, groupKey) => {
+                    const normalized = normalizeGroupKey(groupKey);
+                    setCategoryMappings((prev) => {
+                      const next = new Map(prev);
+                      if (!normalized) next.delete(catId);
+                      else next.set(catId, normalized);
+                      return next;
                     });
                   }}
-                  onSetIds={(ids) => setSelectedCategoryIds(filterLeafOnly(ids, capsCategories))}
                 />
               </div>
             </div>
@@ -1088,10 +1118,19 @@ export default function Indexers() {
               </div>
             ) : isEditing && modalStep === 2 ? (
               <div className="formactions-row">
-                <div className="formactions-left" />
+                <div className="formactions-left">
+                  <button
+                    className="btn btn-hover-info"
+                    type="button"
+                    onClick={reclassifyExisting}
+                    disabled={saving || reclassifying}
+                  >
+                    {reclassifying ? "Reclassement..." : "Reclasser l'existant"}
+                  </button>
+                </div>
                 <div className="formactions-right">
                   {canSaveEdit && (
-                    <button className="btn btn-hover-ok" type="button" onClick={save} disabled={selectedCount === 0 || saving}>
+                    <button className="btn btn-hover-ok" type="button" onClick={save} disabled={saving}>
                       Enregistrer
                     </button>
                   )}
@@ -1138,7 +1177,7 @@ export default function Indexers() {
               <div className="formactions-row">
                 <div className="formactions-left" />
                 <div className="formactions-right">
-                  <button className="btn btn-hover-ok" type="button" onClick={save} disabled={selectedCount === 0 || saving}>
+                  <button className="btn btn-hover-ok" type="button" onClick={save} disabled={saving}>
                     Enregistrer
                   </button>
                   <button className="btn btn-fixed-danger btn-nohover" type="button" onClick={closeModal} disabled={saving}>

@@ -45,7 +45,7 @@ public sealed class SystemStatsReleasesUnifiedTests
             Assert.False(string.IsNullOrWhiteSpace(label));
         }
 
-        Assert.Contains(categories, c => c.GetProperty("key").GetString() == "Serie" && c.GetProperty("label").GetString() == "Series TV");
+        Assert.Contains(categories, c => c.GetProperty("key").GetString() == "Serie" && c.GetProperty("label").GetString() == "Série TV");
         Assert.Contains(categories, c => c.GetProperty("key").GetString() == "Film" && c.GetProperty("label").GetString() == "Films");
         Assert.Contains(categories, c => c.GetProperty("key").GetString() == "Anime" && c.GetProperty("label").GetString() == "Anime");
     }

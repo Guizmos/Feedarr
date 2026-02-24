@@ -6,6 +6,7 @@ using Feedarr.Api.Options;
 using Feedarr.Api.Services;
 using Feedarr.Api.Services.Arr;
 using Feedarr.Api.Services.Backup;
+using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services.Metadata;
 using Feedarr.Api.Services.Posters;
 using Feedarr.Api.Services.Security;
@@ -112,7 +113,36 @@ public sealed class SchedulerController : ControllerBase
                 _sources.SaveRssMode((long)full.Id, usedMode);
                 var nowTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 var name = Convert.ToString(full.Name) ?? "";
-                var categoryMap = _sources.GetUnifiedCategoryMap((long)full.Id);
+                var categoryMap = _sources.GetCategoryMappingMap((long)full.Id);
+                var activeCategoryIds = _sources.GetActiveCategoryIds((long)full.Id);
+                if (activeCategoryIds.Count == 0)
+                {
+                    items = new List<TorznabItem>();
+                }
+                else
+                {
+                    var selectedSet = new HashSet<int>(activeCategoryIds);
+                    items = items
+                        .Select(item =>
+                        {
+                            var ids = item.CategoryIds is { Count: > 0 }
+                                ? item.CategoryIds
+                                : (item.CategoryId.HasValue ? new List<int> { item.CategoryId.Value } : new List<int>());
+
+                            if (!ids.Any(selectedSet.Contains))
+                                return null;
+
+                            var picked = CategorySelection.PickBestCategoryId(ids, categoryMap);
+                            if (!picked.HasValue)
+                                return null;
+
+                            item.CategoryId = picked.Value;
+                            return item;
+                        })
+                        .Where(item => item is not null)
+                        .Cast<TorznabItem>()
+                        .ToList();
+                }
                 var insertedNew = _releases.UpsertMany((long)full.Id, name, items, nowTs, 0, categoryMap);
                 var (retentionResult, postersPurged) = _retention.ApplyRetention((long)full.Id, perCatLimit, globalLimit);
 

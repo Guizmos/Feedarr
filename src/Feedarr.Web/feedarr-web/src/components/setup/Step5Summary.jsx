@@ -164,6 +164,10 @@ export default function Step5Summary({ onFinish, finishing }) {
       };
     });
   }, [indexerProviders]);
+  const configuredIndexerProviderRows = useMemo(
+    () => indexerProviderRows.filter((provider) => provider.configured),
+    [indexerProviderRows]
+  );
 
   const handleFinish = useCallback(async () => {
     if (finishing) return;
@@ -239,23 +243,18 @@ export default function Step5Summary({ onFinish, finishing }) {
 
           <div className="setup-summary__card">
             <h3>{tr("Fournisseurs", "Providers")}</h3>
-            <ul>
-              {indexerProviderRows.map((provider) => (
-                <li key={provider.type}>
-                  <ScrollText>{labelForIndexerProvider(provider.type)}</ScrollText>
-                  <span className={`pill ${provider.configured ? "pill-ok" : "pill-warn"}`}>
-                    {provider.configured ? tr("Configure", "Configured") : tr("Non configure", "Not configured")}
-                  </span>
-                </li>
-              ))}
-            </ul>
-            {indexerProviderRows
-              .filter((provider) => !provider.configured && provider.maskedUrl !== "—")
-              .map((provider) => (
-                <div key={`url-${provider.type}`} className="muted">
-                  {labelForIndexerProvider(provider.type)}: {provider.maskedUrl}
-                </div>
-              ))}
+            {configuredIndexerProviderRows.length === 0 ? (
+              <div className="muted">{tr("Aucun fournisseur configure", "No configured provider")}</div>
+            ) : (
+              <ul>
+                {configuredIndexerProviderRows.map((provider) => (
+                  <li key={provider.type}>
+                    <ScrollText>{labelForIndexerProvider(provider.type)}</ScrollText>
+                    <span className="pill pill-ok">{tr("Configure", "Configured")}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
           <div className="setup-summary__card">

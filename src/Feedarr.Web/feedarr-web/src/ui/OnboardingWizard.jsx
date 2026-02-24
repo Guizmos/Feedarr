@@ -1,14 +1,42 @@
 import React, { useEffect, useState } from "react";
 import Modal from "./Modal.jsx";
-import { apiPost, apiPut } from "../api/client.js";
-import FlatCategorySelector from "../components/shared/FlatCategorySelector.jsx";
-import { filterLeafOnly, getAllowedCategoryIds } from "../components/shared/categorySelectionUtils.js";
+import { apiPatch, apiPost, apiPut } from "../api/client.js";
+import CategoryMappingBoard, { FEEDARR_GROUPS } from "../components/shared/CategoryMappingBoard.jsx";
 
 // TODO(metadata-providers-step1): This legacy wizard duplicates metadata provider logic
 // from setup Step2/settings (state + test/save flow via /api/settings/external).
 // Keep for compatibility, but migrate to shared useExternalProviderInstances + shared UI flow.
 
 const INDEXER_OPTIONS = ["C411", "YGEGE", "LA-CALE", "TOS"];
+const GROUP_LABELS = Object.fromEntries(FEEDARR_GROUPS.map((group) => [group.key, group.label]));
+
+function normalizeGroupKey(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return GROUP_LABELS[key] ? key : null;
+}
+
+function mapFromCapsAssignments(categories) {
+  const map = new Map();
+  for (const category of Array.isArray(categories) ? categories : []) {
+    const id = Number(category?.id);
+    if (!Number.isFinite(id) || id <= 0) continue;
+    const key = normalizeGroupKey(category?.assignedGroupKey);
+    if (!key) continue;
+    map.set(id, key);
+  }
+  return map;
+}
+
+function buildMappingsPayload(map) {
+  const payload = [];
+  for (const [catId, groupKey] of map instanceof Map ? map.entries() : []) {
+    const normalized = normalizeGroupKey(groupKey);
+    const id = Number(catId);
+    if (!Number.isFinite(id) || id <= 0 || !normalized) continue;
+    payload.push({ catId: id, groupKey: normalized });
+  }
+  return payload;
+}
 
 export default function OnboardingWizard({ open, status, onClose, onComplete }) {
   const [idxName, setIdxName] = useState("");
@@ -23,7 +51,7 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
 
   // Category states
   const [capsCategories, setCapsCategories] = useState([]);
-  const [selectedCategoryIds, setSelectedCategoryIds] = useState(() => new Set());
+  const [categoryMappings, setCategoryMappings] = useState(() => new Map());
 
 
   const [provTmdb, setProvTmdb] = useState("");
@@ -86,8 +114,7 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
       }
 
       setCapsCategories(categories);
-
-      setSelectedCategoryIds(new Set());
+      setCategoryMappings(mapFromCapsAssignments(categories));
       setIdxTested(true);
       setIdxOk("Connexion réussie ! Passez à l'étape suivante.");
     } catch (e) {
@@ -102,16 +129,6 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
     setIdxErr("");
     setIdxOk("");
 
-    const allowedIds = getAllowedCategoryIds(capsCategories);
-    const leafOnlyIds = filterLeafOnly(selectedCategoryIds, capsCategories);
-    const selected = (capsCategories || []).filter((c) =>
-      leafOnlyIds.has(c.id) && allowedIds.has(c.id)
-    );
-    if (selected.length === 0) {
-      setIdxErr("Sélectionne au moins une catégorie.");
-      return;
-    }
-
     setIdxSaving(true);
     try {
       const res = await apiPost("/api/sources", {
@@ -119,19 +136,15 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
         torznabUrl: idxUrl.trim(),
         authMode: idxAuthMode,
         apiKey: idxKey.trim(),
-        categories: selected.map((c) => ({
-          id: c.id,
-          name: c.name,
-          isSub: c.isSub,
-          parentId: c.parentId,
-          unifiedKey: c.unifiedKey,
-          unifiedLabel: c.unifiedLabel,
-        })),
       });
 
       // Activer l'indexeur
       if (res?.id) {
         await apiPut(`/api/sources/${res.id}/enabled`, { enabled: true });
+        const mappingsPayload = buildMappingsPayload(categoryMappings);
+        if (mappingsPayload.length > 0) {
+          await apiPatch(`/api/sources/${res.id}/category-mappings`, { mappings: mappingsPayload });
+        }
       }
 
       setIdxOk("Indexeur ajouté et activé !");
@@ -154,7 +167,7 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
   }
 
   const canTestIndexer = idxName.trim() && idxUrl.trim() && idxKey.trim();
-  const selectedCount = selectedCategoryIds.size;
+  const selectedCount = categoryMappings.size;
 
   // Test providers function
   async function testProviders() {
@@ -369,7 +382,7 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
                   onClick={() => {
                     setIdxTested(false);
                     setCapsCategories([]);
-                    setSelectedCategoryIds(new Set());
+                    setCategoryMappings(new Map());
                     setIdxOk("");
                   }}
                 >
@@ -391,21 +404,22 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
           <div className="onboarding__inline">
             {capsCategories.length > 0 ? (
               <>
-                <FlatCategorySelector
+                <CategoryMappingBoard
+                  variant="wizard"
                   categories={capsCategories}
-                  selectedIds={selectedCategoryIds}
-                  onToggleId={(id, checked) => {
-                    setSelectedCategoryIds((prev) => {
-                      const next = new Set(prev);
-                      if (checked) next.add(id);
-                      else next.delete(id);
-                      return filterLeafOnly(next, capsCategories);
+                  mappings={categoryMappings}
+                  onChangeMapping={(catId, groupKey) => {
+                    const normalized = normalizeGroupKey(groupKey);
+                    setCategoryMappings((prev) => {
+                      const next = new Map(prev);
+                      if (!normalized) next.delete(catId);
+                      else next.set(catId, normalized);
+                      return next;
                     });
                   }}
-                  onSetIds={(ids) => setSelectedCategoryIds(filterLeafOnly(ids, capsCategories))}
                 />
                 <div className="muted" style={{ marginTop: 8 }}>
-                  {selectedCount} catégorie{selectedCount > 1 ? "s" : ""} sélectionnée{selectedCount > 1 ? "s" : ""}
+                  {selectedCount} catégorie{selectedCount > 1 ? "s" : ""} assignée{selectedCount > 1 ? "s" : ""}
                 </div>
               </>
             ) : (
@@ -421,7 +435,7 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
               <button
                 className="btn btn-accent"
                 type="button"
-                disabled={selectedCount === 0 || idxSaving}
+                disabled={idxSaving}
                 onClick={saveIndexer}
               >
                 {idxSaving ? "Enregistrement..." : "Enregistrer l'indexeur"}
@@ -596,7 +610,7 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
       setIdxTesting(false);
       setIdxTested(false);
       setCapsCategories([]);
-      setSelectedCategoryIds(new Set());
+      setCategoryMappings(new Map());
       // Reset provider states
       setProvTmdb("");
       setProvTvmaze("");

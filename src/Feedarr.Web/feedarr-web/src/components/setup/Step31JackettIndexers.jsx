@@ -1,10 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import ItemRow from "../../ui/ItemRow.jsx";
 import Modal from "../../ui/Modal.jsx";
-import { apiDelete, apiGet, apiPost, apiPut } from "../../api/client.js";
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "../../api/client.js";
 import { tr } from "../../app/uiText.js";
-import FlatCategorySelector from "../shared/FlatCategorySelector.jsx";
-import { filterLeafOnly, getAllowedCategoryIds } from "../shared/categorySelectionUtils.js";
+import CategoryMappingBoard, { FEEDARR_GROUPS } from "../shared/CategoryMappingBoard.jsx";
 
 const STORAGE_KEYS = {
   jackett: {
@@ -28,6 +27,7 @@ const PROVIDERS = [
 ];
 const EMPTY_CONFIG = { baseUrl: "", providerId: null, indexers: [], configured: false, manualOnly: false };
 const MANUAL_INDEXER_VALUE = "__manual__";
+const GROUP_LABELS = Object.fromEntries(FEEDARR_GROUPS.map((group) => [group.key, group.label]));
 
 function normalizeUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -54,10 +54,32 @@ function getProviderLabel(providerKey) {
   return PROVIDERS.find((p) => p.key === providerKey)?.label || tr("Fournisseur", "Provider");
 }
 
-function filterLeafCategories(categories, selectedIds) {
-  const allowedIds = getAllowedCategoryIds(categories);
-  const leafOnlyIds = filterLeafOnly(selectedIds, categories);
-  return categories.filter((c) => leafOnlyIds.has(c.id) && allowedIds.has(c.id));
+function normalizeGroupKey(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return GROUP_LABELS[key] ? key : null;
+}
+
+function mapFromCapsAssignments(categories) {
+  const map = new Map();
+  for (const category of Array.isArray(categories) ? categories : []) {
+    const id = Number(category?.id);
+    if (!Number.isFinite(id) || id <= 0) continue;
+    const key = normalizeGroupKey(category?.assignedGroupKey);
+    if (!key) continue;
+    map.set(id, key);
+  }
+  return map;
+}
+
+function buildMappingsPayload(map) {
+  const payload = [];
+  for (const [catId, groupKey] of map instanceof Map ? map.entries() : []) {
+    const normalized = normalizeGroupKey(groupKey);
+    const id = Number(catId);
+    if (!Number.isFinite(id) || id <= 0 || !normalized) continue;
+    payload.push({ catId: id, groupKey: normalized });
+  }
+  return payload;
 }
 
 export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jackettConfig }) {
@@ -83,8 +105,9 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
   const [capsOk, setCapsOk] = useState("");
   const [capsWarning, setCapsWarning] = useState("");
   const [capsCategories, setCapsCategories] = useState([]);
-  const [selectedCategoryIds, setSelectedCategoryIds] = useState(() => new Set());
+  const [categoryMappings, setCategoryMappings] = useState(() => new Map());
   const [saving, setSaving] = useState(false);
+  const [reclassifying, setReclassifying] = useState(false);
   const [busySourceId, setBusySourceId] = useState(null);
 
   const loadProviderConfigs = useCallback(async () => {
@@ -260,7 +283,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
     setCapsOk("");
     setCapsWarning("");
     setCapsCategories([]);
-    setSelectedCategoryIds(new Set());
+    setCategoryMappings(new Map());
     setSelectedIndexer(null);
     setEditingSource(null);
     setManualMode(false);
@@ -318,7 +341,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
     setCapsOk("");
     setCapsWarning("");
     setCapsCategories([]);
-    setSelectedCategoryIds(new Set());
+    setCategoryMappings(new Map());
 
     if (!indexer?.torznabUrl) {
       setCapsError(tr("Indexeur invalide.", "Invalid indexer."));
@@ -345,12 +368,11 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
       const cats = Array.isArray(res?.categories) ? res.categories : [];
       const warnings = Array.isArray(res?.warnings) ? res.warnings : [];
       if (warnings.length > 0) {
-        setCapsWarning(warnings.join(" "));
+      setCapsWarning(warnings.join(" "));
       }
 
       setCapsCategories(cats);
-
-      setSelectedCategoryIds(new Set());
+      setCategoryMappings(mapFromCapsAssignments(cats));
 
       if (cats.length > 0) {
         setCapsOk(tr("Categories chargees.", "Categories loaded."));
@@ -398,13 +420,8 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
         }
       : selectedIndexer;
 
-    const selected = filterLeafCategories(allCategories, selectedCategoryIds);
     if (!indexer?.torznabUrl || !normalizeUrl(indexer?.torznabUrl)) {
       setCapsError(manualMode ? tr("URL Torznab requise.", "Torznab URL required.") : tr("Indexeur invalide.", "Invalid indexer."));
-      return;
-    }
-    if (allCategories.length > 0 && selected.length === 0) {
-      setCapsError(tr("Selectionne au moins une categorie.", "Select at least one category."));
       return;
     }
 
@@ -429,17 +446,13 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
         torznabUrl: normalizeUrl(indexer.torznabUrl),
         authMode: "query",
         providerId,
-        categories: selected.length > 0 ? selected.map((c) => ({
-          id: c.id,
-          name: c.name,
-          isSub: c.isSub,
-          parentId: c.parentId,
-          unifiedKey: c.unifiedKey,
-          unifiedLabel: c.unifiedLabel,
-        })) : undefined,
       });
       if (res?.id) {
         await apiPut(`/api/sources/${res.id}/enabled`, { enabled: true });
+        const mappingsPayload = buildMappingsPayload(categoryMappings);
+        if (mappingsPayload.length > 0) {
+          await apiPatch(`/api/sources/${res.id}/category-mappings`, { mappings: mappingsPayload });
+        }
       }
       await loadSources();
       setCapsOk(tr("Indexeur ajoute.", "Indexer added."));
@@ -463,7 +476,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
     setCapsOk("");
     setCapsWarning("");
     setCapsCategories([]);
-    setSelectedCategoryIds(new Set());
+    setCategoryMappings(new Map());
     setCapsLoading(true);
     try {
       const res = await apiGet(buildCapsQuery({
@@ -474,34 +487,13 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
       }));
 
       let cats = Array.isArray(res?.categories) ? res.categories : [];
-      let existing = [];
-
       const warnings = Array.isArray(res?.warnings) ? res.warnings : [];
       if (warnings.length > 0) {
         setCapsWarning(warnings.join(" "));
       }
 
       setCapsCategories(cats);
-      const allowedIds = getAllowedCategoryIds(cats);
-
-      try {
-        existing = await apiGet(`/api/categories/${source.id}`);
-      } catch {
-        existing = [];
-      }
-
-      const existingIds = new Set(
-        (Array.isArray(existing) ? existing : [])
-          .map((row) => Number(row?.id))
-          .filter((id) => Number.isFinite(id) && id > 0)
-      );
-
-      setSelectedCategoryIds(
-        filterLeafOnly(
-          [...allowedIds].filter((id) => existingIds.has(id)),
-          cats
-        )
-      );
+      setCategoryMappings(mapFromCapsAssignments(cats));
 
       if (cats.length > 0) {
         setCapsOk(tr("Categories chargees.", "Categories loaded."));
@@ -517,23 +509,23 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
 
   async function saveCategories() {
     if (!editingSource?.id) return;
-    const selected = filterLeafCategories(allCategories, selectedCategoryIds);
-    if (selected.length === 0) {
-      setCapsError(tr("Selectionne au moins une categorie.", "Select at least one category."));
+    const mappingsPayload = (capsCategories || [])
+      .map((category) => {
+        const catId = Number(category?.id);
+        if (!Number.isFinite(catId) || catId <= 0) return null;
+        return {
+          catId,
+          groupKey: normalizeGroupKey(categoryMappings.get(catId)) || null,
+        };
+      })
+      .filter(Boolean);
+    if (mappingsPayload.length === 0) {
+      setCapsError(tr("Aucune categorie a mettre a jour.", "No category to update."));
       return;
     }
     setSaving(true);
     try {
-      await apiPut(`/api/sources/${editingSource.id}/categories`, {
-        categories: selected.map((c) => ({
-          id: c.id,
-          name: c.name,
-          isSub: c.isSub,
-          parentId: c.parentId,
-          unifiedKey: c.unifiedKey,
-          unifiedLabel: c.unifiedLabel,
-        })),
-      });
+      await apiPatch(`/api/sources/${editingSource.id}/category-mappings`, { mappings: mappingsPayload });
       await loadSources();
       setCapsOk(tr("Categories mises a jour.", "Categories updated."));
       closeModal();
@@ -554,13 +546,34 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
     setBusySourceId(null);
   }
 
+  async function reclassifyExisting() {
+    if (!editingSource?.id || reclassifying) return;
+    const confirmed =
+      typeof window === "undefined"
+        ? true
+        : window.confirm("Reclasser l'existant pour cette source ?");
+    if (!confirmed) return;
+
+    setCapsError("");
+    setReclassifying(true);
+    try {
+      await apiPost(`/api/sources/${editingSource.id}/reclassify`);
+      setCapsOk(tr("Reclassement termine.", "Reclassification done."));
+      await loadSources();
+    } catch (e) {
+      setCapsError(e?.message || tr("Erreur reclassification", "Reclassification error"));
+    } finally {
+      setReclassifying(false);
+    }
+  }
+
   const allCategories = useMemo(() => capsCategories || [], [capsCategories]);
-  const selectedCount = selectedCategoryIds.size;
+  const selectedCount = categoryMappings.size;
   const canSubmitAdd = useMemo(() => {
     if (manualMode && !normalizeUrl(manualTorznabUrl)) return false;
-    return allCategories.length === 0 ? true : selectedCount > 0;
-  }, [manualMode, manualTorznabUrl, allCategories.length, selectedCount]);
-  const canSubmitEdit = selectedCount > 0;
+    return true;
+  }, [manualMode, manualTorznabUrl]);
+  const canSubmitEdit = true;
 
   const hasSelectedProvider = !!selectedProviderKey;
   const modalProviderLabel = hasSelectedProvider ? getProviderLabel(selectedProviderKey) : "";
@@ -708,10 +721,10 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
                   setManualTorznabUrl(e.target.value);
                   setCapsError("");
                   setCapsOk("");
-                  setCapsWarning("");
-                  setCapsCategories([]);
-                  setSelectedCategoryIds(new Set());
-                }}
+                    setCapsWarning("");
+                    setCapsCategories([]);
+                    setCategoryMappings(new Map());
+                  }}
                 placeholder="Colle l'URL Copy Torznab Feed"
                 disabled={saving || capsLoading}
               />
@@ -742,18 +755,19 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
 
         {allCategories.length > 0 && (
           <div className="setup-jackett__categories">
-            <FlatCategorySelector
+            <CategoryMappingBoard
+              variant="wizard"
               categories={capsCategories}
-              selectedIds={selectedCategoryIds}
-              onToggleId={(id, checked) => {
-                setSelectedCategoryIds((prev) => {
-                  const next = new Set(prev);
-                  if (checked) next.add(id);
-                  else next.delete(id);
-                  return filterLeafOnly(next, capsCategories);
+              mappings={categoryMappings}
+              onChangeMapping={(catId, groupKey) => {
+                const normalized = normalizeGroupKey(groupKey);
+                setCategoryMappings((prev) => {
+                  const next = new Map(prev);
+                  if (!normalized) next.delete(catId);
+                  else next.set(catId, normalized);
+                  return next;
                 });
               }}
-              onSetIds={(ids) => setSelectedCategoryIds(filterLeafOnly(ids, capsCategories))}
             />
             <div className="muted" style={{ marginTop: 8 }}>
               {tr(
@@ -773,14 +787,24 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
             </span>
           </div>
           {editingSource ? (
-            <button
-              className="btn btn-accent"
-              type="button"
-              onClick={saveCategories}
-              disabled={saving || !canSubmitEdit}
-            >
-              {saving ? tr("Enregistrement...", "Saving...") : tr("Mettre a jour", "Update")}
-            </button>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                className="btn"
+                type="button"
+                onClick={reclassifyExisting}
+                disabled={saving || reclassifying}
+              >
+                {reclassifying ? tr("Reclassement...", "Reclassifying...") : tr("Reclasser l'existant", "Reclassify existing")}
+              </button>
+              <button
+                className="btn btn-accent"
+                type="button"
+                onClick={saveCategories}
+                disabled={saving || !canSubmitEdit}
+              >
+                {saving ? tr("Enregistrement...", "Saving...") : tr("Mettre a jour", "Update")}
+              </button>
+            </div>
           ) : (
             <button
               className="btn btn-accent"

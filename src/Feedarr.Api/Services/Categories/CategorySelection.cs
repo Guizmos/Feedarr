@@ -6,31 +6,10 @@ namespace Feedarr.Api.Services.Categories;
 
 public static class CategorySelection
 {
-    private static readonly string[] UnifiedPriority =
-    {
-        "games",
-        "spectacle",
-        "shows",
-        "anime",
-        "series",
-        "films",
-        "other"
-    };
-
-    private static readonly HashSet<string> ProtectedKeys = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "games",
-        "spectacle",
-        "shows",
-        "anime"
-    };
-
-    // Golden rule for category handling:
-    // 1) Torznab/Indexer category IDs are the upstream source of truth.
-    // 2) source_categories is a local cache/lookup and must never be blocking.
-    // 3) UnifiedCategory is the internal domain truth used by Feedarr.
-    // Therefore: we never drop an item solely because level-2 cache mapping is incomplete.
-    // If a selected category is present in the item, it can be used as a fallback.
+    // Deterministic pick for mapped IDs:
+    // - prefer mapped specific IDs over standard parents
+    // - among candidates, prefer non-standard (>=10000), then standard leaves, then parents
+    // - tie-breaker is highest cat ID (stable ordering)
     public static int? PickBestCategoryId(IReadOnlyCollection<int> ids, Dictionary<int, (string key, string label)> map)
     {
         if (ids is null || ids.Count == 0 || map is null || map.Count == 0) return null;
@@ -38,29 +17,10 @@ public static class CategorySelection
         var candidates = ids.Where(id => map.ContainsKey(id)).ToList();
         if (candidates.Count == 0) return null;
 
-        var protectedCandidates = candidates
-            .Where(id => ProtectedKeys.Contains(map[id].key))
-            .ToList();
-        if (protectedCandidates.Count > 0)
-            candidates = protectedCandidates;
-
-        var specificCandidates = candidates.Where(id => id >= 10000).ToList();
-        if (specificCandidates.Count > 0)
-            candidates = specificCandidates;
-
-        int? bestId = null;
-        var bestRank = 999;
-        foreach (var id in candidates)
-        {
-            var rank = GetUnifiedRank(map[id].key);
-            if (rank < bestRank)
-            {
-                bestRank = rank;
-                bestId = id;
-            }
-        }
-
-        return bestId;
+        return candidates
+            .OrderByDescending(GetSpecificityScore)
+            .ThenByDescending(id => id)
+            .FirstOrDefault();
     }
 
     public static int? PickSelectedFallbackCategoryId(
@@ -80,10 +40,10 @@ public static class CategorySelection
         return null;
     }
 
-    private static int GetUnifiedRank(string key)
+    private static int GetSpecificityScore(int catId)
     {
-        var normalized = (key ?? "").Trim().ToLowerInvariant();
-        var idx = Array.IndexOf(UnifiedPriority, normalized);
-        return idx < 0 ? 999 : idx;
+        if (catId >= 10000) return 3;
+        if (catId is >= 1000 and <= 8999 && (catId % 1000) != 0) return 2;
+        return 1;
     }
 }

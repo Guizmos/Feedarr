@@ -111,6 +111,7 @@ public sealed class CategoriesController : ControllerBase
 
         var req = new CapsCategoriesRequestDto
         {
+            SourceId     = payload.SourceId,
             TorznabUrl   = torznabUrl,
             ApiKey       = apiKey,
             AuthMode     = "query",

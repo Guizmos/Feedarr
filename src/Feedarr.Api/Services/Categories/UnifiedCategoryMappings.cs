@@ -10,7 +10,7 @@ public static class UnifiedCategoryMappings
         {
             UnifiedCategory.Film => "films",
             UnifiedCategory.Serie => "series",
-            UnifiedCategory.Emission => "shows",
+            UnifiedCategory.Emission => "emissions",
             UnifiedCategory.Spectacle => "spectacle",
             UnifiedCategory.JeuWindows => "games",
             UnifiedCategory.Animation => "animation",
@@ -27,7 +27,7 @@ public static class UnifiedCategoryMappings
         return category switch
         {
             UnifiedCategory.Film => "Films",
-            UnifiedCategory.Serie => "Series TV",
+            UnifiedCategory.Serie => "Série TV",
             UnifiedCategory.Emission => "Emissions",
             UnifiedCategory.Spectacle => "Spectacle",
             UnifiedCategory.JeuWindows => "Jeux PC",
@@ -83,6 +83,9 @@ public static class UnifiedCategoryMappings
                 return true;
             case "series":
                 category = UnifiedCategory.Serie;
+                return true;
+            case "emissions":
+                category = UnifiedCategory.Emission;
                 return true;
             case "shows":
                 category = UnifiedCategory.Emission;

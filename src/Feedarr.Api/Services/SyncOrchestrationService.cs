@@ -76,7 +76,7 @@ public sealed class SyncOrchestrationService
 
         try
         {
-            var categoryMap = _sources.GetUnifiedCategoryMap(id);
+            var categoryMap = _sources.GetCategoryMappingMap(id);
             var perCatLimit = _opts.RssLimitPerCategory > 0 ? _opts.RssLimitPerCategory : _opts.RssLimit;
             if (perCatLimit <= 0) perCatLimit = 50;
             perCatLimit = Math.Clamp(perCatLimit, 1, 200);
@@ -105,9 +105,7 @@ public sealed class SyncOrchestrationService
             {
             }
 
-            var selectedCategoryIds = _sources.GetSelectedCategoryIds(id);
-            if (selectedCategoryIds.Count == 0 && categoryMap.Count > 0)
-                selectedCategoryIds = categoryMap.Keys.ToList();
+            var selectedCategoryIds = _sources.GetActiveCategoryIds(id);
 
             var selectedUnifiedKeys = new HashSet<string>(
                 categoryMap.Values.Select(v => v.key).Where(k => !string.IsNullOrWhiteSpace(k)),
@@ -173,17 +171,6 @@ public sealed class SyncOrchestrationService
             else
             {
                 items = rssItems;
-            }
-
-            if (!rssOnly && rssItems.Count == 0 && selectedCategoryIds.Count == 0)
-            {
-                _log.LogInformation("Torznab fallback start [{Name}] catIds=ALL (no selected categories)", name);
-                var fallback = await _torznab.FetchLatestAsync(url, mode, key, perCatLimit, syncCt, allowSearch: true);
-                fallbackMode = fallback.usedMode;
-                items = fallback.items;
-                _log.LogInformation(
-                    "Torznab fallback done [{Name}] itemsCount={Count} cats={Cats}",
-                    name, items.Count, SummarizeCats(items));
             }
 
             sw.Stop();
@@ -263,6 +250,11 @@ public sealed class SyncOrchestrationService
                     fetchedCats.Count > 0 ? string.Join(",", fetchedCats.OrderBy(x => x)) : "-",
                     keptCats.Count > 0 ? string.Join(",", keptCats.OrderBy(x => x)) : "-",
                     droppedNotSelected + droppedMissingCategory);
+            }
+            else
+            {
+                _log.LogInformation("ManualSync CATEGORY FILTER [{Name}] no active category mappings; dropping all fetched items", name);
+                items = new List<TorznabItem>();
             }
 
             var countBeforeCategoryMapFilter = items.Count;
