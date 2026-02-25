@@ -34,6 +34,7 @@ using Microsoft.AspNetCore.DataProtection.XmlEncryption;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Data;
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
@@ -660,13 +661,20 @@ app.MapGet("/health", (Db db, ILoggerFactory loggerFactory) =>
 app.MapControllers();
 
 // GET /health/deep — transitive connectivity check for external providers.
-// Uses a short per-check timeout so the endpoint itself always responds quickly.
+// Runs all checks in parallel with individual 5 s timeouts (global cap: 12 s).
 // Returns degraded (207) if one or more checks fail, down (503) if all fail.
-// Rate-limited by the global limiter; not called by Docker liveness probes.
-app.MapGet("/health/deep", async (IHttpClientFactory httpClientFactory, SettingsRepository settingsRepo, ILoggerFactory loggerFactory) =>
+// Rate-limited by the global limiter; requires authentication.
+app.MapGet("/health/deep", async (HttpContext context, IHttpClientFactory httpClientFactory, ILoggerFactory loggerFactory) =>
 {
+    // /health/deep reveals internal service reachability — must not be public.
+    if (context.Items[BasicAuthMiddleware.AuthPassedKey] is not true)
+        return Results.Unauthorized();
+
     var log = loggerFactory.CreateLogger("Feedarr.Health.Deep");
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+
+    // Global timeout: ensures the endpoint always responds within 12 s even if Task.WhenAll
+    // somehow hangs (e.g. HttpClient ignores per-check cancellation).
+    using var globalCts = new CancellationTokenSource(TimeSpan.FromSeconds(12));
 
     var checks = new List<(string Name, string Url)>
     {
@@ -676,18 +684,23 @@ app.MapGet("/health/deep", async (IHttpClientFactory httpClientFactory, Settings
     };
 
     var client = httpClientFactory.CreateClient("github-updates"); // shared, neutral client
-    var results = new List<object>();
-    var anyDown = false;
-    var anyUp   = false;
 
-    foreach (var (name, url) in checks)
+    // Run all checks in parallel — a slow/down provider does not block the others.
+    var tasks = checks.Select(async check =>
     {
+        var (name, url) = check;
+        var sw = Stopwatch.StartNew();
         string status;
         string? detail = null;
+
+        // Per-check timeout (5 s) linked to the global cap so either can cancel.
+        using var perCts = CancellationTokenSource.CreateLinkedTokenSource(globalCts.Token);
+        perCts.CancelAfter(TimeSpan.FromSeconds(5));
+
         try
         {
-            using var req = new HttpRequestMessage(HttpMethod.Head, url);
-            using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+            using var req  = new HttpRequestMessage(HttpMethod.Head, url);
+            using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, perCts.Token);
             status = resp.IsSuccessStatusCode || (int)resp.StatusCode < 500 ? "up" : "degraded";
             if (status == "degraded") detail = $"HTTP {(int)resp.StatusCode}";
         }
@@ -697,12 +710,15 @@ app.MapGet("/health/deep", async (IHttpClientFactory httpClientFactory, Settings
             detail = ex is TaskCanceledException or OperationCanceledException ? "timeout" : ex.Message;
         }
 
-        if (status == "up") anyUp = true; else anyDown = true;
-        results.Add(new { name, status, detail });
+        sw.Stop();
+        log.LogInformation("HealthDeepCheck {Provider} {Status} {ElapsedMs}ms", name, status, sw.ElapsedMilliseconds);
+        return new { name, status, detail, elapsedMs = sw.ElapsedMilliseconds };
+    });
 
-        log.LogDebug("Health deep check {Provider}: {Status} {Detail}", name, status, detail ?? "");
-    }
+    var results = await Task.WhenAll(tasks);
 
+    var anyDown = results.Any(r => r.status != "up");
+    var anyUp   = results.Any(r => r.status == "up");
     var overall = !anyDown ? "up" : !anyUp ? "down" : "degraded";
     var statusCode = overall switch
     {
@@ -712,7 +728,7 @@ app.MapGet("/health/deep", async (IHttpClientFactory httpClientFactory, Settings
     };
 
     if (overall != "up")
-        log.LogWarning("Health deep check completed with status {Overall}: {Results}", overall, results);
+        log.LogWarning("HealthDeepCheck completed with overall status {Overall}", overall);
 
     return Results.Json(new { status = overall, checks = results }, statusCode: statusCode);
 });
