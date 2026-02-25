@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Dapper;
+using System.Diagnostics;
 using System.Reflection;
 using Feedarr.Api.Data;
 using Feedarr.Api.Data.Repositories;
@@ -379,50 +380,59 @@ public sealed class SystemController : ControllerBase
         if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
             return Ok(cached);
 
+        var sw = Stopwatch.StartNew();
         using var conn = _db.Open();
 
-        var releasesCount = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM releases;");
-
         var storage = _storageCache.GetSnapshot();
-        var dbSizeMb = Math.Round(storage.DatabaseBytes / 1024d / 1024d, 2);
+        var dbSizeMb    = Math.Round(storage.DatabaseBytes / 1024d / 1024d, 2);
         var localPosters = storage.PostersTopLevelCount;
 
-        var missingPosters = conn.ExecuteScalar<int>(
-            @"SELECT COUNT(1) FROM releases
-              LEFT JOIN media_entities me ON me.id = releases.entity_id
-              WHERE COALESCE(releases.poster_file, me.poster_file) IS NULL
-                 OR COALESCE(releases.poster_file, me.poster_file) = '';");
+        var sinceTs = DateTimeOffset.UtcNow.AddDays(-days).ToUnixTimeSeconds();
+
+        // Single round-trip for all scalar counts + the releases-per-day series.
+        // QueryMultiple avoids 4 separate SQLite connections / statement round-trips.
+        using var multi = conn.QueryMultiple(
+            @"SELECT COUNT(1) FROM releases;
+              SELECT COUNT(1) FROM releases
+                LEFT JOIN media_entities me ON me.id = releases.entity_id
+                WHERE COALESCE(releases.poster_file, me.poster_file) IS NULL
+                   OR COALESCE(releases.poster_file, me.poster_file) = '';
+              SELECT COUNT(DISTINCT COALESCE(releases.poster_file, me.poster_file))
+                FROM releases
+                LEFT JOIN media_entities me ON me.id = releases.entity_id
+                WHERE COALESCE(releases.poster_file, me.poster_file) IS NOT NULL
+                  AND COALESCE(releases.poster_file, me.poster_file) != '';
+              SELECT COUNT(1) FROM release_arr_status WHERE in_sonarr = 1;
+              SELECT COUNT(1) FROM release_arr_status WHERE in_radarr = 1;
+              SELECT date(created_at_ts, 'unixepoch') as date, COUNT(*) as count
+                FROM releases
+                WHERE created_at_ts > @sinceTs
+                GROUP BY date
+                ORDER BY date;",
+            new { sinceTs });
+
+        var releasesCount     = multi.ReadSingle<int>();
+        var missingPosters    = multi.ReadSingle<int>();
+        var distinctPosterFiles = multi.ReadSingle<int>();
+        var sonarrMatchCount  = multi.ReadSingle<int>();
+        var radarrMatchCount  = multi.ReadSingle<int>();
+        var releasesPerDay    = multi.Read<(string date, int count)>()
+                                    .Select(r => new { date = r.date, count = r.count })
+                                    .ToList();
+
+        sw.Stop();
+        _log.LogInformation(
+            "StatsFeedarr DB batch completed in {ElapsedMs}ms (days={Days}, releases={Releases})",
+            sw.ElapsedMilliseconds, days, releasesCount);
 
         // Poster reuse stats
         var releasesWithPoster = releasesCount - missingPosters;
         var matchingPercent = releasesCount > 0
             ? (int)Math.Round(((double)releasesWithPoster / releasesCount) * 100)
             : 0;
-        var distinctPosterFiles = conn.ExecuteScalar<int>(
-            @"SELECT COUNT(DISTINCT COALESCE(releases.poster_file, me.poster_file))
-              FROM releases
-              LEFT JOIN media_entities me ON me.id = releases.entity_id
-              WHERE COALESCE(releases.poster_file, me.poster_file) IS NOT NULL
-                AND COALESCE(releases.poster_file, me.poster_file) != '';");
         var posterReuseRatio = distinctPosterFiles > 0
             ? Math.Round((double)releasesWithPoster / distinctPosterFiles, 1)
             : 0.0;
-
-        var sinceTs = DateTimeOffset.UtcNow.AddDays(-days).ToUnixTimeSeconds();
-        var releasesPerDay = conn.Query<(string date, int count)>(
-            @"SELECT date(created_at_ts, 'unixepoch') as date, COUNT(*) as count
-              FROM releases
-              WHERE created_at_ts > @sinceTs
-              GROUP BY date
-              ORDER BY date",
-            new { sinceTs }
-        ).Select(r => new { date = r.date, count = r.count }).ToList();
-
-        // Global arr match counts from the item list status cache
-        var sonarrMatchCount = conn.ExecuteScalar<int>(
-            "SELECT COUNT(1) FROM release_arr_status WHERE in_sonarr = 1;");
-        var radarrMatchCount = conn.ExecuteScalar<int>(
-            "SELECT COUNT(1) FROM release_arr_status WHERE in_radarr = 1;");
 
         // Storage breakdown (cached)
         var databaseBytes = storage.DatabaseBytes;
