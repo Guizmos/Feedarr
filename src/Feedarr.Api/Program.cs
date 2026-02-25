@@ -108,6 +108,15 @@ else
     });
 }
 
+builder.Services.AddResponseCompression(opts =>
+{
+    opts.EnableForHttps = true;
+    opts.Providers.Add<Microsoft.AspNetCore.ResponseCompression.BrotliCompressionProvider>();
+    opts.Providers.Add<Microsoft.AspNetCore.ResponseCompression.GzipCompressionProvider>();
+    opts.MimeTypes = Microsoft.AspNetCore.ResponseCompression.ResponseCompressionDefaults.MimeTypes
+        .Concat(["application/json"]);
+});
+
 builder.Services.AddScoped<ApiRequestMetricsFilter>();
 builder.Services.AddScoped<ApiErrorNormalizationFilter>();
 builder.Services.AddScoped<RequireAuthFilter>();
@@ -591,6 +600,10 @@ app.UseRateLimiter();
 
 // Security (Basic Auth)
 app.UseMiddleware<BasicAuthMiddleware>();
+
+// Response compression (Brotli preferred, Gzip fallback).
+// Must be placed before UseStaticFiles so static assets are also compressed.
+app.UseResponseCompression();
 
 // Monolithic SPA: serve React build from wwwroot/
 app.UseDefaultFiles();
