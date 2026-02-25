@@ -625,6 +625,64 @@ app.MapGet("/health", (Db db, ILoggerFactory loggerFactory) =>
 
 app.MapControllers();
 
+// GET /health/deep — transitive connectivity check for external providers.
+// Uses a short per-check timeout so the endpoint itself always responds quickly.
+// Returns degraded (207) if one or more checks fail, down (503) if all fail.
+// Rate-limited by the global limiter; not called by Docker liveness probes.
+app.MapGet("/health/deep", async (IHttpClientFactory httpClientFactory, SettingsRepository settingsRepo, ILoggerFactory loggerFactory) =>
+{
+    var log = loggerFactory.CreateLogger("Feedarr.Health.Deep");
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+
+    var checks = new List<(string Name, string Url)>
+    {
+        ("tmdb",    "https://api.themoviedb.org/3/configuration"),
+        ("tvmaze",  "https://api.tvmaze.com/"),
+        ("fanart",  "https://webservice.fanart.tv/v3/"),
+    };
+
+    var client = httpClientFactory.CreateClient("github-updates"); // shared, neutral client
+    var results = new List<object>();
+    var anyDown = false;
+    var anyUp   = false;
+
+    foreach (var (name, url) in checks)
+    {
+        string status;
+        string? detail = null;
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Head, url);
+            using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+            status = resp.IsSuccessStatusCode || (int)resp.StatusCode < 500 ? "up" : "degraded";
+            if (status == "degraded") detail = $"HTTP {(int)resp.StatusCode}";
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException)
+        {
+            status = "down";
+            detail = ex is TaskCanceledException or OperationCanceledException ? "timeout" : ex.Message;
+        }
+
+        if (status == "up") anyUp = true; else anyDown = true;
+        results.Add(new { name, status, detail });
+
+        log.LogDebug("Health deep check {Provider}: {Status} {Detail}", name, status, detail ?? "");
+    }
+
+    var overall = !anyDown ? "up" : !anyUp ? "down" : "degraded";
+    var statusCode = overall switch
+    {
+        "up"       => StatusCodes.Status200OK,
+        "degraded" => StatusCodes.Status207MultiStatus,
+        _          => StatusCodes.Status503ServiceUnavailable,
+    };
+
+    if (overall != "up")
+        log.LogWarning("Health deep check completed with status {Overall}: {Results}", overall, results);
+
+    return Results.Json(new { status = overall, checks = results }, statusCode: statusCode);
+});
+
 // Guard: unmatched /api/* routes must return JSON 404, not index.html.
 // Without this, MapFallbackToFile would serve the SPA for invalid API paths.
 app.MapFallback("/api/{**slug}", () => Results.NotFound(new { error = "not found" }));
