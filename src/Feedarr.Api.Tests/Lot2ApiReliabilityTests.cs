@@ -110,7 +110,7 @@ public sealed class Lot2ApiReliabilityTests
             registry,
             NullLogger<ActiveExternalProviderConfigResolver>.Instance);
 
-        var stats = new ProviderStatsService(new StatsRepository(db));
+        var stats = new ProviderStatsService(new StatsRepository(db, new MemoryCache(new MemoryCacheOptions())));
         var throwingHttp = new HttpClient(new ThrowingHttpMessageHandler());
 
         var tmdb = new TmdbClient(throwingHttp, settingsRepo, stats, resolver);

@@ -25,6 +25,7 @@ using Feedarr.Api.Services.Titles;
 using Feedarr.Api.Services.Tmdb;
 using Feedarr.Api.Services.TvMaze;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
 using OptionsFactory = Microsoft.Extensions.Options.Options;
@@ -80,7 +81,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
 
         var protection = new DeterministicProtectionService();
         var settings = new SettingsRepository(_db, protection, NullLogger<SettingsRepository>.Instance);
-        var stats = new ProviderStatsService(new StatsRepository(_db));
+        var stats = new ProviderStatsService(new StatsRepository(_db, new MemoryCache(new MemoryCacheOptions())));
 
         var registry = new ExternalProviderRegistry();
         var externalInstances = new ExternalProviderInstanceRepository(

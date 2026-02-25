@@ -113,16 +113,23 @@ public sealed class SystemStatsReleasesUnifiedTests
             NullLogger<BackupService>.Instance);
         backup.InitializeForStartup();
 
+        var storageCache = new StorageUsageCacheService(
+            new MemoryCache(new MemoryCacheOptions()),
+            new TestWebHostEnvironment(workspace.RootDir),
+            options,
+            db,
+            NullLogger<StorageUsageCacheService>.Instance);
+
         return new SystemController(
             db,
             new TestWebHostEnvironment(workspace.RootDir),
-            options,
             settings,
-            new ProviderStatsService(new StatsRepository(db)),
+            new ProviderStatsService(new StatsRepository(db, new MemoryCache(new MemoryCacheOptions()))),
             new ApiRequestMetricsService(),
             backup,
             new MemoryCache(new MemoryCacheOptions()),
             new SetupStateService(settings, new MemoryCache(new MemoryCacheOptions())),
+            storageCache,
             NullLogger<SystemController>.Instance);
     }
 
