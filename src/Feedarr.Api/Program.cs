@@ -41,10 +41,11 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading.RateLimiting;
 using Feedarr.Api.Services.Resilience;
-using Feedarr.Api.Services.Security;
 
 var builder = WebApplication.CreateBuilder(args);
-var enforceHttps = builder.Configuration.GetValue("App:Security:EnforceHttps", !builder.Environment.IsDevelopment());
+// Default false: in a reverse-proxy setup the proxy owns TLS.
+// Set App:Security:EnforceHttps=true only if ASP.NET Core terminates TLS directly.
+var enforceHttps = builder.Configuration.GetValue("App:Security:EnforceHttps", false);
 var emitSecurityHeaders = builder.Configuration.GetValue("App:Security:EmitSecurityHeaders", true);
 // Allows self-signed / invalid TLS certs for internal services (Sonarr, Radarr, Jackett, etc.).
 // SECURITY: leave false in production. Only enable on home-lab setups with self-signed certs.
@@ -180,6 +181,7 @@ builder.Services.AddSingleton<RequestTmdbResolverService>();
 builder.Services.AddSingleton<RequestTmdbBackfillService>();
 builder.Services.AddSingleton<RetentionService>();
 builder.Services.AddSingleton<ReleaseInfoService>();
+builder.Services.AddSingleton<SetupStateService>();
 
 builder.Services.AddHttpClient("github-updates", c =>
 {

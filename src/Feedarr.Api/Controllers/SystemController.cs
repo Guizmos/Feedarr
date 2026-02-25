@@ -52,6 +52,7 @@ public sealed class SystemController : ControllerBase
     private readonly ApiRequestMetricsService _apiRequestMetrics;
     private readonly BackupService _backupService;
     private readonly IMemoryCache _cache;
+    private readonly SetupStateService _setupState;
     private readonly ILogger<SystemController> _log;
 
     private string DataDirAbs =>
@@ -72,6 +73,7 @@ public sealed class SystemController : ControllerBase
         ApiRequestMetricsService apiRequestMetrics,
         BackupService backupService,
         IMemoryCache cache,
+        SetupStateService setupState,
         ILogger<SystemController> log)
     {
         _db = db;
@@ -82,6 +84,7 @@ public sealed class SystemController : ControllerBase
         _apiRequestMetrics = apiRequestMetrics;
         _backupService = backupService;
         _cache = cache;
+        _setupState = setupState;
         _log = log;
     }
 
@@ -174,8 +177,7 @@ public sealed class SystemController : ControllerBase
                           || (!string.IsNullOrWhiteSpace(ext.IgdbClientId)
                               && !string.IsNullOrWhiteSpace(ext.IgdbClientSecret));
 
-        var ui = _settings.GetUi(new Models.Settings.UiSettings());
-        var onboardingDone = ui.OnboardingDone;
+        var onboardingDone = _setupState.IsSetupCompleted();
 
         var shouldShow = !onboardingDone && (!hasExternal || sourcesCount == 0);
 
@@ -192,13 +194,7 @@ public sealed class SystemController : ControllerBase
     [HttpPost("onboarding/complete")]
     public IActionResult CompleteOnboarding()
     {
-        var ui = _settings.GetUi(new Models.Settings.UiSettings());
-        if (!ui.OnboardingDone)
-        {
-            ui.OnboardingDone = true;
-            _settings.SaveUi(ui);
-        }
-
+        _setupState.MarkSetupCompleted();
         return Ok(new { ok = true, onboardingDone = true });
     }
 
@@ -206,10 +202,7 @@ public sealed class SystemController : ControllerBase
     [HttpPost("onboarding/reset")]
     public IActionResult ResetOnboarding()
     {
-        var ui = _settings.GetUi(new Models.Settings.UiSettings());
-        ui.OnboardingDone = false;
-        _settings.SaveUi(ui);
-
+        _setupState.ResetSetupCompleted();
         return Ok(new { ok = true, onboardingDone = false });
     }
 

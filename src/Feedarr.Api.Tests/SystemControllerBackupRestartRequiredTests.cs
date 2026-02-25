@@ -55,6 +55,7 @@ public sealed class SystemControllerBackupRestartRequiredTests
             new ApiRequestMetricsService(),
             backupService,
             new MemoryCache(new MemoryCacheOptions()),
+            new SetupStateService(settings, new MemoryCache(new MemoryCacheOptions())),
             NullLogger<SystemController>.Instance);
 
         var result = controller.RestoreBackup("backup.zip");

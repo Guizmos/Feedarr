@@ -163,6 +163,7 @@ public sealed class CriticalFlowsAndPerfTests
             new ApiRequestMetricsService(),
             backup,
             new MemoryCache(new MemoryCacheOptions()),
+            new SetupStateService(settings, new MemoryCache(new MemoryCacheOptions())),
             NullLogger<SystemController>.Instance);
 
         var before = Assert.IsType<OkObjectResult>(system.Onboarding());

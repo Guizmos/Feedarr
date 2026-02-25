@@ -5,6 +5,12 @@
 <h1 align="center">Feedarr</h1>
 
 <p align="center">
+  <strong>⚠️ Feedarr v2 introduces a major architectural change.</strong><br/>
+  Feedarr is now a single-container monolithic application.<br/>
+  The previous split setup (<code>feedarr-api</code> + <code>feedarr-web</code>) is deprecated and no longer maintained.
+</p>
+
+<p align="center">
   Smart release dashboard for Torznab, Jackett and Prowlarr.
 </p>
 
@@ -13,22 +19,19 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Guizmos/Feedarr/actions/workflows/docker-publish.yml">
-    <img src="https://github.com/Guizmos/Feedarr/actions/workflows/docker-publish.yml/badge.svg" alt="Build Status" />
+  <a href="https://github.com/Guizmos/Feedarr/actions/workflows/docker-release.yml">
+    <img src="https://github.com/Guizmos/Feedarr/actions/workflows/docker-release.yml/badge.svg" alt="Build Status" />
   </a>
   <a href="https://github.com/Guizmos/Feedarr/releases">
     <img src="https://img.shields.io/github/v/release/Guizmos/Feedarr" alt="Latest Release" />
   </a>
-  <a href="https://hub.docker.com/r/guizmos/feedarr-api">
-    <img src="https://img.shields.io/docker/pulls/guizmos/feedarr-api?label=feedarr-api&logo=docker" alt="Docker Pulls API" />
+  <a href="https://hub.docker.com/r/guizmos/feedarr">
+    <img src="https://img.shields.io/docker/pulls/guizmos/feedarr?logo=docker" alt="Docker Pulls" />
   </a>
-  <a href="https://hub.docker.com/r/guizmos/feedarr-web">
-    <img src="https://img.shields.io/docker/pulls/guizmos/feedarr-web?label=feedarr-web&logo=docker" alt="Docker Pulls Web" />
-  </a>
-  <a href="LICENSE">
-    <img src="https://img.shields.io/github/license/Guizmos/Feedarr" alt="License" />
-  </a>
-</p>
+    <a href="LICENSE">
+      <img src="https://img.shields.io/github/license/Guizmos/Feedarr" alt="License" />
+    </a>
+  </p>
 
 <p align="center">
   <a href="#features">Features</a> |
@@ -72,7 +75,7 @@
 
 ## Installation
 
-### Docker Compose
+### Docker Compose (Monolithic)
 
 Prerequisites:
 - Docker
@@ -82,9 +85,9 @@ Prerequisites:
 version: "3.9"
 
 services:
-  api:
-    container_name: FEEDARR-API
-    image: guizmos/feedarr-api:latest
+  feedarr:
+    container_name: FEEDARR
+    image: guizmos/feedarr:latest
     restart: unless-stopped
     environment:
       ASPNETCORE_URLS: http://+:8080
@@ -92,16 +95,7 @@ services:
     volumes:
       - /volume1/Docker/Feedarr/data:/app/data
     ports:
-      - "9999:8080"
-
-  web:
-    container_name: FEEDARR-WEB
-    image: guizmos/feedarr-web:latest
-    restart: unless-stopped
-    depends_on:
-      - api
-    ports:
-      - "8888:80"
+      - "8888:8080"
 ```
 
 Start:
@@ -111,17 +105,20 @@ docker compose up -d
 ```
 
 Default endpoints:
-- Web: `http://localhost:8888`
-- API: `http://localhost:9999`
+ - Web UI: `http://localhost:8888`
+ - API: `http://localhost:8888/api`
+ - Health: `http://localhost:8888/health`
+
+First run security behavior:
+- Feedarr starts in `setup lock` mode until the setup wizard is completed.
+- During this phase, only health/setup routes and setup-required assets/APIs are available.
+- Other routes return `Setup required`.
 
 Optional external network (if your environment requires it):
 
 ```yaml
 services:
-  api:
-    networks:
-      - docker_net
-  web:
+  feedarr:
     networks:
       - docker_net
 
@@ -129,6 +126,20 @@ networks:
   docker_net:
     external: true
 ```
+
+### Reverse Proxy (NPM / Traefik / Caddy)
+
+Feedarr now runs as a single upstream service.
+Point your reverse proxy to:
+
+ - `http://feedarr:8080`
+ or
+ - `http://<host-ip>:8888`
+
+You no longer need separate rules for `/api` and `/`.
+
+HTTPS redirection is handled by your reverse proxy.  
+`App__Security__EnforceHttps` is disabled by default.
 
 ### Runtime Configuration
 
@@ -157,7 +168,9 @@ Common API environment variables:
 
 ## Configuration
 
-Feedarr includes a 6-step Setup Wizard (`/setup`) for first-run configuration.
+On first run, Feedarr requires completing the Setup Wizard (`/setup`) before unlocking the full UI/API.
+- For WAN deployments, configure authentication after onboarding (`Settings -> Users`).
+- `Authentication=none` is supported for LAN-only usage, but not recommended for WAN exposure.
 
 - Direct configuration pages (Web UI):
   - Wizard: `http://localhost:8888/setup`
@@ -184,40 +197,34 @@ Feedarr includes a 6-step Setup Wizard (`/setup`) for first-run configuration.
 ### Requirements
 
 - .NET SDK 8.x
-- Node.js 18+
 
-### Run Locally
+### Run Locally (Monolithic)
 
-Backend:
+Backend + UI (recommended):
+
+```bash
+dotnet run --project src/Feedarr.Api/Feedarr.Api.csproj -p:BuildWeb=true
+```
+
+Fast backend-only run (no UI rebuild):
 
 ```bash
 dotnet run --project src/Feedarr.Api/Feedarr.Api.csproj
 ```
 
-Frontend:
+## Upgrade from Split Version (API + Web)
 
-```bash
-cd src/Feedarr.Web/feedarr-web
-npm install
-npm run dev
-```
+If you previously used separate `feedarr-api` and `feedarr-web` containers:
 
-### Validate Changes
+1. Stop old containers
+2. Remove both services from docker-compose
+3. Replace with the single `feedarr` service
+4. Keep the same `/app/data` volume
+5. Start again
 
-Backend:
+No data migration is required.
 
-```bash
-dotnet test src/Feedarr.Api.Tests/Feedarr.Api.Tests.csproj -c Release
-```
-
-Frontend:
-
-```bash
-cd src/Feedarr.Web/feedarr-web
-npm run lint
-npm run test
-npm run build
-```
+If onboarding was not completed before upgrading, Feedarr will stay in setup lock mode until `/setup` is completed.
 
 ## Release Workflow and Updates
 
@@ -253,7 +260,9 @@ Notes:
 - API keys are stored using encrypted data-protection keys.
 - Basic auth is available and configurable in the UI.
 - Heavy stats endpoints are rate-limited.
-- For WAN exposure, use TLS reverse proxy and enable auth.
+- `Authentication=none` should be treated as LAN-only and is not recommended for WAN.
+- For WAN exposure, use a TLS reverse proxy and enable authentication.
+- `App__Security__EnforceHttps=true` should only be enabled when ASP.NET Core terminates TLS directly (not behind a TLS offloading reverse proxy).
 
 ## Support
 

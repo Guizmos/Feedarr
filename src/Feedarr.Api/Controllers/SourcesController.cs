@@ -101,6 +101,46 @@ public sealed class SourcesController : ControllerBase
         return trimmed.ToLowerInvariant();
     }
 
+    private BadRequestObjectResult? ValidateTorznabUrl(
+        string? rawUrl,
+        string operation,
+        out string normalizedUrl)
+    {
+        normalizedUrl = string.Empty;
+        if (!OutboundUrlGuard.TryNormalizeHttpBaseUrl(
+                rawUrl,
+                allowImplicitHttp: true,
+                out normalizedUrl,
+                out var urlError))
+        {
+            _log.LogWarning(
+                "Rejected source torznab URL for {Operation}: host={Host} reason={Reason}",
+                operation,
+                TryExtractHost(rawUrl) ?? "unknown",
+                urlError);
+            return new BadRequestObjectResult(new { error = urlError });
+        }
+
+        return null;
+    }
+
+    private static string? TryExtractHost(string? rawUrl)
+    {
+        var raw = (rawUrl ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        if (!raw.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !raw.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            raw = "http://" + raw;
+        }
+
+        return Uri.TryCreate(raw, UriKind.Absolute, out var uri)
+            ? uri.Host
+            : null;
+    }
+
     // GET /api/sources
     [HttpGet]
     public IActionResult List()
@@ -143,6 +183,12 @@ public sealed class SourcesController : ControllerBase
 
             if (string.IsNullOrWhiteSpace(torznabUrl))
                 return BadRequest(new { error = "torznabUrl missing" });
+
+            var validationResult = ValidateTorznabUrl(torznabUrl, "test", out var normalizedTorznabUrl);
+            if (validationResult is not null)
+                return validationResult;
+
+            torznabUrl = normalizedTorznabUrl;
 
             var cats = await _torznab.FetchCapsAsync(torznabUrl, authMode, apiKey, ct);
             res.Caps.CategoriesTotal = cats.Count;
@@ -240,6 +286,11 @@ public sealed class SourcesController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(name)) return BadRequest(new { error = "name missing" });
         if (string.IsNullOrWhiteSpace(url)) return BadRequest(new { error = "torznabUrl missing" });
+
+        var createValidationResult = ValidateTorznabUrl(url, "create", out var normalizedCreateUrl);
+        if (createValidationResult is not null)
+            return createValidationResult;
+        url = normalizedCreateUrl;
 
         var existingId = _sources.GetIdByTorznabUrl(url);
         if (existingId.HasValue)
@@ -374,6 +425,11 @@ public sealed class SourcesController : ControllerBase
 
         var mode = string.IsNullOrWhiteSpace(dto.AuthMode) ? current.AuthMode : dto.AuthMode!.Trim().ToLowerInvariant();
         if (mode != "header") mode = "query";
+
+        var updateValidationResult = ValidateTorznabUrl(url, "update", out var normalizedUpdateUrl);
+        if (updateValidationResult is not null)
+            return updateValidationResult;
+        url = normalizedUpdateUrl;
 
         // apiKey: si null/empty => on ne change pas
         string? apiKeyMaybe = null;

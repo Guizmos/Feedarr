@@ -122,6 +122,7 @@ public sealed class SystemStatsReleasesUnifiedTests
             new ApiRequestMetricsService(),
             backup,
             new MemoryCache(new MemoryCacheOptions()),
+            new SetupStateService(settings, new MemoryCache(new MemoryCacheOptions())),
             NullLogger<SystemController>.Instance);
     }
 

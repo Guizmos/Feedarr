@@ -7,12 +7,23 @@ namespace Feedarr.Api.Services.Resilience;
 /// </summary>
 internal sealed class ProtocolDowngradeRedirectHandler : DelegatingHandler
 {
+    internal static readonly HttpRequestOptionsKey<bool> AllowHttpsToHttpDowngradeOption =
+        new("feedarr.allow_https_to_http_downgrade_redirect");
+
     private const int MaxRedirects = 5;
+    private static readonly HashSet<string> ForwardHeaderAllowList = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "User-Agent",
+        "Accept",
+        "Accept-Encoding",
+        "Accept-Language"
+    };
 
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken ct)
     {
-        var response = await base.SendAsync(request, ct);
+        var currentRequest = request;
+        var response = await base.SendAsync(currentRequest, ct);
 
         for (var i = 0; i < MaxRedirects; i++)
         {
@@ -26,21 +37,84 @@ internal sealed class ProtocolDowngradeRedirectHandler : DelegatingHandler
 
             var redirectUri = location.IsAbsoluteUri
                 ? location
-                : new Uri(request.RequestUri!, location);
+                : new Uri(currentRequest.RequestUri!, location);
 
-            response.Dispose();
+            if (HasHostChanged(currentRequest.RequestUri, redirectUri))
+                return response;
 
-            using var redirectRequest = new HttpRequestMessage(request.Method, redirectUri);
-            // Copy headers (except Host, which is set automatically)
-            foreach (var header in request.Headers)
+            if (IsHttpsToHttpDowngrade(currentRequest.RequestUri, redirectUri) &&
+                !IsHttpsToHttpDowngradeAllowed(currentRequest))
             {
-                if (!header.Key.Equals("Host", StringComparison.OrdinalIgnoreCase))
-                    redirectRequest.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                return response;
             }
 
-            response = await base.SendAsync(redirectRequest, ct);
+            var redirectRequest = await BuildRedirectRequestAsync(currentRequest, redirectUri, ct);
+
+            response.Dispose();
+            if (!ReferenceEquals(currentRequest, request))
+                currentRequest.Dispose();
+
+            currentRequest = redirectRequest;
+            response = await base.SendAsync(currentRequest, ct);
         }
 
         return response;
+    }
+
+    private static bool HasHostChanged(Uri? sourceUri, Uri redirectUri)
+    {
+        if (sourceUri is null)
+            return true;
+
+        return !string.Equals(sourceUri.IdnHost, redirectUri.IdnHost, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsHttpsToHttpDowngrade(Uri? sourceUri, Uri redirectUri)
+    {
+        if (sourceUri is null)
+            return false;
+
+        return sourceUri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+               && redirectUri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsHttpsToHttpDowngradeAllowed(HttpRequestMessage request)
+        => request.Options.TryGetValue(AllowHttpsToHttpDowngradeOption, out var allowed) && allowed;
+
+    private static async Task<HttpRequestMessage> BuildRedirectRequestAsync(
+        HttpRequestMessage source,
+        Uri redirectUri,
+        CancellationToken ct)
+    {
+        var redirectRequest = new HttpRequestMessage(source.Method, redirectUri)
+        {
+            Version = source.Version,
+            VersionPolicy = source.VersionPolicy
+        };
+
+        foreach (var option in source.Options)
+        {
+            redirectRequest.Options.Set(new HttpRequestOptionsKey<object?>(option.Key), option.Value);
+        }
+
+        foreach (var header in source.Headers)
+        {
+            if (ForwardHeaderAllowList.Contains(header.Key))
+                redirectRequest.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+
+        if (source.Content is not null)
+        {
+            var contentBytes = await source.Content.ReadAsByteArrayAsync(ct);
+            var content = new ByteArrayContent(contentBytes);
+            foreach (var header in source.Content.Headers)
+            {
+                content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            }
+
+            redirectRequest.Content = content;
+        }
+
+        return redirectRequest;
     }
 }

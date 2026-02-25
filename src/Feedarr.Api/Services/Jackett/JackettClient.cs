@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Xml.Linq;
+using Feedarr.Api.Services.Resilience;
 using Feedarr.Api.Services.Security;
 
 namespace Feedarr.Api.Services.Jackett;
@@ -44,6 +45,13 @@ public sealed class JackettClient
         return $"{baseTrim}/api/v2.0/indexers/all/results/torznab/api?t=indexers&apikey={Uri.EscapeDataString(apiKey ?? "")}";
     }
 
+    private async Task<HttpResponseMessage> SendGetAllowingSameHostDowngradeAsync(string url, CancellationToken ct)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Options.Set(ProtocolDowngradeRedirectHandler.AllowHttpsToHttpDowngradeOption, true);
+        return await _http.SendAsync(request, ct);
+    }
+
     // ── JSON helpers ────────────────────────────────────────────────
 
     private static bool? GetBool(JsonElement element, string prop)
@@ -69,7 +77,7 @@ public sealed class JackettClient
         string baseUrl, string apiKey, CancellationToken ct)
     {
         var url = BuildIndexersUrl(baseUrl, apiKey);
-        using var resp = await _http.GetAsync(url, ct);
+        using var resp = await SendGetAllowingSameHostDowngradeAsync(url, ct);
 
         // If Jackett redirects to login (302) or returns error, let it throw
         resp.EnsureSuccessStatusCode();
@@ -118,7 +126,7 @@ public sealed class JackettClient
         string baseUrl, string apiKey, CancellationToken ct)
     {
         var url = BuildTorznabIndexersUrl(baseUrl, apiKey);
-        using var resp = await _http.GetAsync(url, ct);
+        using var resp = await SendGetAllowingSameHostDowngradeAsync(url, ct);
         resp.EnsureSuccessStatusCode();
 
         var xml = await resp.Content.ReadAsStringAsync(ct);
