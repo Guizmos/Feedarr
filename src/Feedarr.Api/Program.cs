@@ -182,6 +182,7 @@ builder.Services.AddSingleton<RequestTmdbBackfillService>();
 builder.Services.AddSingleton<RetentionService>();
 builder.Services.AddSingleton<ReleaseInfoService>();
 builder.Services.AddSingleton<SetupStateService>();
+builder.Services.AddSingleton<StorageUsageCacheService>();
 
 builder.Services.AddHttpClient("github-updates", c =>
 {
@@ -578,10 +579,27 @@ _startupLog.LogInformation("[BUILD] Feedarr.Api built={T} — CATS_STANDARDONLY_
 
 if (allowInvalidCerts)
 {
+    if (app.Environment.IsProduction())
+    {
+        // HARD STOP: accepting invalid TLS certificates in Production is a critical
+        // security vulnerability that cannot be silently tolerated.
+        _startupLog.LogCritical(
+            "[SECURITY] CRITICAL: App:HttpClients:AllowInvalidCertificates=true is NOT permitted " +
+            "in the Production environment. TLS certificate validation bypass exposes all HTTP clients " +
+            "(Torznab, Sonarr, Radarr, Jackett, Prowlarr) to man-in-the-middle attacks. " +
+            "Remove this setting from your production configuration, or use a properly signed certificate.");
+
+        throw new InvalidOperationException(
+            "App:HttpClients:AllowInvalidCertificates=true is not allowed in Production. " +
+            "Remove this setting or change ASPNETCORE_ENVIRONMENT to a non-production value.");
+    }
+
     _startupLog.LogWarning(
         "[SECURITY] App:HttpClients:AllowInvalidCertificates = true — TLS certificate validation is DISABLED " +
         "for internal HTTP clients (Torznab, Sonarr, Radarr, Arr, Jackett, Prowlarr). " +
-        "Only enable this on trusted home-lab networks with self-signed certificates.");
+        "Only enable this on trusted home-lab networks with self-signed certificates. " +
+        "Current environment: {Environment}",
+        app.Environment.EnvironmentName);
 }
 
 // GET /health — liveness/readiness probe pour Docker/orchestrateurs.

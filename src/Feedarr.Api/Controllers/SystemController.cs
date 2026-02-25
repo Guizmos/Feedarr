@@ -4,7 +4,6 @@ using System.Reflection;
 using Feedarr.Api.Data;
 using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Dtos.System;
-using Feedarr.Api.Options;
 using Feedarr.Api.Services;
 using Feedarr.Api.Services.Backup;
 using Feedarr.Api.Services.Categories;
@@ -33,58 +32,42 @@ public sealed class SystemController : ControllerBase
         public int ReleaseCount { get; set; }
     }
 
+    // Captures the real start-up instant once, on first type load — readonly, no mutation.
     private static readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
-    private static readonly TimeSpan StorageUsageCacheDuration = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan StatsCacheDuration = TimeSpan.FromSeconds(20);
-    private const string StorageUsageCacheKey = "system:storage-usage:v1";
-    private static readonly object StorageRefreshLock = new();
-    private static readonly TimeSpan StorageScanCooldown = TimeSpan.FromSeconds(30);
-    private static Task<StorageUsageSnapshot>? _storageScanTask;
-    private static DateTime _lastStorageScanStartedUtc = DateTime.MinValue;
-    private static volatile bool _storageScanEverSucceeded;
-    private static StorageUsageSnapshot _lastKnownStorageUsage = new(0, 0, 0, 0, 0, 0);
 
     private readonly Db _db;
     private readonly IWebHostEnvironment _env;
-    private readonly AppOptions _opts;
     private readonly SettingsRepository _settings;
     private readonly ProviderStatsService _providerStats;
     private readonly ApiRequestMetricsService _apiRequestMetrics;
     private readonly BackupService _backupService;
     private readonly IMemoryCache _cache;
     private readonly SetupStateService _setupState;
+    private readonly StorageUsageCacheService _storageCache;
     private readonly ILogger<SystemController> _log;
-
-    private string DataDirAbs =>
-        Path.IsPathRooted(_opts.DataDir)
-            ? _opts.DataDir
-            : Path.GetFullPath(Path.Combine(_env.ContentRootPath, _opts.DataDir));
-
-    private string BackupDirAbs => Path.Combine(DataDirAbs, "backups");
-
-    private string DbPathAbs => Path.Combine(DataDirAbs, _opts.DbFileName);
 
     public SystemController(
         Db db,
         IWebHostEnvironment env,
-        Microsoft.Extensions.Options.IOptions<AppOptions> opts,
         SettingsRepository settings,
         ProviderStatsService providerStats,
         ApiRequestMetricsService apiRequestMetrics,
         BackupService backupService,
         IMemoryCache cache,
         SetupStateService setupState,
+        StorageUsageCacheService storageCache,
         ILogger<SystemController> log)
     {
         _db = db;
         _env = env;
-        _opts = opts.Value;
         _settings = settings;
         _providerStats = providerStats;
         _apiRequestMetrics = apiRequestMetrics;
         _backupService = backupService;
         _cache = cache;
         _setupState = setupState;
+        _storageCache = storageCache;
         _log = log;
     }
 
@@ -354,7 +337,7 @@ public sealed class SystemController : ControllerBase
         var totalCalls = providerStatsByKey.Values.Sum(v => v.Calls);
         var totalFailures = providerStatsByKey.Values.Sum(v => v.Failures);
 
-        var storage = GetStorageUsageSnapshot();
+        var storage = _storageCache.GetSnapshot();
         var localPosters = storage.PostersTopLevelCount;
 
         var missingPoster = conn.ExecuteScalar<int>(
@@ -396,7 +379,7 @@ public sealed class SystemController : ControllerBase
 
         var releasesCount = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM releases;");
 
-        var storage = GetStorageUsageSnapshot();
+        var storage = _storageCache.GetSnapshot();
         var dbSizeMb = Math.Round(storage.DatabaseBytes / 1024d / 1024d, 2);
         var localPosters = storage.PostersTopLevelCount;
 
@@ -780,7 +763,7 @@ public sealed class SystemController : ControllerBase
         var totalIndexers = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM sources;");
         var releasesCount = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM releases;");
 
-        var storage = GetStorageUsageSnapshot();
+        var storage = _storageCache.GetSnapshot();
         var dbSizeMb = Math.Round(storage.DatabaseBytes / 1024d / 1024d, 2);
         var localPosters = storage.PostersTopLevelCount;
 
@@ -907,7 +890,7 @@ public sealed class SystemController : ControllerBase
             // On Linux/Docker, show only relevant paths (DataDir and common mount points)
             var pathsToCheck = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                DataDirAbs,
+                _storageCache.DataDirAbs,
                 "/",
                 "/data",
                 "/config",
@@ -973,7 +956,7 @@ public sealed class SystemController : ControllerBase
             }
         }
 
-        var storage = GetStorageUsageSnapshot();
+        var storage = _storageCache.GetSnapshot();
 
         // Calculate usage
         var usage = new StorageUsageDto();
@@ -1051,142 +1034,6 @@ public sealed class SystemController : ControllerBase
         };
     }
 
-    private StorageUsageSnapshot GetStorageUsageSnapshot()
-    {
-        // Hot path: unexpired cached value.
-        if (_cache.TryGetValue(StorageUsageCacheKey, out StorageUsageSnapshot? cached) && cached is not null)
-            return cached;
-
-        // Volatile read — safe without a lock (_storageScanEverSucceeded is volatile).
-        var hasStale = _storageScanEverSucceeded;
-
-        Task<StorageUsageSnapshot>? task;
-        lock (StorageRefreshLock)
-            task = EnsureStorageScanRunning();
-
-        // Stale-while-revalidate: return the last known snapshot immediately while the
-        // background refresh runs — callers never block after the first successful scan.
-        if (hasStale)
-            return Volatile.Read(ref _lastKnownStorageUsage);
-
-        // First scan ever: wait up to 5 s so callers get a real value on startup.
-        // All concurrent first-callers share the same in-flight Task — true single-flight.
-        if (task is not null && task.Wait(TimeSpan.FromSeconds(5)))
-            return task.Result;
-
-        // Timed out or cooldown active with no prior data — return zeros.
-        return Volatile.Read(ref _lastKnownStorageUsage);
-    }
-
-    /// <summary>
-    /// Decides whether to start a new storage scan. Must be called inside
-    /// <see cref="StorageRefreshLock"/>. Three rules, in priority order:
-    ///   a) Scan already in flight  → reuse the existing Task (single-flight).
-    ///   b) Cooldown not yet elapsed → do not start; return current task reference (may be
-    ///      a completed task — first-callers can still read its result).
-    ///   c) Otherwise               → start a new Task and record the start timestamp.
-    /// </summary>
-    private Task<StorageUsageSnapshot>? EnsureStorageScanRunning()
-    {
-        // a) In-flight — share the existing task.
-        if (_storageScanTask is not null && !_storageScanTask.IsCompleted)
-            return _storageScanTask;
-
-        // b) Cooldown — avoid spamming scans on every cache-miss request.
-        if (DateTime.UtcNow - _lastStorageScanStartedUtc < StorageScanCooldown)
-            return _storageScanTask; // may be a completed task or null
-
-        // c) Start a new scan.
-        _lastStorageScanStartedUtc = DateTime.UtcNow;
-        _storageScanTask = Task.Run(RunStorageScan);
-        return _storageScanTask;
-    }
-
-    private StorageUsageSnapshot RunStorageScan()
-    {
-        try
-        {
-            var snapshot = ComputeStorageUsageSnapshot();
-
-            // Writes under the lock: Monitor.Exit provides a release fence, ensuring that
-            // any thread reading _lastKnownStorageUsage with Volatile.Read (acquire fence)
-            // after seeing _storageScanEverSucceeded == true is guaranteed to see the
-            // new snapshot — no torn read, no stale reference on any supported platform.
-            lock (StorageRefreshLock)
-            {
-                _lastKnownStorageUsage = snapshot;
-                _storageScanEverSucceeded = true;
-                _cache.Set(StorageUsageCacheKey, snapshot, StorageUsageCacheDuration);
-            }
-
-            return snapshot;
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Background storage usage refresh failed");
-            return Volatile.Read(ref _lastKnownStorageUsage);
-        }
-    }
-
-    private StorageUsageSnapshot ComputeStorageUsageSnapshot()
-    {
-        long databaseBytes = 0;
-        int postersTopLevelCount = 0;
-        int postersRecursiveCount = 0;
-        long postersBytes = 0;
-        int backupsCount = 0;
-        long backupsBytes = 0;
-
-        try
-        {
-            if (System.IO.File.Exists(DbPathAbs))
-                databaseBytes = new FileInfo(DbPathAbs).Length;
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Failed to read database size");
-        }
-
-        var postersDir = Path.Combine(DataDirAbs, "posters");
-        try
-        {
-            if (Directory.Exists(postersDir))
-            {
-                postersTopLevelCount = Directory.GetFiles(postersDir, "*.*", SearchOption.TopDirectoryOnly).Length;
-                var files = Directory.GetFiles(postersDir, "*.*", SearchOption.AllDirectories);
-                postersRecursiveCount = files.Length;
-                postersBytes = files.Sum(f => new FileInfo(f).Length);
-            }
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Failed to calculate posters usage in {PostersDir}", postersDir);
-        }
-
-        try
-        {
-            if (Directory.Exists(BackupDirAbs))
-            {
-                var files = Directory.GetFiles(BackupDirAbs, "*.zip", SearchOption.TopDirectoryOnly);
-                backupsCount = files.Length;
-                backupsBytes = files.Sum(f => new FileInfo(f).Length);
-            }
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Failed to calculate backups usage in {BackupDir}", BackupDirAbs);
-        }
-
-        return new StorageUsageSnapshot(
-            databaseBytes,
-            postersTopLevelCount,
-            postersRecursiveCount,
-            postersBytes,
-            backupsCount,
-            backupsBytes
-        );
-    }
-
     private sealed class ArrAppStatsRow
     {
         public long Id { get; set; }
@@ -1198,12 +1045,4 @@ public sealed class SystemController : ControllerBase
         public int LastSyncCount { get; set; }
         public string? LastError { get; set; }
     }
-
-    private sealed record StorageUsageSnapshot(
-        long DatabaseBytes,
-        int PostersTopLevelCount,
-        int PostersRecursiveCount,
-        long PostersBytes,
-        int BackupsCount,
-        long BackupsBytes);
 }
