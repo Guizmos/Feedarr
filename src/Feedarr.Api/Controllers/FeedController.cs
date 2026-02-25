@@ -21,6 +21,84 @@ public sealed class FeedController : ControllerBase
     private static readonly TimeSpan TopCacheDuration = TimeSpan.FromSeconds(20);
     private static readonly Regex SearchTokenRegex = new(@"[a-zA-Z0-9_-]+", RegexOptions.Compiled);
     private const int MaxFtsTokenLength = 64;
+    private static readonly string[] TopCategoryKeys =
+    {
+        "films",
+        "series",
+        "animation",
+        "anime",
+        "games",
+        "emissions",
+        "spectacle",
+        "audio",
+        "books",
+        "comics"
+    };
+    private const string UnifiedCategoryToKeySql =
+        "CASE releases.unified_category " +
+        "WHEN 'Film' THEN 'films' " +
+        "WHEN 'Serie' THEN 'series' " +
+        "WHEN 'Emission' THEN 'emissions' " +
+        "WHEN 'Spectacle' THEN 'spectacle' " +
+        "WHEN 'JeuWindows' THEN 'games' " +
+        "WHEN 'Animation' THEN 'animation' " +
+        "WHEN 'Anime' THEN 'anime' " +
+        "WHEN 'Audio' THEN 'audio' " +
+        "WHEN 'Book' THEN 'books' " +
+        "WHEN 'Comic' THEN 'comics' " +
+        "ELSE NULL END";
+    private const string MappingKeyToCanonicalSql =
+        "CASE lower(trim(COALESCE(scm.group_key, ''))) " +
+        "WHEN '' THEN NULL " +
+        "WHEN 'movie' THEN 'films' " +
+        "WHEN 'movies' THEN 'films' " +
+        "WHEN 'film' THEN 'films' " +
+        "WHEN 'films' THEN 'films' " +
+        "WHEN 'tv' THEN 'series' " +
+        "WHEN 'serie' THEN 'series' " +
+        "WHEN 'series' THEN 'series' " +
+        "WHEN 'show' THEN 'emissions' " +
+        "WHEN 'shows' THEN 'emissions' " +
+        "WHEN 'emission' THEN 'emissions' " +
+        "WHEN 'emissions' THEN 'emissions' " +
+        "WHEN 'game' THEN 'games' " +
+        "WHEN 'games' THEN 'games' " +
+        "WHEN 'book' THEN 'books' " +
+        "WHEN 'books' THEN 'books' " +
+        "WHEN 'comic' THEN 'comics' " +
+        "WHEN 'comics' THEN 'comics' " +
+        "WHEN 'animation' THEN 'animation' " +
+        "WHEN 'anime' THEN 'anime' " +
+        "WHEN 'audio' THEN 'audio' " +
+        "WHEN 'spectacle' THEN 'spectacle' " +
+        "ELSE lower(trim(scm.group_key)) END";
+    private const string LegacySourceCategoryKeyToCanonicalSql =
+        "CASE lower(trim(COALESCE(sc.unified_key, ''))) " +
+        "WHEN '' THEN NULL " +
+        "WHEN 'movie' THEN 'films' " +
+        "WHEN 'movies' THEN 'films' " +
+        "WHEN 'film' THEN 'films' " +
+        "WHEN 'films' THEN 'films' " +
+        "WHEN 'tv' THEN 'series' " +
+        "WHEN 'serie' THEN 'series' " +
+        "WHEN 'series' THEN 'series' " +
+        "WHEN 'show' THEN 'emissions' " +
+        "WHEN 'shows' THEN 'emissions' " +
+        "WHEN 'emission' THEN 'emissions' " +
+        "WHEN 'emissions' THEN 'emissions' " +
+        "WHEN 'game' THEN 'games' " +
+        "WHEN 'games' THEN 'games' " +
+        "WHEN 'book' THEN 'books' " +
+        "WHEN 'books' THEN 'books' " +
+        "WHEN 'comic' THEN 'comics' " +
+        "WHEN 'comics' THEN 'comics' " +
+        "WHEN 'animation' THEN 'animation' " +
+        "WHEN 'anime' THEN 'anime' " +
+        "WHEN 'audio' THEN 'audio' " +
+        "WHEN 'spectacle' THEN 'spectacle' " +
+        "ELSE lower(trim(sc.unified_key)) END";
+    private const string EffectiveTopCategoryKeySql =
+        "COALESCE(" + UnifiedCategoryToKeySql + ", " + MappingKeyToCanonicalSql + ", " + LegacySourceCategoryKeyToCanonicalSql + ")";
 
     public FeedController(Db db, UnifiedCategoryService unified, IMemoryCache cache)
     {
@@ -427,7 +505,6 @@ public sealed class FeedController : ControllerBase
             });
         }
 
-        var categories = new[] { "films", "series", "anime", "games", "shows", "spectacle", "audio", "books", "comics" };
         var result = new Dictionary<string, object>
         {
             ["sortBy"] = topSort
@@ -462,8 +539,8 @@ public sealed class FeedController : ControllerBase
           spec_category_id as specCategoryId,
           category_ids as categoryIds,
           releases.unified_category as unifiedCategory,
-          sc.unified_key as unifiedCategoryKey,
-          sc.unified_label as unifiedCategoryLabel,
+          ({EffectiveTopCategoryKeySql}) as unifiedCategoryKey,
+          COALESCE(scm.group_label, sc.unified_label) as unifiedCategoryLabel,
           seen,
           ('/api/releases/' || releases.id || '/download') as downloadPath,
           releases.entity_id as entityId,
@@ -500,8 +577,10 @@ public sealed class FeedController : ControllerBase
         FROM releases
         LEFT JOIN media_entities me
           ON me.id = releases.entity_id
-        INNER JOIN source_categories sc
+        LEFT JOIN source_categories sc
           ON sc.source_id = releases.source_id AND sc.cat_id = releases.category_id
+        LEFT JOIN source_category_mappings scm
+          ON scm.source_id = releases.source_id AND scm.cat_id = releases.category_id
         LEFT JOIN release_arr_status ras
           ON ras.release_id = releases.id
         WHERE {topWhere}
@@ -545,11 +624,11 @@ public sealed class FeedController : ControllerBase
 
         // Top par catégorie
         var byCategory = new Dictionary<string, object>();
-        foreach (var cat in categories)
+        foreach (var cat in TopCategoryKeys)
         {
             var catWhere = sourceId.HasValue
-                ? "sc.source_id = @sid AND sc.unified_key = @cat"
-                : "sc.unified_key = @cat";
+                ? "releases.source_id = @sid AND " + EffectiveTopCategoryKeySql + " = @cat"
+                : EffectiveTopCategoryKeySql + " = @cat";
 
             var catSql = $"""
             SELECT
@@ -576,8 +655,8 @@ public sealed class FeedController : ControllerBase
               spec_category_id as specCategoryId,
               category_ids as categoryIds,
               releases.unified_category as unifiedCategory,
-              sc.unified_key as unifiedCategoryKey,
-              sc.unified_label as unifiedCategoryLabel,
+              ({EffectiveTopCategoryKeySql}) as unifiedCategoryKey,
+              COALESCE(scm.group_label, sc.unified_label) as unifiedCategoryLabel,
               seen,
               ('/api/releases/' || releases.id || '/download') as downloadPath,
               releases.entity_id as entityId,
@@ -614,8 +693,10 @@ public sealed class FeedController : ControllerBase
             FROM releases
             LEFT JOIN media_entities me
               ON me.id = releases.entity_id
-            INNER JOIN source_categories sc
+            LEFT JOIN source_categories sc
               ON sc.source_id = releases.source_id AND sc.cat_id = releases.category_id
+            LEFT JOIN source_category_mappings scm
+              ON scm.source_id = releases.source_id AND scm.cat_id = releases.category_id
             LEFT JOIN release_arr_status ras
               ON ras.release_id = releases.id
             WHERE {catWhere}

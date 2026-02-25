@@ -23,6 +23,7 @@ import {
 const CATEGORY_LABELS = {
   films: "Films",
   series: "Series TV",
+  animation: "Animation",
   anime: "Anime",
   games: "Jeux PC",
   emissions: "Emissions",
