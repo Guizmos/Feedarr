@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Reflection;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
@@ -11,6 +12,10 @@ public sealed class ApiErrorNormalizationFilter : IAsyncResultFilter
     {
         "error", "message", "title", "detail", "status", "type", "instance"
     };
+
+    // Caches readable public properties per error-object Type.
+    // Avoids repeated reflection on every 4xx response (GetProperties allocates a new array each call).
+    private static readonly ConcurrentDictionary<Type, PropertyInfo[]> PropCache = new();
 
     public async Task OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next)
     {
@@ -76,17 +81,15 @@ public sealed class ApiErrorNormalizationFilter : IAsyncResultFilter
 
     private static Dictionary<string, object?> ReadProperties(object value)
     {
-        var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-        var props = value
-            .GetType()
-            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Where(p => p.CanRead)
-            .ToList();
+        var type  = value.GetType();
+        var props = PropCache.GetOrAdd(type, static t =>
+            t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+             .Where(p => p.CanRead)
+             .ToArray());
 
+        var map = new Dictionary<string, object?>(props.Length, StringComparer.OrdinalIgnoreCase);
         foreach (var prop in props)
-        {
             map[prop.Name] = prop.GetValue(value);
-        }
 
         return map;
     }
