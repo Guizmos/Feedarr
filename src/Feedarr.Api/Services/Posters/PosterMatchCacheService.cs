@@ -130,7 +130,8 @@ public sealed class PosterMatchCacheService
 
         if (year.HasValue)
         {
-            return conn.QueryFirstOrDefault<PosterMatch>(
+            // Exact match (title + year): early return on hit.
+            var exact = conn.QueryFirstOrDefault<PosterMatch>(
                 """
                 SELECT
                     fingerprint as Fingerprint,
@@ -160,9 +161,12 @@ public sealed class PosterMatchCacheService
                 """,
                 new { mt = mediaType, title = normalizedTitle, year }
             );
+            if (exact is not null)
+                return exact;
+            // Fall through to title-only search as fallback.
         }
 
-        var match = conn.QueryFirstOrDefault<PosterMatch>(
+        return conn.QueryFirstOrDefault<PosterMatch>(
             """
             SELECT
                 fingerprint as Fingerprint,
@@ -191,8 +195,6 @@ public sealed class PosterMatchCacheService
             """,
             new { mt = mediaType, title = normalizedTitle }
         );
-
-        return match;
     }
 
     public void Upsert(PosterMatch match)
@@ -253,7 +255,12 @@ public sealed class PosterMatchCacheService
                 season = excluded.season,
                 episode = excluded.episode,
                 ids_json = COALESCE(excluded.ids_json, poster_matches.ids_json),
-                confidence = COALESCE(excluded.confidence, poster_matches.confidence),
+                -- COALESCE would accept 0.0 (non-null) and overwrite a good value;
+                -- use CASE WHEN so that an explicit zero is treated as "unset".
+                confidence = CASE WHEN excluded.confidence > 0
+                                  THEN excluded.confidence
+                                  ELSE poster_matches.confidence
+                             END,
                 match_source = COALESCE(excluded.match_source, poster_matches.match_source),
                 poster_file = COALESCE(excluded.poster_file, poster_matches.poster_file),
                 poster_provider = COALESCE(excluded.poster_provider, poster_matches.poster_provider),

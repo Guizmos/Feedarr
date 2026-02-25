@@ -381,7 +381,7 @@ public sealed class SyncOrchestrationService
             {
                 var job = _posterJobs.Create(releaseId, forceRefresh: false);
                 if (job is null) continue;
-                _posterQueue.Enqueue(job);
+                _posterQueue.TryEnqueue(job);
             }
 
             _sources.UpdateLastSync(id, "ok", null);

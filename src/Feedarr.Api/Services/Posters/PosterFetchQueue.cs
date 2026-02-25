@@ -18,6 +18,11 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
     private readonly Channel<PosterFetchJob> _channel;
     private readonly ConcurrentDictionary<long, byte> _pendingByItemId = new();
     private readonly ILogger<PosterFetchQueue> _log;
+    // Guards the TryAdd-then-TryWrite pair so that two concurrent callers
+    // for the same ItemId cannot both observe "not pending" before either
+    // has written to the channel, which would cause one to return true
+    // incorrectly while the job gets dropped.
+    private readonly object _enqueueLock = new();
 
     public PosterFetchQueue(ILogger<PosterFetchQueue> log)
     {
@@ -38,27 +43,32 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
     /// <summary>Current number of jobs pending in the queue.</summary>
     public int Count => (int)(_channel.Reader.Count);
 
-    public bool Enqueue(PosterFetchJob job)
+    public bool TryEnqueue(PosterFetchJob job)
     {
         if (job.ItemId <= 0)
             return false;
 
-        // Deduplicate by release id: if already queued, consider it accepted.
-        if (!_pendingByItemId.TryAdd(job.ItemId, 0))
-            return true;
+        // The lock makes the ContainsKey check and TryWrite atomic so that
+        // two concurrent callers for the same ItemId cannot both pass the
+        // "not yet pending" guard before either has written to the channel.
+        lock (_enqueueLock)
+        {
+            // Deduplicate: if already tracked (in channel), accept without re-adding.
+            if (_pendingByItemId.ContainsKey(job.ItemId))
+                return true;
 
-        var written = _channel.Writer.TryWrite(job);
-        if (written)
-            return true;
+            if (!_channel.Writer.TryWrite(job))
+            {
+                _log.LogWarning(
+                    "PosterFetchQueue is full (capacity={Capacity}). Dropped job for ItemId={ItemId}. " +
+                    "The item will be retried on the next sync cycle.",
+                    Capacity, job.ItemId);
+                return false;
+            }
 
-        // Channel full — slot dropped. Remove from dedup set so the item can be
-        // re-queued on the next sync cycle.
-        _pendingByItemId.TryRemove(job.ItemId, out _);
-        _log.LogWarning(
-            "PosterFetchQueue is full (capacity={Capacity}). Dropped job for ItemId={ItemId}. " +
-            "The item will be retried on the next sync cycle.",
-            Capacity, job.ItemId);
-        return false;
+            _pendingByItemId.TryAdd(job.ItemId, 0);
+            return true;
+        }
     }
 
     public async ValueTask<PosterFetchJob> DequeueAsync(CancellationToken ct)

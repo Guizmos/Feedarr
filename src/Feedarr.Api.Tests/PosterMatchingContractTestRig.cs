@@ -99,7 +99,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             NullLogger<ActiveExternalProviderConfigResolver>.Instance);
 
         var tmdb = new TmdbClient(new HttpClient(new TmdbHandler(scenario)), settings, stats, resolver);
-        var fanart = new FanartClient(new HttpClient(new FanartHandler(scenario)), stats, resolver);
+        var fanart = new FanartClient(new HttpClient(new FanartHandler(scenario)), stats, resolver, settings);
         var igdb = new IgdbClient(new HttpClient(new IgdbHandler(scenario)), stats, resolver);
         var tvmaze = new TvMazeClient(new HttpClient(new TvMazeHandler(scenario)), stats, resolver);
         var jikan = new JikanClient(new HttpClient(new JikanHandler(scenario)), resolver, stats);

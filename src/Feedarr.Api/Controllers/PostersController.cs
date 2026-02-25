@@ -220,7 +220,7 @@ public sealed class PostersController : ControllerBase
         var job = _jobFactory.Create(id, forceRefresh: false);
         if (job is null) return NotFound(new { error = "release not found" });
 
-        if (!_queue.Enqueue(job))
+        if (!_queue.TryEnqueue(job))
             return StatusCode(503, new { error = "poster queue full" });
 
         return Accepted(new { ok = true, enqueued = true });
@@ -233,7 +233,7 @@ public sealed class PostersController : ControllerBase
         var job = _jobFactory.Create(itemId, forceRefresh: true);
         if (job is null) return NotFound(new { error = "release not found" });
 
-        if (!_queue.Enqueue(job))
+        if (!_queue.TryEnqueue(job))
             return StatusCode(503, new { error = "poster queue full" });
 
         return Accepted(new { ok = true, enqueued = true, forceRefresh = true });
@@ -787,7 +787,7 @@ public sealed class PostersController : ControllerBase
                 continue;
             }
 
-            if (_queue.Enqueue(job))
+            if (_queue.TryEnqueue(job))
                 enqueued++;
             else
                 failed++;

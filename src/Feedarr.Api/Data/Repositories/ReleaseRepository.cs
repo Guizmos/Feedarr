@@ -5,6 +5,7 @@ using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services.Torznab;
 using Feedarr.Api.Services.Titles;
 using System.Data;
+using PosterServices = Feedarr.Api.Services.Posters;
 
 namespace Feedarr.Api.Data.Repositories;
 
@@ -1053,6 +1054,9 @@ public sealed class ReleaseRepository
 
     public void SavePoster(long id, int? tmdbId, string? posterPath, string posterFile)
     {
+        if (string.IsNullOrWhiteSpace(posterFile))
+            throw new ArgumentException("posterFile cannot be null or empty", nameof(posterFile));
+
         using var conn = _db.Open();
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
@@ -1061,32 +1065,45 @@ public sealed class ReleaseRepository
             new { id }
         );
 
-        if (entityId.HasValue && entityId.Value > 0)
+        using var tx = conn.BeginTransaction();
+        try
         {
+            if (entityId.HasValue && entityId.Value > 0)
+            {
+                conn.Execute(
+                    """
+                    UPDATE media_entities
+                    SET tmdb_id = COALESCE(@tmdbId, tmdb_id),
+                        poster_file = @posterFile,
+                        poster_updated_at_ts = @ts,
+                        updated_at_ts = @ts
+                    WHERE id = @entityId;
+                    """,
+                    new { entityId, tmdbId, posterFile, ts = now },
+                    tx
+                );
+            }
+
             conn.Execute(
                 """
-                UPDATE media_entities
+                UPDATE releases
                 SET tmdb_id = COALESCE(@tmdbId, tmdb_id),
+                    poster_path = COALESCE(@posterPath, poster_path),
                     poster_file = @posterFile,
-                    poster_updated_at_ts = @ts,
-                    updated_at_ts = @ts
-                WHERE id = @entityId;
+                    poster_updated_at_ts = @ts
+                WHERE id = @id;
                 """,
-                new { entityId, tmdbId, posterFile, ts = now }
+                new { id, tmdbId, posterPath, posterFile, ts = now },
+                tx
             );
-        }
 
-        conn.Execute(
-            """
-            UPDATE releases
-            SET tmdb_id = COALESCE(@tmdbId, tmdb_id),
-                poster_path = COALESCE(@posterPath, poster_path),
-                poster_file = @posterFile,
-                poster_updated_at_ts = @ts
-            WHERE id = @id;
-            """,
-            new { id, tmdbId, posterPath, posterFile, ts = now }
-        );
+            tx.Commit();
+        }
+        catch
+        {
+            tx.Rollback();
+            throw;
+        }
     }
 
     public PosterMatch? GetPosterForTitleClean(long excludeId, string titleClean, string? normalizedTitle, string? mediaType, int? year)
@@ -1486,6 +1503,32 @@ LEFT JOIN media_entities me
                 ts = now
             }
         );
+
+        // Invalidate the cached poster match for this release.
+        // Recompute the fingerprint from the release's own title key (same hash as PosterFetchService
+        // uses when storing the match) so we delete exactly one entry — no blast radius.
+        var titleKey = conn.QueryFirstOrDefault<(string? TitleClean, int? Year, string? MediaType, int? Season, int? Episode)>(
+            """
+            SELECT title_clean as TitleClean, year as Year, media_type as MediaType,
+                   season as Season, episode as Episode
+            FROM releases WHERE id = @id;
+            """,
+            new { id }
+        );
+        if (titleKey.TitleClean is not null)
+        {
+            var normalized = NormalizeTitle(titleKey.TitleClean);
+            var fp = PosterServices.PosterMatchCacheService.BuildFingerprint(new PosterServices.PosterTitleKey(
+                titleKey.MediaType ?? "",
+                normalized,
+                titleKey.Year,
+                titleKey.Season,
+                titleKey.Episode));
+            conn.Execute(
+                "DELETE FROM poster_matches WHERE fingerprint = @fp;",
+                new { fp }
+            );
+        }
     }
 
     public sealed record RetentionResult(

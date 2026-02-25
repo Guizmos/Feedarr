@@ -1039,33 +1039,11 @@ public sealed class PosterFetchService
             }
         }
 
-        // TMDB poster failed -> try IGDB as fallback if title looks like a game
-// TMDB failed -> try Fanart
-        if (tmdbMatchForIds.Candidate is not null)
-        {
-            var tmdbIdsOnly = new PosterMatchIds(tmdbMatchForIds.Candidate.TmdbId, tvdbIdResolved, null, null, null);
-            var tmdbIdsConfidence = AdjustConfidence(tmdbMatchForIds.Score, ambiguity, unifiedCategory == UnifiedCategory.Emission);
-            _matchCache.Upsert(new PosterMatch(
-                fingerprint,
-                mediaType,
-                normalizedTitle,
-                year,
-                season,
-                episode,
-                PosterMatchCacheService.SerializeIds(tmdbIdsOnly),
-                tmdbIdsConfidence,
-                "tmdb",
-                null,
-                null,
-                null,
-                null,
-                null,
-                DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                null));
-        }
-
+        // TMDB poster failed -> try Fanart.
+        // Do NOT write a cache entry here: no image was saved, so caching a
+        // null-poster record would set last_attempt_ts without a real result
+        // and could overwrite a previously good confidence value on conflict.
+        // If Fanart succeeds below it will write the correct cache entry.
         var tmdbIdForFanart = tmdbMatchForIds.Candidate?.TmdbId ?? tmdbIdStored;
         var tvdbIdForFanart = tvdbIdResolved ?? tvdbIdStored;
 

@@ -115,7 +115,7 @@ public sealed class Lot2ApiReliabilityTests
 
         var tmdb = new TmdbClient(throwingHttp, settingsRepo, stats, resolver);
         var tvmaze = new TvMazeClient(throwingHttp, stats, resolver);
-        var fanart = new FanartClient(throwingHttp, stats, resolver);
+        var fanart = new FanartClient(throwingHttp, stats, resolver, settingsRepo);
         var igdb = new IgdbClient(throwingHttp, stats, resolver);
 
         var controller = new SettingsController(

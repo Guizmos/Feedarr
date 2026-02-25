@@ -178,8 +178,8 @@ public sealed class JikanClient
             item.Title,
             item.TitleEnglish
         }.Concat(item.TitleSynonyms ?? Enumerable.Empty<string>())
-         .Where(t => !string.IsNullOrWhiteSpace(t))
-         .Select(t => t.Trim().ToLowerInvariant())
+         .Where(static t => !string.IsNullOrWhiteSpace(t))
+         .Select(static t => t!.Trim().ToLowerInvariant())
          .Distinct()
          .ToList();
 

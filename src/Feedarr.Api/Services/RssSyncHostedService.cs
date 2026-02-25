@@ -451,7 +451,7 @@ public sealed class RssSyncHostedService : BackgroundService
                 {
                     var job = posterJobs.CreateFromSeed(seed, forceRefresh: false);
                     if (job is null) continue;
-                    posterQueue.Enqueue(job);
+                    posterQueue.TryEnqueue(job);
                 }
 
                 _log.LogInformation(

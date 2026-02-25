@@ -55,6 +55,8 @@ var statsRateLimitPermit = Math.Max(10, builder.Configuration.GetValue("App:Rate
 var statsRateLimitWindowSeconds = Math.Clamp(builder.Configuration.GetValue("App:RateLimit:Stats:WindowSeconds", 60), 10, 3600);
 var globalRateLimitPermit = Math.Max(10, builder.Configuration.GetValue("App:RateLimit:Global:PermitLimit", 300));
 var globalRateLimitWindowSeconds = Math.Clamp(builder.Configuration.GetValue("App:RateLimit:Global:WindowSeconds", 60), 10, 3600);
+var postersRateLimitPermit = Math.Max(30, builder.Configuration.GetValue("App:RateLimit:Posters:PermitLimit", 600));
+var postersRateLimitWindowSeconds = Math.Clamp(builder.Configuration.GetValue("App:RateLimit:Posters:WindowSeconds", 60), 10, 3600);
 
 // Data Protection pour le chiffrement des clés API
 var configuredDataDir = builder.Configuration.GetValue<string>("App:DataDir") ?? "data";
@@ -447,9 +449,18 @@ builder.Services.AddRateLimiter(options =>
     {
         if (httpContext.Request.Path.StartsWithSegments("/api/posters", StringComparison.OrdinalIgnoreCase))
         {
-            // Poster endpoints can spike heavily during retro-fetch and image retries.
-            // Excluding them from the global limiter prevents app-wide 429 lockups.
-            return RateLimitPartition.GetNoLimiter("posters");
+            // Poster endpoints can spike during retro-fetch and image retries.
+            // Keep a dedicated high-throughput limiter instead of bypassing all limits.
+            var posterIp = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            return RateLimitPartition.GetFixedWindowLimiter(
+                $"posters:{posterIp}",
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = postersRateLimitPermit,
+                    Window = TimeSpan.FromSeconds(postersRateLimitWindowSeconds),
+                    QueueLimit = 0,
+                    AutoReplenishment = true
+                });
         }
 
         var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";

@@ -153,7 +153,7 @@ public sealed class SchedulerController : ControllerBase
                 {
                     var job = _posterJobs.Create(rid, forceRefresh: false);
                     if (job is null) continue;
-                    _posterQueue.Enqueue(job);
+                    _posterQueue.TryEnqueue(job);
                 }
                 _sources.UpdateLastSync((long)full.Id, "ok", null);
 

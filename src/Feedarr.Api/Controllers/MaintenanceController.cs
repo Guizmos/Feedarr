@@ -261,75 +261,96 @@ public sealed class MaintenanceController : ControllerBase
     [HttpPost("cleanup-posters")]
     public IActionResult CleanupPosters()
     {
-        var postersDir = _posterFetch.PostersDirPath;
-        if (!Directory.Exists(postersDir))
-            return Ok(new { ok = true, scanned = 0, orphaned = 0, deleted = 0, freedBytes = 0L });
-
-        var files = Directory.GetFiles(postersDir, "*.*", SearchOption.TopDirectoryOnly);
-        var fileNames = files
-            .Select(Path.GetFileName)
-            .Where(name => !string.IsNullOrWhiteSpace(name))
-            .Select(name => name!)
-            .ToList();
-        var referencedPosters = _releases.GetReferencedPosterFiles(fileNames);
-        var scanned = files.Length;
-        var orphaned = 0;
-        var deleted = 0;
-        long freedBytes = 0;
-
-        // Pre-compute canonical root path with trailing separator for safe containment check
-        var canonicalRoot = Path.GetFullPath(postersDir);
-        if (!canonicalRoot.EndsWith(Path.DirectorySeparatorChar))
-            canonicalRoot += Path.DirectorySeparatorChar;
-
-        foreach (var file in files)
+        if (!_maintenanceLock.TryEnter())
         {
-            var fileName = Path.GetFileName(file);
-            if (string.IsNullOrWhiteSpace(fileName))
-                continue;
-
-            if (referencedPosters.Contains(fileName))
-                continue;
-
-            // Validate file extension is an image type
-            var ext = Path.GetExtension(fileName);
-            if (string.IsNullOrEmpty(ext) ||
-                !ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase) &&
-                !ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) &&
-                !ext.Equals(".png", StringComparison.OrdinalIgnoreCase) &&
-                !ext.Equals(".webp", StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            orphaned++;
-            try
-            {
-                var full = Path.GetFullPath(file);
-                if (!full.StartsWith(canonicalRoot, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                var size = new FileInfo(file).Length;
-
-                System.IO.File.Delete(file);
-                if (System.IO.File.Exists(file))
-                {
-                    _log.LogWarning("Poster file still exists after delete attempt, skipping DB cleanup for {File}", fileName);
-                    continue;
-                }
-
-                freedBytes += size;
-                deleted++;
-                _releases.ClearPosterFileReferences(fileName);
-            }
-            catch (Exception ex)
-            {
-                _log.LogWarning(ex, "Failed to delete orphaned poster: {File}", fileName);
-            }
+            _log.LogWarning("CleanupPosters rejected – a maintenance operation is already running");
+            return Conflict(new { error = "a maintenance operation is already running" });
         }
 
-        _activity.Add(null, "info", "maintenance", "Orphaned posters cleaned",
-            dataJson: $"{{\"scanned\":{scanned},\"orphaned\":{orphaned},\"deleted\":{deleted},\"freedBytes\":{freedBytes}}}");
+        try
+        {
+            var postersDir = _posterFetch.PostersDirPath;
+            if (!Directory.Exists(postersDir))
+                return Ok(new { ok = true, scanned = 0, orphaned = 0, deleted = 0, freedBytes = 0L });
 
-        return Ok(new { ok = true, scanned, orphaned, deleted, freedBytes });
+            var files = Directory.GetFiles(postersDir, "*.*", SearchOption.TopDirectoryOnly);
+            var fileNames = files
+                .Select(Path.GetFileName)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Select(name => name!)
+                .ToList();
+            var referencedPosters = _releases.GetReferencedPosterFiles(fileNames);
+            var scanned = files.Length;
+            var orphaned = 0;
+            var deleted = 0;
+            long freedBytes = 0;
+
+            // Pre-compute canonical root path with trailing separator for safe containment check
+            var canonicalRoot = Path.GetFullPath(postersDir);
+            if (!canonicalRoot.EndsWith(Path.DirectorySeparatorChar))
+                canonicalRoot += Path.DirectorySeparatorChar;
+
+            foreach (var file in files)
+            {
+                var fileName = Path.GetFileName(file);
+                if (string.IsNullOrWhiteSpace(fileName))
+                    continue;
+
+                if (referencedPosters.Contains(fileName))
+                    continue;
+
+                // Validate file extension is an image type.
+                // Parentheses around the && chain are required: without them the ||
+                // binds tighter than && and the condition logic is incorrect.
+                var ext = Path.GetExtension(fileName);
+                if (string.IsNullOrEmpty(ext) ||
+                    (!ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase) &&
+                     !ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) &&
+                     !ext.Equals(".png", StringComparison.OrdinalIgnoreCase) &&
+                     !ext.Equals(".webp", StringComparison.OrdinalIgnoreCase)))
+                    continue;
+
+                orphaned++;
+                try
+                {
+                    var full = Path.GetFullPath(file);
+                    if (!full.StartsWith(canonicalRoot, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var size = new FileInfo(file).Length;
+
+                    // DB-first: clear the reference before deleting the file.
+                    // If the DB write fails we abort without touching the file,
+                    // so no broken reference pointing to a missing file can arise.
+                    // If the subsequent file delete fails, the DB reference is
+                    // already gone; the file will be cleaned up on the next run.
+                    _releases.ClearPosterFileReferences(fileName);
+
+                    System.IO.File.Delete(file);
+                    if (System.IO.File.Exists(file))
+                    {
+                        _log.LogWarning("Poster file still exists after delete attempt for {File}", fileName);
+                        continue;
+                    }
+
+                    freedBytes += size;
+                    deleted++;
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Failed to delete orphaned poster: {File}", fileName);
+                }
+            }
+
+            _activity.Add(null, "info", "maintenance", "Orphaned posters cleaned",
+                dataJson: $"{{\"scanned\":{scanned},\"orphaned\":{orphaned},\"deleted\":{deleted},\"freedBytes\":{freedBytes}}}");
+
+            return Ok(new { ok = true, scanned, orphaned, deleted, freedBytes });
+        }
+        finally
+        {
+            _maintenanceLock.Release();
+        }
     }
 
     // POST /api/maintenance/test-providers
