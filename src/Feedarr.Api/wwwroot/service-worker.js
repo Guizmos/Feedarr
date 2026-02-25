@@ -1,4 +1,4 @@
-const CACHE_NAME = "feedarr-pwa-v2";
+const CACHE_NAME = "feedarr-pwa-v3";
 const SCOPE_PATH = (() => {
   const scopePath = new URL(self.registration.scope).pathname;
   return scopePath !== "/" && scopePath.endsWith("/")
@@ -58,7 +58,15 @@ self.addEventListener("fetch", (event) => {
 
   if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request).catch(() => caches.match(scopedPath("/index.html")) || caches.match("/index.html"))
+      fetch(request)
+        .then((response) => {
+          if (response && response.ok) {
+            const responseClone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone));
+          }
+          return response;
+        })
+        .catch(() => caches.match(request) || caches.match(scopedPath("/index.html")) || caches.match("/index.html"))
     );
     return;
   }
@@ -70,15 +78,14 @@ self.addEventListener("fetch", (event) => {
   if (!isStaticAsset) return;
 
   event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) return cached;
-      return fetch(request).then((response) => {
+    fetch(request)
+      .then((response) => {
         if (response && response.ok) {
           const responseClone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone));
         }
         return response;
-      });
-    })
+      })
+      .catch(() => caches.match(request))
   );
 });

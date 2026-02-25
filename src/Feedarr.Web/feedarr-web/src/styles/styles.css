@@ -5003,6 +5003,11 @@ body.modal-open .content{
   border-color: var(--cat-chip-anime-border);
 }
 
+.mapping-chip--games{
+  background: var(--cat-chip-games-bg);
+  border-color: var(--cat-chip-games-border);
+}
+
 .mapping-chip--comics{
   background: var(--cat-chip-comics-bg);
   border-color: var(--cat-chip-comics-border);

@@ -2,9 +2,22 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import {
   CATEGORY_GROUPS,
-  CATEGORY_GROUP_LABELS,
   normalizeCategoryGroupKey,
 } from "../../domain/categories/index.js";
+import { tr } from "../../app/uiText.js";
+
+const CATEGORY_GROUP_LABELS_EN = {
+  films: "Movies",
+  series: "TV Series",
+  animation: "Animation",
+  anime: "Anime",
+  games: "Video Games",
+  comics: "Comics",
+  books: "Books",
+  audio: "Audio",
+  spectacle: "Live Shows",
+  emissions: "Shows",
+};
 
 function normalizeCategories(categories) {
   const seen = new Map();
@@ -43,10 +56,15 @@ export default function CategoryMappingBoard({ categories, mappings, onChangeMap
 
   const map = mappings instanceof Map ? mappings : new Map();
   const normalizedCategories = useMemo(() => normalizeCategories(categories), [categories]);
-  const groupsByLabel = useMemo(
-    () => [...CATEGORY_GROUPS].sort((a, b) => a.label.localeCompare(b.label, "fr", { sensitivity: "base" })),
-    []
+  const groupLabels = Object.fromEntries(
+    CATEGORY_GROUPS.map((group) => [
+      group.key,
+      tr(group.label, CATEGORY_GROUP_LABELS_EN[group.key] || group.label),
+    ])
   );
+  const groupsByLabel = [...CATEGORY_GROUPS]
+    .map((group) => ({ ...group, label: groupLabels[group.key] || group.label }))
+    .sort((a, b) => a.label.localeCompare(b.label, "en", { sensitivity: "base" }));
 
   const closeMenu = useCallback(() => {
     setOpenMenuId(null);
@@ -172,7 +190,7 @@ export default function CategoryMappingBoard({ categories, mappings, onChangeMap
           className="category-mapping-board__search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Rechercher par id ou nom..."
+          placeholder={tr("Rechercher par id ou nom...", "Search by id or name...")}
         />
         <div className="category-mapping-board__filters">
           <button
@@ -180,21 +198,21 @@ export default function CategoryMappingBoard({ categories, mappings, onChangeMap
             className={`type-chip${mode === "all" ? " type-chip--active" : ""}`}
             onClick={() => setMode("all")}
           >
-            Tout
+            {tr("Tout", "All")}
           </button>
           <button
             type="button"
             className={`type-chip${mode === "assigned" ? " type-chip--active" : ""}`}
             onClick={() => setMode("assigned")}
           >
-            Assignées
+            {tr("Assignées", "Assigned")}
           </button>
           <button
             type="button"
             className={`type-chip${mode === "unassigned" ? " type-chip--active" : ""}`}
             onClick={() => setMode("unassigned")}
           >
-            Non assignées
+            {tr("Non assignées", "Unassigned")}
           </button>
         </div>
       </div>
@@ -210,17 +228,19 @@ export default function CategoryMappingBoard({ categories, mappings, onChangeMap
 
       <div className="category-mapping-board__columns">
         <MappingColumn
-          title="Standard"
+          title={tr("Standard", "Standard")}
           categories={standardCategories}
           mappings={map}
+          groupLabels={groupLabels}
           openMenuId={openMenuId}
           onToggleMenu={toggleMenu}
           registerAssignButton={registerAssignButton}
         />
         <MappingColumn
-          title="Spécifiques"
+          title={tr("Spécifiques", "Specific")}
           categories={specificCategories}
           mappings={map}
+          groupLabels={groupLabels}
           openMenuId={openMenuId}
           onToggleMenu={toggleMenu}
           registerAssignButton={registerAssignButton}
@@ -245,15 +265,15 @@ export default function CategoryMappingBoard({ categories, mappings, onChangeMap
   );
 }
 
-function MappingColumn({ title, categories, mappings, openMenuId, onToggleMenu, registerAssignButton }) {
+function MappingColumn({ title, categories, mappings, groupLabels, openMenuId, onToggleMenu, registerAssignButton }) {
   return (
     <div className="category-mapping-board__column">
       <div className="category-mapping-board__column-title">{title}</div>
       <div className="category-mapping-board__chips">
-        {categories.length === 0 && <div className="muted">Aucune catégorie.</div>}
+        {categories.length === 0 && <div className="muted">{tr("Aucune catégorie.", "No category.")}</div>}
         {categories.map((category) => {
           const assignedKey = normalizeCategoryGroupKey(mappings.get(category.id));
-          const assignedLabel = assignedKey ? CATEGORY_GROUP_LABELS[assignedKey] : "—";
+          const assignedLabel = assignedKey ? groupLabels[assignedKey] : "—";
           const menuOpen = openMenuId === category.id;
           return (
             <div
@@ -311,7 +331,7 @@ function MappingMenuPortal({ groups, position, assignedKey, onAssign, onClear })
         className="mapping-chip__menu-item"
         onClick={onClear}
       >
-        Retirer
+        {tr("Retirer", "Remove")}
       </button>
     </div>,
     document.body

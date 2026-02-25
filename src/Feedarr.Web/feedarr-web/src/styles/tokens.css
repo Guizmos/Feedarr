@@ -83,6 +83,8 @@
   --cat-chip-animation-border: rgba(148, 163, 184, 0.45);
   --cat-chip-anime-bg: rgba(34, 211, 238, 0.18);
   --cat-chip-anime-border: rgba(34, 211, 238, 0.34);
+  --cat-chip-games-bg: rgba(192, 132, 252, 0.16);
+  --cat-chip-games-border: rgba(192, 132, 252, 0.34);
   --cat-chip-comics-bg: rgba(248, 113, 113, 0.16);
   --cat-chip-comics-border: rgba(248, 113, 113, 0.34);
   --cat-chip-books-bg: rgba(163, 230, 53, 0.16);
@@ -114,4 +116,3 @@
 :root[data-theme="dark"] {
   --cat-bubble-default-text: #e5e7eb;
 }
-

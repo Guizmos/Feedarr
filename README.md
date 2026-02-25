@@ -35,10 +35,10 @@
 
 <p align="center">
   <a href="#features">Features</a> |
-  <a href="#screenshots">Screenshots</a> |
   <a href="#installation">Installation</a> |
   <a href="#configuration">Configuration</a> |
   <a href="#development">Development</a> |
+  <a href="#screenshots">Screenshots</a> |
   <a href="#support">Support</a> |
   <a href="#license">License</a>
 </p>
@@ -52,26 +52,6 @@
 - Backup, restore and maintenance workflows built into the API.
 - Sonarr/Radarr integration for library and status workflows.
 - Setup Wizard for first-run onboarding.
-
-## Screenshots
-
-<table>
-  <tr>
-    <td><img src="docs/screenshots/light_details.png" alt="Light - Details" width="320" /></td>
-    <td><img src="docs/screenshots/light_stat.png" alt="Light - Stats" width="320" /></td>
-    <td><img src="docs/screenshots/light_radarr.png" alt="Light - Radarr" width="320" /></td>
-  </tr>
-  <tr>
-    <td><img src="docs/screenshots/dark_application.png" alt="Dark - Applications" width="320" /></td>
-    <td><img src="docs/screenshots/dark_providers.png" alt="Dark - Providers" width="320" /></td>
-    <td><img src="docs/screenshots/dark_indexeurs.png" alt="Dark - Indexers" width="320" /></td>
-  </tr>
-  <tr>
-    <td><img src="docs/screenshots/dark_library.png" alt="Dark - Library" width="320" /></td>
-    <td><img src="docs/screenshots/dark_fournisseur.png" alt="Dark - Provider Details" width="320" /></td>
-    <td><img src="docs/screenshots/dark_top.png" alt="Dark - Top Releases" width="320" /></td>
-  </tr>
-</table>
 
 ## Installation
 
@@ -263,6 +243,26 @@ Notes:
 - `Authentication=none` should be treated as LAN-only and is not recommended for WAN.
 - For WAN exposure, use a TLS reverse proxy and enable authentication.
 - `App__Security__EnforceHttps=true` should only be enabled when ASP.NET Core terminates TLS directly (not behind a TLS offloading reverse proxy).
+
+## Screenshots
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/library.png" alt="Library - Dark" width="320" /></td>
+    <td><img src="docs/screenshots/library_n.png" alt="Library - light" width="320" /></td>
+    <td><img src="docs/screenshots/details_modal.png" alt="Details modal" width="320" /></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/ui.png" alt="UI" width="320" /></td>
+    <td><img src="docs/screenshots/providers.png" alt="Providers" width="320" /></td>
+    <td><img src="docs/screenshots/indexers.png" alt="Indexers" width="320" /></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/metadata.png" alt="Metadata" width="320" /></td>
+    <td><img src="docs/screenshots/applications.png" alt="Applications" width="320" /></td>
+    <td><img src="docs/screenshots/light_stat.png" alt="Statistics" width="320" /></td>
+  </tr>
+</table>
 
 ## Support
 

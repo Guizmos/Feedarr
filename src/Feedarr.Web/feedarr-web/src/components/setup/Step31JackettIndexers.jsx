@@ -412,7 +412,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
       (s) => normalizeUrl(s?.torznabUrl) === normalizeUrl(indexer.torznabUrl)
     );
     if (existing) {
-      setCapsError("Cet indexeur est déjà ajouté.");
+      setCapsError(tr("Cet indexeur est déjà ajouté.", "This indexer is already added."));
       return;
     }
 
@@ -570,10 +570,10 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
   const hasSelectedProvider = !!selectedProviderKey;
   const modalProviderLabel = hasSelectedProvider ? getProviderLabel(selectedProviderKey) : "";
   const modalTitle = editingSource
-    ? `Modifier : ${editingSource.name}${hasSelectedProvider ? ` (${modalProviderLabel})` : ""}`
+    ? `${tr("Modifier", "Edit")} : ${editingSource.name}${hasSelectedProvider ? ` (${modalProviderLabel})` : ""}`
     : manualMode
-      ? `Ajouter manuellement${hasSelectedProvider ? ` (${modalProviderLabel})` : ""}`
-      : `Ajouter : ${selectedIndexer?.name || "Indexeur"}${hasSelectedProvider ? ` (${modalProviderLabel})` : ""}`;
+      ? `${tr("Ajouter manuellement", "Add manually")}${hasSelectedProvider ? ` (${modalProviderLabel})` : ""}`
+      : `${tr("Ajouter", "Add")} : ${selectedIndexer?.name || tr("Indexeur", "Indexer")}${hasSelectedProvider ? ` (${modalProviderLabel})` : ""}`;
 
   return (
     <div className="setup-step setup-jackett">
@@ -703,7 +703,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
               <input
                 value={manualName}
                 onChange={(e) => setManualName(e.target.value)}
-                placeholder={`Nom ${modalProviderLabel || "indexeur"}`}
+                placeholder={tr(`Nom ${modalProviderLabel || "indexeur"}`, `Name ${modalProviderLabel || "indexer"}`)}
                 disabled={saving || capsLoading}
               />
             </div>
@@ -719,7 +719,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
                     setCapsCategories([]);
                     setCategoryMappings(new Map());
                   }}
-                placeholder="Colle l'URL Copy Torznab Feed"
+                placeholder={tr("Colle l'URL Copy Torznab Feed", "Paste the Copy Torznab Feed URL")}
                 disabled={saving || capsLoading}
               />
               <span className="field-hint">
@@ -776,8 +776,10 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
           <div className="setup-jackett__footer-note" role="note">
             <span className="setup-jackett__footer-note-icon" aria-hidden="true">i</span>
             <span>
-              Choisissez de preference les categories specifiques, plus pertinentes. Les categories
-              "parents" incluent souvent des sous-categories qui peuvent provoquer un mauvais tri.
+              {tr(
+                "Choisissez de preference les categories specifiques, plus pertinentes. Les categories \"parents\" incluent souvent des sous-categories qui peuvent provoquer un mauvais tri.",
+                "Prefer specific categories when possible. Parent categories often include subcategories that can cause incorrect sorting."
+              )}
             </span>
           </div>
           {editingSource ? (
@@ -808,9 +810,9 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
             >
               {saving
                 ? tr("Enregistrement...", "Saving...")
-                : manualMode
-                  ? tr("Ajouter manuellement", "Add manually")
-                  : tr("Ajouter l'indexeur", "Add indexer")}
+                  : manualMode
+                    ? tr("Ajouter manuellement", "Add manually")
+                  : tr("Ajouter l'indexeur", "Add Indexer")}
             </button>
           )}
         </div>
