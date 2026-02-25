@@ -463,7 +463,7 @@ public sealed class SettingsRepository
     {
         public string Protect(string plainText) => plainText;
         public string Unprotect(string protectedText) => protectedText;
-        public bool TryUnprotect(string protectedText, out string plainText)
+        public bool TryUnprotect(string protectedText, out string? plainText)
         {
             plainText = protectedText;
             return true;

@@ -41,10 +41,14 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading.RateLimiting;
 using Feedarr.Api.Services.Resilience;
+using Feedarr.Api.Services.Security;
 
 var builder = WebApplication.CreateBuilder(args);
 var enforceHttps = builder.Configuration.GetValue("App:Security:EnforceHttps", !builder.Environment.IsDevelopment());
 var emitSecurityHeaders = builder.Configuration.GetValue("App:Security:EmitSecurityHeaders", true);
+// Allows self-signed / invalid TLS certs for internal services (Sonarr, Radarr, Jackett, etc.).
+// SECURITY: leave false in production. Only enable on home-lab setups with self-signed certs.
+var allowInvalidCerts = builder.Configuration.GetValue("App:HttpClients:AllowInvalidCertificates", false);
 var statsRateLimitPermit = Math.Max(10, builder.Configuration.GetValue("App:RateLimit:Stats:PermitLimit", 120));
 var statsRateLimitWindowSeconds = Math.Clamp(builder.Configuration.GetValue("App:RateLimit:Stats:WindowSeconds", 60), 10, 3600);
 var globalRateLimitPermit = Math.Max(10, builder.Configuration.GetValue("App:RateLimit:Global:PermitLimit", 300));
@@ -138,6 +142,9 @@ builder.Services.AddSingleton<ArrLibraryRepository>();
 builder.Services.AddSingleton<MediaEntityRepository>();
 builder.Services.AddSingleton<MediaEntityArrStatusRepository>();
 
+// Maintenance lock — prevents concurrent execution of heavy SQLite operations
+builder.Services.AddSingleton<MaintenanceLockService>();
+
 // Services
 builder.Services.AddSingleton<BadgeSignal>();
 builder.Services.AddSingleton<ProviderStatsService>();
@@ -194,7 +201,9 @@ builder.Services.AddHttpClient<TorznabClient>(c =>
 {
     AllowAutoRedirect = true,
     MaxAutomaticRedirections = 5,
-    ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+    ServerCertificateCustomValidationCallback = allowInvalidCerts
+        ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+        : null
 });
 
 // TMDB
@@ -294,7 +303,9 @@ builder.Services.AddHttpClient<SonarrClient>(c =>
 {
     AllowAutoRedirect = true,
     MaxAutomaticRedirections = 5,
-    ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+    ServerCertificateCustomValidationCallback = allowInvalidCerts
+        ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+        : null
 }).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Radarr
@@ -306,7 +317,9 @@ builder.Services.AddHttpClient<RadarrClient>(c =>
 {
     AllowAutoRedirect = true,
     MaxAutomaticRedirections = 5,
-    ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+    ServerCertificateCustomValidationCallback = allowInvalidCerts
+        ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+        : null
 }).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Overseerr/Jellyseerr/Seer
@@ -318,7 +331,9 @@ builder.Services.AddHttpClient<EerrRequestClient>(c =>
 {
     AllowAutoRedirect = true,
     MaxAutomaticRedirections = 5,
-    ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+    ServerCertificateCustomValidationCallback = allowInvalidCerts
+        ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+        : null
 }).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Jackett — AllowAutoRedirect=false + ProtocolDowngradeRedirectHandler
@@ -330,7 +345,9 @@ builder.Services.AddHttpClient<JackettClient>(c =>
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
 {
     AllowAutoRedirect = false,
-    ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+    ServerCertificateCustomValidationCallback = allowInvalidCerts
+        ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+        : null
 }).AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
@@ -342,7 +359,9 @@ builder.Services.AddHttpClient<ProwlarrClient>(c =>
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
 {
     AllowAutoRedirect = false,
-    ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+    ServerCertificateCustomValidationCallback = allowInvalidCerts
+        ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+        : null
 }).AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
@@ -460,13 +479,53 @@ app.UseExceptionHandler(errApp =>
     errApp.Run(async context =>
     {
         var exceptionFeature = context.Features.Get<IExceptionHandlerFeature>();
-        if (exceptionFeature?.Error is Exception ex)
+        var ex = exceptionFeature?.Error;
+
+        var logger = context.RequestServices
+            .GetRequiredService<ILoggerFactory>()
+            .CreateLogger("Feedarr.GlobalExceptionHandler");
+
+        if (ex is ApiKeyDecryptionException decryptEx)
         {
-            var logger = context.RequestServices
-                .GetRequiredService<ILoggerFactory>()
-                .CreateLogger("Feedarr.GlobalExceptionHandler");
-            logger.LogError(ex, "Unhandled exception for {Method} {Path}", context.Request.Method, context.Request.Path);
+            // Route to 422 or 503 depending on whether the problem is a bad stored credential
+            // or an unavailable crypto subsystem (key ring files inaccessible).
+            var isCryptoInfra = decryptEx.Reason == DecryptionFailureReason.CryptoSubsystemUnavailable;
+
+            if (isCryptoInfra)
+            {
+                logger.LogError(decryptEx,
+                    "Crypto subsystem unavailable for {Method} {Path} – data/keys may be unreadable",
+                    context.Request.Method, context.Request.Path);
+            }
+            else
+            {
+                logger.LogError(decryptEx,
+                    "API key decryption failure for {Method} {Path} – stored credential is invalid",
+                    context.Request.Method, context.Request.Path);
+            }
+
+            context.Response.StatusCode = isCryptoInfra
+                ? StatusCodes.Status503ServiceUnavailable   // transient infra — retry may work
+                : StatusCodes.Status422UnprocessableEntity; // bad stored data — user must act
+
+            context.Response.ContentType = "application/json";
+            await context.Response.WriteAsJsonAsync(new
+            {
+                error = "api_key_decryption_failed",
+                reason = isCryptoInfra ? "crypto_subsystem_unavailable" : "invalid_stored_secret",
+                message = isCryptoInfra
+                    ? "The encryption subsystem is unavailable. " +
+                      "Ensure the data/keys directory is mounted and readable, then restart Feedarr."
+                    : "One or more API keys could not be decrypted. " +
+                      "The DataProtection key ring may have changed (new machine, Docker volume reset, " +
+                      "or backup restored from a different host). " +
+                      "Go to Settings → External Providers and re-enter the affected credentials."
+            });
+            return;
         }
+
+        if (ex is not null)
+            logger.LogError(ex, "Unhandled exception for {Method} {Path}", context.Request.Method, context.Request.Path);
 
         context.Response.StatusCode = StatusCodes.Status500InternalServerError;
         context.Response.ContentType = "application/json";
@@ -496,7 +555,37 @@ var _asm = typeof(Feedarr.Api.Controllers.CategoriesController).Assembly;
 var _buildTs = System.IO.File.GetLastWriteTimeUtc(_asm.Location).ToString("yyyy-MM-dd HH:mm:ss UTC");
 _startupLog.LogInformation("[BUILD] Feedarr.Api built={T} — CATS_STANDARDONLY_V2", _buildTs);
 
+if (allowInvalidCerts)
+{
+    _startupLog.LogWarning(
+        "[SECURITY] App:HttpClients:AllowInvalidCertificates = true — TLS certificate validation is DISABLED " +
+        "for internal HTTP clients (Torznab, Sonarr, Radarr, Arr, Jackett, Prowlarr). " +
+        "Only enable this on trusted home-lab networks with self-signed certificates.");
+}
+
 app.MapGet("/", () => Results.Text("Feedarr.Api OK"));
+
+// GET /health — liveness/readiness probe pour Docker/orchestrateurs.
+// Effectue un SELECT 1 sur la DB SQLite pour vérifier que la couche de données répond.
+app.MapGet("/health", (Db db, ILoggerFactory loggerFactory) =>
+{
+    var healthLog = loggerFactory.CreateLogger("Feedarr.Health");
+    try
+    {
+        using var conn = db.Open();
+        conn.ExecuteScalar<int>("SELECT 1;");
+        return Results.Ok(new { status = "up" });
+    }
+    catch (Exception ex)
+    {
+        healthLog.LogError(ex, "Health check failed – database is unavailable");
+        return Results.Problem(
+            detail: "database unavailable",
+            statusCode: StatusCodes.Status503ServiceUnavailable,
+            title: "service unavailable");
+    }
+});
+
 app.MapControllers();
 
 if (app.Environment.IsDevelopment())

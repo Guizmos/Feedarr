@@ -34,6 +34,7 @@ public sealed class MaintenanceController : ControllerBase
     private readonly IgdbClient _igdb;
     private readonly AppOptions _opts;
     private readonly IWebHostEnvironment _env;
+    private readonly MaintenanceLockService _maintenanceLock;
     private readonly ILogger<MaintenanceController> _log;
 
     private string DataDirAbs =>
@@ -54,6 +55,7 @@ public sealed class MaintenanceController : ControllerBase
         IgdbClient igdb,
         IOptions<AppOptions> opts,
         IWebHostEnvironment env,
+        MaintenanceLockService maintenanceLock,
         ILogger<MaintenanceController> log)
     {
         _db = db;
@@ -68,6 +70,7 @@ public sealed class MaintenanceController : ControllerBase
         _igdb = igdb;
         _opts = opts.Value;
         _env = env;
+        _maintenanceLock = maintenanceLock;
         _log = log;
     }
 
@@ -75,35 +78,47 @@ public sealed class MaintenanceController : ControllerBase
     [HttpPost("vacuum")]
     public IActionResult Vacuum()
     {
-        var dbPath = _db.DbPath;
-        if (!System.IO.File.Exists(dbPath))
-            return NotFound(new { error = "database not found" });
-
-        double sizeBefore = 0;
-        try { sizeBefore = Math.Round(new FileInfo(dbPath).Length / 1024d / 1024d, 2); }
-        catch (Exception ex) { _log.LogWarning(ex, "Failed to read DB size before VACUUM"); }
-
+        if (!_maintenanceLock.TryEnter())
+        {
+            _log.LogWarning("Vacuum rejected – a maintenance operation is already running");
+            return Conflict(new { error = "a maintenance operation is already running" });
+        }
         try
         {
-            using var conn = _db.Open();
-            conn.Execute("PRAGMA wal_checkpoint(TRUNCATE);");
-            conn.Execute("VACUUM;");
+            var dbPath = _db.DbPath;
+            if (!System.IO.File.Exists(dbPath))
+                return NotFound(new { error = "database not found" });
+
+            double sizeBefore = 0;
+            try { sizeBefore = Math.Round(new FileInfo(dbPath).Length / 1024d / 1024d, 2); }
+            catch (Exception ex) { _log.LogWarning(ex, "Failed to read DB size before VACUUM"); }
+
+            try
+            {
+                using var conn = _db.Open();
+                conn.Execute("PRAGMA wal_checkpoint(TRUNCATE);");
+                conn.Execute("VACUUM;");
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "VACUUM maintenance task failed");
+                return StatusCode(500, new { error = "internal server error" });
+            }
+
+            double sizeAfter = 0;
+            try { sizeAfter = Math.Round(new FileInfo(dbPath).Length / 1024d / 1024d, 2); }
+            catch (Exception ex) { _log.LogWarning(ex, "Failed to read DB size after VACUUM"); }
+
+            var saved = Math.Round(sizeBefore - sizeAfter, 2);
+            _activity.Add(null, "info", "maintenance", "Database optimized (VACUUM)",
+                dataJson: $"{{\"sizeBefore\":{sizeBefore},\"sizeAfter\":{sizeAfter},\"savedMB\":{saved}}}");
+
+            return Ok(new { ok = true, dbSizeBefore = sizeBefore, dbSizeAfter = sizeAfter, savedMB = saved });
         }
-        catch (Exception ex)
+        finally
         {
-            _log.LogError(ex, "VACUUM maintenance task failed");
-            return StatusCode(500, new { error = "internal server error" });
+            _maintenanceLock.Release();
         }
-
-        double sizeAfter = 0;
-        try { sizeAfter = Math.Round(new FileInfo(dbPath).Length / 1024d / 1024d, 2); }
-        catch (Exception ex) { _log.LogWarning(ex, "Failed to read DB size after VACUUM"); }
-
-        var saved = Math.Round(sizeBefore - sizeAfter, 2);
-        _activity.Add(null, "info", "maintenance", "Database optimized (VACUUM)",
-            dataJson: $"{{\"sizeBefore\":{sizeBefore},\"sizeAfter\":{sizeAfter},\"savedMB\":{saved}}}");
-
-        return Ok(new { ok = true, dbSizeBefore = sizeBefore, dbSizeAfter = sizeAfter, savedMB = saved });
     }
 
     // POST /api/maintenance/purge-logs
@@ -386,6 +401,11 @@ public sealed class MaintenanceController : ControllerBase
     [HttpPost("detect-duplicates")]
     public IActionResult DetectDuplicates([FromQuery] bool purge = false)
     {
+        if (!_maintenanceLock.TryEnter())
+        {
+            _log.LogWarning("DetectDuplicates rejected – a maintenance operation is already running");
+            return Conflict(new { error = "a maintenance operation is already running" });
+        }
         try
         {
             var result = _releases.DetectDuplicates();
@@ -405,12 +425,21 @@ public sealed class MaintenanceController : ControllerBase
             _log.LogError(ex, "Duplicate detection maintenance task failed");
             return StatusCode(500, new { error = "internal server error" });
         }
+        finally
+        {
+            _maintenanceLock.Release();
+        }
     }
 
     // POST /api/maintenance/reprocess-categories
     [HttpPost("reprocess-categories")]
     public IActionResult ReprocessCategories()
     {
+        if (!_maintenanceLock.TryEnter())
+        {
+            _log.LogWarning("ReprocessCategories rejected – a maintenance operation is already running");
+            return Conflict(new { error = "a maintenance operation is already running" });
+        }
         try
         {
             var (processed, updated, markedRebind) = _releases.ReprocessCategories();
@@ -425,6 +454,10 @@ public sealed class MaintenanceController : ControllerBase
             _log.LogError(ex, "Reprocess categories maintenance task failed");
             return StatusCode(500, new { error = "internal server error" });
         }
+        finally
+        {
+            _maintenanceLock.Release();
+        }
     }
 
     // POST /api/maintenance/rebind-entities?batchSize=200
@@ -433,6 +466,11 @@ public sealed class MaintenanceController : ControllerBase
     [HttpPost("rebind-entities")]
     public IActionResult RebindEntities([FromQuery] int batchSize = 200)
     {
+        if (!_maintenanceLock.TryEnter())
+        {
+            _log.LogWarning("RebindEntities rejected – a maintenance operation is already running");
+            return Conflict(new { error = "a maintenance operation is already running" });
+        }
         try
         {
             var (processed, rebound) = _releases.RebindEntities(batchSize);
@@ -446,6 +484,10 @@ public sealed class MaintenanceController : ControllerBase
         {
             _log.LogError(ex, "Rebind entities maintenance task failed");
             return StatusCode(500, new { error = "internal server error" });
+        }
+        finally
+        {
+            _maintenanceLock.Release();
         }
     }
 }

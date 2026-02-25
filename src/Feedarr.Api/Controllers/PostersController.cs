@@ -37,6 +37,7 @@ public sealed class PostersController : ControllerBase
     private readonly RawgClient _rawg;
     private readonly ComicVineClient _comicVine;
     private readonly MusicBrainzClient _musicBrainz;
+    private readonly ILogger<PostersController> _log;
 
     public PostersController(
         ReleaseRepository releases,
@@ -54,7 +55,8 @@ public sealed class PostersController : ControllerBase
         OpenLibraryClient openLibrary,
         RawgClient rawg,
         ComicVineClient comicVine,
-        MusicBrainzClient musicBrainz)
+        MusicBrainzClient musicBrainz,
+        ILogger<PostersController> log)
     {
         _releases = releases;
         _mediaEntities = mediaEntities;
@@ -72,6 +74,7 @@ public sealed class PostersController : ControllerBase
         _rawg = rawg;
         _comicVine = comicVine;
         _musicBrainz = musicBrainz;
+        _log = log;
     }
 
     // GET /api/posters/release/{id}
@@ -808,14 +811,71 @@ public sealed class PostersController : ControllerBase
     [HttpGet("retro-fetch/log/{file}")]
     public IActionResult DownloadRetroFetchLog([FromRoute] string file)
     {
-        var full = _retroLogs.ResolveLogPath(file);
+        // Defense-in-depth: validate input in the controller before delegating to the service.
+
+        if (string.IsNullOrWhiteSpace(file))
+            return BadRequest(new { error = "invalid log file name" });
+
+        // Reject absolute paths immediately (e.g. "/etc/passwd", "C:\\Windows\\...").
+        if (Path.IsPathRooted(file))
+        {
+            _log.LogWarning("DownloadRetroFetchLog: rejected absolute path – value={File}", SanitizeForLog(file));
+            return StatusCode(403, new { error = "invalid log file name" });
+        }
+
+        // Belt-and-suspenders: reject path separators explicitly before GetFileName.
+        // Covers both OS-native separators and any literal slash passed through routing.
+        if (file.Contains('/') || file.Contains('\\'))
+        {
+            _log.LogWarning("DownloadRetroFetchLog: rejected separator in filename – value={File}", SanitizeForLog(file));
+            return StatusCode(403, new { error = "invalid log file name" });
+        }
+
+        // Strip to filename only (no trim — raw input must already be a plain filename).
+        // If any separator survived the check above, Path.GetFileName would produce a
+        // different string and the Ordinal comparison below would reject it.
+        var safeFileName = Path.GetFileName(file);
+        if (string.IsNullOrWhiteSpace(safeFileName))
+            return BadRequest(new { error = "invalid log file name" });
+
+        if (!string.Equals(safeFileName, file, StringComparison.Ordinal))
+        {
+            _log.LogWarning(
+                "DownloadRetroFetchLog: rejected path-traversal attempt – raw={File} sanitized={Safe}",
+                SanitizeForLog(file), SanitizeForLog(safeFileName));
+            return StatusCode(403, new { error = "invalid log file name" });
+        }
+
+        // Extension whitelist: RetroFetchLogService only ever writes .csv files.
+        // Extend this list only if new log formats are added to that service.
+        if (!safeFileName.EndsWith(".csv", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { error = "invalid log file type: only .csv files are allowed" });
+
+        // Delegate path resolution to the service (also applies Path.GetFileName + extension check).
+        var full = _retroLogs.ResolveLogPath(safeFileName);
         if (string.IsNullOrWhiteSpace(full))
             return BadRequest(new { error = "invalid log file" });
+
+        // Final containment check: canonical absolute path must sit inside the logs directory.
+        var logsDirAbs = Path.GetFullPath(_retroLogs.LogsDirPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        var resolvedAbs = Path.GetFullPath(full);
+        if (!resolvedAbs.StartsWith(logsDirAbs, StringComparison.OrdinalIgnoreCase))
+        {
+            // Log the safe filename only — never expose full resolved paths in log output.
+            _log.LogWarning(
+                "DownloadRetroFetchLog: resolved path for {File} is outside logs directory",
+                SanitizeForLog(safeFileName));
+            return StatusCode(403, new { error = "invalid log file path" });
+        }
 
         if (!System.IO.File.Exists(full))
             return NotFound();
 
-        return PhysicalFile(full, "text/csv", Path.GetFileName(full));
+        // Audit log: safe filename only, control characters stripped.
+        _log.LogInformation("DownloadRetroFetchLog: serving {File}", SanitizeForLog(safeFileName));
+        return PhysicalFile(full, "text/csv", safeFileName);
     }
 
     private static string? InferIgdbSize(string coverUrl)
@@ -858,4 +918,12 @@ public sealed class PostersController : ControllerBase
 
         return (null, raw);
     }
+
+    /// <summary>
+    /// Strips ASCII control characters (CR, LF, TAB) from a value before it is written to
+    /// a log, preventing log-injection attacks that could forge or split log lines.
+    /// Full paths are never passed here — only filenames.
+    /// </summary>
+    private static string SanitizeForLog(string value)
+        => value.Replace('\r', ' ').Replace('\n', ' ').Replace('\t', ' ');
 }

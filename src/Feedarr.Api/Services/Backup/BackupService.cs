@@ -186,6 +186,74 @@ public sealed class BackupService
         });
     }
 
+    /// <summary>
+    /// Dry-run: validates the backup archive and analyses which credentials would be re-encrypted
+    /// or cleared, WITHOUT applying any changes to the live database.
+    /// Safe to call without <see cref="confirm"/> parameter.
+    /// </summary>
+    public BackupRestorePreview PreviewRestoreBackup(string name, string currentAppVersion)
+    {
+        EnsureRestartNotRequired();
+
+        // Preview is read-only on a temp extract — no coordinator lock needed.
+        var (_, backupPath) = GetExistingBackupFile(name);
+        var operationId = Guid.NewGuid().ToString("N");
+        var workDir = Path.Combine(BackupDirAbs, $"preview-{operationId}");
+        var extractedDbPath = Path.Combine(workDir, "preview.db");
+
+        Directory.CreateDirectory(workDir);
+
+        try
+        {
+            using var archive = ZipFile.OpenRead(backupPath);
+            if (!_validation.TryValidateArchiveForRestore(
+                    archive,
+                    _opts.DbFileName,
+                    currentAppVersion,
+                    out var dbEntryName,
+                    out _,
+                    out var validationError))
+            {
+                throw new BackupOperationException(validationError, StatusCodes.Status400BadRequest);
+            }
+
+            var dbEntry = archive.GetEntry(dbEntryName);
+            if (dbEntry is null)
+                throw new BackupOperationException("backup database missing", StatusCodes.Status400BadRequest);
+
+            ExtractEntryControlled(dbEntry, extractedDbPath);
+            VerifySqliteIntegrity(extractedDbPath);
+
+            var (wouldReencrypt, wouldClear) = AnalyzeRestoredCredentials(extractedDbPath);
+
+            _logger.LogInformation(
+                "Backup preview for {Name}: wouldReencrypt={Re} wouldClear={Clear}",
+                name, wouldReencrypt, wouldClear);
+
+            return new BackupRestorePreview
+            {
+                WouldReencrypt = wouldReencrypt,
+                WouldClear = wouldClear
+            };
+        }
+        catch (BackupOperationException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Backup preview failed for {BackupName}", name);
+            throw new BackupOperationException(
+                ErrorMessageSanitizer.ToOperationalMessage(ex, "backup preview failed"),
+                ex);
+        }
+        finally
+        {
+            TryDeleteFile(extractedDbPath);
+            TryDeleteDirectory(workDir);
+        }
+    }
+
     public BackupRestoreResult RestoreBackup(string name, string currentAppVersion)
     {
         EnsureRestartNotRequired();
@@ -637,7 +705,7 @@ public sealed class BackupService
 
             if (_apiKeyProtection.IsProtected(currentValue))
             {
-                if (_apiKeyProtection.TryUnprotect(currentValue, out var plainText))
+                if (_apiKeyProtection.TryUnprotect(currentValue, out var plainText) && plainText is not null)
                 {
                     var reprotected = _apiKeyProtection.Protect(plainText);
                     if (!string.Equals(reprotected, currentValue, StringComparison.Ordinal))
@@ -755,4 +823,99 @@ public sealed class BackupService
     {
         public static CredentialRestoreReport Empty => new(0, 0);
     }
+
+    /// <summary>
+    /// Analyses credentials in an extracted (temporary) database without writing anything.
+    /// Opens the DB in ReadWrite mode on the temp file, runs the same column inspection logic
+    /// as <see cref="NormalizeRestoredCredentials"/> but rolls back the transaction — so the
+    /// temp file is left unchanged and zero changes reach the live database.
+    /// </summary>
+    private (int WouldReencrypt, int WouldClear) AnalyzeRestoredCredentials(string dbPath)
+    {
+        var cs = new SqliteConnectionStringBuilder
+        {
+            DataSource = dbPath,
+            Mode = SqliteOpenMode.ReadWrite,
+            Pooling = false
+        }.ToString();
+
+        using var conn = new SqliteConnection(cs);
+        conn.Open();
+
+        // Use a transaction so we can inspect rows with the same logic as NormalizeCredentialsColumn,
+        // but rollback at the end — no actual changes are committed.
+        using var tx = conn.BeginTransaction();
+
+        var wouldReencrypt = 0;
+        var wouldClear = 0;
+
+        AnalyzeCredentialsColumn(conn, tx, "sources", "api_key", ref wouldReencrypt, ref wouldClear);
+        AnalyzeCredentialsColumn(conn, tx, "providers", "api_key", ref wouldReencrypt, ref wouldClear);
+        AnalyzeCredentialsColumn(conn, tx, "arr_applications", "api_key_encrypted", ref wouldReencrypt, ref wouldClear);
+
+        tx.Rollback(); // Nothing persisted — temp file remains unmodified.
+        return (wouldReencrypt, wouldClear);
+    }
+
+    private void AnalyzeCredentialsColumn(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        string table,
+        string column,
+        ref int wouldReencrypt,
+        ref int wouldClear)
+    {
+        if (!ColumnExists(conn, tx, table, column))
+            return;
+
+        var tableSql = QuoteIdentifier(table);
+        var columnSql = QuoteIdentifier(column);
+
+        var selectSql = $"""
+            SELECT {columnSql} AS value
+            FROM {tableSql}
+            WHERE {columnSql} IS NOT NULL
+              AND TRIM({columnSql}) <> '';
+            """;
+
+        var values = conn.Query<string>(selectSql, transaction: tx).ToList();
+
+        foreach (var currentValue in values)
+        {
+            if (string.IsNullOrWhiteSpace(currentValue))
+                continue;
+
+            if (_apiKeyProtection.IsProtected(currentValue))
+            {
+                if (_apiKeyProtection.TryUnprotect(currentValue, out var plainText) && plainText is not null)
+                {
+                    var reprotected = _apiKeyProtection.Protect(plainText);
+                    if (!string.Equals(reprotected, currentValue, StringComparison.Ordinal))
+                        wouldReencrypt++;
+                }
+                else
+                {
+                    wouldClear++;
+                }
+            }
+            else
+            {
+                // Plain-text credential — would be re-encrypted during actual restore.
+                wouldReencrypt++;
+            }
+        }
+    }
+}
+
+/// <summary>Result of a dry-run backup restore preview.</summary>
+public sealed class BackupRestorePreview
+{
+    /// <summary>Number of credentials that would be re-encrypted with the current key ring.</summary>
+    public int WouldReencrypt { get; init; }
+
+    /// <summary>
+    /// Number of credentials that could NOT be decrypted and would be cleared (set to empty)
+    /// if the restore proceeded. Requires user confirmation before applying.
+    /// </summary>
+    public int WouldClear { get; init; }
 }

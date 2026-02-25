@@ -38,8 +38,11 @@ public sealed class SystemController : ControllerBase
     private static readonly TimeSpan StatsCacheDuration = TimeSpan.FromSeconds(20);
     private const string StorageUsageCacheKey = "system:storage-usage:v1";
     private static readonly object StorageRefreshLock = new();
-    private static Task? StorageRefreshTask;
-    private static StorageUsageSnapshot LastKnownStorageUsage = new(0, 0, 0, 0, 0, 0);
+    private static readonly TimeSpan StorageScanCooldown = TimeSpan.FromSeconds(30);
+    private static Task<StorageUsageSnapshot>? _storageScanTask;
+    private static DateTime _lastStorageScanStartedUtc = DateTime.MinValue;
+    private static volatile bool _storageScanEverSucceeded;
+    private static StorageUsageSnapshot _lastKnownStorageUsage = new(0, 0, 0, 0, 0, 0);
 
     private readonly Db _db;
     private readonly IWebHostEnvironment _env;
@@ -277,16 +280,51 @@ public sealed class SystemController : ControllerBase
         }
     }
 
-    // POST /api/system/backups/{name}/restore
+    // POST /api/system/backups/{name}/restore?confirm=false
+    //
+    // confirm=false (default): dry-run preview — validates the archive and reports which credentials
+    //   would be re-encrypted or cleared, WITHOUT touching the live database.
+    //   Response: { dryRun: true, wouldReencrypt: N, wouldClear: N }
+    //
+    // confirm=true: performs the actual restore. If wouldClear > 0, the caller MUST have passed
+    //   confirm=true explicitly, acknowledging that some credentials will be erased.
+    //   Response: { ok: true, needsRestart: true, reencryptedCredentials: N, clearedUndecryptableCredentials: N }
     [HttpPost("backups/{name}/restore")]
-    public IActionResult RestoreBackup([FromRoute] string name)
+    public IActionResult RestoreBackup([FromRoute] string name, [FromQuery] bool confirm = false)
     {
         try
         {
+            if (!confirm)
+            {
+                // Dry-run: return a preview without modifying anything.
+                var preview = _backupService.PreviewRestoreBackup(name, GetAppVersion());
+
+                var previewWarning = preview.WouldClear > 0
+                    ? $"{preview.WouldClear} credential(s) could not be decrypted with the current key ring " +
+                      "and would be permanently cleared. Pass confirm=true to proceed."
+                    : null;
+
+                return Ok(new
+                {
+                    dryRun = true,
+                    wouldReencrypt = preview.WouldReencrypt,
+                    wouldClear = preview.WouldClear,
+                    warning = previewWarning
+                });
+            }
+
+            // Actual restore.
             var result = _backupService.RestoreBackup(name, GetAppVersion());
+
             var warning = result.ClearedUndecryptableCredentials > 0
-                ? "Certaines clés API chiffrées n'ont pas pu être déchiffrées et ont été supprimées."
+                ? $"{result.ClearedUndecryptableCredentials} credential(s) could not be decrypted " +
+                  "and were cleared. Reconfigure them in Settings → External Providers."
                 : null;
+
+            if (result.ClearedUndecryptableCredentials > 0)
+                _log.LogWarning(
+                    "RestoreBackup {Name}: {Cleared} credential(s) cleared – key ring mismatch",
+                    name, result.ClearedUndecryptableCredentials);
 
             return Ok(new
             {
@@ -1022,43 +1060,78 @@ public sealed class SystemController : ControllerBase
 
     private StorageUsageSnapshot GetStorageUsageSnapshot()
     {
+        // Hot path: unexpired cached value.
         if (_cache.TryGetValue(StorageUsageCacheKey, out StorageUsageSnapshot? cached) && cached is not null)
             return cached;
 
-        StartStorageUsageRefresh();
+        // Volatile read — safe without a lock (_storageScanEverSucceeded is volatile).
+        var hasStale = _storageScanEverSucceeded;
 
-        // Return last known snapshot (or zeros) while background refresh runs.
-        // This avoids multiple concurrent requests each doing an expensive disk scan.
+        Task<StorageUsageSnapshot>? task;
         lock (StorageRefreshLock)
-        {
-            return LastKnownStorageUsage;
-        }
+            task = EnsureStorageScanRunning();
+
+        // Stale-while-revalidate: return the last known snapshot immediately while the
+        // background refresh runs — callers never block after the first successful scan.
+        if (hasStale)
+            return Volatile.Read(ref _lastKnownStorageUsage);
+
+        // First scan ever: wait up to 5 s so callers get a real value on startup.
+        // All concurrent first-callers share the same in-flight Task — true single-flight.
+        if (task is not null && task.Wait(TimeSpan.FromSeconds(5)))
+            return task.Result;
+
+        // Timed out or cooldown active with no prior data — return zeros.
+        return Volatile.Read(ref _lastKnownStorageUsage);
     }
 
-    private void StartStorageUsageRefresh()
+    /// <summary>
+    /// Decides whether to start a new storage scan. Must be called inside
+    /// <see cref="StorageRefreshLock"/>. Three rules, in priority order:
+    ///   a) Scan already in flight  → reuse the existing Task (single-flight).
+    ///   b) Cooldown not yet elapsed → do not start; return current task reference (may be
+    ///      a completed task — first-callers can still read its result).
+    ///   c) Otherwise               → start a new Task and record the start timestamp.
+    /// </summary>
+    private Task<StorageUsageSnapshot>? EnsureStorageScanRunning()
     {
-        lock (StorageRefreshLock)
-        {
-            if (StorageRefreshTask is not null && !StorageRefreshTask.IsCompleted)
-                return;
+        // a) In-flight — share the existing task.
+        if (_storageScanTask is not null && !_storageScanTask.IsCompleted)
+            return _storageScanTask;
 
-            StorageRefreshTask = Task.Run(() =>
+        // b) Cooldown — avoid spamming scans on every cache-miss request.
+        if (DateTime.UtcNow - _lastStorageScanStartedUtc < StorageScanCooldown)
+            return _storageScanTask; // may be a completed task or null
+
+        // c) Start a new scan.
+        _lastStorageScanStartedUtc = DateTime.UtcNow;
+        _storageScanTask = Task.Run(RunStorageScan);
+        return _storageScanTask;
+    }
+
+    private StorageUsageSnapshot RunStorageScan()
+    {
+        try
+        {
+            var snapshot = ComputeStorageUsageSnapshot();
+
+            // Writes under the lock: Monitor.Exit provides a release fence, ensuring that
+            // any thread reading _lastKnownStorageUsage with Volatile.Read (acquire fence)
+            // after seeing _storageScanEverSucceeded == true is guaranteed to see the
+            // new snapshot — no torn read, no stale reference on any supported platform.
+            lock (StorageRefreshLock)
             {
-                try
-                {
-                    var snapshot = ComputeStorageUsageSnapshot();
-                    lock (StorageRefreshLock)
-                    {
-                        LastKnownStorageUsage = snapshot;
-                        // snapshot available for subsequent requests
-                    }
-                    _cache.Set(StorageUsageCacheKey, snapshot, StorageUsageCacheDuration);
-                }
-                catch (Exception ex)
-                {
-                    _log.LogWarning(ex, "Background storage usage refresh failed");
-                }
-            });
+                _lastKnownStorageUsage = snapshot;
+                _storageScanEverSucceeded = true;
+                _cache.Set(StorageUsageCacheKey, snapshot, StorageUsageCacheDuration);
+            }
+
+            return snapshot;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Background storage usage refresh failed");
+            return Volatile.Read(ref _lastKnownStorageUsage);
         }
     }
 

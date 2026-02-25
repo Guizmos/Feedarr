@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.DataProtection;
 
 namespace Feedarr.Api.Services.Security;
@@ -13,18 +14,31 @@ public interface IApiKeyProtectionService
     string Protect(string plainText);
 
     /// <summary>
-    /// Déchiffre une clé API chiffrée.
-    /// Retourne la valeur originale si le déchiffrement échoue (clé non chiffrée).
+    /// Déchiffre une clé API.
+    /// - Valeur sans préfixe ENC: → retournée telle quelle (compatibilité pré-chiffrement).
+    /// - Valeur avec préfixe ENC: → déchiffrée; si le déchiffrement échoue, lève
+    ///   <see cref="ApiKeyDecryptionException"/> (ne retourne JAMAIS la valeur chiffrée en clair).
     /// </summary>
+    /// <exception cref="ApiKeyDecryptionException">
+    /// La valeur a le préfixe ENC: mais le déchiffrement a échoué (key ring changé, backup
+    /// restauré d'une autre machine, clés DataProtection perdues).
+    /// </exception>
     string Unprotect(string protectedText);
 
     /// <summary>
-    /// Tente de déchiffrer une valeur protégée.
+    /// Tente de déchiffrer une valeur protégée sans lever d'exception.
+    /// À utiliser quand l'échec est gérable (ex. : backup restore preview, analyse).
+    ///
+    /// Garanties :
+    ///   - Retourne <c>true</c>  → <paramref name="plainText"/> est la valeur déchiffrée (non null, non ENC:).
+    ///   - Retourne <c>false</c> → <paramref name="plainText"/> est <c>null</c> — ne jamais l'utiliser.
+    ///
+    /// Ne retourne JAMAIS la valeur <c>ENC:…</c> dans <paramref name="plainText"/>.
     /// </summary>
-    bool TryUnprotect(string protectedText, out string plainText);
+    bool TryUnprotect(string protectedText, out string? plainText);
 
     /// <summary>
-    /// Vérifie si une valeur est déjà chiffrée.
+    /// Vérifie si une valeur est déjà chiffrée (préfixe ENC:).
     /// </summary>
     bool IsProtected(string value);
 }
@@ -72,23 +86,71 @@ public sealed class ApiKeyProtectionService : IApiKeyProtectionService
 
     public string Unprotect(string protectedText)
     {
-        if (TryUnprotect(protectedText, out var plainText))
-            return plainText;
+        if (string.IsNullOrEmpty(protectedText))
+            return protectedText;
 
-        // Si le déchiffrement échoue, on retourne la valeur originale pour préserver la compatibilité.
-        return protectedText;
+        // Valeur sans préfixe ENC: → donnée en clair (compatibilité pré-migration).
+        if (!IsProtected(protectedText))
+            return protectedText;
+
+        // Valeur chiffrée → le déchiffrement DOIT réussir. Tout échec est fatal : retourner la
+        // valeur chiffrée en clair serait une fuite de sécurité et pire, une clé invalide envoyée
+        // à l'API externe.
+        try
+        {
+            var encrypted = protectedText[ProtectedPrefix.Length..];
+            return _protector.Unprotect(encrypted);
+        }
+        catch (Exception ex)
+        {
+            // Distinguish infra failures (503 — may be transient) from credential corruption
+            // (422 — requires user action to reconfigure the stored secret).
+            var reason = ClassifyDecryptionException(ex);
+
+            if (reason == DecryptionFailureReason.CryptoSubsystemUnavailable)
+            {
+                _logger.LogError(ex,
+                    "Le sous-système cryptographique est indisponible (key ring inaccessible). " +
+                    "Vérifiez que le répertoire data/keys est monté et accessible.");
+            }
+            else
+            {
+                _logger.LogError(ex,
+                    "Échec du déchiffrement d'une clé API (préfixe ENC: présent). " +
+                    "Le key ring DataProtection a probablement changé (nouveau volume Docker, " +
+                    "restauration de backup depuis une autre machine, suppression de data/keys). " +
+                    "La clé doit être reconfigurée dans Paramètres → Fournisseurs externes.");
+            }
+
+            throw new ApiKeyDecryptionException(
+                reason == DecryptionFailureReason.CryptoSubsystemUnavailable
+                    ? "The cryptographic subsystem is unavailable. " +
+                      "Check that the data/keys directory is mounted and accessible."
+                    : "An API key could not be decrypted. " +
+                      "The DataProtection key ring may have changed. " +
+                      "Reconfigure the credential in Settings → External Providers.",
+                ex,
+                reason);
+        }
     }
 
-    public bool TryUnprotect(string protectedText, out string plainText)
+    public bool TryUnprotect(string protectedText, out string? plainText)
     {
-        plainText = protectedText;
+        // Null / vide → succès trivial, pas de déchiffrement nécessaire.
         if (string.IsNullOrEmpty(protectedText))
+        {
+            plainText = protectedText;
             return true;
+        }
 
-        // Si pas chiffrée (pas de préfixe), retourner telle quelle
+        // Valeur sans préfixe ENC: → déjà en clair, retourner telle quelle.
         if (!IsProtected(protectedText))
+        {
+            plainText = protectedText;
             return true;
+        }
 
+        // Valeur ENC: → tentative de déchiffrement, sans lancer d'exception.
         try
         {
             var encrypted = protectedText[ProtectedPrefix.Length..];
@@ -97,8 +159,12 @@ public sealed class ApiKeyProtectionService : IApiKeyProtectionService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Échec du déchiffrement d'une clé API protégée");
-            plainText = protectedText;
+            _logger.LogWarning(ex,
+                "TryUnprotect: échec du déchiffrement d'une clé API protégée (non fatal – " +
+                "utilisé en contexte d'analyse ou de preview)");
+            // On NE retourne PAS la valeur chiffrée ni string.Empty :
+            // null signale clairement "pas de valeur utilisable".
+            plainText = null;
             return false;
         }
     }
@@ -106,5 +172,37 @@ public sealed class ApiKeyProtectionService : IApiKeyProtectionService
     public bool IsProtected(string value)
     {
         return !string.IsNullOrEmpty(value) && value.StartsWith(ProtectedPrefix);
+    }
+
+    /// <summary>
+    /// Classifies a decryption exception to distinguish a corrupt credential (422)
+    /// from a key-ring infrastructure failure (503).
+    ///
+    /// Heuristics:
+    ///   - IOException / UnauthorizedAccessException → key files unreadable → 503
+    ///   - InvalidOperationException "key ring" / "no key"   → key ring not loaded → 503
+    ///   - CryptographicException, FormatException, others  → bad ciphertext → 422
+    /// </summary>
+    private static DecryptionFailureReason ClassifyDecryptionException(Exception ex)
+    {
+        // Walk inner exceptions to find the root cause.
+        for (var current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is IOException or UnauthorizedAccessException)
+                return DecryptionFailureReason.CryptoSubsystemUnavailable;
+
+            // ASP.NET Core DataProtection throws InvalidOperationException when no keys exist.
+            if (current is InvalidOperationException)
+            {
+                var msg = current.Message;
+                if (msg.Contains("key", StringComparison.OrdinalIgnoreCase) ||
+                    msg.Contains("ring", StringComparison.OrdinalIgnoreCase) ||
+                    msg.Contains("protect", StringComparison.OrdinalIgnoreCase))
+                    return DecryptionFailureReason.CryptoSubsystemUnavailable;
+            }
+        }
+
+        // CryptographicException, FormatException, ArgumentException → corrupt ciphertext → 422.
+        return DecryptionFailureReason.InvalidStoredSecret;
     }
 }
