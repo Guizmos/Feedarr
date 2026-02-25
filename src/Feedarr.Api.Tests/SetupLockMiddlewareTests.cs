@@ -12,8 +12,10 @@ namespace Feedarr.Api.Tests;
 
 public sealed class SetupLockMiddlewareTests
 {
-    [Fact]
-    public async Task WithoutSetup_GetRoot_Returns403WithSetupRequired()
+    [Theory]
+    [InlineData("/")]
+    [InlineData("/library")]
+    public async Task WithoutSetup_BrowserRoutes_RedirectToSetup(string path)
     {
         using var workspace = new TestWorkspace();
         var db = CreateDb(workspace);
@@ -31,7 +33,41 @@ public sealed class SetupLockMiddlewareTests
         });
 
         var context = new DefaultHttpContext();
-        context.Request.Path = "/";
+        context.Request.Path = path;
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(
+            context,
+            settings,
+            cache,
+            setupState,
+            NullLogger<BasicAuthMiddleware>.Instance);
+
+        Assert.False(nextCalled);
+        Assert.Equal(StatusCodes.Status302Found, context.Response.StatusCode);
+        Assert.Equal("/setup", context.Response.Headers.Location.ToString());
+    }
+
+    [Fact]
+    public async Task WithoutSetup_ApiRoute_Returns403WithSetupRequiredJson()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var settings = new SettingsRepository(db);
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        var setupState = new SetupStateService(settings, cache);
+
+        var nextCalled = false;
+        var middleware = new BasicAuthMiddleware(_ =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        });
+
+        var context = new DefaultHttpContext();
+        context.Request.Path = "/api/something";
         context.Response.Body = new MemoryStream();
 
         await middleware.InvokeAsync(
@@ -43,16 +79,19 @@ public sealed class SetupLockMiddlewareTests
 
         Assert.False(nextCalled);
         Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+        Assert.StartsWith("application/json", context.Response.ContentType ?? string.Empty, StringComparison.OrdinalIgnoreCase);
 
         context.Response.Body.Position = 0;
         using var reader = new StreamReader(context.Response.Body);
         var body = await reader.ReadToEndAsync();
+        Assert.Contains("setup_required", body, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Setup required", body, StringComparison.Ordinal);
     }
 
     [Theory]
     [InlineData("/setup")]
     [InlineData("/health")]
+    [InlineData("/api/health")]
     [InlineData("/assets/main.js")]
     public async Task WithoutSetup_SetupAndHealthAndAssets_AreAccessible(string path)
     {

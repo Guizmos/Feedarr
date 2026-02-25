@@ -469,7 +469,7 @@ if (emitSecurityHeaders)
                 "default-src 'self'; " +
                 "script-src 'self' 'sha256-xJMtJybfJiXqQTAxXQOlOZvL1dMOajZ39gyMoArS5Ck='; " +
                 "style-src 'self' 'unsafe-inline'; " +
-                "img-src 'self' data: blob:; " +
+                "img-src 'self' data: blob: https:; " +
                 "font-src 'self'; " +
                 "connect-src 'self'; " +
                 "worker-src 'self'; " +

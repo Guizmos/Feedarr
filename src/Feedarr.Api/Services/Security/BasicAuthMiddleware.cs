@@ -44,7 +44,7 @@ public sealed class BasicAuthMiddleware
                 "Request rejected by setup lock for {Method} {Path}",
                 context.Request.Method,
                 context.Request.Path.Value ?? "/");
-            await RejectSetupRequired(context);
+            await HandleSetupLockRejection(context);
             return;
         }
 
@@ -93,7 +93,20 @@ public sealed class BasicAuthMiddleware
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
     }
 
-    private static Task RejectSetupRequired(HttpContext context)
+    private static Task HandleSetupLockRejection(HttpContext context)
+    {
+        var path = context.Request.Path.Value ?? "";
+        if (!string.IsNullOrWhiteSpace(path) &&
+            path.StartsWith("/api", StringComparison.OrdinalIgnoreCase))
+        {
+            return RejectSetupRequiredApi(context);
+        }
+
+        context.Response.Redirect("/setup", permanent: false);
+        return Task.CompletedTask;
+    }
+
+    private static Task RejectSetupRequiredApi(HttpContext context)
     {
         context.Response.StatusCode = StatusCodes.Status403Forbidden;
         context.Response.ContentType = "application/json";
