@@ -72,6 +72,7 @@ public sealed class SystemController : ControllerBase
     }
 
     [HttpGet("status")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult Status([FromQuery] long? releasesSinceTs = null)
     {
         using var conn = _db.Open();
@@ -132,6 +133,7 @@ public sealed class SystemController : ControllerBase
 
     // GET /api/system/providers
     [HttpGet("providers")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult Providers()
     {
         var stats = _providerStats.SnapshotByProvider();
@@ -140,6 +142,7 @@ public sealed class SystemController : ControllerBase
 
     // GET /api/system/perf
     [HttpGet("perf")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult Performance([FromQuery] int top = 20)
     {
         return Ok(_apiRequestMetrics.Snapshot(top));
@@ -147,6 +150,7 @@ public sealed class SystemController : ControllerBase
 
     // GET /api/system/onboarding
     [HttpGet("onboarding")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult Onboarding()
     {
         using var conn = _db.Open();
@@ -880,6 +884,7 @@ public sealed class SystemController : ControllerBase
 
     // GET /api/system/storage
     [HttpGet("storage")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult Storage()
     {
         var volumes = new List<DiskVolumeDto>();
