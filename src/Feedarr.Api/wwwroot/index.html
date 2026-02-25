@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="application-name" content="Feedarr" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Feedarr" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="theme-color" content="#2493b5" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/favicon-ios.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Feedarr</title>
+    <script type="module" crossorigin src="/assets/index-C6BMTWfr.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/vendor-react-B6j9w5IJ.js">
+    <link rel="modulepreload" crossorigin href="/assets/vendor-router-DbNMZja2.js">
+    <link rel="modulepreload" crossorigin href="/assets/vendor-icons-CUZlM7O3.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-JyJ3ejm-.css">
+  </head>
+  <body>
+    <script>
+      (function() {
+        var theme = localStorage.getItem('feedarr-theme') || 'system';
+        var resolved = theme;
+        if (theme === 'system') {
+          resolved = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        var root = document.documentElement;
+        root.setAttribute('data-theme', resolved);
+
+        var metaTheme = document.querySelector('meta[name="theme-color"]');
+        if (metaTheme) {
+          metaTheme.setAttribute('content', resolved === 'dark' ? '#2a2a2a' : '#2493b5');
+        }
+
+        var isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+          || window.navigator.standalone === true;
+        if (isStandalone) {
+          root.classList.add('display-mode-standalone');
+        }
+      })();
+    </script>
+    <div id="root"></div>
+  </body>
+</html>

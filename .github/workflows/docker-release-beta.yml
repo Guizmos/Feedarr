@@ -26,11 +26,6 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
       - name: Resolve app version (beta from git tag)
         id: app_version
         shell: bash
@@ -53,44 +48,25 @@ jobs:
           echo "version=${BASE_VERSION}-beta-sha.${SHA7}" >> "$GITHUB_OUTPUT"
           echo "docker_tag=beta-${SHA7}" >> "$GITHUB_OUTPUT"
 
-      - name: Docker meta (api)
-        id: meta_api
+      - name: Docker meta
+        id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/feedarr-api
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/feedarr
           tags: |
             type=raw,value=beta
             type=raw,value=${{ steps.app_version.outputs.docker_tag }}
 
-      - name: Build & push (api)
+      - name: Build & push
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta_api.outputs.tags }}
-          labels: ${{ steps.meta_api.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             FEEDARR_VERSION=${{ steps.app_version.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Docker meta (web)
-        id: meta_web
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/feedarr-web
-          tags: |
-            type=raw,value=beta
-            type=raw,value=${{ steps.app_version.outputs.docker_tag }}
-
-      - name: Build & push (web)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/Dockerfile.web
-          push: true
-          tags: ${{ steps.meta_web.outputs.tags }}
-          labels: ${{ steps.meta_web.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

@@ -1,9 +1,9 @@
 version: "3.9"
 
 services:
-  api:
-    container_name: FEEDARR-API
-    image: guizmos/feedarr-api:latest
+  feedarr:
+    container_name: FEEDARR
+    image: guizmos/feedarr:latest
     restart: unless-stopped
     environment:
       ASPNETCORE_URLS: http://+:8080
@@ -15,17 +15,8 @@ services:
 
       # OPTIONNEL : clé stable (sinon l'app en génère une et la stocke dans /app/data/keys)
       # FEEDARR_MASTER_KEY: "met-une-valeur-unique-ici"
-      
+
     volumes:
       - /volume1/Docker/Feedarr/data:/app/data
-    ports:
-      - "9999:8080"
-
-  web:
-    container_name: FEEDARR-WEB
-    image: guizmos/feedarr-web:latest
-    restart: unless-stopped
-    depends_on:
-      - api
     ports:
       - "8888:8080"

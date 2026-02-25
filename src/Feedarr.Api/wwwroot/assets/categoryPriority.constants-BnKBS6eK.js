@@ -1,0 +1,1 @@
+const s=["series","anime","films","animation","games","spectacle","emissions","audio","books","comics"],i=["series","anime","films","animation","games","spectacle","emissions","audio","books","comics"];export{s as M,i as R};

@@ -460,7 +460,22 @@ if (emitSecurityHeaders)
             headers.TryAdd("Referrer-Policy", "no-referrer");
             headers.TryAdd("X-Permitted-Cross-Domain-Policies", "none");
             headers.TryAdd("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
-            headers.TryAdd("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+            // Hash covers the inline theme-detection <script> block baked into index.html by Vite.
+            // Recompute if that block ever changes (run from feedarr-web/):
+            //   node -e "const c=require('crypto'),h=require('fs').readFileSync('dist/index.html','utf8');const s=h.indexOf('<script>'),e=h.indexOf('</script>',s);console.log('sha256-'+c.createHash('sha256').update(h.slice(s+'<script>'.length,e)).digest('base64'));"
+            headers.TryAdd("Content-Security-Policy",
+                "default-src 'self'; " +
+                "script-src 'self' 'sha256-xJMtJybfJiXqQTAxXQOlOZvL1dMOajZ39gyMoArS5Ck='; " +
+                "style-src 'self' 'unsafe-inline'; " +
+                "img-src 'self' data: blob:; " +
+                "font-src 'self'; " +
+                "connect-src 'self'; " +
+                "worker-src 'self'; " +
+                "manifest-src 'self'; " +
+                "object-src 'none'; " +
+                "frame-ancestors 'none'; " +
+                "base-uri 'self'; " +
+                "form-action 'self'");
             return Task.CompletedTask;
         });
         await next();
@@ -539,6 +554,10 @@ app.UseRateLimiter();
 // Security (Basic Auth)
 app.UseMiddleware<BasicAuthMiddleware>();
 
+// Monolithic SPA: serve React build from wwwroot/
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 // DB migrations on boot
 app.Services.GetRequiredService<Db>().EnsureWalMode();
 app.Services.GetRequiredService<MigrationsRunner>().Run();
@@ -563,8 +582,6 @@ if (allowInvalidCerts)
         "Only enable this on trusted home-lab networks with self-signed certificates.");
 }
 
-app.MapGet("/", () => Results.Text("Feedarr.Api OK"));
-
 // GET /health — liveness/readiness probe pour Docker/orchestrateurs.
 // Effectue un SELECT 1 sur la DB SQLite pour vérifier que la couche de données répond.
 app.MapGet("/health", (Db db, ILoggerFactory loggerFactory) =>
@@ -587,6 +604,13 @@ app.MapGet("/health", (Db db, ILoggerFactory loggerFactory) =>
 });
 
 app.MapControllers();
+
+// Guard: unmatched /api/* routes must return JSON 404, not index.html.
+// Without this, MapFallbackToFile would serve the SPA for invalid API paths.
+app.MapFallback("/api/{**slug}", () => Results.NotFound(new { error = "not found" }));
+
+// SPA fallback: any non-API route (e.g. /library, /settings) returns index.html
+app.MapFallbackToFile("index.html");
 
 if (app.Environment.IsDevelopment())
 {
