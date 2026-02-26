@@ -11,36 +11,50 @@ export default function SettingsUsers({
       <div className="indexer-list">
         <div className="indexer-card">
           <div className="indexer-row indexer-row--settings">
-            <span className="indexer-title">Authentication</span>
+            <span className="indexer-title">Auth Mode</span>
             <div className="indexer-actions">
               <select
-                value={security.authentication}
-                onChange={(e) => setSecurity((s) => ({ ...s, authentication: e.target.value }))}
+                value={security.authMode}
+                onChange={(e) => setSecurity((s) => ({ ...s, authMode: e.target.value }))}
               >
-                <option value="none">None</option>
-                <option value="basic">Basic (Browser Popup)</option>
+                <option value="smart">Smart (default)</option>
+                <option value="strict">Strict</option>
+                <option value="open">Open</option>
               </select>
+            </div>
+          </div>
+          <div className="settings-help">
+            Smart protects automatically when the instance is exposed
+          </div>
+        </div>
+
+        <div className="indexer-card">
+          <div className="indexer-row indexer-row--settings">
+            <span className="indexer-title">Public Base URL</span>
+            <div className="indexer-actions">
+              <input
+                type="text"
+                value={security.publicBaseUrl || ""}
+                onChange={(e) => setSecurity((s) => ({ ...s, publicBaseUrl: e.target.value }))}
+                placeholder="https://example.com/feedarr"
+              />
             </div>
           </div>
         </div>
 
-        {security.authentication === "basic" && (
+        {security.authMode !== "open" && (
           <>
             <div className="indexer-card">
               <div className="indexer-row indexer-row--settings">
-                <span className="indexer-title">Authentication Required</span>
+                <span className="indexer-title">Status</span>
                 <div className="indexer-actions">
-                  <select
-                    value={security.authenticationRequired}
-                    onChange={(e) => setSecurity((s) => ({ ...s, authenticationRequired: e.target.value }))}
-                  >
-                    <option value="local">Disabled for Local Addresses</option>
-                    <option value="all">Enabled for all Addresses</option>
-                  </select>
+                  <span className={`pill ${security.authConfigured ? "pill-ok" : "pill-warn"}`}>
+                    {security.authConfigured ? "Configured" : "Not configured"}
+                  </span>
+                  <span className={`pill ${security.authRequired ? "pill-warn" : "pill-blue"}`}>
+                    {security.authRequired ? "Auth required" : "Auth not required"}
+                  </span>
                 </div>
-              </div>
-              <div className="settings-help">
-                Require Username and Password to access Feedarr
               </div>
             </div>
 

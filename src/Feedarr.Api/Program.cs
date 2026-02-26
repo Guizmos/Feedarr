@@ -168,6 +168,7 @@ builder.Services.AddSingleton<BackupService>();
 builder.Services.AddSingleton<UnifiedCategoryService>();
 builder.Services.AddSingleton<UnifiedCategoryResolver>();
 builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<BootstrapTokenService>();
 builder.Services.AddSingleton<CategoryRecommendationService>();
 builder.Services.AddSingleton<ExternalProviderRegistry>();
 builder.Services.AddSingleton<ActiveExternalProviderConfigResolver>();

@@ -6,6 +6,7 @@ using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Models.Settings;
 using Feedarr.Api.Services.Security;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http;
 
@@ -18,17 +19,23 @@ public sealed class SetupController : ControllerBase
     private readonly Db _db;
     private readonly SettingsRepository _settings;
     private readonly ProviderRepository _providers;
+    private readonly IConfiguration _config;
+    private readonly BootstrapTokenService _bootstrapTokens;
     private readonly ILogger<SetupController> _log;
 
     public SetupController(
         Db db,
         SettingsRepository settings,
         ProviderRepository providers,
+        IConfiguration config,
+        BootstrapTokenService bootstrapTokens,
         ILogger<SetupController> log)
     {
         _db = db;
         _settings = settings;
         _providers = providers;
+        _config = config;
+        _bootstrapTokens = bootstrapTokens;
         _log = log;
     }
 
@@ -51,13 +58,21 @@ public sealed class SetupController : ControllerBase
              url.Contains("prowlarr", StringComparison.OrdinalIgnoreCase)));
 
         var ui = _settings.GetUi(new UiSettings());
+        var security = _settings.GetSecurity(new SecuritySettings());
+        var bootstrapSecret = SmartAuthPolicy.GetBootstrapSecret(_config);
+        var authConfigured = SmartAuthPolicy.IsAuthConfigured(security, bootstrapSecret);
+        var authRequired = SmartAuthPolicy.IsAuthRequired(HttpContext, security);
+        var authMode = SmartAuthPolicy.NormalizeAuthMode(security);
 
         return Ok(new
         {
             onboardingDone = ui.OnboardingDone,
             hasSources,
             hasJackettSource,
-            hasProwlarrSource
+            hasProwlarrSource,
+            authMode,
+            authConfigured,
+            authRequired
         });
     }
 
@@ -109,6 +124,32 @@ public sealed class SetupController : ControllerBase
         var normalized = (value ?? "").Trim().ToLowerInvariant();
         if (normalized == "jackett" || normalized == "prowlarr") return normalized;
         return null;
+    }
+
+    // POST /api/setup/bootstrap-token
+    [HttpPost("bootstrap-token")]
+    public IActionResult IssueBootstrapToken()
+    {
+        var bootstrapSecret = SmartAuthPolicy.GetBootstrapSecret(_config);
+        var allowed =
+            SmartAuthPolicy.IsLoopbackRequest(HttpContext) ||
+            SmartAuthPolicy.HasValidBootstrapSecretHeader(HttpContext, bootstrapSecret);
+
+        if (!allowed)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                error = "security_setup_required",
+                message = "Bootstrap token requires loopback access or bootstrap secret"
+            });
+        }
+
+        var token = _bootstrapTokens.IssueToken();
+        return Ok(new
+        {
+            token,
+            expiresInSeconds = _bootstrapTokens.ExpiresInSeconds
+        });
     }
 
 }

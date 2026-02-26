@@ -3,24 +3,26 @@ import { apiGet, apiPut } from "../../../api/client.js";
 
 export default function useSecuritySettings() {
   const [security, setSecurity] = useState({
-    authentication: "none",
-    authenticationRequired: "local",
+    authMode: "smart",
+    publicBaseUrl: "",
     username: "",
     password: "",
     passwordConfirmation: "",
     hasPassword: false,
+    authConfigured: false,
+    authRequired: false,
   });
   const [initialSecurity, setInitialSecurity] = useState({
-    authentication: "none",
-    authenticationRequired: "local",
+    authMode: "smart",
+    publicBaseUrl: "",
     username: "",
   });
   const [securityErrors, setSecurityErrors] = useState([]);
 
   const isDirty =
     JSON.stringify({
-      authentication: security.authentication,
-      authenticationRequired: security.authenticationRequired,
+      authMode: security.authMode,
+      publicBaseUrl: security.publicBaseUrl,
       username: security.username,
     }) !== JSON.stringify(initialSecurity) ||
     !!security.password ||
@@ -32,16 +34,18 @@ export default function useSecuritySettings() {
       if (sec) {
         setSecurity((prev) => ({
           ...prev,
-          authentication: sec.authentication || "none",
-          authenticationRequired: sec.authenticationRequired || "local",
+          authMode: sec.authMode || "smart",
+          publicBaseUrl: sec.publicBaseUrl || "",
           username: sec.username || "",
           hasPassword: !!sec.hasPassword,
+          authConfigured: !!sec.authConfigured,
+          authRequired: !!sec.authRequired,
           password: "",
           passwordConfirmation: "",
         }));
         setInitialSecurity({
-          authentication: sec.authentication || "none",
-          authenticationRequired: sec.authenticationRequired || "local",
+          authMode: sec.authMode || "smart",
+          publicBaseUrl: sec.publicBaseUrl || "",
           username: sec.username || "",
         });
       }
@@ -53,8 +57,8 @@ export default function useSecuritySettings() {
   const saveSecuritySettings = useCallback(async () => {
     setSecurityErrors([]);
     const payload = {
-      authentication: security.authentication,
-      authenticationRequired: security.authenticationRequired,
+      authMode: security.authMode,
+      publicBaseUrl: security.publicBaseUrl,
       username: security.username,
     };
 
@@ -64,14 +68,20 @@ export default function useSecuritySettings() {
     }
 
     try {
-      await apiPut("/api/settings/security", payload);
+      const saved = await apiPut("/api/settings/security", payload);
       setInitialSecurity({
-        authentication: security.authentication,
-        authenticationRequired: security.authenticationRequired,
-        username: security.username,
+        authMode: saved?.authMode || security.authMode,
+        publicBaseUrl: saved?.publicBaseUrl || security.publicBaseUrl,
+        username: saved?.username || security.username,
       });
       setSecurity((prev) => ({
         ...prev,
+        authMode: saved?.authMode || prev.authMode,
+        publicBaseUrl: saved?.publicBaseUrl || prev.publicBaseUrl,
+        username: saved?.username || prev.username,
+        hasPassword: !!saved?.hasPassword,
+        authConfigured: !!saved?.authConfigured,
+        authRequired: !!saved?.authRequired,
         password: "",
         passwordConfirmation: "",
       }));

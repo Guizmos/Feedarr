@@ -22,6 +22,7 @@ using Microsoft.AspNetCore.Mvc.Abstractions;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -125,6 +126,8 @@ public sealed class CriticalFlowsAndPerfTests
             db,
             settings,
             providers,
+            BuildConfiguration(),
+            new BootstrapTokenService(new MemoryCache(new MemoryCacheOptions())),
             NullLogger<SetupController>.Instance);
 
         var upsert = setup.UpsertIndexerProvider("jackett", new SetupController.SetupIndexerProviderUpsertDto
@@ -275,6 +278,13 @@ public sealed class CriticalFlowsAndPerfTests
             DbFileName = "feedarr.db"
         });
         return new Db(options);
+    }
+
+    private static IConfiguration BuildConfiguration()
+    {
+        return new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>())
+            .Build();
     }
 
     private sealed class SonarrSeriesHandler : HttpMessageHandler

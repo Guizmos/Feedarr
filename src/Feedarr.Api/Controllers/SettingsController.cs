@@ -8,6 +8,7 @@ using Feedarr.Api.Services.Tmdb;
 using Feedarr.Api.Services.TvMaze;
 using Feedarr.Api.Services.ExternalProviders;
 using Feedarr.Api.Services.Security;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Caching.Memory;
 using System.Security.Cryptography;
@@ -26,6 +27,7 @@ public sealed class SettingsController : ControllerBase
     private readonly TvMazeClient _tvmaze;
     private readonly ExternalProviderInstanceRepository? _externalProviderInstances;
     private readonly IMemoryCache _cache;
+    private readonly IConfiguration _config;
     private readonly ILogger<SettingsController> _log;
 
     public SettingsController(
@@ -36,6 +38,7 @@ public sealed class SettingsController : ControllerBase
         IgdbClient igdb,
         TvMazeClient tvmaze,
         IMemoryCache cache,
+        IConfiguration config,
         ILogger<SettingsController> log,
         ExternalProviderInstanceRepository? externalProviderInstances = null)
     {
@@ -47,6 +50,7 @@ public sealed class SettingsController : ControllerBase
         _tvmaze = tvmaze;
         _externalProviderInstances = externalProviderInstances;
         _cache = cache;
+        _config = config;
         _log = log;
     }
 
@@ -300,20 +304,31 @@ public sealed class SettingsController : ControllerBase
     {
         var defaults = new SecuritySettings();
         var sec = _repo.GetSecurity(defaults);
+        var authMode = SmartAuthPolicy.NormalizeAuthMode(sec);
+        var bootstrapSecret = SmartAuthPolicy.GetBootstrapSecret(_config);
+        var authConfigured = SmartAuthPolicy.IsAuthConfigured(sec, bootstrapSecret);
+        var authRequired = SmartAuthPolicy.IsAuthRequired(HttpContext, sec);
+        var (authentication, authenticationRequired) = LegacyAuthProjection(authMode);
 
         return Ok(new
         {
-            authentication = Normalize(sec.Authentication, "none", new[] { "none", "basic" }),
-            authenticationRequired = Normalize(sec.AuthenticationRequired, "local", new[] { "local", "all" }),
+            authMode,
+            authentication,
+            authenticationRequired,
+            publicBaseUrl = sec.PublicBaseUrl ?? "",
             username = sec.Username ?? "",
-            hasPassword = !string.IsNullOrWhiteSpace(sec.PasswordHash)
+            hasPassword = !string.IsNullOrWhiteSpace(sec.PasswordHash),
+            authConfigured,
+            authRequired
         });
     }
 
     public sealed class SecuritySettingsDto
     {
+        public string? AuthMode { get; set; }
         public string? Authentication { get; set; }
         public string? AuthenticationRequired { get; set; }
+        public string? PublicBaseUrl { get; set; }
         public string? Username { get; set; }
         public string? Password { get; set; }
         public string? PasswordConfirmation { get; set; }
@@ -326,15 +341,21 @@ public sealed class SettingsController : ControllerBase
 
         var current = _repo.GetSecurity(new SecuritySettings());
 
-        var auth = Normalize(dto.Authentication, current.Authentication, new[] { "none", "basic" });
-        var authRequired = Normalize(dto.AuthenticationRequired, current.AuthenticationRequired, new[] { "local", "all" });
+        var legacyAuth = Normalize(dto.Authentication, current.Authentication, new[] { "none", "basic" });
+        var legacyRequired = Normalize(dto.AuthenticationRequired, current.AuthenticationRequired, new[] { "local", "all" });
+        var fallbackMode = SmartAuthPolicy.NormalizeAuthMode(current);
+        var authMode = SmartAuthPolicy.NormalizeAuthMode(dto.AuthMode ?? LegacyModeProjection(legacyAuth, legacyRequired) ?? fallbackMode);
 
         var username = dto.Username is not null ? dto.Username.Trim() : current.Username;
+        var publicBaseUrl = dto.PublicBaseUrl is not null ? dto.PublicBaseUrl.Trim() : current.PublicBaseUrl;
+        var (auth, authRequired) = LegacyAuthProjection(authMode);
 
         var next = new SecuritySettings
         {
+            AuthMode = authMode,
             Authentication = auth,
             AuthenticationRequired = authRequired,
+            PublicBaseUrl = publicBaseUrl ?? "",
             Username = username ?? "",
             PasswordHash = current.PasswordHash,
             PasswordSalt = current.PasswordSalt
@@ -357,22 +378,36 @@ public sealed class SettingsController : ControllerBase
             next.PasswordSalt = salt;
         }
 
-        if (auth == "basic")
+        if (authMode is "smart" or "strict")
         {
-            if (string.IsNullOrWhiteSpace(next.Username))
-                return Problem(title: "username required for basic auth", statusCode: StatusCodes.Status400BadRequest);
-            if (string.IsNullOrWhiteSpace(next.PasswordHash) || string.IsNullOrWhiteSpace(next.PasswordSalt))
-                return Problem(title: "password required for basic auth", statusCode: StatusCodes.Status400BadRequest);
+            var hasBasic =
+                !string.IsNullOrWhiteSpace(next.Username) &&
+                !string.IsNullOrWhiteSpace(next.PasswordHash) &&
+                !string.IsNullOrWhiteSpace(next.PasswordSalt);
+            var hasSecret = !string.IsNullOrWhiteSpace(SmartAuthPolicy.GetBootstrapSecret(_config));
+            if (!hasBasic && !hasSecret)
+            {
+                return Problem(
+                    title: "username and password required for smart/strict mode (or configure bootstrap secret)",
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
         }
 
         _repo.SaveSecurity(next);
         _cache.Remove(SecuritySettingsCache.CacheKey);
+        var bootstrapSecret = SmartAuthPolicy.GetBootstrapSecret(_config);
+        var authConfigured = SmartAuthPolicy.IsAuthConfigured(next, bootstrapSecret);
+        var effectiveAuthRequired = SmartAuthPolicy.IsAuthRequired(HttpContext, next);
         return Ok(new
         {
+            authMode = next.AuthMode,
             authentication = next.Authentication,
             authenticationRequired = next.AuthenticationRequired,
+            publicBaseUrl = next.PublicBaseUrl,
             username = next.Username,
-            hasPassword = !string.IsNullOrWhiteSpace(next.PasswordHash)
+            hasPassword = !string.IsNullOrWhiteSpace(next.PasswordHash),
+            authConfigured,
+            authRequired = effectiveAuthRequired
         });
     }
 
@@ -380,6 +415,27 @@ public sealed class SettingsController : ControllerBase
     {
         var v = (value ?? fallback).Trim().ToLowerInvariant();
         return allowed.Contains(v) ? v : fallback;
+    }
+
+    private static (string authentication, string authenticationRequired) LegacyAuthProjection(string authMode)
+    {
+        return authMode switch
+        {
+            "open" => ("none", "local"),
+            "strict" => ("basic", "all"),
+            _ => ("basic", "local")
+        };
+    }
+
+    private static string? LegacyModeProjection(string authentication, string authenticationRequired)
+    {
+        if (authentication == "none")
+            return "open";
+        if (authentication == "basic" && authenticationRequired == "all")
+            return "strict";
+        if (authentication == "basic")
+            return "smart";
+        return null;
     }
 
     private static (string hash, string salt) HashPassword(string password)

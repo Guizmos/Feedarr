@@ -4,6 +4,7 @@ import { apiGet, apiPost } from "../api/client.js";
 import { tr } from "../app/uiText.js";
 import Step0Language from "../components/setup/Step0Language.jsx";
 import Step1Intro from "../components/setup/Step1Intro.jsx";
+import Step2Security from "../components/setup/Step2Security.jsx";
 import Step2Providers from "../components/setup/Step2Providers.jsx";
 import Step3JackettConn from "../components/setup/Step3JackettConn.jsx";
 import Step31JackettIndexers from "../components/setup/Step31JackettIndexers.jsx";
@@ -27,7 +28,7 @@ const JACKETT_STORAGE_KEYS = [
   "feedarr:prowlarrManualOnly",
 ];
 const MIN_STEP = 1;
-const MAX_STEP = 7;
+const MAX_STEP = 8;
 
 function clampStep(value) {
   if (!Number.isFinite(value)) return MIN_STEP;
@@ -53,6 +54,14 @@ export default function SetupWizard() {
   });
   const [providersValidation, setProvidersValidation] = useState({});
   const [providersAllAdded, setProvidersAllAdded] = useState(false);
+  const [securityStepStatus, setSecurityStepStatus] = useState({
+    ready: true,
+    saving: false,
+    error: "",
+    authRequired: false,
+    authConfigured: true,
+    authMode: "smart",
+  });
   const [jackettStatus, setJackettStatus] = useState({
     provider: "",
     ready: false,
@@ -107,11 +116,19 @@ export default function SetupWizard() {
           return value !== null && value !== "";
         });
         const hasIndexerSource = !!state?.hasJackettSource || !!state?.hasProwlarrSource;
+        const authRequired = !!state?.authRequired;
+        const authConfigured = !!state?.authConfigured;
         const shouldClear = !hasIndexerSource && (prevHasJackett === "true" || hasLocalConfig);
         window.localStorage.setItem(
           STORAGE_HAS_JACKETT_SOURCE,
           state?.hasJackettSource ? "true" : "false"
         );
+        setSecurityStepStatus((prev) => ({
+          ...prev,
+          authRequired,
+          authConfigured,
+          ready: !authRequired || authConfigured || prev.authMode === "open",
+        }));
         if (shouldClear) {
           JACKETT_STORAGE_KEYS.forEach((key) => window.localStorage.removeItem(key));
           window.localStorage.removeItem(STORAGE_KEY);
@@ -155,6 +172,16 @@ export default function SetupWizard() {
     { id: 2, title: tr("Intro", "Intro"), content: <Step1Intro /> },
     {
       id: 3,
+      title: tr("Securite", "Security"),
+      content: (
+        <Step2Security
+          required={securityStepStatus.authRequired && !securityStepStatus.authConfigured}
+          onStatusChange={setSecurityStepStatus}
+        />
+      ),
+    },
+    {
+      id: 4,
       title: tr("Metadonnees", "Metadata"),
       content: (
         <Step2Providers
@@ -165,7 +192,7 @@ export default function SetupWizard() {
       ),
     },
     {
-      id: 4,
+      id: 5,
       title: tr("Fournisseurs RSS", "RSS providers"),
       content: (
         <Step3JackettConn
@@ -176,18 +203,18 @@ export default function SetupWizard() {
       ),
     },
     {
-      id: 5,
+      id: 6,
       title: tr("Indexeurs", "Indexers"),
       content: (
         <Step31JackettIndexers
           onHasSourcesChange={setJackettHasSources}
-          onBack={() => setStep(4)}
+          onBack={() => setStep(5)}
           jackettConfig={jackettStatus}
         />
       ),
     },
-    { id: 6, title: tr("Applications", "Applications"), content: <Step4ArrApps /> },
-    { id: 7, title: tr("Resume", "Summary"), content: <Step5Summary onFinish={finish} finishing={finishing} /> },
+    { id: 7, title: tr("Applications", "Applications"), content: <Step4ArrApps /> },
+    { id: 8, title: tr("Resume", "Summary"), content: <Step5Summary onFinish={finish} finishing={finishing} /> },
   ];
 
   const providersOk = useMemo(
@@ -196,10 +223,10 @@ export default function SetupWizard() {
   );
 
   const current = steps[step - 1];
-  const allowSkip = step === 3 || step === 6;
+  const allowSkip = step === 4 || step === 7;
   const isJackettReady = !!jackettStatus?.ready;
-  const canSkip = step === 3 ? providersOk : true;
-  const showSkip = allowSkip && !(step === 3 && providersAllAdded);
+  const canSkip = step === 4 ? providersOk : true;
+  const showSkip = allowSkip && !(step === 4 && providersAllAdded);
 
   function goStep(next) {
     setStep(clampStep(next));
@@ -265,9 +292,10 @@ export default function SetupWizard() {
                   onClick={() => goStep(step + 1)}
                   disabled={
                     (step === 1 && (!languageStepStatus.ready || languageStepStatus.saving)) ||
-                    (step === 3 && !providersOk) ||
-                    (step === 4 && !isJackettReady) ||
-                    (step === 5 && !jackettHasSources)
+                    (step === 3 && (!securityStepStatus.ready || securityStepStatus.saving)) ||
+                    (step === 4 && !providersOk) ||
+                    (step === 5 && !isJackettReady) ||
+                    (step === 6 && !jackettHasSources)
                   }
                 >
                   {tr("Suivant", "Next")}

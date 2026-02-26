@@ -18,6 +18,7 @@ using Feedarr.Api.Services.TvMaze;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using OptionsFactory = Microsoft.Extensions.Options.Options;
 
@@ -126,6 +127,7 @@ public sealed class Lot2ApiReliabilityTests
             igdb,
             tvmaze,
             new MemoryCache(new MemoryCacheOptions()),
+            BuildConfiguration(),
             NullLogger<SettingsController>.Instance);
 
         var action = await controller.TestExternal(
@@ -225,6 +227,13 @@ public sealed class Lot2ApiReliabilityTests
             null!,
             NullLogger<ArrController>.Instance,
             null!);
+    }
+
+    private static IConfiguration BuildConfiguration()
+    {
+        return new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>())
+            .Build();
     }
 
     private static Db CreateDb(TestWorkspace workspace)

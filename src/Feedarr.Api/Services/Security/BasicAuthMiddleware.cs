@@ -1,21 +1,23 @@
-using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Models.Settings;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
 
 namespace Feedarr.Api.Services.Security;
 
 public sealed class BasicAuthMiddleware
 {
     internal const string AuthPassedKey = "feedarr.auth.passed";
+
     private static readonly string[] SetupAllowedApiPrefixes =
     {
         "/api/setup",
         "/api/system/onboarding",
         "/api/settings/ui",
+        "/api/settings/security",
         "/api/providers",
         "/api/sources",
         "/api/apps",
@@ -24,11 +26,21 @@ public sealed class BasicAuthMiddleware
         "/api/prowlarr/indexers"
     };
 
-    private readonly RequestDelegate _next;
+    private static readonly string[] SecuritySetupAllowedApiPrefixes =
+    {
+        "/api/setup/state",
+        "/api/system/onboarding",
+        "/api/settings/ui",
+        "/api/settings/security"
+    };
 
-    public BasicAuthMiddleware(RequestDelegate next)
+    private readonly RequestDelegate _next;
+    private readonly IConfiguration _config;
+
+    public BasicAuthMiddleware(RequestDelegate next, IConfiguration config)
     {
         _next = next;
+        _config = config;
     }
 
     public async Task InvokeAsync(
@@ -54,17 +66,51 @@ public sealed class BasicAuthMiddleware
             return settingsRepo.GetSecurity(new SecuritySettings());
         }) ?? new SecuritySettings();
 
-        var authMode = Normalize(security.Authentication, "none", new[] { "none", "basic" });
+        var bootstrapSecret = SmartAuthPolicy.GetBootstrapSecret(_config);
+        if (SmartAuthPolicy.IsBootstrapTokenRequest(context.Request))
+        {
+            if (SmartAuthPolicy.IsLoopbackRequest(context) ||
+                SmartAuthPolicy.HasValidBootstrapSecretHeader(context, bootstrapSecret))
+            {
+                context.Items[AuthPassedKey] = true;
+                await _next(context);
+                return;
+            }
 
-        if (authMode != "basic")
+            await RejectSecuritySetupRequired(context);
+            return;
+        }
+
+        var authRequired = SmartAuthPolicy.IsAuthRequired(context, security);
+        var authConfigured = SmartAuthPolicy.IsAuthConfigured(security, bootstrapSecret);
+        var authMode = SmartAuthPolicy.NormalizeAuthMode(security);
+
+        if (!authRequired)
         {
             context.Items[AuthPassedKey] = true;
             await _next(context);
             return;
         }
 
-        var authRequired = Normalize(security.AuthenticationRequired, "local", new[] { "local", "all" });
-        if (authRequired == "local" && IsLocalRequest(context))
+        if (!authConfigured)
+        {
+            if (IsAllowedDuringSecuritySetup(context.Request))
+            {
+                context.Items[AuthPassedKey] = true;
+                await _next(context);
+                return;
+            }
+
+            log.LogWarning(
+                "Request rejected by security setup lock for {Method} {Path} (mode={AuthMode})",
+                context.Request.Method,
+                context.Request.Path.Value ?? "/",
+                authMode);
+            await RejectSecuritySetupRequired(context);
+            return;
+        }
+
+        if (SmartAuthPolicy.HasValidBootstrapSecretHeader(context, bootstrapSecret))
         {
             context.Items[AuthPassedKey] = true;
             await _next(context);
@@ -117,10 +163,17 @@ public sealed class BasicAuthMiddleware
         });
     }
 
-    private static string Normalize(string? value, string fallback, IEnumerable<string> allowed)
+    private static Task RejectSecuritySetupRequired(HttpContext context)
     {
-        var v = (value ?? fallback).Trim().ToLowerInvariant();
-        return allowed.Contains(v) ? v : fallback;
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        context.Response.ContentType = "application/json";
+        return context.Response.WriteAsJsonAsync(new
+        {
+            error = "security_setup_required",
+            message = "Security setup is required before accessing this endpoint",
+            authRequired = true,
+            authConfigured = false
+        });
     }
 
     private static bool TryGetBasicCredentials(HttpContext context, out string user, out string pass)
@@ -136,7 +189,8 @@ public sealed class BasicAuthMiddleware
             return false;
 
         var encoded = raw[6..].Trim();
-        if (string.IsNullOrWhiteSpace(encoded)) return false;
+        if (string.IsNullOrWhiteSpace(encoded))
+            return false;
 
         try
         {
@@ -179,30 +233,6 @@ public sealed class BasicAuthMiddleware
         }
     }
 
-    private static bool IsLocalRequest(HttpContext context)
-    {
-        // If a forwarded header is present but was not processed by ForwardedHeaders middleware,
-        // the remote IP is likely the reverse proxy; avoid bypassing auth in that situation.
-        var hasForwardedFor = context.Request.Headers.ContainsKey("X-Forwarded-For");
-        var hasOriginalFor = context.Request.Headers.ContainsKey("X-Original-For");
-        if (hasForwardedFor && !hasOriginalFor)
-            return false;
-
-        var ip = context.Connection.RemoteIpAddress;
-        if (ip is null) return false;
-        if (IPAddress.IsLoopback(ip)) return true;
-
-        // IPv4 private ranges
-        var bytes = ip.MapToIPv4().GetAddressBytes();
-        return bytes[0] switch
-        {
-            10 => true,
-            172 => bytes[1] >= 16 && bytes[1] <= 31,
-            192 => bytes[1] == 168,
-            _ => false
-        };
-    }
-
     private static bool IsAllowedDuringSetup(HttpRequest request)
     {
         if (HttpMethods.IsOptions(request.Method))
@@ -224,6 +254,35 @@ public sealed class BasicAuthMiddleware
             return true;
 
         foreach (var prefix in SetupAllowedApiPrefixes)
+        {
+            if (PathEqualsOrUnder(path, prefix))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsAllowedDuringSecuritySetup(HttpRequest request)
+    {
+        if (HttpMethods.IsOptions(request.Method))
+            return true;
+
+        var path = request.Path.Value ?? "";
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        if (path.Equals("/health", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("/api/health", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (PathEqualsOrUnder(path, "/setup") ||
+            PathEqualsOrUnder(path, "/assets") ||
+            path.StartsWith("/favicon", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("/manifest", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("/service-worker", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        foreach (var prefix in SecuritySetupAllowedApiPrefixes)
         {
             if (PathEqualsOrUnder(path, prefix))
                 return true;

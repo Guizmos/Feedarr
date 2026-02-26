@@ -9,6 +9,7 @@ using Feedarr.Api.Services.Prowlarr;
 using Feedarr.Api.Services.Security;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using OptionsFactory = Microsoft.Extensions.Options.Options;
 
@@ -32,6 +33,8 @@ public sealed class SetupIndexerProvidersPersistenceTests
             db,
             settings,
             providers,
+            BuildConfiguration(),
+            new BootstrapTokenService(new MemoryCache(new MemoryCacheOptions())),
             NullLogger<SetupController>.Instance);
 
         var first = setup.UpsertIndexerProvider("jackett", new SetupController.SetupIndexerProviderUpsertDto
@@ -92,6 +95,8 @@ public sealed class SetupIndexerProvidersPersistenceTests
             db,
             settings,
             providers,
+            BuildConfiguration(),
+            new BootstrapTokenService(new MemoryCache(new MemoryCacheOptions())),
             NullLogger<SetupController>.Instance);
 
         setup.UpsertIndexerProvider("jackett", new SetupController.SetupIndexerProviderUpsertDto
@@ -134,6 +139,13 @@ public sealed class SetupIndexerProvidersPersistenceTests
             DbFileName = "feedarr.db"
         });
         return new Db(options);
+    }
+
+    private static IConfiguration BuildConfiguration()
+    {
+        return new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>())
+            .Build();
     }
 
     private sealed class PassthroughProtectionService : IApiKeyProtectionService

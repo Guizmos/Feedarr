@@ -5,6 +5,7 @@ using Feedarr.Api.Options;
 using Feedarr.Api.Services.Security;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using OptionsFactory = Microsoft.Extensions.Options.Options;
 
@@ -30,7 +31,7 @@ public sealed class SetupLockMiddlewareTests
         {
             nextCalled = true;
             return Task.CompletedTask;
-        });
+        }, BuildConfiguration());
 
         var context = new DefaultHttpContext();
         context.Request.Path = path;
@@ -64,7 +65,7 @@ public sealed class SetupLockMiddlewareTests
         {
             nextCalled = true;
             return Task.CompletedTask;
-        });
+        }, BuildConfiguration());
 
         var context = new DefaultHttpContext();
         context.Request.Path = "/api/something";
@@ -109,7 +110,7 @@ public sealed class SetupLockMiddlewareTests
             nextCalled = true;
             context.Response.StatusCode = StatusCodes.Status200OK;
             return Task.CompletedTask;
-        });
+        }, BuildConfiguration());
 
         var context = new DefaultHttpContext();
         context.Request.Path = path;
@@ -144,7 +145,7 @@ public sealed class SetupLockMiddlewareTests
             nextCalled = true;
             context.Response.StatusCode = StatusCodes.Status200OK;
             return Task.CompletedTask;
-        });
+        }, BuildConfiguration());
 
         var context = new DefaultHttpContext();
         context.Request.Path = "/";
@@ -170,6 +171,13 @@ public sealed class SetupLockMiddlewareTests
         });
 
         return new Db(options);
+    }
+
+    private static IConfiguration BuildConfiguration()
+    {
+        return new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>())
+            .Build();
     }
 
     private sealed class TestWorkspace : IDisposable
