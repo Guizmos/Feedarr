@@ -19,6 +19,7 @@ using Feedarr.Api.Services.Rawg;
 using Feedarr.Api.Services.TheAudioDb;
 using Feedarr.Api.Services.Tmdb;
 using Feedarr.Api.Services.TvMaze;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Feedarr.Api.Services.Posters;
@@ -56,6 +57,7 @@ public sealed class PosterFetchService
     private readonly IWebHostEnvironment _env;
     private readonly PosterMatchingOrchestrator _matchingOrchestrator;
     private readonly ActiveExternalProviderConfigResolver _activeConfigResolver;
+    private readonly ILogger<PosterFetchService> _logger;
 
     public PosterFetchService(
         ReleaseRepository releases,
@@ -75,7 +77,8 @@ public sealed class PosterFetchService
         IOptions<AppOptions> opt,
         IWebHostEnvironment env,
         PosterMatchingOrchestrator matchingOrchestrator,
-        ActiveExternalProviderConfigResolver activeConfigResolver)
+        ActiveExternalProviderConfigResolver activeConfigResolver,
+        ILogger<PosterFetchService> logger)
     {
         _releases = releases;
         _activity = activity;
@@ -95,6 +98,7 @@ public sealed class PosterFetchService
         _env = env;
         _matchingOrchestrator = matchingOrchestrator;
         _activeConfigResolver = activeConfigResolver;
+        _logger = logger;
     }
 
     // data/ posteurs = relatif => on l'ancre sur le ContentRoot (racine du projet)
@@ -982,6 +986,8 @@ public sealed class PosterFetchService
             }
 
             var bytesTmdb = await _tmdb.DownloadPosterW500Async(selectedPosterPath, ct);
+            var posterSaved = false;
+            string? posterFileFinal = null;
             if (bytesTmdb is not null && bytesTmdb.Length > 0)
             {
                 var file = $"tmdb-{tmdbMatch.Candidate.TmdbId}-w500.jpg";
@@ -991,6 +997,12 @@ public sealed class PosterFetchService
                 await UpdateExternalDetailsFromTmdbAsync(id, tmdbMatch.Candidate.TmdbId, mediaType, ct);
                 var hash = ComputeSha256Hex(bytesTmdb);
                 PosterAudit.UpdateAttemptSuccess(_releases, id, "tmdb", tmdbMatch.Candidate.TmdbId.ToString(CultureInfo.InvariantCulture), null, "w500", hash);
+                posterSaved = true;
+                posterFileFinal = file;
+            }
+
+            if (posterSaved && !string.IsNullOrWhiteSpace(posterFileFinal))
+            {
                 var tmdbIds = new PosterMatchIds(tmdbMatch.Candidate.TmdbId, tvdbIdResolved, null, null, null);
                 var tmdbConfidence = AdjustConfidence(tmdbMatch.Score, ambiguity, unifiedCategory == UnifiedCategory.Emission);
                 _matchCache.Upsert(new PosterMatch(
@@ -1003,7 +1015,7 @@ public sealed class PosterFetchService
                     PosterMatchCacheService.SerializeIds(tmdbIds),
                     tmdbConfidence,
                     "tmdb",
-                    file,
+                    posterFileFinal,
                     "tmdb",
                     tmdbMatch.Candidate.TmdbId.ToString(CultureInfo.InvariantCulture),
                     null,
@@ -1024,7 +1036,7 @@ public sealed class PosterFetchService
                         tmdbId = tmdbMatch.Candidate.TmdbId,
                         posterPath = selectedPosterPath,
                         score = tmdbMatch.Score,
-                        posterFile = file
+                        posterFile = posterFileFinal
                     });
                 }
 
@@ -1033,10 +1045,15 @@ public sealed class PosterFetchService
                     ok = true,
                     tmdbId = tmdbMatch.Candidate.TmdbId,
                     posterPath = selectedPosterPath,
-                    posterFile = file,
+                    posterFile = posterFileFinal,
                     posterUrl = $"/api/posters/release/{id}"
                 }, sourceId);
             }
+
+            _logger.LogDebug(
+                "No poster saved; skip poster_match cache for {Fingerprint} {Provider}.",
+                fingerprint,
+                "tmdb");
         }
 
         // TMDB poster failed -> try Fanart.

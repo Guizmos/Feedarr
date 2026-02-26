@@ -36,6 +36,7 @@ internal enum PosterContractScenario
 {
     MovieTmdbHit,
     MovieTmdbFallbackFanart,
+    MovieTmdbNoPosterNoFanart,
     SeriesTvmazeHit,
     SeriesTvmazeMissTmdb,
     SeriesTmdbFallbackFanart,
@@ -143,7 +144,8 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             }),
             new TestWebHostEnvironment(_workspace.RootDir),
             orchestrator,
-            resolver);
+            resolver,
+            NullLogger<PosterFetchService>.Instance);
 
         SeedSource();
     }
@@ -222,6 +224,14 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             TvdbId: release?.TvdbId,
             Cached: TryGetBool(root, "cached"),
             Error: TryGetString(root, "error"));
+    }
+
+    public PosterMatch? TryGetCachedMatch(string mediaType, string normalizedTitle, int? year, int? season = null, int? episode = null)
+    {
+        var fingerprint = PosterMatchCacheService.BuildFingerprint(
+            new PosterTitleKey(mediaType, normalizedTitle, year, season, episode));
+        var cache = new PosterMatchCacheService(_db);
+        return cache.TryGet(fingerprint);
     }
 
     private static bool TryGetBool(JsonElement root, string propertyName)
@@ -473,6 +483,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             {
                 PosterContractScenario.MovieTmdbHit => "{\"results\":[{\"id\":100,\"title\":\"The Matrix\",\"original_title\":\"The Matrix\",\"poster_path\":\"/tmdb/matrix-search.jpg\",\"release_date\":\"1999-03-31\",\"original_language\":\"en\"}]}",
                 PosterContractScenario.MovieTmdbFallbackFanart => "{\"results\":[{\"id\":200,\"title\":\"Fallback Movie\",\"original_title\":\"Fallback Movie\",\"poster_path\":\"/tmdb/fallback-empty.jpg\",\"release_date\":\"2001-01-01\",\"original_language\":\"en\"}]}",
+                PosterContractScenario.MovieTmdbNoPosterNoFanart => "{\"results\":[{\"id\":210,\"title\":\"No Fanart Movie\",\"original_title\":\"No Fanart Movie\",\"poster_path\":\"/tmdb/no-fanart-empty.jpg\",\"release_date\":\"2002-01-01\",\"original_language\":\"en\"}]}",
                 PosterContractScenario.CacheReuseMovie => "{\"results\":[{\"id\":900,\"title\":\"Cache Movie\",\"original_title\":\"Cache Movie\",\"poster_path\":\"/tmdb/cache-900.jpg\",\"release_date\":\"2022-01-01\",\"original_language\":\"en\"}]}",
                 _ => "{\"results\":[]}"
             };
@@ -497,6 +508,8 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
                 return "{\"posters\":[{\"file_path\":\"/tmdb/matrix-pref.jpg\",\"iso_639_1\":\"fr\",\"vote_average\":8,\"vote_count\":100,\"width\":1000,\"height\":1500}],\"backdrops\":[]}";
             if (path.Contains("/movie/200/images"))
                 return "{\"posters\":[],\"backdrops\":[]}";
+            if (path.Contains("/movie/210/images"))
+                return "{\"posters\":[],\"backdrops\":[]}";
             if (path.Contains("/movie/900/images"))
                 return "{\"posters\":[{\"file_path\":\"/tmdb/cache-900.jpg\",\"iso_639_1\":\"en\",\"vote_average\":8,\"vote_count\":10,\"width\":1000,\"height\":1500}],\"backdrops\":[]}";
             if (path.Contains("/tv/600/images"))
@@ -509,6 +522,9 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         private byte[] ImageBytesForPath(string path)
         {
             if (_scenario == PosterContractScenario.MovieTmdbFallbackFanart && path.Contains("fallback-empty"))
+                return Array.Empty<byte>();
+
+            if (_scenario == PosterContractScenario.MovieTmdbNoPosterNoFanart && path.Contains("no-fanart-empty"))
                 return Array.Empty<byte>();
 
             if (_scenario == PosterContractScenario.SeriesTmdbFallbackFanart && path.Contains("/w500") && path.Contains("700"))
