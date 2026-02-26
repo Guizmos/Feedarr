@@ -380,16 +380,18 @@ public sealed class SettingsController : ControllerBase
 
         if (authMode is "smart" or "strict")
         {
-            var hasBasic =
+            var exposedConfig = SmartAuthPolicy.IsExposedConfig(next.PublicBaseUrl);
+            var hasCredentials =
                 !string.IsNullOrWhiteSpace(next.Username) &&
                 !string.IsNullOrWhiteSpace(next.PasswordHash) &&
                 !string.IsNullOrWhiteSpace(next.PasswordSalt);
-            var hasSecret = !string.IsNullOrWhiteSpace(SmartAuthPolicy.GetBootstrapSecret(_config));
-            if (!hasBasic && !hasSecret)
+            if (exposedConfig && !hasCredentials)
             {
-                return Problem(
-                    title: "username and password required for smart/strict mode (or configure bootstrap secret)",
-                    statusCode: StatusCodes.Status400BadRequest);
+                return BadRequest(new
+                {
+                    error = "credentials_required",
+                    message = "Credentials are required when AuthMode is smart/strict and instance is exposed. Set username/password or switch to open."
+                });
             }
         }
 

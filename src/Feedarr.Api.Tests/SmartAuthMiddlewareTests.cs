@@ -160,6 +160,45 @@ public sealed class SmartAuthMiddlewareTests
         Assert.Equal(StatusCodes.Status200OK, allowed.Response.StatusCode);
     }
 
+    [Fact]
+    public async Task BootstrapToken_IsReachable_WhenSecuritySetupRequired()
+    {
+        using var fixture = new MiddlewareFixture(new Dictionary<string, string?>
+        {
+            ["App:Security:BootstrapSecret"] = "test-bootstrap-secret"
+        });
+        fixture.SetupState.MarkSetupCompleted();
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        {
+            AuthMode = "smart",
+            PublicBaseUrl = "https://example.com",
+            Username = "",
+            PasswordHash = "",
+            PasswordSalt = ""
+        });
+
+        var (nextCalledSensitive, sensitive) = await fixture.InvokeAsync(
+            path: "/api/sources",
+            host: "feedarr.example.com",
+            remoteIp: IPAddress.Parse("203.0.113.33"));
+        Assert.False(nextCalledSensitive);
+        Assert.Equal(StatusCodes.Status403Forbidden, sensitive.Response.StatusCode);
+        var blockedBody = await ReadBodyAsync(sensitive);
+        Assert.Contains("security_setup_required", blockedBody, StringComparison.OrdinalIgnoreCase);
+
+        var (nextCalledBootstrap, bootstrap) = await fixture.InvokeAsync(
+            path: "/api/setup/bootstrap-token",
+            method: "POST",
+            host: "feedarr.example.com",
+            remoteIp: IPAddress.Parse("203.0.113.33"),
+            headers: new Dictionary<string, string>
+            {
+                [SmartAuthPolicy.BootstrapSecretHeader] = "test-bootstrap-secret"
+            });
+        Assert.True(nextCalledBootstrap);
+        Assert.Equal(StatusCodes.Status200OK, bootstrap.Response.StatusCode);
+    }
+
     private static (string hash, string salt) HashPassword(string password)
     {
         var salt = RandomNumberGenerator.GetBytes(16);

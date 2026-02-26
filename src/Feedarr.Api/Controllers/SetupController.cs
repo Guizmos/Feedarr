@@ -137,10 +137,19 @@ public sealed class SetupController : ControllerBase
 
         if (!allowed)
         {
+            var hasBootstrapHeader =
+                HttpContext.Request.Headers.ContainsKey(SmartAuthPolicy.BootstrapSecretHeader) ||
+                HttpContext.Request.Headers.ContainsKey(SmartAuthPolicy.LegacyBootstrapSecretHeader);
+            _log.LogWarning(
+                "Bootstrap token request rejected at controller for {Method} {Path} (remoteIp={RemoteIp}, hasBootstrapHeader={HasBootstrapHeader})",
+                HttpContext.Request.Method,
+                HttpContext.Request.Path.Value ?? "/",
+                HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                hasBootstrapHeader);
             return StatusCode(StatusCodes.Status403Forbidden, new
             {
-                error = "security_setup_required",
-                message = "Bootstrap token requires loopback access or bootstrap secret"
+                error = "bootstrap_secret_required",
+                message = "Bootstrap token requires loopback access or a valid X-Bootstrap-Secret header"
             });
         }
 

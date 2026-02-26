@@ -9,7 +9,8 @@ namespace Feedarr.Api.Services.Security;
 
 public static class SmartAuthPolicy
 {
-    public const string BootstrapSecretHeader = "X-Feedarr-Bootstrap-Secret";
+    public const string BootstrapSecretHeader = "X-Bootstrap-Secret";
+    public const string LegacyBootstrapSecretHeader = "X-Feedarr-Bootstrap-Secret";
     public const string BootstrapTokenHeader = "X-Feedarr-Bootstrap-Token";
 
     public static string NormalizeAuthMode(SecuritySettings settings)
@@ -31,12 +32,11 @@ public static class SmartAuthPolicy
 
     public static bool IsAuthConfigured(SecuritySettings settings, string? bootstrapSecret)
     {
-        var hasBasic =
+        _ = bootstrapSecret;
+        return
             !string.IsNullOrWhiteSpace(settings.Username) &&
             !string.IsNullOrWhiteSpace(settings.PasswordHash) &&
             !string.IsNullOrWhiteSpace(settings.PasswordSalt);
-
-        return hasBasic || !string.IsNullOrWhiteSpace(bootstrapSecret);
     }
 
     public static bool IsAuthRequired(HttpContext context, SecuritySettings settings)
@@ -51,7 +51,7 @@ public static class SmartAuthPolicy
 
     public static bool IsExposedRequest(HttpContext context, SecuritySettings settings)
     {
-        if (IsNonLocalPublicBaseUrl(settings.PublicBaseUrl))
+        if (IsExposedConfig(settings.PublicBaseUrl))
             return true;
 
         if (HasForwardedHeaders(context.Request.Headers))
@@ -62,6 +62,11 @@ public static class SmartAuthPolicy
             return true;
 
         return false;
+    }
+
+    public static bool IsExposedConfig(string? publicBaseUrl)
+    {
+        return IsNonLocalPublicBaseUrl(publicBaseUrl);
     }
 
     public static bool IsLoopbackRequest(HttpContext context)
@@ -117,10 +122,10 @@ public static class SmartAuthPolicy
         if (string.IsNullOrWhiteSpace(expected))
             return false;
 
-        if (!context.Request.Headers.TryGetValue(BootstrapSecretHeader, out var values))
-            return false;
+        var provided =
+            TryReadHeader(context.Request.Headers, BootstrapSecretHeader) ??
+            TryReadHeader(context.Request.Headers, LegacyBootstrapSecretHeader);
 
-        var provided = values.ToString().Trim();
         if (string.IsNullOrWhiteSpace(provided))
             return false;
 
@@ -147,6 +152,15 @@ public static class SmartAuthPolicy
             return false;
 
         return !IsLocalHost(uri.Host);
+    }
+
+    private static string? TryReadHeader(IHeaderDictionary headers, string key)
+    {
+        if (!headers.TryGetValue(key, out var values))
+            return null;
+
+        var value = values.ToString().Trim();
+        return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 
     private static bool PathEqualsOrUnder(string path, string prefix)

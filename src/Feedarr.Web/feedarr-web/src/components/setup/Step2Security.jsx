@@ -1,11 +1,30 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiPut } from "../../api/client.js";
 import { tr } from "../../app/uiText.js";
+
+function isLocalHost(host) {
+  if (!host) return false;
+  const normalized = String(host).trim().replace(/^\[(.*)\]$/, "$1").toLowerCase();
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
+}
+
+function isExposedPublicBaseUrl(publicBaseUrl) {
+  const raw = String(publicBaseUrl || "").trim();
+  if (!raw) return false;
+  try {
+    const parsed = new URL(raw);
+    return !isLocalHost(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
 
 export default function Step2Security({ required = false, onStatusChange }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const usernameInputRef = useRef(null);
+  const passwordInputRef = useRef(null);
   const [form, setForm] = useState({
     authMode: "smart",
     publicBaseUrl: "",
@@ -44,7 +63,41 @@ export default function Step2Security({ required = false, onStatusChange }) {
     load();
   }, [load]);
 
+  const isProtectedMode = form.authMode === "smart" || form.authMode === "strict";
+  const isExposedConfig = isExposedPublicBaseUrl(form.publicBaseUrl);
+  const credentialsRequiredForMode = isProtectedMode && isExposedConfig;
+  const usernameMissing = credentialsRequiredForMode && !String(form.username || "").trim();
+  const hasPasswordPresent = form.hasPassword || !!String(form.password || "").trim();
+  const passwordMissing = credentialsRequiredForMode && !hasPasswordPresent;
+  const passwordUpdateStarted = !!form.password || !!form.passwordConfirmation;
+  const passwordUpdateInvalid =
+    passwordUpdateStarted &&
+    (!String(form.password || "").trim() ||
+      !String(form.passwordConfirmation || "").trim() ||
+      form.password !== form.passwordConfirmation);
+  const credentialsInvalid = usernameMissing || passwordMissing || passwordUpdateInvalid;
+  const validationWarning = credentialsRequiredForMode
+    ? tr(
+        "Identifiants obligatoires: en mode Smart/Strict avec une URL publique non-locale, renseigne username et password.",
+        "Credentials required: in Smart/Strict mode with a non-local public URL, set username and password."
+      )
+    : "";
+
   const save = useCallback(async () => {
+    if (credentialsInvalid) {
+      const localValidationMessage =
+        usernameMissing || passwordMissing
+          ? validationWarning
+          : tr(
+              "Password et confirmation doivent etre renseignes et identiques.",
+              "Password and confirmation are required and must match."
+            );
+      setError(localValidationMessage);
+      if (usernameMissing) usernameInputRef.current?.focus();
+      else if (passwordMissing || passwordUpdateInvalid) passwordInputRef.current?.focus();
+      return;
+    }
+
     setSaving(true);
     setError("");
     try {
@@ -72,15 +125,31 @@ export default function Step2Security({ required = false, onStatusChange }) {
         authRequired: !!next?.authRequired,
       }));
     } catch (e) {
-      setError(e?.message || tr("Erreur sauvegarde securite", "Security save error"));
+      const message = e?.message || tr("Erreur sauvegarde securite", "Security save error");
+      const lowered = String(message).toLowerCase();
+      if (lowered.includes("credentials_required") || lowered.includes("credentials are required")) {
+        setError(message);
+        if (!String(form.username || "").trim()) usernameInputRef.current?.focus();
+        else if (!(form.hasPassword || !!String(form.password || "").trim())) passwordInputRef.current?.focus();
+      } else {
+        setError(message);
+      }
     } finally {
       setSaving(false);
     }
-  }, [form]);
+  }, [
+    credentialsInvalid,
+    form,
+    passwordMissing,
+    passwordUpdateInvalid,
+    usernameMissing,
+    validationWarning,
+  ]);
 
   const status = useMemo(() => {
     const effectiveRequired = !!form.authRequired || !!required;
-    const ready = !effectiveRequired || form.authConfigured || form.authMode === "open";
+    const ready =
+      (!effectiveRequired || form.authConfigured || form.authMode === "open") && !credentialsInvalid;
     return {
       ready: ready && !saving,
       saving,
@@ -89,7 +158,7 @@ export default function Step2Security({ required = false, onStatusChange }) {
       authConfigured: !!form.authConfigured,
       authMode: form.authMode,
     };
-  }, [error, form.authConfigured, form.authMode, form.authRequired, required, saving]);
+  }, [credentialsInvalid, error, form.authConfigured, form.authMode, form.authRequired, required, saving]);
 
   useEffect(() => {
     onStatusChange?.(status);
@@ -112,6 +181,9 @@ export default function Step2Security({ required = false, onStatusChange }) {
                 "Security setup is required before continuing."
               )}
             </div>
+          )}
+          {credentialsRequiredForMode && (
+            <div className="onboarding__error">{validationWarning}</div>
           )}
 
           <div className="indexer-list">
@@ -160,10 +232,13 @@ export default function Step2Security({ required = false, onStatusChange }) {
                     <span className="indexer-title">Username</span>
                     <div className="indexer-actions">
                       <input
+                        ref={usernameInputRef}
                         type="text"
                         value={form.username}
                         onChange={(e) => setForm((s) => ({ ...s, username: e.target.value }))}
                         placeholder={tr("Entrez username", "Enter username")}
+                        className={usernameMissing ? "is-error" : ""}
+                        required={credentialsRequiredForMode}
                         disabled={saving}
                       />
                     </div>
@@ -175,10 +250,17 @@ export default function Step2Security({ required = false, onStatusChange }) {
                     <span className="indexer-title">Password</span>
                     <div className="indexer-actions">
                       <input
+                        ref={passwordInputRef}
                         type="password"
                         value={form.password}
                         onChange={(e) => setForm((s) => ({ ...s, password: e.target.value }))}
-                        placeholder={form.hasPassword ? tr("Laisser vide pour conserver", "Leave blank to keep current") : tr("Entrez password", "Enter password")}
+                        placeholder={
+                          form.hasPassword
+                            ? tr("Laisser vide pour conserver", "Leave blank to keep current")
+                            : tr("Entrez password", "Enter password")
+                        }
+                        className={passwordMissing || passwordUpdateInvalid ? "is-error" : ""}
+                        required={credentialsRequiredForMode && !form.hasPassword}
                         disabled={saving}
                       />
                     </div>
@@ -194,6 +276,8 @@ export default function Step2Security({ required = false, onStatusChange }) {
                         value={form.passwordConfirmation}
                         onChange={(e) => setForm((s) => ({ ...s, passwordConfirmation: e.target.value }))}
                         placeholder={tr("Confirmez password", "Confirm password")}
+                        className={passwordUpdateInvalid ? "is-error" : ""}
+                        required={credentialsRequiredForMode && !form.hasPassword}
                         disabled={saving}
                       />
                     </div>
@@ -204,7 +288,7 @@ export default function Step2Security({ required = false, onStatusChange }) {
           </div>
 
           <div className="setup-jackett__actions" style={{ marginTop: 16 }}>
-            <button className="btn btn-accent" type="button" onClick={save} disabled={saving}>
+            <button className="btn btn-accent" type="button" onClick={save} disabled={saving || credentialsInvalid}>
               {saving ? tr("Enregistrement...", "Saving...") : tr("Enregistrer", "Save")}
             </button>
           </div>

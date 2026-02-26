@@ -1,13 +1,34 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 
 export default function SettingsUsers({
   security,
   setSecurity,
   securityErrors,
+  securityMessage,
+  credentialsRequiredForMode,
 }) {
+  const usernameInputRef = useRef(null);
+  const passwordInputRef = useRef(null);
+
+  useEffect(() => {
+    if (securityErrors.includes("username")) {
+      usernameInputRef.current?.focus();
+      return;
+    }
+    if (securityErrors.includes("password")) {
+      passwordInputRef.current?.focus();
+    }
+  }, [securityErrors]);
+
   return (
     <div className="settings-card" id="security">
       <div className="settings-card__title">Authentification</div>
+      {credentialsRequiredForMode && (
+        <div className="onboarding__error">
+          Credentials required: in Smart/Strict mode with a non-local public URL, set username and password.
+        </div>
+      )}
+      {!!securityMessage && <div className="onboarding__error">{securityMessage}</div>}
       <div className="indexer-list">
         <div className="indexer-card">
           <div className="indexer-row indexer-row--settings">
@@ -63,10 +84,12 @@ export default function SettingsUsers({
                 <span className="indexer-title">Username</span>
                 <div className="indexer-actions">
                   <input
+                    ref={usernameInputRef}
                     type="text"
                     value={security.username}
                     onChange={(e) => setSecurity((s) => ({ ...s, username: e.target.value }))}
                     className={securityErrors.includes("username") ? "is-error" : ""}
+                    required={credentialsRequiredForMode}
                     placeholder="Enter username"
                   />
                 </div>
@@ -78,10 +101,12 @@ export default function SettingsUsers({
                 <span className="indexer-title">Password</span>
                 <div className="indexer-actions">
                   <input
+                    ref={passwordInputRef}
                     type="password"
                     value={security.password}
                     onChange={(e) => setSecurity((s) => ({ ...s, password: e.target.value }))}
                     className={securityErrors.includes("password") ? "is-error" : ""}
+                    required={credentialsRequiredForMode && !security.hasPassword}
                     placeholder={security.hasPassword ? "Leave blank to keep current" : "Enter password"}
                   />
                 </div>
@@ -97,6 +122,7 @@ export default function SettingsUsers({
                     value={security.passwordConfirmation}
                     onChange={(e) => setSecurity((s) => ({ ...s, passwordConfirmation: e.target.value }))}
                     className={securityErrors.includes("passwordConfirmation") ? "is-error" : ""}
+                    required={credentialsRequiredForMode && !security.hasPassword}
                     placeholder="Confirm password"
                   />
                 </div>

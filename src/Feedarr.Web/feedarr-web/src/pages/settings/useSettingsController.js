@@ -125,6 +125,7 @@ export default function useSettingsController(section = "general") {
     uiSettings.isDirty ||
     security.isDirty ||
     applications.isRequestModeDirty;
+  const isSaveBlocked = showUsers && !security.canSave;
 
   // Load all settings
   const load = useCallback(async () => {
@@ -456,6 +457,7 @@ export default function useSettingsController(section = "general") {
     handleSave,
     saveState,
     isDirty,
+    isSaveBlocked,
     openArrModalAdd: applications.openArrModalAdd,
     canAddArrApp: applications.availableAddTypes.length > 0,
     openExternalModalAdd: providers.openExternalModalAdd,
@@ -641,6 +643,8 @@ export default function useSettingsController(section = "general") {
       security: security.security,
       setSecurity: security.setSecurity,
       securityErrors: security.securityErrors,
+      securityMessage: security.securityMessage,
+      credentialsRequiredForMode: security.credentialsRequiredForMode,
     },
   };
 }

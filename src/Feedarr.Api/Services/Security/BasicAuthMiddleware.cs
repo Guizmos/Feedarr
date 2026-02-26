@@ -77,7 +77,16 @@ public sealed class BasicAuthMiddleware
                 return;
             }
 
-            await RejectSecuritySetupRequired(context);
+            var hasBootstrapHeader =
+                context.Request.Headers.ContainsKey(SmartAuthPolicy.BootstrapSecretHeader) ||
+                context.Request.Headers.ContainsKey(SmartAuthPolicy.LegacyBootstrapSecretHeader);
+            log.LogWarning(
+                "Bootstrap token request rejected for {Method} {Path} (remoteIp={RemoteIp}, hasBootstrapHeader={HasBootstrapHeader})",
+                context.Request.Method,
+                context.Request.Path.Value ?? "/",
+                context.Connection.RemoteIpAddress?.ToString() ?? "",
+                hasBootstrapHeader);
+            await RejectBootstrapTokenDenied(context);
             return;
         }
 
@@ -176,6 +185,17 @@ public sealed class BasicAuthMiddleware
         });
     }
 
+    private static Task RejectBootstrapTokenDenied(HttpContext context)
+    {
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        context.Response.ContentType = "application/json";
+        return context.Response.WriteAsJsonAsync(new
+        {
+            error = "bootstrap_secret_required",
+            message = "Bootstrap token requires loopback access or a valid X-Bootstrap-Secret header"
+        });
+    }
+
     private static bool TryGetBasicCredentials(HttpContext context, out string user, out string pass)
     {
         user = "";
@@ -270,6 +290,14 @@ public sealed class BasicAuthMiddleware
         var path = request.Path.Value ?? "";
         if (string.IsNullOrWhiteSpace(path))
             return false;
+
+        if (SmartAuthPolicy.IsBootstrapTokenRequest(request))
+            return true;
+
+        if (HttpMethods.IsGet(request.Method) &&
+            (PathEqualsOrUnder(path, "/api/settings/security") ||
+             PathEqualsOrUnder(path, "/api/setup/state")))
+            return true;
 
         if (path.Equals("/health", StringComparison.OrdinalIgnoreCase) ||
             path.Equals("/api/health", StringComparison.OrdinalIgnoreCase))

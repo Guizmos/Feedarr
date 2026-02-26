@@ -34,6 +34,7 @@ export default function Settings() {
     handleSave,
     saveState,
     isDirty,
+    isSaveBlocked,
     openArrModalAdd,
     canAddArrApp,
     openExternalModalAdd,
@@ -115,7 +116,7 @@ export default function Settings() {
             }
             label="Enregistrer"
             onClick={() => handleSaveRef.current?.()}
-            disabled={saveState === "loading" || !isDirty}
+            disabled={saveState === "loading" || !isDirty || isSaveBlocked}
             className={
               saveState === "loading"
                 ? "is-loading"
@@ -164,6 +165,7 @@ export default function Settings() {
     showExternals,
     saveState,
     isDirty,
+    isSaveBlocked,
     canAddArrApp,
     triggerArrSync,
     arrSyncing,
