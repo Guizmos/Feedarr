@@ -14,11 +14,47 @@
   <ItemGroup>
     <PackageReference Include="Dapper" Version="2.1.66" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.8" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.9.0" />
   </ItemGroup>
-  
+
   <ItemGroup>
     <Content Include="Data\Migrations\*.sql">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
+
+  <PropertyGroup>
+    <WebClientDir>..\Feedarr.Web\feedarr-web</WebClientDir>
+    <WebDistDir>$(WebClientDir)\dist</WebDistDir>
+
+    <BuildWeb>false</BuildWeb>
+    <BuildWebOnPublish>true</BuildWebOnPublish>
+  </PropertyGroup>
+
+  <Target Name="BuildAndCopyWeb" Condition="'$(BuildWeb)' == 'true' Or ('$(IsPublish)' == 'true' And '$(BuildWebOnPublish)' == 'true')" BeforeTargets="ComputeFilesToPublish">
+
+    <PropertyGroup>
+      <NpmExe Condition="'$(OS)' == 'Windows_NT'">npm.cmd</NpmExe>
+      <NpmExe Condition="'$(OS)' != 'Windows_NT'">npm</NpmExe>
+    </PropertyGroup>
+
+    <Message Importance="high" Text="Feedarr Web: building Vite app in '$(WebClientDir)'..." />
+
+    <Exec WorkingDirectory="$(WebClientDir)" Command="cmd /c &quot;if not exist node_modules ($(NpmExe) ci)&quot;" Condition="'$(OS)' == 'Windows_NT'" />
+    <Exec WorkingDirectory="$(WebClientDir)" Command="sh -lc &quot;test -d node_modules || $(NpmExe) ci&quot;" Condition="'$(OS)' != 'Windows_NT'" />
+
+    <Exec WorkingDirectory="$(WebClientDir)" Command="$(NpmExe) run build" />
+
+    <ItemGroup>
+      <WebDistFiles Include="$(WebDistDir)\**\*" />
+    </ItemGroup>
+
+    <RemoveDir Directories="$(ProjectDir)wwwroot" />
+    <MakeDir Directories="$(ProjectDir)wwwroot" />
+
+    <Copy SourceFiles="@(WebDistFiles)" DestinationFiles="@(WebDistFiles->'$(ProjectDir)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+
+    <Message Importance="high" Text="Feedarr Web: copied dist -&gt; '$(ProjectDir)wwwroot'." />
+  </Target>
+
 </Project>

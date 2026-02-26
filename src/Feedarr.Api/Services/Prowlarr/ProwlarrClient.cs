@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Feedarr.Api.Services.Resilience;
 using Feedarr.Api.Services.Security;
 
 namespace Feedarr.Api.Services.Prowlarr;
@@ -19,10 +20,17 @@ public sealed class ProwlarrClient
         return normalizedBaseUrl;
     }
 
-    private static string BuildIndexersUrl(string baseUrl)
+    private static string BuildIndexersUrl(string baseUrl, string apiKey)
     {
         var baseTrim = NormalizeBaseUrl(baseUrl);
-        return $"{baseTrim}/api/v1/indexer";
+        return $"{baseTrim}/api/v1/indexer?apikey={Uri.EscapeDataString(apiKey ?? "")}";
+    }
+
+    private async Task<HttpResponseMessage> SendGetAllowingSameHostDowngradeAsync(string url, CancellationToken ct)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Options.Set(ProtocolDowngradeRedirectHandler.AllowHttpsToHttpDowngradeOption, true);
+        return await _http.SendAsync(request, ct);
     }
 
     private static bool? GetBool(JsonElement element, string prop)
@@ -53,11 +61,8 @@ public sealed class ProwlarrClient
     private async Task<List<(string id, string name, string torznabUrl)>> ListIndexersCoreAsync(
         string baseUrl, string apiKey, CancellationToken ct)
     {
-        var url = BuildIndexersUrl(baseUrl);
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.Add("X-Api-Key", apiKey);
-
-        using var resp = await _http.SendAsync(request, ct);
+        var url = BuildIndexersUrl(baseUrl, apiKey);
+        using var resp = await SendGetAllowingSameHostDowngradeAsync(url, ct);
         resp.EnsureSuccessStatusCode();
 
         var contentType = resp.Content.Headers.ContentType?.MediaType ?? "";

@@ -15,10 +15,13 @@ public sealed class UnifiedCategoryService
     {
         ["films"] = "Films",
         ["series"] = "Series TV",
-        ["anime"] = "Animation",
+        ["anime"] = "Anime",
         ["games"] = "Jeux",
         ["shows"] = "Emissions",
-        ["spectacle"] = "Spectacle"
+        ["spectacle"] = "Spectacle",
+        ["audio"] = "Audio",
+        ["books"] = "Livres",
+        ["comics"] = "Comics"
     };
 
     public UnifiedCategory? Get(string? categoryName, string? title)
@@ -46,6 +49,9 @@ public sealed class UnifiedCategoryService
         if (ContainsAny(cat, new[] { "pc/games", "pc games", "game", "games", "jeu", "jeux" })) return "games";
         if (ContainsAny(cat, new[] { "tv/anime", "anime" })) return "anime";
         if (ContainsAny(cat, new[] { "movies/other" })) return "anime";
+        if (ContainsAny(cat, new[] { "audio", "music", "musique", "mp3", "flac", "podcast", "audiobook", "audiobooks" })) return "audio";
+        if (ContainsAny(cat, new[] { "book", "books", "livre", "livres", "ebook", "ebooks", "epub", "mobi", "kindle" })) return "books";
+        if (ContainsAny(cat, new[] { "comic", "comics", "bd", "bande dessinee", "bande dessinee numerique", "manga", "scan", "scans" })) return "comics";
         if (ContainsAny(cat, new[] { "spectacle", "concert", "opera", "theatre", "ballet" })) return "spectacle";
         if (ContainsAny(cat, new[] { "documentary", "documentaire", "doc", "emission", "show", "magazine" }))
             return "shows";

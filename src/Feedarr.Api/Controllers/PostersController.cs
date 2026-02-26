@@ -4,9 +4,16 @@ using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Services.Igdb;
 using Feedarr.Api.Services.Tmdb;
 using Feedarr.Api.Services.Fanart;
+using Feedarr.Api.Services.TheAudioDb;
+using Feedarr.Api.Services.GoogleBooks;
+using Feedarr.Api.Services.ComicVine;
+using Feedarr.Api.Services.MusicBrainz;
+using Feedarr.Api.Services.OpenLibrary;
+using Feedarr.Api.Services.Rawg;
 using Feedarr.Api.Services.Posters;
 using Feedarr.Api.Models;
 using Feedarr.Api.Services.Categories;
+using Feedarr.Api.Services.ExternalProviders;
 
 namespace Feedarr.Api.Controllers;
 
@@ -24,6 +31,13 @@ public sealed class PostersController : ControllerBase
     private readonly TmdbClient _tmdb;
     private readonly FanartClient _fanart;
     private readonly IgdbClient _igdb;
+    private readonly TheAudioDbClient _theAudioDb;
+    private readonly GoogleBooksClient _googleBooks;
+    private readonly OpenLibraryClient _openLibrary;
+    private readonly RawgClient _rawg;
+    private readonly ComicVineClient _comicVine;
+    private readonly MusicBrainzClient _musicBrainz;
+    private readonly ILogger<PostersController> _log;
 
     public PostersController(
         ReleaseRepository releases,
@@ -35,7 +49,14 @@ public sealed class PostersController : ControllerBase
         RetroFetchLogService retroLogs,
         TmdbClient tmdb,
         FanartClient fanart,
-        IgdbClient igdb)
+        IgdbClient igdb,
+        TheAudioDbClient theAudioDb,
+        GoogleBooksClient googleBooks,
+        OpenLibraryClient openLibrary,
+        RawgClient rawg,
+        ComicVineClient comicVine,
+        MusicBrainzClient musicBrainz,
+        ILogger<PostersController> log)
     {
         _releases = releases;
         _mediaEntities = mediaEntities;
@@ -47,6 +68,13 @@ public sealed class PostersController : ControllerBase
         _tmdb = tmdb;
         _fanart = fanart;
         _igdb = igdb;
+        _theAudioDb = theAudioDb;
+        _googleBooks = googleBooks;
+        _openLibrary = openLibrary;
+        _rawg = rawg;
+        _comicVine = comicVine;
+        _musicBrainz = musicBrainz;
+        _log = log;
     }
 
     // GET /api/posters/release/{id}
@@ -192,7 +220,7 @@ public sealed class PostersController : ControllerBase
         var job = _jobFactory.Create(id, forceRefresh: false);
         if (job is null) return NotFound(new { error = "release not found" });
 
-        if (!_queue.Enqueue(job))
+        if (!_queue.TryEnqueue(job))
             return StatusCode(503, new { error = "poster queue full" });
 
         return Accepted(new { ok = true, enqueued = true });
@@ -205,7 +233,7 @@ public sealed class PostersController : ControllerBase
         var job = _jobFactory.Create(itemId, forceRefresh: true);
         if (job is null) return NotFound(new { error = "release not found" });
 
-        if (!_queue.Enqueue(job))
+        if (!_queue.TryEnqueue(job))
             return StatusCode(503, new { error = "poster queue full" });
 
         return Accepted(new { ok = true, enqueued = true, forceRefresh = true });
@@ -217,11 +245,13 @@ public sealed class PostersController : ControllerBase
         public int? TmdbId { get; set; }
         public string? PosterPath { get; set; }
         public int? IgdbId { get; set; }
+        public string? ProviderId { get; set; }
     }
 
     private sealed class PosterSearchResult
     {
         public string? Provider { get; set; }
+        public string? ProviderId { get; set; }
         public int? TmdbId { get; set; }
         public int? IgdbId { get; set; }
         public string? Title { get; set; }
@@ -259,7 +289,10 @@ public sealed class PostersController : ControllerBase
         }
 
         var provider = (dto?.Provider ?? "").Trim().ToLowerInvariant();
-        if (provider != "tmdb" && provider != "igdb")
+        if (provider != "tmdb" && provider != "igdb" && provider != ExternalProviderKeys.TheAudioDb
+            && provider != ExternalProviderKeys.GoogleBooks && provider != ExternalProviderKeys.OpenLibrary
+            && provider != ExternalProviderKeys.ComicVine && provider != ExternalProviderKeys.MusicBrainz
+            && provider != ExternalProviderKeys.Rawg)
             return BadRequest(new { error = "unsupported provider" });
 
         if (provider == "tmdb")
@@ -274,17 +307,92 @@ public sealed class PostersController : ControllerBase
             return Ok(BuildPosterResponse(posterUrl));
         }
 
-        if (dto?.IgdbId is null || string.IsNullOrWhiteSpace(dto?.PosterPath))
-            return BadRequest(new { error = "igdbId/coverUrl missing" });
+        if (provider == "igdb")
+        {
+            if (dto?.IgdbId is null || string.IsNullOrWhiteSpace(dto?.PosterPath))
+                return BadRequest(new { error = "igdbId/coverUrl missing" });
 
-        var igdbPosterUrl = await _posterFetch.SaveIgdbPosterAsync(id, dto.IgdbId.Value, dto.PosterPath!, ct);
-        if (string.IsNullOrWhiteSpace(igdbPosterUrl))
+            var igdbPosterUrl = await _posterFetch.SaveIgdbPosterAsync(id, dto.IgdbId.Value, dto.PosterPath!, ct);
+            if (string.IsNullOrWhiteSpace(igdbPosterUrl))
+                return StatusCode(500, new { error = "poster download failed" });
+
+            return Ok(BuildPosterResponse(igdbPosterUrl));
+        }
+
+        if (provider == ExternalProviderKeys.Rawg)
+        {
+            if (string.IsNullOrWhiteSpace(dto?.ProviderId) || string.IsNullOrWhiteSpace(dto?.PosterPath))
+                return BadRequest(new { error = "providerId/posterPath missing" });
+
+            if (!int.TryParse(dto.ProviderId, out var rawgId) || rawgId <= 0)
+                return BadRequest(new { error = "invalid rawgId" });
+
+            var rawgPosterUrl = await _posterFetch.SaveRawgPosterAsync(id, rawgId, dto.PosterPath!, ct);
+            if (string.IsNullOrWhiteSpace(rawgPosterUrl))
+                return StatusCode(500, new { error = "poster download failed" });
+
+            return Ok(BuildPosterResponse(rawgPosterUrl));
+        }
+
+        if (provider == ExternalProviderKeys.GoogleBooks)
+        {
+            if (string.IsNullOrWhiteSpace(dto?.PosterPath))
+                return BadRequest(new { error = "posterUrl missing" });
+
+            var bookPosterUrl = await _posterFetch.SaveGoogleBooksPosterAsync(id, dto.ProviderId, dto.PosterPath!, ct);
+            if (string.IsNullOrWhiteSpace(bookPosterUrl))
+                return StatusCode(500, new { error = "poster download failed" });
+
+            return Ok(BuildPosterResponse(bookPosterUrl));
+        }
+
+        if (provider == ExternalProviderKeys.OpenLibrary)
+        {
+            if (string.IsNullOrWhiteSpace(dto?.PosterPath))
+                return BadRequest(new { error = "posterUrl missing" });
+
+            var olPosterUrl = await _posterFetch.SaveOpenLibraryPosterAsync(id, dto.ProviderId, dto.PosterPath!, ct);
+            if (string.IsNullOrWhiteSpace(olPosterUrl))
+                return StatusCode(500, new { error = "poster download failed" });
+
+            return Ok(BuildPosterResponse(olPosterUrl));
+        }
+
+        if (provider == ExternalProviderKeys.ComicVine)
+        {
+            if (string.IsNullOrWhiteSpace(dto?.PosterPath))
+                return BadRequest(new { error = "posterUrl missing" });
+
+            var comicPosterUrl = await _posterFetch.SaveComicVinePosterAsync(id, dto.ProviderId, dto.PosterPath!, ct);
+            if (string.IsNullOrWhiteSpace(comicPosterUrl))
+                return StatusCode(500, new { error = "poster download failed" });
+
+            return Ok(BuildPosterResponse(comicPosterUrl));
+        }
+
+        if (provider == ExternalProviderKeys.MusicBrainz)
+        {
+            if (string.IsNullOrWhiteSpace(dto?.PosterPath))
+                return BadRequest(new { error = "posterUrl missing" });
+
+            var mbPosterUrl = await _posterFetch.SaveMusicBrainzPosterAsync(id, dto.ProviderId, dto.PosterPath!, ct);
+            if (string.IsNullOrWhiteSpace(mbPosterUrl))
+                return StatusCode(500, new { error = "poster download failed" });
+
+            return Ok(BuildPosterResponse(mbPosterUrl));
+        }
+
+        if (string.IsNullOrWhiteSpace(dto?.PosterPath))
+            return BadRequest(new { error = "posterUrl missing" });
+
+        var audioPosterUrl = await _posterFetch.SaveTheAudioDbPosterAsync(id, dto.ProviderId, dto.PosterPath!, ct);
+        if (string.IsNullOrWhiteSpace(audioPosterUrl))
             return StatusCode(500, new { error = "poster download failed" });
 
-        return Ok(BuildPosterResponse(igdbPosterUrl));
+        return Ok(BuildPosterResponse(audioPosterUrl));
     }
 
-    // GET /api/posters/search?q=title&mediaType=movie|series|game
+    // GET /api/posters/search?q=title&mediaType=movie|series|game|audio
     [HttpGet("search")]
     public async Task<IActionResult> Search([FromQuery] string? q, [FromQuery] string? mediaType, CancellationToken ct)
     {
@@ -296,8 +404,11 @@ public sealed class PostersController : ControllerBase
         var results = new List<PosterSearchResult>();
         if (mediaType == "game")
         {
-            var games = await _igdb.SearchGameListAsync(query, null, ct);
-            results.AddRange(games.Select(r => new PosterSearchResult
+            var igdbTask = _igdb.SearchGameListAsync(query, null, ct);
+            var rawgTask = _rawg.SearchGameListAsync(query, ct);
+            await Task.WhenAll(igdbTask, rawgTask);
+
+            results.AddRange(igdbTask.Result.Select(r => new PosterSearchResult
             {
                 Provider = "igdb",
                 IgdbId = r.igdbId,
@@ -309,6 +420,119 @@ public sealed class PostersController : ControllerBase
                 PosterLang = null,
                 PosterSize = InferIgdbSize(r.coverUrl)
             }));
+
+            results.AddRange(rawgTask.Result.Select(r => new PosterSearchResult
+            {
+                Provider = ExternalProviderKeys.Rawg,
+                ProviderId = r.rawgId.ToString(),
+                Title = r.title,
+                Year = r.year,
+                MediaType = "game",
+                PosterPath = r.coverUrl,
+                PosterUrl = r.coverUrl,
+                PosterLang = null,
+                PosterSize = "cover"
+            }));
+        }
+        else if (mediaType == "audio")
+        {
+            var (artist, title) = ParseAudioSearchQuery(query);
+
+            // Run TheAudioDB and MusicBrainz searches in parallel
+            var audioDbTask = _theAudioDb.SearchAudioListAsync(title, artist, null, ct);
+            var mbTask = _musicBrainz.SearchReleaseListAsync(title, artist, ct);
+            await Task.WhenAll(audioDbTask, mbTask);
+
+            results.AddRange(audioDbTask.Result.Select(audio =>
+            {
+                var displayTitle = !string.IsNullOrWhiteSpace(audio.Artist)
+                    ? $"{audio.Artist} – {audio.Title}"
+                    : audio.Title;
+                return new PosterSearchResult
+                {
+                    Provider = ExternalProviderKeys.TheAudioDb,
+                    ProviderId = audio.ProviderId,
+                    Title = displayTitle,
+                    Year = int.TryParse(audio.Released, out var parsedYear) ? parsedYear : null,
+                    MediaType = "audio",
+                    PosterPath = audio.PosterUrl,
+                    PosterUrl = audio.PosterUrl
+                };
+            }));
+
+            results.AddRange(mbTask.Result.Select(mb =>
+            {
+                var displayTitle = !string.IsNullOrWhiteSpace(mb.Artist)
+                    ? $"{mb.Artist} – {mb.Title}"
+                    : mb.Title;
+                return new PosterSearchResult
+                {
+                    Provider = ExternalProviderKeys.MusicBrainz,
+                    ProviderId = mb.Mbid,
+                    Title = displayTitle,
+                    Year = mb.Released?.Length >= 4
+                        && int.TryParse(mb.Released[..4], out var mbYear) ? mbYear : null,
+                    MediaType = "audio",
+                    PosterPath = mb.CoverUrl,
+                    PosterUrl = mb.CoverUrl
+                };
+            }));
+        }
+        else if (mediaType == "book")
+        {
+            var gbTask = _googleBooks.SearchBookAsync(query, null, ct);
+            var olTask = _openLibrary.SearchBookListAsync(query, ct);
+            await Task.WhenAll(gbTask, olTask);
+            var gbBook = await gbTask;
+            var olBooks = await olTask;
+
+            if (gbBook is not null)
+            {
+                results.Add(new PosterSearchResult
+                {
+                    Provider = ExternalProviderKeys.GoogleBooks,
+                    ProviderId = gbBook.VolumeId,
+                    Title = gbBook.Title,
+                    Year = gbBook.PublishedDate?.Length >= 4
+                        && int.TryParse(gbBook.PublishedDate[..4], out var bookYear) ? bookYear : null,
+                    MediaType = "book",
+                    PosterPath = gbBook.ThumbnailUrl,
+                    PosterUrl = gbBook.ThumbnailUrl
+                });
+            }
+
+            foreach (var olBook in olBooks)
+            {
+                results.Add(new PosterSearchResult
+                {
+                    Provider = ExternalProviderKeys.OpenLibrary,
+                    ProviderId = olBook.WorkId,
+                    Title = olBook.Title,
+                    Year = olBook.PublishedYear is not null
+                        && int.TryParse(olBook.PublishedYear, out var olYear) ? olYear : null,
+                    MediaType = "book",
+                    PosterPath = olBook.CoverUrl,
+                    PosterUrl = olBook.CoverUrl
+                });
+            }
+        }
+        else if (mediaType == "comic")
+        {
+            var comic = await _comicVine.SearchComicAsync(query, null, ct);
+            if (comic is not null)
+            {
+                results.Add(new PosterSearchResult
+                {
+                    Provider = ExternalProviderKeys.ComicVine,
+                    ProviderId = comic.ProviderId,
+                    Title = comic.Title,
+                    Year = comic.ReleaseDate?.Length >= 4
+                        && int.TryParse(comic.ReleaseDate[..4], out var comicYear) ? comicYear : null,
+                    MediaType = "comic",
+                    PosterPath = comic.CoverUrl,
+                    PosterUrl = comic.CoverUrl
+                });
+            }
         }
         else if (mediaType == "series")
         {
@@ -563,7 +787,7 @@ public sealed class PostersController : ControllerBase
                 continue;
             }
 
-            if (_queue.Enqueue(job))
+            if (_queue.TryEnqueue(job))
                 enqueued++;
             else
                 failed++;
@@ -587,14 +811,71 @@ public sealed class PostersController : ControllerBase
     [HttpGet("retro-fetch/log/{file}")]
     public IActionResult DownloadRetroFetchLog([FromRoute] string file)
     {
-        var full = _retroLogs.ResolveLogPath(file);
+        // Defense-in-depth: validate input in the controller before delegating to the service.
+
+        if (string.IsNullOrWhiteSpace(file))
+            return BadRequest(new { error = "invalid log file name" });
+
+        // Reject absolute paths immediately (e.g. "/etc/passwd", "C:\\Windows\\...").
+        if (Path.IsPathRooted(file))
+        {
+            _log.LogWarning("DownloadRetroFetchLog: rejected absolute path – value={File}", SanitizeForLog(file));
+            return StatusCode(403, new { error = "invalid log file name" });
+        }
+
+        // Belt-and-suspenders: reject path separators explicitly before GetFileName.
+        // Covers both OS-native separators and any literal slash passed through routing.
+        if (file.Contains('/') || file.Contains('\\'))
+        {
+            _log.LogWarning("DownloadRetroFetchLog: rejected separator in filename – value={File}", SanitizeForLog(file));
+            return StatusCode(403, new { error = "invalid log file name" });
+        }
+
+        // Strip to filename only (no trim — raw input must already be a plain filename).
+        // If any separator survived the check above, Path.GetFileName would produce a
+        // different string and the Ordinal comparison below would reject it.
+        var safeFileName = Path.GetFileName(file);
+        if (string.IsNullOrWhiteSpace(safeFileName))
+            return BadRequest(new { error = "invalid log file name" });
+
+        if (!string.Equals(safeFileName, file, StringComparison.Ordinal))
+        {
+            _log.LogWarning(
+                "DownloadRetroFetchLog: rejected path-traversal attempt – raw={File} sanitized={Safe}",
+                SanitizeForLog(file), SanitizeForLog(safeFileName));
+            return StatusCode(403, new { error = "invalid log file name" });
+        }
+
+        // Extension whitelist: RetroFetchLogService only ever writes .csv files.
+        // Extend this list only if new log formats are added to that service.
+        if (!safeFileName.EndsWith(".csv", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { error = "invalid log file type: only .csv files are allowed" });
+
+        // Delegate path resolution to the service (also applies Path.GetFileName + extension check).
+        var full = _retroLogs.ResolveLogPath(safeFileName);
         if (string.IsNullOrWhiteSpace(full))
             return BadRequest(new { error = "invalid log file" });
+
+        // Final containment check: canonical absolute path must sit inside the logs directory.
+        var logsDirAbs = Path.GetFullPath(_retroLogs.LogsDirPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        var resolvedAbs = Path.GetFullPath(full);
+        if (!resolvedAbs.StartsWith(logsDirAbs, StringComparison.OrdinalIgnoreCase))
+        {
+            // Log the safe filename only — never expose full resolved paths in log output.
+            _log.LogWarning(
+                "DownloadRetroFetchLog: resolved path for {File} is outside logs directory",
+                SanitizeForLog(safeFileName));
+            return StatusCode(403, new { error = "invalid log file path" });
+        }
 
         if (!System.IO.File.Exists(full))
             return NotFound();
 
-        return PhysicalFile(full, "text/csv", Path.GetFileName(full));
+        // Audit log: safe filename only, control characters stripped.
+        _log.LogInformation("DownloadRetroFetchLog: serving {File}", SanitizeForLog(safeFileName));
+        return PhysicalFile(full, "text/csv", safeFileName);
     }
 
     private static string? InferIgdbSize(string coverUrl)
@@ -615,4 +896,34 @@ public sealed class PostersController : ControllerBase
         var year = result.Year?.ToString() ?? "";
         return $"{provider}:{title}:{year}";
     }
+
+    private static (string? artist, string title) ParseAudioSearchQuery(string input)
+    {
+        var raw = (input ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(raw))
+            return (null, "");
+
+        var separators = new[] { " - ", " – ", " — ", " | ", " : ", ", " };
+        foreach (var separator in separators)
+        {
+            var idx = raw.IndexOf(separator, StringComparison.Ordinal);
+            if (idx <= 0 || idx >= raw.Length - separator.Length)
+                continue;
+
+            var artist = raw[..idx].Trim();
+            var title = raw[(idx + separator.Length)..].Trim();
+            if (!string.IsNullOrWhiteSpace(artist) && !string.IsNullOrWhiteSpace(title))
+                return (artist, title);
+        }
+
+        return (null, raw);
+    }
+
+    /// <summary>
+    /// Strips ASCII control characters (CR, LF, TAB) from a value before it is written to
+    /// a log, preventing log-injection attacks that could forge or split log lines.
+    /// Full paths are never passed here — only filenames.
+    /// </summary>
+    private static string SanitizeForLog(string value)
+        => value.Replace('\r', ' ').Replace('\n', ' ').Replace('\t', ' ');
 }

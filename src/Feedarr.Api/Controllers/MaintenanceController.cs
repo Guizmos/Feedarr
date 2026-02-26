@@ -34,6 +34,7 @@ public sealed class MaintenanceController : ControllerBase
     private readonly IgdbClient _igdb;
     private readonly AppOptions _opts;
     private readonly IWebHostEnvironment _env;
+    private readonly MaintenanceLockService _maintenanceLock;
     private readonly ILogger<MaintenanceController> _log;
 
     private string DataDirAbs =>
@@ -54,6 +55,7 @@ public sealed class MaintenanceController : ControllerBase
         IgdbClient igdb,
         IOptions<AppOptions> opts,
         IWebHostEnvironment env,
+        MaintenanceLockService maintenanceLock,
         ILogger<MaintenanceController> log)
     {
         _db = db;
@@ -68,6 +70,7 @@ public sealed class MaintenanceController : ControllerBase
         _igdb = igdb;
         _opts = opts.Value;
         _env = env;
+        _maintenanceLock = maintenanceLock;
         _log = log;
     }
 
@@ -75,35 +78,47 @@ public sealed class MaintenanceController : ControllerBase
     [HttpPost("vacuum")]
     public IActionResult Vacuum()
     {
-        var dbPath = _db.DbPath;
-        if (!System.IO.File.Exists(dbPath))
-            return NotFound(new { error = "database not found" });
-
-        double sizeBefore = 0;
-        try { sizeBefore = Math.Round(new FileInfo(dbPath).Length / 1024d / 1024d, 2); }
-        catch (Exception ex) { _log.LogWarning(ex, "Failed to read DB size before VACUUM"); }
-
+        if (!_maintenanceLock.TryEnter())
+        {
+            _log.LogWarning("Vacuum rejected – a maintenance operation is already running");
+            return Conflict(new { error = "a maintenance operation is already running" });
+        }
         try
         {
-            using var conn = _db.Open();
-            conn.Execute("PRAGMA wal_checkpoint(TRUNCATE);");
-            conn.Execute("VACUUM;");
+            var dbPath = _db.DbPath;
+            if (!System.IO.File.Exists(dbPath))
+                return NotFound(new { error = "database not found" });
+
+            double sizeBefore = 0;
+            try { sizeBefore = Math.Round(new FileInfo(dbPath).Length / 1024d / 1024d, 2); }
+            catch (Exception ex) { _log.LogWarning(ex, "Failed to read DB size before VACUUM"); }
+
+            try
+            {
+                using var conn = _db.Open();
+                conn.Execute("PRAGMA wal_checkpoint(TRUNCATE);");
+                conn.Execute("VACUUM;");
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "VACUUM maintenance task failed");
+                return StatusCode(500, new { error = "internal server error" });
+            }
+
+            double sizeAfter = 0;
+            try { sizeAfter = Math.Round(new FileInfo(dbPath).Length / 1024d / 1024d, 2); }
+            catch (Exception ex) { _log.LogWarning(ex, "Failed to read DB size after VACUUM"); }
+
+            var saved = Math.Round(sizeBefore - sizeAfter, 2);
+            _activity.Add(null, "info", "maintenance", "Database optimized (VACUUM)",
+                dataJson: $"{{\"sizeBefore\":{sizeBefore},\"sizeAfter\":{sizeAfter},\"savedMB\":{saved}}}");
+
+            return Ok(new { ok = true, dbSizeBefore = sizeBefore, dbSizeAfter = sizeAfter, savedMB = saved });
         }
-        catch (Exception ex)
+        finally
         {
-            _log.LogError(ex, "VACUUM maintenance task failed");
-            return StatusCode(500, new { error = "internal server error" });
+            _maintenanceLock.Release();
         }
-
-        double sizeAfter = 0;
-        try { sizeAfter = Math.Round(new FileInfo(dbPath).Length / 1024d / 1024d, 2); }
-        catch (Exception ex) { _log.LogWarning(ex, "Failed to read DB size after VACUUM"); }
-
-        var saved = Math.Round(sizeBefore - sizeAfter, 2);
-        _activity.Add(null, "info", "maintenance", "Database optimized (VACUUM)",
-            dataJson: $"{{\"sizeBefore\":{sizeBefore},\"sizeAfter\":{sizeAfter},\"savedMB\":{saved}}}");
-
-        return Ok(new { ok = true, dbSizeBefore = sizeBefore, dbSizeAfter = sizeAfter, savedMB = saved });
     }
 
     // POST /api/maintenance/purge-logs
@@ -246,75 +261,96 @@ public sealed class MaintenanceController : ControllerBase
     [HttpPost("cleanup-posters")]
     public IActionResult CleanupPosters()
     {
-        var postersDir = _posterFetch.PostersDirPath;
-        if (!Directory.Exists(postersDir))
-            return Ok(new { ok = true, scanned = 0, orphaned = 0, deleted = 0, freedBytes = 0L });
-
-        var files = Directory.GetFiles(postersDir, "*.*", SearchOption.TopDirectoryOnly);
-        var fileNames = files
-            .Select(Path.GetFileName)
-            .Where(name => !string.IsNullOrWhiteSpace(name))
-            .Select(name => name!)
-            .ToList();
-        var referencedPosters = _releases.GetReferencedPosterFiles(fileNames);
-        var scanned = files.Length;
-        var orphaned = 0;
-        var deleted = 0;
-        long freedBytes = 0;
-
-        // Pre-compute canonical root path with trailing separator for safe containment check
-        var canonicalRoot = Path.GetFullPath(postersDir);
-        if (!canonicalRoot.EndsWith(Path.DirectorySeparatorChar))
-            canonicalRoot += Path.DirectorySeparatorChar;
-
-        foreach (var file in files)
+        if (!_maintenanceLock.TryEnter())
         {
-            var fileName = Path.GetFileName(file);
-            if (string.IsNullOrWhiteSpace(fileName))
-                continue;
-
-            if (referencedPosters.Contains(fileName))
-                continue;
-
-            // Validate file extension is an image type
-            var ext = Path.GetExtension(fileName);
-            if (string.IsNullOrEmpty(ext) ||
-                !ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase) &&
-                !ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) &&
-                !ext.Equals(".png", StringComparison.OrdinalIgnoreCase) &&
-                !ext.Equals(".webp", StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            orphaned++;
-            try
-            {
-                var full = Path.GetFullPath(file);
-                if (!full.StartsWith(canonicalRoot, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                var size = new FileInfo(file).Length;
-
-                System.IO.File.Delete(file);
-                if (System.IO.File.Exists(file))
-                {
-                    _log.LogWarning("Poster file still exists after delete attempt, skipping DB cleanup for {File}", fileName);
-                    continue;
-                }
-
-                freedBytes += size;
-                deleted++;
-                _releases.ClearPosterFileReferences(fileName);
-            }
-            catch (Exception ex)
-            {
-                _log.LogWarning(ex, "Failed to delete orphaned poster: {File}", fileName);
-            }
+            _log.LogWarning("CleanupPosters rejected – a maintenance operation is already running");
+            return Conflict(new { error = "a maintenance operation is already running" });
         }
 
-        _activity.Add(null, "info", "maintenance", "Orphaned posters cleaned",
-            dataJson: $"{{\"scanned\":{scanned},\"orphaned\":{orphaned},\"deleted\":{deleted},\"freedBytes\":{freedBytes}}}");
+        try
+        {
+            var postersDir = _posterFetch.PostersDirPath;
+            if (!Directory.Exists(postersDir))
+                return Ok(new { ok = true, scanned = 0, orphaned = 0, deleted = 0, freedBytes = 0L });
 
-        return Ok(new { ok = true, scanned, orphaned, deleted, freedBytes });
+            var files = Directory.GetFiles(postersDir, "*.*", SearchOption.TopDirectoryOnly);
+            var fileNames = files
+                .Select(Path.GetFileName)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Select(name => name!)
+                .ToList();
+            var referencedPosters = _releases.GetReferencedPosterFiles(fileNames);
+            var scanned = files.Length;
+            var orphaned = 0;
+            var deleted = 0;
+            long freedBytes = 0;
+
+            // Pre-compute canonical root path with trailing separator for safe containment check
+            var canonicalRoot = Path.GetFullPath(postersDir);
+            if (!canonicalRoot.EndsWith(Path.DirectorySeparatorChar))
+                canonicalRoot += Path.DirectorySeparatorChar;
+
+            foreach (var file in files)
+            {
+                var fileName = Path.GetFileName(file);
+                if (string.IsNullOrWhiteSpace(fileName))
+                    continue;
+
+                if (referencedPosters.Contains(fileName))
+                    continue;
+
+                // Validate file extension is an image type.
+                // Parentheses around the && chain are required: without them the ||
+                // binds tighter than && and the condition logic is incorrect.
+                var ext = Path.GetExtension(fileName);
+                if (string.IsNullOrEmpty(ext) ||
+                    (!ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase) &&
+                     !ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) &&
+                     !ext.Equals(".png", StringComparison.OrdinalIgnoreCase) &&
+                     !ext.Equals(".webp", StringComparison.OrdinalIgnoreCase)))
+                    continue;
+
+                orphaned++;
+                try
+                {
+                    var full = Path.GetFullPath(file);
+                    if (!full.StartsWith(canonicalRoot, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var size = new FileInfo(file).Length;
+
+                    // DB-first: clear the reference before deleting the file.
+                    // If the DB write fails we abort without touching the file,
+                    // so no broken reference pointing to a missing file can arise.
+                    // If the subsequent file delete fails, the DB reference is
+                    // already gone; the file will be cleaned up on the next run.
+                    _releases.ClearPosterFileReferences(fileName);
+
+                    System.IO.File.Delete(file);
+                    if (System.IO.File.Exists(file))
+                    {
+                        _log.LogWarning("Poster file still exists after delete attempt for {File}", fileName);
+                        continue;
+                    }
+
+                    freedBytes += size;
+                    deleted++;
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Failed to delete orphaned poster: {File}", fileName);
+                }
+            }
+
+            _activity.Add(null, "info", "maintenance", "Orphaned posters cleaned",
+                dataJson: $"{{\"scanned\":{scanned},\"orphaned\":{orphaned},\"deleted\":{deleted},\"freedBytes\":{freedBytes}}}");
+
+            return Ok(new { ok = true, scanned, orphaned, deleted, freedBytes });
+        }
+        finally
+        {
+            _maintenanceLock.Release();
+        }
     }
 
     // POST /api/maintenance/test-providers
@@ -386,6 +422,11 @@ public sealed class MaintenanceController : ControllerBase
     [HttpPost("detect-duplicates")]
     public IActionResult DetectDuplicates([FromQuery] bool purge = false)
     {
+        if (!_maintenanceLock.TryEnter())
+        {
+            _log.LogWarning("DetectDuplicates rejected – a maintenance operation is already running");
+            return Conflict(new { error = "a maintenance operation is already running" });
+        }
         try
         {
             var result = _releases.DetectDuplicates();
@@ -404,6 +445,70 @@ public sealed class MaintenanceController : ControllerBase
         {
             _log.LogError(ex, "Duplicate detection maintenance task failed");
             return StatusCode(500, new { error = "internal server error" });
+        }
+        finally
+        {
+            _maintenanceLock.Release();
+        }
+    }
+
+    // POST /api/maintenance/reprocess-categories
+    [HttpPost("reprocess-categories")]
+    public IActionResult ReprocessCategories()
+    {
+        if (!_maintenanceLock.TryEnter())
+        {
+            _log.LogWarning("ReprocessCategories rejected – a maintenance operation is already running");
+            return Conflict(new { error = "a maintenance operation is already running" });
+        }
+        try
+        {
+            var (processed, updated, markedRebind) = _releases.ReprocessCategories();
+
+            _activity.Add(null, "info", "maintenance", "Categories re-processed",
+                dataJson: $"{{\"processed\":{processed},\"updated\":{updated},\"markedRebind\":{markedRebind}}}");
+
+            return Ok(new { ok = true, processed, updated, markedRebind });
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Reprocess categories maintenance task failed");
+            return StatusCode(500, new { error = "internal server error" });
+        }
+        finally
+        {
+            _maintenanceLock.Release();
+        }
+    }
+
+    // POST /api/maintenance/rebind-entities?batchSize=200
+    // À appeler après reprocess-categories pour corriger entity_id des releases recatégorisées.
+    // Traite les releases WHERE needs_rebind=1 par batch (curseur id) et recalcule entity_id.
+    [HttpPost("rebind-entities")]
+    public IActionResult RebindEntities([FromQuery] int batchSize = 200)
+    {
+        if (!_maintenanceLock.TryEnter())
+        {
+            _log.LogWarning("RebindEntities rejected – a maintenance operation is already running");
+            return Conflict(new { error = "a maintenance operation is already running" });
+        }
+        try
+        {
+            var (processed, rebound) = _releases.RebindEntities(batchSize);
+
+            _activity.Add(null, "info", "maintenance", "Entity rebind completed",
+                dataJson: $"{{\"processed\":{processed},\"rebound\":{rebound}}}");
+
+            return Ok(new { ok = true, processed, rebound });
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Rebind entities maintenance task failed");
+            return StatusCode(500, new { error = "internal server error" });
+        }
+        finally
+        {
+            _maintenanceLock.Release();
         }
     }
 }

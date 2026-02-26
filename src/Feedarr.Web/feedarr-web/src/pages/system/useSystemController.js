@@ -9,11 +9,31 @@ const DEFAULT_EXTERNAL = {
   hasIgdbClientSecret: false,
 };
 
-const DEFAULT_PROVIDER_STATS = {
-  tmdb: { calls: 0, failures: 0, avgMs: 0 },
-  tvmaze: { calls: 0, failures: 0, avgMs: 0 },
-  fanart: { calls: 0, failures: 0, avgMs: 0 },
-  igdb: { calls: 0, failures: 0, avgMs: 0 },
+const DEFAULT_PROVIDER_STATS = {};
+
+function toHasFlagName(fieldKey) {
+  const raw = String(fieldKey || "").trim();
+  if (!raw) return "";
+  return `has${raw.charAt(0).toUpperCase()}${raw.slice(1)}`;
+}
+
+function hasRequiredAuth(instance, definition) {
+  if (!definition) return false;
+  const required = (definition.fieldsSchema || []).filter((field) => field.required);
+  if (required.length === 0) return true;
+  const flags = instance?.authFlags || {};
+  return required.every((field) => !!flags[toHasFlagName(field.key)]);
+}
+
+const PROVIDER_LABELS = {
+  tmdb: "TMDB",
+  tvmaze: "TVmaze",
+  fanart: "Fanart.tv",
+  igdb: "IGDB",
+  jikan: "Jikan (MAL)",
+  googlebooks: "Google Books",
+  theaudiodb: "TheAudioDB",
+  comicvine: "Comic Vine",
 };
 
 const DEFAULT_STORAGE_INFO = { volumes: [], usage: {} };
@@ -23,12 +43,7 @@ function createDefaultExternal() {
 }
 
 function createDefaultProviderStats() {
-  return {
-    tmdb: { ...DEFAULT_PROVIDER_STATS.tmdb },
-    tvmaze: { ...DEFAULT_PROVIDER_STATS.tvmaze },
-    fanart: { ...DEFAULT_PROVIDER_STATS.fanart },
-    igdb: { ...DEFAULT_PROVIDER_STATS.igdb },
-  };
+  return { ...DEFAULT_PROVIDER_STATS };
 }
 
 function createDefaultStorageInfo() {
@@ -58,6 +73,7 @@ export default function useSystemController(section = "overview") {
   const [status, setStatus] = useState(null);
   const [sources, setSources] = useState([]);
   const [external, setExternal] = useState(createDefaultExternal);
+  const [externalProviders, setExternalProviders] = useState({ definitions: [], instances: [] });
   const [providerStats, setProviderStats] = useState(createDefaultProviderStats);
   const [missingPosterCount, setMissingPosterCount] = useState(0);
   const [storageInfo, setStorageInfo] = useState(createDefaultStorageInfo);
@@ -67,12 +83,13 @@ export default function useSystemController(section = "overview") {
     setLoading(true);
     setErr("");
 
-    const [sysRes, srcRes, extRes, provRes, missingRes] = await Promise.allSettled([
+    const [sysRes, srcRes, extRes, provRes, missingRes, extProvidersRes] = await Promise.allSettled([
       apiGet("/api/system/status"),
       apiGet("/api/sources"),
       apiGet("/api/settings/external"),
       apiGet("/api/system/providers"),
       apiGet("/api/posters/missing-count"),
+      apiGet("/api/providers/external"),
     ]);
 
     const errors = [];
@@ -104,31 +121,31 @@ export default function useSystemController(section = "overview") {
     }
 
     if (provRes.status === "fulfilled") {
-      setProviderStats({
-        tmdb: {
-          calls: Number(provRes.value?.tmdb?.calls ?? 0),
-          failures: Number(provRes.value?.tmdb?.failures ?? 0),
-          avgMs: Number(provRes.value?.tmdb?.avgMs ?? 0),
-        },
-        tvmaze: {
-          calls: Number(provRes.value?.tvmaze?.calls ?? 0),
-          failures: Number(provRes.value?.tvmaze?.failures ?? 0),
-          avgMs: Number(provRes.value?.tvmaze?.avgMs ?? 0),
-        },
-        fanart: {
-          calls: Number(provRes.value?.fanart?.calls ?? 0),
-          failures: Number(provRes.value?.fanart?.failures ?? 0),
-          avgMs: Number(provRes.value?.fanart?.avgMs ?? 0),
-        },
-        igdb: {
-          calls: Number(provRes.value?.igdb?.calls ?? 0),
-          failures: Number(provRes.value?.igdb?.failures ?? 0),
-          avgMs: Number(provRes.value?.igdb?.avgMs ?? 0),
-        },
-      });
+      const nextStats = {};
+      const payload = provRes.value;
+      if (payload && typeof payload === "object") {
+        Object.entries(payload).forEach(([providerKey, value]) => {
+          if (!value || typeof value !== "object") return;
+          nextStats[String(providerKey).toLowerCase()] = {
+            calls: Number(value.calls ?? 0),
+            failures: Number(value.failures ?? 0),
+            avgMs: Number(value.avgMs ?? 0),
+          };
+        });
+      }
+      setProviderStats(nextStats);
     } else {
       setProviderStats(createDefaultProviderStats());
       errors.push("Stats métadonnées indisponibles");
+    }
+
+    if (extProvidersRes.status === "fulfilled") {
+      const definitions = Array.isArray(extProvidersRes.value?.definitions) ? extProvidersRes.value.definitions : [];
+      const instances = Array.isArray(extProvidersRes.value?.instances) ? extProvidersRes.value.instances : [];
+      setExternalProviders({ definitions, instances });
+    } else {
+      setExternalProviders({ definitions: [], instances: [] });
+      errors.push("Configuration metadata indisponible");
     }
 
     if (missingRes.status === "fulfilled") {
@@ -178,6 +195,38 @@ export default function useSystemController(section = "overview") {
     return "#22c55e";
   }, [matchingPercent]);
 
+  const metadataProviderRows = useMemo(() => {
+    const definitions = Array.isArray(externalProviders?.definitions) ? externalProviders.definitions : [];
+    const instances = (Array.isArray(externalProviders?.instances) ? externalProviders.instances : [])
+      .filter((instance) => instance?.enabled !== false);
+    const definitionByKey = new Map(
+      definitions.map((definition) => [String(definition?.providerKey || "").toLowerCase(), definition])
+    );
+
+    return instances.map((instance) => {
+      const providerKey = String(instance?.providerKey || "").toLowerCase();
+      const definition = definitionByKey.get(providerKey);
+      const requiredFields = (definition?.fieldsSchema || []).filter((field) => field.required);
+      const configured = hasRequiredAuth(instance, definition);
+      const stats = providerStats?.[providerKey] || { calls: 0, failures: 0, avgMs: 0 };
+
+      const apiStatus = requiredFields.length === 0
+        ? "N/A"
+        : (configured ? "OK" : "NO");
+
+      return {
+        instanceId: String(instance?.instanceId || providerKey),
+        providerKey,
+        label: instance?.displayName || definition?.displayName || PROVIDER_LABELS[providerKey] || providerKey.toUpperCase(),
+        apiStatus,
+        apiStatusClass: apiStatus === "OK" ? "ok" : "warn",
+        calls: Number(stats.calls ?? 0),
+        failures: Number(stats.failures ?? 0),
+        avgMs: Number(stats.avgMs ?? 0),
+      };
+    });
+  }, [externalProviders, providerStats]);
+
   return {
     systemTitle,
     showStorage,
@@ -191,6 +240,7 @@ export default function useSystemController(section = "overview") {
     sources,
     external,
     providerStats,
+    metadataProviderRows,
     missingPosterCount,
     storageInfo,
     load,

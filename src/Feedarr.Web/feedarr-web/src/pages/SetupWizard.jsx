@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiGet, apiPost } from "../api/client.js";
+import { tr } from "../app/uiText.js";
+import Step0Language from "../components/setup/Step0Language.jsx";
 import Step1Intro from "../components/setup/Step1Intro.jsx";
 import Step2Providers from "../components/setup/Step2Providers.jsx";
 import Step3JackettConn from "../components/setup/Step3JackettConn.jsx";
@@ -25,7 +27,7 @@ const JACKETT_STORAGE_KEYS = [
   "feedarr:prowlarrManualOnly",
 ];
 const MIN_STEP = 1;
-const MAX_STEP = 6;
+const MAX_STEP = 7;
 
 function clampStep(value) {
   if (!Number.isFinite(value)) return MIN_STEP;
@@ -44,12 +46,12 @@ export default function SetupWizard() {
   const [step, setStep] = useState(readStoredStep);
   const [maxStep, setMaxStep] = useState(step);
   const [finishing, setFinishing] = useState(false);
-  const [providersValidation, setProvidersValidation] = useState({
-    tmdb: null,
-    tvmaze: null,
-    fanart: null,
-    igdb: null,
+  const [languageStepStatus, setLanguageStepStatus] = useState({
+    ready: false,
+    saving: false,
+    error: "",
   });
+  const [providersValidation, setProvidersValidation] = useState({});
   const [providersAllAdded, setProvidersAllAdded] = useState(false);
   const [jackettStatus, setJackettStatus] = useState({
     provider: "",
@@ -144,11 +146,16 @@ export default function SetupWizard() {
     }
   }, [finishing, navigate]);
 
-  const steps = useMemo(() => ([
-    { id: 1, title: "Intro", content: <Step1Intro /> },
+  const steps = [
     {
-      id: 2,
-      title: "Providers",
+      id: 1,
+      title: tr("Langue", "Language"),
+      content: <Step0Language onStatusChange={setLanguageStepStatus} />,
+    },
+    { id: 2, title: tr("Intro", "Intro"), content: <Step1Intro /> },
+    {
+      id: 3,
+      title: tr("Metadonnees", "Metadata"),
       content: (
         <Step2Providers
           validation={providersValidation}
@@ -158,8 +165,8 @@ export default function SetupWizard() {
       ),
     },
     {
-      id: 3,
-      title: "Fournisseurs",
+      id: 4,
+      title: tr("Fournisseurs RSS", "RSS providers"),
       content: (
         <Step3JackettConn
           onStatusChange={setJackettStatus}
@@ -169,19 +176,19 @@ export default function SetupWizard() {
       ),
     },
     {
-      id: 4,
-      title: "Indexeurs",
+      id: 5,
+      title: tr("Indexeurs", "Indexers"),
       content: (
         <Step31JackettIndexers
           onHasSourcesChange={setJackettHasSources}
-          onBack={() => setStep(3)}
+          onBack={() => setStep(4)}
           jackettConfig={jackettStatus}
         />
       ),
     },
-    { id: 5, title: "Applications", content: <Step4ArrApps /> },
-    { id: 6, title: "Résumé", content: <Step5Summary onFinish={finish} finishing={finishing} /> },
-  ]), [providersValidation, jackettResetToken, jackettStatus, finish, finishing]);
+    { id: 6, title: tr("Applications", "Applications"), content: <Step4ArrApps /> },
+    { id: 7, title: tr("Resume", "Summary"), content: <Step5Summary onFinish={finish} finishing={finishing} /> },
+  ];
 
   const providersOk = useMemo(
     () => Object.values(providersValidation || {}).some((v) => v === "ok"),
@@ -189,10 +196,10 @@ export default function SetupWizard() {
   );
 
   const current = steps[step - 1];
-  const allowSkip = step === 2 || step === 5;
+  const allowSkip = step === 3 || step === 6;
   const isJackettReady = !!jackettStatus?.ready;
-  const canSkip = step === 2 ? providersOk : true;
-  const showSkip = allowSkip && !(step === 2 && providersAllAdded);
+  const canSkip = step === 3 ? providersOk : true;
+  const showSkip = allowSkip && !(step === 3 && providersAllAdded);
 
   function goStep(next) {
     setStep(clampStep(next));
@@ -230,16 +237,17 @@ export default function SetupWizard() {
 
         <div className="setupWizardFooter">
           <div className="setup-actions">
-            <button
-              className="btn"
-              type="button"
-              onClick={() => goStep(step - 1)}
-              disabled={step <= MIN_STEP}
-            >
-              Precedent
-            </button>
+            {step > MIN_STEP && (
+              <button
+                className="btn"
+                type="button"
+                onClick={() => goStep(step - 1)}
+              >
+                {tr("Precedent", "Previous")}
+              </button>
+            )}
 
-            <div className="setup-actions-right">
+            <div className="setup-actions-right" style={{ marginLeft: "auto" }}>
               {showSkip && (
                 <button
                   className="btn"
@@ -247,7 +255,7 @@ export default function SetupWizard() {
                   onClick={() => goStep(step + 1)}
                   disabled={!canSkip}
                 >
-                  Passer
+                  {tr("Passer", "Skip")}
                 </button>
               )}
               {step < MAX_STEP && (
@@ -256,12 +264,13 @@ export default function SetupWizard() {
                   type="button"
                   onClick={() => goStep(step + 1)}
                   disabled={
-                    (step === 2 && !providersOk) ||
-                    (step === 3 && !isJackettReady) ||
-                    (step === 4 && !jackettHasSources)
+                    (step === 1 && (!languageStepStatus.ready || languageStepStatus.saving)) ||
+                    (step === 3 && !providersOk) ||
+                    (step === 4 && !isJackettReady) ||
+                    (step === 5 && !jackettHasSources)
                   }
                 >
-                  Suivant
+                  {tr("Suivant", "Next")}
                 </button>
               )}
             </div>

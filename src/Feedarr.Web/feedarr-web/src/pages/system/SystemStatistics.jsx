@@ -3,6 +3,7 @@ import { apiGet } from '../../api/client.js';
 import { fmtUptime, fmtBytes } from './systemUtils.js';
 import { getActiveUiLanguage } from '../../app/locale.js';
 import { tr } from '../../app/uiText.js';
+import { CATEGORY_GROUP_LABELS, normalizeCategoryGroupKey } from '../../domain/categories/index.js';
 
 /* ─────────────────────── Helpers ─────────────────────── */
 
@@ -14,147 +15,121 @@ function formatNumber(num) {
 
 /* ─────────────────────── Category mapping ─────────────────────── */
 
-const CATEGORY_MAP = {
-  2183: { color: "#3b82f6", name: "Films" },
-  2145: { color: "#f472b6", name: "Animation" },
-  2184: { color: "#22c55e", name: "Séries" },
-  2185: { color: "#f472b6", name: "Animation" },
-  2178: { color: "#06b6d4", name: "Documentaire" },
-  2182: { color: "#a855f7", name: "Émissions" },
-  2190: { color: "#f97316", name: "Spectacle" },
-  2181: { color: "#84cc16", name: "Sport" },
-  2188: { color: "#ec4899", name: "Clip" },
-  2189: { color: "#64748b", name: "Autre Vidéo" },
-  2090: { color: "#f97316", name: "Spectacle" },
-  5080: { color: "#a855f7", name: "Émissions" },
-  2101: { color: "#8b5cf6", name: "Musique" },
-  2102: { color: "#8b5cf6", name: "Musique" },
-  2103: { color: "#8b5cf6", name: "Samples" },
-  2104: { color: "#8b5cf6", name: "Podcast" },
-  2105: { color: "#8b5cf6", name: "Karaoké" },
-  2136: { color: "#ef4444", name: "Livres" },
-  2137: { color: "#ef4444", name: "BD" },
-  2138: { color: "#ef4444", name: "Comics" },
-  2139: { color: "#ef4444", name: "Mangas" },
-  2140: { color: "#ef4444", name: "Presse" },
-  2141: { color: "#ef4444", name: "Audio Livres" },
-  2160: { color: "#f59e0b", name: "Jeux Vidéo" },
-  2161: { color: "#f59e0b", name: "Jeux Windows" },
-  2162: { color: "#f59e0b", name: "Jeux Linux" },
-  2163: { color: "#f59e0b", name: "Jeux Mac" },
-  2164: { color: "#f59e0b", name: "Jeux Console" },
-  2165: { color: "#f59e0b", name: "Jeux Nintendo" },
-  2166: { color: "#f59e0b", name: "Jeux Sony" },
-  2167: { color: "#f59e0b", name: "Jeux Microsoft" },
-  2168: { color: "#f59e0b", name: "Jeux Android" },
-  2169: { color: "#f59e0b", name: "Jeux iOS" },
-  2150: { color: "#ec4899", name: "Logiciels" },
-  2151: { color: "#ec4899", name: "Apps Windows" },
-  2152: { color: "#ec4899", name: "Apps Linux" },
-  2153: { color: "#ec4899", name: "Apps Mac" },
-  2154: { color: "#ec4899", name: "Apps Mobile" },
-  2155: { color: "#ec4899", name: "GPS" },
-  2156: { color: "#ec4899", name: "Formation" },
-  2191: { color: "#14b8a6", name: "XXX" },
-  1000: { color: "#f59e0b", name: "Console" },
-  1010: { color: "#f59e0b", name: "NDS" },
-  1020: { color: "#f59e0b", name: "PSP" },
-  1030: { color: "#f59e0b", name: "Wii" },
-  1040: { color: "#f59e0b", name: "Xbox" },
-  1050: { color: "#f59e0b", name: "Xbox 360" },
-  1060: { color: "#f59e0b", name: "WiiWare" },
-  1070: { color: "#f59e0b", name: "Xbox 360 DLC" },
-  1080: { color: "#f59e0b", name: "PS3" },
-  1090: { color: "#f59e0b", name: "Autre Console" },
-  2000: { color: "#3b82f6", name: "Films" },
-  2010: { color: "#3b82f6", name: "Films Étranger" },
-  2020: { color: "#3b82f6", name: "Films Autre" },
-  2030: { color: "#3b82f6", name: "Films SD" },
-  2040: { color: "#3b82f6", name: "Films HD" },
-  2045: { color: "#3b82f6", name: "Films UHD" },
-  2050: { color: "#3b82f6", name: "Films BluRay" },
-  2060: { color: "#3b82f6", name: "Films 3D" },
-  2070: { color: "#06b6d4", name: "Documentaire" },
-  3000: { color: "#8b5cf6", name: "Audio" },
-  3010: { color: "#8b5cf6", name: "MP3" },
-  3020: { color: "#8b5cf6", name: "Video Clip" },
-  3030: { color: "#8b5cf6", name: "Lossless" },
-  3040: { color: "#8b5cf6", name: "Autre Audio" },
-  3050: { color: "#8b5cf6", name: "Podcast" },
-  3060: { color: "#8b5cf6", name: "Audiobook" },
-  4000: { color: "#ec4899", name: "PC" },
-  4010: { color: "#ec4899", name: "PC 0day" },
-  4020: { color: "#ec4899", name: "PC ISO" },
-  4030: { color: "#ec4899", name: "PC Mac" },
-  4040: { color: "#ec4899", name: "PC Mobile" },
-  4050: { color: "#ec4899", name: "PC Games" },
-  4060: { color: "#ec4899", name: "PC Mobile iOS" },
-  4070: { color: "#ec4899", name: "PC Mobile Android" },
-  5000: { color: "#22c55e", name: "Séries" },
-  5010: { color: "#22c55e", name: "Séries WEB-DL" },
-  5020: { color: "#22c55e", name: "Séries Étranger" },
-  5030: { color: "#22c55e", name: "Séries SD" },
-  5040: { color: "#22c55e", name: "Séries HD" },
-  5045: { color: "#22c55e", name: "Séries UHD" },
-  5050: { color: "#22c55e", name: "Séries Autre" },
-  5060: { color: "#84cc16", name: "Sport" },
-  5070: { color: "#f472b6", name: "Anime" },
-  6000: { color: "#14b8a6", name: "XXX" },
-  6010: { color: "#14b8a6", name: "XXX DVD" },
-  6020: { color: "#14b8a6", name: "XXX WMV" },
-  6030: { color: "#14b8a6", name: "XXX XviD" },
-  6040: { color: "#14b8a6", name: "XXX x264" },
-  6050: { color: "#14b8a6", name: "XXX Pack" },
-  6060: { color: "#14b8a6", name: "XXX ImageSet" },
-  6070: { color: "#14b8a6", name: "XXX Other" },
-  7000: { color: "#ef4444", name: "Livres" },
-  7010: { color: "#ef4444", name: "Magazines" },
-  7020: { color: "#ef4444", name: "Ebook" },
-  7030: { color: "#ef4444", name: "Comics" },
-  7040: { color: "#ef4444", name: "Technical" },
-  7050: { color: "#ef4444", name: "Foreign Books" },
-  8000: { color: "#6366f1", name: "Autre" },
-  8010: { color: "#6366f1", name: "Misc" },
-  8020: { color: "#6366f1", name: "Hashed" },
-};
+const CATEGORY_COLOR_FALLBACK = "var(--cat-stats-unknown)";
+
+const cssVarCache = new Map();
+
+function getCssVar(name) {
+  if (cssVarCache.has(name)) return cssVarCache.get(name);
+  const value = getComputedStyle(document.documentElement)
+    .getPropertyValue(name)
+    .trim();
+  cssVarCache.set(name, value);
+  return value;
+}
+
+function getCategoryColor(key) {
+  const normalized = String(key || "").trim().toLowerCase();
+  if (!normalized) return CATEGORY_COLOR_FALLBACK;
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return `var(--cat-${normalized})`;
+  }
+  const value = getCssVar(`--cat-${normalized}`);
+  return value || CATEGORY_COLOR_FALLBACK;
+}
 
 const MAIN_CATEGORY_FALLBACKS = {
-  1: { color: "#f59e0b", name: "Console" },
-  2: { color: "#3b82f6", name: "Films" },
-  3: { color: "#8b5cf6", name: "Audio" },
-  4: { color: "#ec4899", name: "PC" },
-  5: { color: "#22c55e", name: "Séries" },
-  6: { color: "#14b8a6", name: "XXX" },
-  7: { color: "#ef4444", name: "Livres" },
-  8: { color: "#6366f1", name: "Autre" },
+  1: { tokenKey: "stats-games", name: "Console" },
+  2: { tokenKey: "stats-films", name: "Films" },
+  3: { tokenKey: "stats-audio", name: "Audio" },
+  4: { tokenKey: "stats-pc", name: "PC" },
+  5: { tokenKey: "stats-series", name: "Séries" },
+  6: { tokenKey: "stats-xxx", name: "XXX" },
+  7: { tokenKey: "stats-books", name: "Livres" },
+  8: { tokenKey: "stats-other", name: "Autre" },
+};
+
+const CATEGORY_ID_OVERRIDES = {
+  2145: { tokenKey: "stats-animation", name: "Animation" },
+  2185: { tokenKey: "stats-animation", name: "Animation" },
+  5070: { tokenKey: "stats-animation", name: "Anime" },
+  2182: { tokenKey: "stats-emissions", name: "Émissions" },
+  5080: { tokenKey: "stats-emissions", name: "Émissions" },
+  2090: { tokenKey: "stats-spectacle", name: "Spectacle" },
+  2190: { tokenKey: "stats-spectacle", name: "Spectacle" },
+  2178: { tokenKey: "stats-documentaire", name: "Documentaire" },
+  2070: { tokenKey: "stats-documentaire", name: "Documentaire" },
+  2181: { tokenKey: "stats-sport", name: "Sport" },
+  5060: { tokenKey: "stats-sport", name: "Sport" },
+  2188: { tokenKey: "stats-pc", name: "Clip" },
+  2189: { tokenKey: "stats-other", name: "Autre Vidéo" },
 };
 
 const UNIFIED_CATEGORY_INFO = {
-  film: { color: "#3b82f6", name: "Films" },
-  serie: { color: "#22c55e", name: "Séries" },
-  emission: { color: "#a855f7", name: "Émissions" },
-  spectacle: { color: "#f97316", name: "Spectacle" },
-  jeuwindows: { color: "#ec4899", name: "PC Games" },
-  animation: { color: "#f472b6", name: "Animation" },
-  autre: { color: "#94a3b8", name: "Autre" },
+  films: { tokenKey: "stats-films", name: CATEGORY_GROUP_LABELS.films || "Films" },
+  series: { tokenKey: "stats-series", name: CATEGORY_GROUP_LABELS.series || "Série TV" },
+  emissions: { tokenKey: "stats-emissions", name: CATEGORY_GROUP_LABELS.emissions || "Émissions" },
+  games: { tokenKey: "stats-pc", name: CATEGORY_GROUP_LABELS.games || "Jeux Vidéo" },
+  comics: { tokenKey: "stats-books", name: CATEGORY_GROUP_LABELS.comics || "Comics" },
+  books: { tokenKey: "stats-books", name: CATEGORY_GROUP_LABELS.books || "Livres" },
+  audio: { tokenKey: "stats-audio", name: CATEGORY_GROUP_LABELS.audio || "Audio" },
+  anime: { tokenKey: "stats-animation", name: CATEGORY_GROUP_LABELS.anime || "Anime" },
+  spectacle: { tokenKey: "stats-spectacle", name: CATEGORY_GROUP_LABELS.spectacle || "Spectacle" },
+  animation: { tokenKey: "stats-animation", name: CATEGORY_GROUP_LABELS.animation || "Animation" },
+  jeuwindows: { tokenKey: "stats-pc", name: "PC Games" },
+  autre: { tokenKey: "stats-unknown", name: "Autre" },
 };
 
-function getCategoryInfo(categoryId) {
-  if (!categoryId) return { color: "#94a3b8", name: "Autre" };
+const STATS_TOKEN_BY_CANONICAL_CATEGORY = {
+  films: "stats-films",
+  series: "stats-series",
+  animation: "stats-animation",
+  anime: "stats-animation",
+  games: "stats-pc",
+  comics: "stats-books",
+  books: "stats-books",
+  audio: "stats-audio",
+  spectacle: "stats-spectacle",
+  emissions: "stats-emissions",
+};
+
+function getCategoryInfoById(categoryId) {
+  if (!categoryId) return { color: getCategoryColor("stats-unknown"), name: "Autre" };
   let normalizedId = categoryId;
   if (categoryId >= 100000) normalizedId = categoryId % 100000;
-  if (CATEGORY_MAP[normalizedId]) return CATEGORY_MAP[normalizedId];
+
+  const override = CATEGORY_ID_OVERRIDES[normalizedId];
+  if (override) {
+    return { color: getCategoryColor(override.tokenKey), name: override.name };
+  }
+
   const mainCatDigit = Math.floor(normalizedId / 1000);
-  if (MAIN_CATEGORY_FALLBACKS[mainCatDigit]) return MAIN_CATEGORY_FALLBACKS[mainCatDigit];
-  return { color: "#94a3b8", name: "Autre" };
+  const fallback = MAIN_CATEGORY_FALLBACKS[mainCatDigit];
+  if (fallback) {
+    return { color: getCategoryColor(fallback.tokenKey), name: fallback.name };
+  }
+
+  return { color: getCategoryColor("stats-unknown"), name: "Autre" };
 }
 
 function getCategoryInfoForStats(categoryId, unifiedCategory) {
-  const unifiedKey = String(unifiedCategory || "").trim().toLowerCase();
-  if (unifiedKey && UNIFIED_CATEGORY_INFO[unifiedKey]) {
-    return UNIFIED_CATEGORY_INFO[unifiedKey];
+  const canonicalKey = normalizeCategoryGroupKey(unifiedCategory);
+  if (canonicalKey) {
+    const fromUnified = UNIFIED_CATEGORY_INFO[canonicalKey];
+    const tokenKey = fromUnified?.tokenKey || STATS_TOKEN_BY_CANONICAL_CATEGORY[canonicalKey] || "stats-unknown";
+    const name = CATEGORY_GROUP_LABELS[canonicalKey] || fromUnified?.name || canonicalKey;
+    return {
+      color: getCategoryColor(tokenKey),
+      name,
+    };
   }
-  return getCategoryInfo(categoryId);
+
+  const legacyKey = String(unifiedCategory || "").trim().toLowerCase();
+  if (legacyKey && UNIFIED_CATEGORY_INFO[legacyKey]) {
+    const legacy = UNIFIED_CATEGORY_INFO[legacyKey];
+    return { color: getCategoryColor(legacy.tokenKey), name: legacy.name };
+  }
+  return getCategoryInfoById(categoryId);
 }
 
 const CATEGORY_ORDER = [
@@ -170,6 +145,7 @@ function HorizontalBarChart({
   color = "#5cb3ff", secondaryColor = "#f0c54d",
   height = 280, showLegend = false, legendLabels = [],
   barGap = 16, barMaxWidth, stretchBars = false,
+  valueFormatter = formatNumber,
 }) {
   const maxValue = Math.max(...data.map(d => Math.max(d[valueKey] || 0, d[secondaryKey] || 0)), 1);
   const columnCount = Math.max(1, data.length);
@@ -198,7 +174,7 @@ function HorizontalBarChart({
           return (
             <div key={i} style={{ flex: stretchBars ? `0 0 ${columnWidth}` : 1, width: stretchBars ? columnWidth : "100%", display: "flex", flexDirection: "column", alignItems: "center", minWidth: 0 }}>
               <div style={{ fontSize: 12, marginBottom: 6, color: "var(--muted)", fontWeight: 600 }}>
-                {value > 0 ? formatNumber(value) : ""}
+                {value > 0 ? valueFormatter(value) : ""}
               </div>
               <div style={{ flex: 1, width: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", gap: 2 }}>
                 {secondaryKey && secondary > 0 && (
@@ -705,6 +681,7 @@ function IndexersPanel({ refreshKey }) {
   if (!data) return <PanelLoading />;
 
   const indexerChartData = (data.indexerStatsBySource || []).map(src => ({ name: src.name, releases: src.releaseCount, failed: src.lastStatus === "error" ? 1 : 0 }));
+  const responseChartData = (data.indexerResponseMsBySource || []).map(src => ({ name: src.name, avgMs: Number(src.avgMs || 0) }));
 
   return (
     <>
@@ -719,16 +696,35 @@ function IndexersPanel({ refreshKey }) {
       </div>
 
       {/* Charts */}
-      {indexerChartData.length > 0 && (
+      {(indexerChartData.length > 0 || responseChartData.length > 0) && (
         <div className="card-row card-row-half system-mobile-full-row" style={{ marginBottom: 20 }}>
-          <div className="card card-half system-mobile-full-card" style={{ padding: "12px 16px" }}>
-            <div className="card-title" style={{ marginBottom: 12 }}>Releases par fournisseur</div>
-            <HorizontalBarChart data={indexerChartData} valueKey="releases" labelKey="name" color="#5cb3ff" height={260} barGap={24} barMaxWidth={110} />
-          </div>
-          <div className="card card-half system-mobile-full-card" style={{ padding: "12px 12px 12px 8px" }}>
-            <div className="card-title" style={{ marginBottom: 8 }}>Catégories par fournisseur</div>
-            <StackedHorizontalBarChart data={stackedByIndexer} height={260} barGap={8} />
-          </div>
+          {indexerChartData.length > 0 && (
+            <div className="card card-half system-mobile-full-card" style={{ padding: "12px 16px" }}>
+              <div className="card-title" style={{ marginBottom: 12 }}>Releases par fournisseur</div>
+              <HorizontalBarChart data={indexerChartData} valueKey="releases" labelKey="name" color="#5cb3ff" height={260} barGap={24} barMaxWidth={110} />
+            </div>
+          )}
+          {responseChartData.length > 0 && (
+            <div className="card card-half system-mobile-full-card" style={{ padding: "12px 16px" }}>
+              <div className="card-title" style={{ marginBottom: 12 }}>Temps de réponse</div>
+              <HorizontalBarChart
+                data={responseChartData}
+                valueKey="avgMs"
+                labelKey="name"
+                color="#22c55e"
+                height={260}
+                barGap={24}
+                barMaxWidth={110}
+                valueFormatter={(value) => `${Math.round(value)} ms`}
+              />
+            </div>
+          )}
+        </div>
+      )}
+      {stackedByIndexer.length > 0 && (
+        <div className="card" style={{ padding: "12px 12px 12px 8px", marginBottom: 20 }}>
+          <div className="card-title" style={{ marginBottom: 8 }}>Catégories par indexeur</div>
+          <StackedHorizontalBarChart data={stackedByIndexer} height={260} barGap={8} />
         </div>
       )}
 
@@ -780,12 +776,23 @@ function IndexersPanel({ refreshKey }) {
 
 function ProvidersPanel({ refreshKey }) {
   const [data, setData] = useState(null);
+  const [externalProviders, setExternalProviders] = useState({ definitions: [], instances: [] });
   const [error, setError] = useState("");
 
   useEffect(() => {
     (async () => {
       setError("");
-      try { setData(await apiGet('/api/system/stats/providers')); }
+      try {
+        const [statsData, providersData] = await Promise.all([
+          apiGet('/api/system/stats/providers'),
+          apiGet('/api/providers/external'),
+        ]);
+        setData(statsData || {});
+        setExternalProviders({
+          definitions: Array.isArray(providersData?.definitions) ? providersData.definitions : [],
+          instances: Array.isArray(providersData?.instances) ? providersData.instances : [],
+        });
+      }
       catch (e) { setError(e?.message || "Erreur"); }
     })();
   }, [refreshKey]);
@@ -793,11 +800,36 @@ function ProvidersPanel({ refreshKey }) {
   if (error) return <div className="card" style={{ color: "red", fontWeight: 700 }}>Erreur: {error}</div>;
   if (!data) return <PanelLoading />;
 
-  const providers = ['tmdb', 'tvmaze', 'fanart', 'igdb'];
-  const labels = { tmdb: 'TMDB', tvmaze: 'TVmaze', fanart: 'Fanart', igdb: 'IGDB' };
+  const labels = {
+    tmdb: 'TMDB',
+    tvmaze: 'TVmaze',
+    fanart: 'Fanart',
+    igdb: 'IGDB',
+    jikan: 'Jikan (MAL)',
+    googlebooks: 'Google Books',
+    theaudiodb: 'TheAudioDB',
+    comicvine: 'Comic Vine',
+  };
 
-  const providerData = providers.map(p => ({
-    provider: labels[p], calls: data[p]?.calls || 0, failures: data[p]?.failures || 0, avgMs: data[p]?.avgMs || 0
+  const activeProviderKeys = (externalProviders?.instances || [])
+    .filter((instance) => instance?.enabled !== false)
+    .map((instance) => String(instance?.providerKey || "").toLowerCase())
+    .filter(Boolean);
+
+  const providerKeys = Array.from(new Set(activeProviderKeys)).sort((a, b) => a.localeCompare(b));
+
+  const providerData = providerKeys.map(p => ({
+    provider: labels[p] || p.toUpperCase(),
+    calls: Number(data?.[p]?.calls || 0),
+    failures: Number(data?.[p]?.failures || 0),
+    avgMs: Number(data?.[p]?.avgMs || 0),
+  }));
+  const matchingByProvider = (data?._matchingByProvider && typeof data._matchingByProvider === "object")
+    ? data._matchingByProvider
+    : {};
+  const matchingData = providerKeys.map((key) => ({
+    provider: labels[key] || key.toUpperCase(),
+    matched: Number(matchingByProvider[key] || 0),
   }));
   const failureData = providerData.map(p => ({ provider: p.provider, rate: p.calls > 0 ? (p.failures / p.calls) : 0 }));
 
@@ -830,6 +862,12 @@ function ProvidersPanel({ refreshKey }) {
           <div className="card-title" style={{ marginBottom: 12 }}>Temps de réponse moyen</div>
           <HorizontalBarChart data={providerData} valueKey="avgMs" labelKey="provider" color="#22c55e" height={200} barGap={8} stretchBars />
         </div>
+      </div>
+
+      {/* Matching */}
+      <div className="card" style={{ padding: "12px 16px", marginBottom: 20 }}>
+        <div className="card-title" style={{ marginBottom: 12 }}>Matching</div>
+        <HorizontalBarChart data={matchingData} valueKey="matched" labelKey="provider" color="#f59e0b" height={220} barGap={12} stretchBars />
       </div>
 
       {/* Detail table */}
@@ -879,16 +917,26 @@ function ReleasesPanel({ refreshKey }) {
   if (error) return <div className="card" style={{ color: "red", fontWeight: 700 }}>Erreur: {error}</div>;
   if (!data) return <PanelLoading />;
 
-  // Aggregate categories by main name for donut
-  const catAgg = {};
-  (data.releasesByCategory || []).forEach(c => {
-    const info = getCategoryInfo(c.categoryId);
-    if (!catAgg[info.name]) catAgg[info.name] = { label: info.name, value: 0, color: info.color };
-    catAgg[info.name].value += c.count;
-  });
-  const donutData = Object.values(catAgg)
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 10);
+  const donutData = (data.releasesByCategory || [])
+    .slice()
+    .sort((a, b) => (b.count || 0) - (a.count || 0))
+    .slice(0, 10)
+    .map((category) => {
+      const rawKey = category.key || category.categoryKey || "";
+      const canonicalKey = normalizeCategoryGroupKey(rawKey);
+      const tokenKey = canonicalKey
+        ? STATS_TOKEN_BY_CANONICAL_CATEGORY[canonicalKey] || "stats-unknown"
+        : "stats-unknown";
+      return {
+        key: canonicalKey || String(rawKey || "").toLowerCase(),
+        label: canonicalKey
+          ? CATEGORY_GROUP_LABELS[canonicalKey] || category.label || canonicalKey
+          : category.label || category.key || "Autre",
+        value: category.count || 0,
+        color: getCategoryColor(tokenKey),
+      };
+    });
+  const releaseColorByKey = new Map(donutData.map(item => [String(item.key || "").toLowerCase(), item.color]));
 
   const sizeData = (data.sizeDistribution || []).filter(d => d.range !== "Inconnu");
   const seedData = (data.seedersDistribution || []).filter(d => d.range !== "Inconnu");
@@ -939,11 +987,21 @@ function ReleasesPanel({ refreshKey }) {
               </thead>
               <tbody>
                 {data.topGrabbed.map((r, i) => {
-                  const cat = getCategoryInfo(r.categoryId);
+                  const categoryKey = normalizeCategoryGroupKey(r.categoryKey) || String(r.categoryKey || "").toLowerCase();
+                  const categoryLabel = categoryKey
+                    ? CATEGORY_GROUP_LABELS[categoryKey] || r.categoryLabel || r.categoryKey || "Autre"
+                    : r.categoryLabel || r.categoryKey || "Autre";
+                  const categoryColor =
+                    releaseColorByKey.get(categoryKey) ||
+                    getCategoryColor(
+                      categoryKey
+                        ? STATS_TOKEN_BY_CANONICAL_CATEGORY[categoryKey] || "stats-unknown"
+                        : "stats-unknown"
+                    );
                   return (
                     <tr key={i}>
                       <td style={{ maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.title}>{r.title}</td>
-                      <td><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: cat.color, display: "inline-block" }} />{cat.name}</span></td>
+                      <td><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: categoryColor, display: "inline-block" }} />{categoryLabel}</span></td>
                       <td style={{ fontWeight: 700, color: "var(--accent)" }}>{r.grabs}</td>
                       <td>{r.seeders}</td>
                       <td>{fmtBytes(r.sizeBytes)}</td>

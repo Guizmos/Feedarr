@@ -19,6 +19,7 @@ public sealed class SourcesController : ControllerBase
     private readonly TorznabClient _torznab;
     private readonly SourceRepository _sources;
     private readonly ProviderRepository _providers;
+    private readonly ReleaseRepository _releases;
     private readonly ActivityRepository _activity;
     private readonly CategoryRecommendationService _caps;
     private readonly BackupExecutionCoordinator _backupCoordinator;
@@ -29,6 +30,7 @@ public sealed class SourcesController : ControllerBase
         TorznabClient torznab,
         SourceRepository sources,
         ProviderRepository providers,
+        ReleaseRepository releases,
         ActivityRepository activity,
         CategoryRecommendationService caps,
         BackupExecutionCoordinator backupCoordinator,
@@ -38,6 +40,7 @@ public sealed class SourcesController : ControllerBase
         _torznab = torznab;
         _sources = sources;
         _providers = providers;
+        _releases = releases;
         _activity = activity;
         _caps = caps;
         _backupCoordinator = backupCoordinator;
@@ -98,6 +101,46 @@ public sealed class SourcesController : ControllerBase
         return trimmed.ToLowerInvariant();
     }
 
+    private BadRequestObjectResult? ValidateTorznabUrl(
+        string? rawUrl,
+        string operation,
+        out string normalizedUrl)
+    {
+        normalizedUrl = string.Empty;
+        if (!OutboundUrlGuard.TryNormalizeHttpBaseUrl(
+                rawUrl,
+                allowImplicitHttp: true,
+                out normalizedUrl,
+                out var urlError))
+        {
+            _log.LogWarning(
+                "Rejected source torznab URL for {Operation}: host={Host} reason={Reason}",
+                operation,
+                TryExtractHost(rawUrl) ?? "unknown",
+                urlError);
+            return new BadRequestObjectResult(new { error = urlError });
+        }
+
+        return null;
+    }
+
+    private static string? TryExtractHost(string? rawUrl)
+    {
+        var raw = (rawUrl ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        if (!raw.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !raw.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            raw = "http://" + raw;
+        }
+
+        return Uri.TryCreate(raw, UriKind.Absolute, out var uri)
+            ? uri.Host
+            : null;
+    }
+
     // GET /api/sources
     [HttpGet]
     public IActionResult List()
@@ -140,6 +183,12 @@ public sealed class SourcesController : ControllerBase
 
             if (string.IsNullOrWhiteSpace(torznabUrl))
                 return BadRequest(new { error = "torznabUrl missing" });
+
+            var validationResult = ValidateTorznabUrl(torznabUrl, "test", out var normalizedTorznabUrl);
+            if (validationResult is not null)
+                return validationResult;
+
+            torznabUrl = normalizedTorznabUrl;
 
             var cats = await _torznab.FetchCapsAsync(torznabUrl, authMode, apiKey, ct);
             res.Caps.CategoriesTotal = cats.Count;
@@ -238,6 +287,11 @@ public sealed class SourcesController : ControllerBase
         if (string.IsNullOrWhiteSpace(name)) return BadRequest(new { error = "name missing" });
         if (string.IsNullOrWhiteSpace(url)) return BadRequest(new { error = "torznabUrl missing" });
 
+        var createValidationResult = ValidateTorznabUrl(url, "create", out var normalizedCreateUrl);
+        if (createValidationResult is not null)
+            return createValidationResult;
+        url = normalizedCreateUrl;
+
         var existingId = _sources.GetIdByTorznabUrl(url);
         if (existingId.HasValue)
             return Conflict(new { error = "torznabUrl already exists", id = existingId.Value });
@@ -260,14 +314,14 @@ public sealed class SourcesController : ControllerBase
         if (dto.Categories is not null && dto.Categories.Count > 0)
         {
             filtered = dto.Categories
-                .Where(c => c.Id > 0 && !string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.UnifiedKey))
+                .Where(c => c.Id > 0 && !string.IsNullOrWhiteSpace(c.Name))
                 .Select(c => new SourceRepository.SourceCategoryInput
                 {
                     Id = c.Id,
                     Name = c.Name.Trim(),
                     IsSub = c.IsSub,
                     ParentId = c.ParentId,
-                    UnifiedKey = c.UnifiedKey.Trim(),
+                    UnifiedKey = string.IsNullOrWhiteSpace(c.UnifiedKey) ? null : c.UnifiedKey.Trim(),
                     UnifiedLabel = string.IsNullOrWhiteSpace(c.UnifiedLabel) ? null : c.UnifiedLabel.Trim()
                 })
                 .ToList();
@@ -372,6 +426,11 @@ public sealed class SourcesController : ControllerBase
         var mode = string.IsNullOrWhiteSpace(dto.AuthMode) ? current.AuthMode : dto.AuthMode!.Trim().ToLowerInvariant();
         if (mode != "header") mode = "query";
 
+        var updateValidationResult = ValidateTorznabUrl(url, "update", out var normalizedUpdateUrl);
+        if (updateValidationResult is not null)
+            return updateValidationResult;
+        url = normalizedUpdateUrl;
+
         // apiKey: si null/empty => on ne change pas
         string? apiKeyMaybe = null;
         if (!string.IsNullOrWhiteSpace(dto.ApiKey))
@@ -473,16 +532,24 @@ public sealed class SourcesController : ControllerBase
         var src = _sources.Get(id);
         if (src is null) return NotFound(new { error = "source not found" });
 
+        _log.LogWarning("Legacy endpoint PUT /api/sources/{SourceId}/categories called; category mappings remain source of truth.", id);
+
+        var existingMap = _sources.GetUnifiedCategoryMap(id);
+
         var filtered = (dto?.Categories ?? new List<SourceCategorySelectionDto>())
-            .Where(c => c.Id > 0 && !string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.UnifiedKey))
+            .Where(c => c.Id > 0 && !string.IsNullOrWhiteSpace(c.Name))
             .Select(c => new SourceRepository.SourceCategoryInput
             {
                 Id = c.Id,
                 Name = c.Name.Trim(),
                 IsSub = c.IsSub,
                 ParentId = c.ParentId,
-                UnifiedKey = c.UnifiedKey.Trim(),
-                UnifiedLabel = string.IsNullOrWhiteSpace(c.UnifiedLabel) ? null : c.UnifiedLabel.Trim()
+                UnifiedKey = existingMap.TryGetValue(c.Id, out var entry)
+                    ? entry.key
+                    : (string.IsNullOrWhiteSpace(c.UnifiedKey) ? null : c.UnifiedKey.Trim()),
+                UnifiedLabel = existingMap.TryGetValue(c.Id, out var entry2)
+                    ? entry2.label
+                    : (string.IsNullOrWhiteSpace(c.UnifiedLabel) ? null : c.UnifiedLabel.Trim())
             })
             .ToList();
 
@@ -495,6 +562,109 @@ public sealed class SourcesController : ControllerBase
             dataJson: $"{{\"sourceId\":{id},\"categories\":{filtered.Count}}}");
 
         return Ok(new { id, categories = filtered.Count });
+    }
+
+    // GET /api/sources/{id}/category-mappings
+    [HttpGet("{id:long}/category-mappings")]
+    public IActionResult GetCategoryMappings([FromRoute] long id)
+    {
+        var src = _sources.Get(id);
+        if (src is null) return NotFound(new { error = "source not found" });
+
+        var mappings = _sources.GetCategoryMappings(id)
+            .Select(m => new SourceCategoryMappingDto
+            {
+                CatId = m.CatId,
+                GroupKey = m.GroupKey,
+                GroupLabel = m.GroupLabel
+            })
+            .ToList();
+
+        return Ok(mappings);
+    }
+
+    // PATCH /api/sources/{id}/category-mappings
+    [HttpPatch("{id:long}/category-mappings")]
+    public IActionResult PatchCategoryMappings([FromRoute] long id, [FromBody] SourceCategoryMappingsPatchDto? dto)
+    {
+        var src = _sources.Get(id);
+        if (src is null) return NotFound(new { error = "source not found" });
+
+        var rawMappings = (dto?.Mappings ?? new List<SourceCategoryMappingPatchItemDto>()).ToList();
+        if (rawMappings.Count == 0)
+            return BadRequest(new { error = "mappings missing" });
+
+        foreach (var mapping in rawMappings)
+        {
+            if (mapping.CatId <= 0)
+                return BadRequest(new { error = $"invalid catId: {mapping.CatId}" });
+
+            if (string.IsNullOrWhiteSpace(mapping.GroupKey))
+                continue;
+
+            if (!CategoryGroupCatalog.TryNormalizeKey(mapping.GroupKey, out _))
+            {
+                return BadRequest(new { error = $"invalid groupKey for catId={mapping.CatId}" });
+            }
+        }
+
+        var changed = _sources.PatchCategoryMappings(
+            id,
+            rawMappings.Select(m => new SourceRepository.SourceCategoryMappingPatch
+            {
+                CatId = m.CatId,
+                GroupKey = string.IsNullOrWhiteSpace(m.GroupKey)
+                    ? null
+                    : (CategoryGroupCatalog.TryNormalizeKey(m.GroupKey, out var canonicalKey) ? canonicalKey : null)
+            }));
+
+        _caps.InvalidateSource(id);
+        _activity.Add(id, "info", "source", $"Source category mappings patched: {src.Name}",
+            dataJson: $"{{\"sourceId\":{id},\"changed\":{changed},\"patched\":{rawMappings.Count}}}");
+
+        var updated = _sources.GetCategoryMappings(id)
+            .Select(m => new SourceCategoryMappingDto
+            {
+                CatId = m.CatId,
+                GroupKey = m.GroupKey,
+                GroupLabel = m.GroupLabel
+            })
+            .ToList();
+
+        return Ok(new { changed, mappings = updated });
+    }
+
+    // POST /api/sources/{id}/reclassify
+    [HttpPost("{id:long}/reclassify")]
+    public IActionResult ReclassifySource([FromRoute] long id, [FromQuery] int batchSize = 200)
+    {
+        var src = _sources.Get(id);
+        if (src is null) return NotFound(new { error = "source not found" });
+
+        try
+        {
+            var (processed, updated, markedRebind) = _releases.ReprocessCategoriesForSource(id);
+            var (rebindProcessed, rebound) = _releases.RebindEntitiesForSource(id, batchSize);
+
+            _activity.Add(id, "info", "maintenance", "Source reclassify completed",
+                dataJson: $"{{\"sourceId\":{id},\"processed\":{processed},\"updated\":{updated},\"markedRebind\":{markedRebind},\"rebindProcessed\":{rebindProcessed},\"rebound\":{rebound}}}");
+
+            return Ok(new
+            {
+                ok = true,
+                sourceId = id,
+                processed,
+                updated,
+                markedRebind,
+                rebindProcessed,
+                rebound
+            });
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Source reclassify failed for sourceId={SourceId}", id);
+            return StatusCode(500, new { ok = false, error = "internal server error" });
+        }
     }
 
     // DELETE /api/sources/{id}

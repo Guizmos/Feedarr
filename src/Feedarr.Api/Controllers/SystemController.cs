@@ -1,18 +1,19 @@
 using Microsoft.AspNetCore.Mvc;
 using Dapper;
+using System.Diagnostics;
 using System.Reflection;
-using System.Text.RegularExpressions;
 using Feedarr.Api.Data;
 using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Dtos.System;
-using Feedarr.Api.Options;
 using Feedarr.Api.Services;
 using Feedarr.Api.Services.Backup;
+using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services.Diagnostics;
 using Feedarr.Api.Services.Security;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Data;
+using Feedarr.Api.Services.Updates;
 
 namespace Feedarr.Api.Controllers;
 
@@ -32,60 +33,47 @@ public sealed class SystemController : ControllerBase
         public int ReleaseCount { get; set; }
     }
 
+    // Captures the real start-up instant once, on first type load — readonly, no mutation.
     private static readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
-    private static readonly TimeSpan StorageUsageCacheDuration = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan StatsCacheDuration = TimeSpan.FromSeconds(20);
-    private const string StorageUsageCacheKey = "system:storage-usage:v1";
-    private static readonly object StorageRefreshLock = new();
-    private static Task? StorageRefreshTask;
-    private static StorageUsageSnapshot LastKnownStorageUsage = new(0, 0, 0, 0, 0, 0);
-    private static readonly Regex _semVerRegex = new(
-        @"(?<!\d)v?(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase
-    );
 
     private readonly Db _db;
     private readonly IWebHostEnvironment _env;
-    private readonly AppOptions _opts;
     private readonly SettingsRepository _settings;
     private readonly ProviderStatsService _providerStats;
     private readonly ApiRequestMetricsService _apiRequestMetrics;
     private readonly BackupService _backupService;
     private readonly IMemoryCache _cache;
+    private readonly SetupStateService _setupState;
+    private readonly StorageUsageCacheService _storageCache;
     private readonly ILogger<SystemController> _log;
-
-    private string DataDirAbs =>
-        Path.IsPathRooted(_opts.DataDir)
-            ? _opts.DataDir
-            : Path.GetFullPath(Path.Combine(_env.ContentRootPath, _opts.DataDir));
-
-    private string BackupDirAbs => Path.Combine(DataDirAbs, "backups");
-
-    private string DbPathAbs => Path.Combine(DataDirAbs, _opts.DbFileName);
 
     public SystemController(
         Db db,
         IWebHostEnvironment env,
-        Microsoft.Extensions.Options.IOptions<AppOptions> opts,
         SettingsRepository settings,
         ProviderStatsService providerStats,
         ApiRequestMetricsService apiRequestMetrics,
         BackupService backupService,
         IMemoryCache cache,
+        SetupStateService setupState,
+        StorageUsageCacheService storageCache,
         ILogger<SystemController> log)
     {
         _db = db;
         _env = env;
-        _opts = opts.Value;
         _settings = settings;
         _providerStats = providerStats;
         _apiRequestMetrics = apiRequestMetrics;
         _backupService = backupService;
         _cache = cache;
+        _setupState = setupState;
+        _storageCache = storageCache;
         _log = log;
     }
 
     [HttpGet("status")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult Status([FromQuery] long? releasesSinceTs = null)
     {
         using var conn = _db.Open();
@@ -146,21 +134,16 @@ public sealed class SystemController : ControllerBase
 
     // GET /api/system/providers
     [HttpGet("providers")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult Providers()
     {
-        var stats = _providerStats.Snapshot();
-
-        return Ok(new
-        {
-            tmdb = new { calls = stats.Tmdb.Calls, failures = stats.Tmdb.Failures, avgMs = stats.Tmdb.AvgMs },
-            tvmaze = new { calls = stats.Tvmaze.Calls, failures = stats.Tvmaze.Failures, avgMs = stats.Tvmaze.AvgMs },
-            fanart = new { calls = stats.Fanart.Calls, failures = stats.Fanart.Failures, avgMs = stats.Fanart.AvgMs },
-            igdb = new { calls = stats.Igdb.Calls, failures = stats.Igdb.Failures, avgMs = stats.Igdb.AvgMs }
-        });
+        var stats = _providerStats.SnapshotByProvider();
+        return Ok(ToProviderStatsPayload(stats));
     }
 
     // GET /api/system/perf
     [HttpGet("perf")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult Performance([FromQuery] int top = 20)
     {
         return Ok(_apiRequestMetrics.Snapshot(top));
@@ -168,6 +151,7 @@ public sealed class SystemController : ControllerBase
 
     // GET /api/system/onboarding
     [HttpGet("onboarding")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult Onboarding()
     {
         using var conn = _db.Open();
@@ -181,8 +165,7 @@ public sealed class SystemController : ControllerBase
                           || (!string.IsNullOrWhiteSpace(ext.IgdbClientId)
                               && !string.IsNullOrWhiteSpace(ext.IgdbClientSecret));
 
-        var ui = _settings.GetUi(new Models.Settings.UiSettings());
-        var onboardingDone = ui.OnboardingDone;
+        var onboardingDone = _setupState.IsSetupCompleted();
 
         var shouldShow = !onboardingDone && (!hasExternal || sourcesCount == 0);
 
@@ -199,13 +182,7 @@ public sealed class SystemController : ControllerBase
     [HttpPost("onboarding/complete")]
     public IActionResult CompleteOnboarding()
     {
-        var ui = _settings.GetUi(new Models.Settings.UiSettings());
-        if (!ui.OnboardingDone)
-        {
-            ui.OnboardingDone = true;
-            _settings.SaveUi(ui);
-        }
-
+        _setupState.MarkSetupCompleted();
         return Ok(new { ok = true, onboardingDone = true });
     }
 
@@ -213,10 +190,7 @@ public sealed class SystemController : ControllerBase
     [HttpPost("onboarding/reset")]
     public IActionResult ResetOnboarding()
     {
-        var ui = _settings.GetUi(new Models.Settings.UiSettings());
-        ui.OnboardingDone = false;
-        _settings.SaveUi(ui);
-
+        _setupState.ResetSetupCompleted();
         return Ok(new { ok = true, onboardingDone = false });
     }
 
@@ -287,16 +261,51 @@ public sealed class SystemController : ControllerBase
         }
     }
 
-    // POST /api/system/backups/{name}/restore
+    // POST /api/system/backups/{name}/restore?confirm=false
+    //
+    // confirm=false (default): dry-run preview — validates the archive and reports which credentials
+    //   would be re-encrypted or cleared, WITHOUT touching the live database.
+    //   Response: { dryRun: true, wouldReencrypt: N, wouldClear: N }
+    //
+    // confirm=true: performs the actual restore. If wouldClear > 0, the caller MUST have passed
+    //   confirm=true explicitly, acknowledging that some credentials will be erased.
+    //   Response: { ok: true, needsRestart: true, reencryptedCredentials: N, clearedUndecryptableCredentials: N }
     [HttpPost("backups/{name}/restore")]
-    public IActionResult RestoreBackup([FromRoute] string name)
+    public IActionResult RestoreBackup([FromRoute] string name, [FromQuery] bool confirm = false)
     {
         try
         {
+            if (!confirm)
+            {
+                // Dry-run: return a preview without modifying anything.
+                var preview = _backupService.PreviewRestoreBackup(name, GetAppVersion());
+
+                var previewWarning = preview.WouldClear > 0
+                    ? $"{preview.WouldClear} credential(s) could not be decrypted with the current key ring " +
+                      "and would be permanently cleared. Pass confirm=true to proceed."
+                    : null;
+
+                return Ok(new
+                {
+                    dryRun = true,
+                    wouldReencrypt = preview.WouldReencrypt,
+                    wouldClear = preview.WouldClear,
+                    warning = previewWarning
+                });
+            }
+
+            // Actual restore.
             var result = _backupService.RestoreBackup(name, GetAppVersion());
+
             var warning = result.ClearedUndecryptableCredentials > 0
-                ? "Certaines clés API chiffrées n'ont pas pu être déchiffrées et ont été supprimées."
+                ? $"{result.ClearedUndecryptableCredentials} credential(s) could not be decrypted " +
+                  "and were cleared. Reconfigure them in Settings → External Providers."
                 : null;
+
+            if (result.ClearedUndecryptableCredentials > 0)
+                _log.LogWarning(
+                    "RestoreBackup {Name}: {Cleared} credential(s) cleared – key ring mismatch",
+                    name, result.ClearedUndecryptableCredentials);
 
             return Ok(new
             {
@@ -327,15 +336,13 @@ public sealed class SystemController : ControllerBase
         var activeIndexers = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM sources WHERE enabled = 1;");
         var releasesCount = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM releases;");
 
-        var providerStats = _providerStats.Snapshot();
+        var providerStatsByKey = _providerStats.SnapshotByProvider();
         var indexerStats = _providerStats.IndexerSnapshot();
 
-        var totalCalls = providerStats.Tmdb.Calls + providerStats.Tvmaze.Calls
-                       + providerStats.Fanart.Calls + providerStats.Igdb.Calls;
-        var totalFailures = providerStats.Tmdb.Failures + providerStats.Tvmaze.Failures
-                          + providerStats.Fanart.Failures + providerStats.Igdb.Failures;
+        var totalCalls = providerStatsByKey.Values.Sum(v => v.Calls);
+        var totalFailures = providerStatsByKey.Values.Sum(v => v.Failures);
 
-        var storage = GetStorageUsageSnapshot();
+        var storage = _storageCache.GetSnapshot();
         var localPosters = storage.PostersTopLevelCount;
 
         var missingPoster = conn.ExecuteScalar<int>(
@@ -373,50 +380,59 @@ public sealed class SystemController : ControllerBase
         if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
             return Ok(cached);
 
+        var sw = Stopwatch.StartNew();
         using var conn = _db.Open();
 
-        var releasesCount = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM releases;");
-
-        var storage = GetStorageUsageSnapshot();
-        var dbSizeMb = Math.Round(storage.DatabaseBytes / 1024d / 1024d, 2);
+        var storage = _storageCache.GetSnapshot();
+        var dbSizeMb    = Math.Round(storage.DatabaseBytes / 1024d / 1024d, 2);
         var localPosters = storage.PostersTopLevelCount;
 
-        var missingPosters = conn.ExecuteScalar<int>(
-            @"SELECT COUNT(1) FROM releases
-              LEFT JOIN media_entities me ON me.id = releases.entity_id
-              WHERE COALESCE(releases.poster_file, me.poster_file) IS NULL
-                 OR COALESCE(releases.poster_file, me.poster_file) = '';");
+        var sinceTs = DateTimeOffset.UtcNow.AddDays(-days).ToUnixTimeSeconds();
+
+        // Single round-trip for all scalar counts + the releases-per-day series.
+        // QueryMultiple avoids 4 separate SQLite connections / statement round-trips.
+        using var multi = conn.QueryMultiple(
+            @"SELECT COUNT(1) FROM releases;
+              SELECT COUNT(1) FROM releases
+                LEFT JOIN media_entities me ON me.id = releases.entity_id
+                WHERE COALESCE(releases.poster_file, me.poster_file) IS NULL
+                   OR COALESCE(releases.poster_file, me.poster_file) = '';
+              SELECT COUNT(DISTINCT COALESCE(releases.poster_file, me.poster_file))
+                FROM releases
+                LEFT JOIN media_entities me ON me.id = releases.entity_id
+                WHERE COALESCE(releases.poster_file, me.poster_file) IS NOT NULL
+                  AND COALESCE(releases.poster_file, me.poster_file) != '';
+              SELECT COUNT(1) FROM release_arr_status WHERE in_sonarr = 1;
+              SELECT COUNT(1) FROM release_arr_status WHERE in_radarr = 1;
+              SELECT date(created_at_ts, 'unixepoch') as date, COUNT(*) as count
+                FROM releases
+                WHERE created_at_ts > @sinceTs
+                GROUP BY date
+                ORDER BY date;",
+            new { sinceTs });
+
+        var releasesCount     = multi.ReadSingle<int>();
+        var missingPosters    = multi.ReadSingle<int>();
+        var distinctPosterFiles = multi.ReadSingle<int>();
+        var sonarrMatchCount  = multi.ReadSingle<int>();
+        var radarrMatchCount  = multi.ReadSingle<int>();
+        var releasesPerDay    = multi.Read<(string date, int count)>()
+                                    .Select(r => new { date = r.date, count = r.count })
+                                    .ToList();
+
+        sw.Stop();
+        _log.LogInformation(
+            "StatsFeedarr DB batch completed in {ElapsedMs}ms (days={Days}, releases={Releases})",
+            sw.ElapsedMilliseconds, days, releasesCount);
 
         // Poster reuse stats
         var releasesWithPoster = releasesCount - missingPosters;
         var matchingPercent = releasesCount > 0
             ? (int)Math.Round(((double)releasesWithPoster / releasesCount) * 100)
             : 0;
-        var distinctPosterFiles = conn.ExecuteScalar<int>(
-            @"SELECT COUNT(DISTINCT COALESCE(releases.poster_file, me.poster_file))
-              FROM releases
-              LEFT JOIN media_entities me ON me.id = releases.entity_id
-              WHERE COALESCE(releases.poster_file, me.poster_file) IS NOT NULL
-                AND COALESCE(releases.poster_file, me.poster_file) != '';");
         var posterReuseRatio = distinctPosterFiles > 0
             ? Math.Round((double)releasesWithPoster / distinctPosterFiles, 1)
             : 0.0;
-
-        var sinceTs = DateTimeOffset.UtcNow.AddDays(-days).ToUnixTimeSeconds();
-        var releasesPerDay = conn.Query<(string date, int count)>(
-            @"SELECT date(created_at_ts, 'unixepoch') as date, COUNT(*) as count
-              FROM releases
-              WHERE created_at_ts > @sinceTs
-              GROUP BY date
-              ORDER BY date",
-            new { sinceTs }
-        ).Select(r => new { date = r.date, count = r.count }).ToList();
-
-        // Global arr match counts from the item list status cache
-        var sonarrMatchCount = conn.ExecuteScalar<int>(
-            "SELECT COUNT(1) FROM release_arr_status WHERE in_sonarr = 1;");
-        var radarrMatchCount = conn.ExecuteScalar<int>(
-            "SELECT COUNT(1) FROM release_arr_status WHERE in_radarr = 1;");
 
         // Storage breakdown (cached)
         var databaseBytes = storage.DatabaseBytes;
@@ -494,7 +510,7 @@ public sealed class SystemController : ControllerBase
     [HttpGet("stats/indexers")]
     public IActionResult StatsIndexers()
     {
-        const string cacheKey = "system:stats:indexers:v2";
+        const string cacheKey = "system:stats:indexers:v3";
         if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
             return Ok(cached);
 
@@ -516,6 +532,34 @@ public sealed class SystemController : ControllerBase
                 lastStatus = r.LastStatus
             })
             .OrderByDescending(r => r.releaseCount)
+            .ToList();
+
+        var avgResponseMsBySourceId = conn.Query<(long sourceId, double avgMs)>(
+            """
+            SELECT a.source_id as sourceId,
+                   AVG(CAST(json_extract(a.data_json, '$.elapsedMs') AS REAL)) as avgMs
+            FROM activity_log a
+            JOIN sources s ON s.id = a.source_id
+            WHERE a.source_id IS NOT NULL
+              AND lower(a.event_type) = 'sync'
+              AND a.data_json IS NOT NULL
+              AND json_valid(a.data_json) = 1
+              AND json_extract(a.data_json, '$.elapsedMs') IS NOT NULL
+              AND s.enabled = 1
+            GROUP BY a.source_id
+            """
+        ).ToDictionary(k => k.sourceId, v => v.avgMs);
+
+        var indexerResponseMsBySource = sourceRows
+            .Where(r => r.Enabled == 1)
+            .Select(r => new
+            {
+                id = r.Id,
+                name = r.Name,
+                avgMs = (int)Math.Round(avgResponseMsBySourceId.TryGetValue(r.Id, out var ms) ? ms : 0d)
+            })
+            .OrderByDescending(r => r.avgMs)
+            .ThenBy(r => r.name)
             .ToList();
 
         var releasesByCategoryByIndexer = conn.Query<(long sourceId, string sourceName, string unifiedCategory, int categoryId, int count)>(
@@ -558,7 +602,7 @@ public sealed class SystemController : ControllerBase
             activeIndexers, totalIndexers,
             queries = indexerStats.Queries, failures = indexerStats.Failures,
             syncJobs = indexerStats.SyncJobs, syncFailures = indexerStats.SyncFailures,
-            indexerStatsBySource, releasesByCategoryByIndexer, indexerDetails
+            indexerStatsBySource, indexerResponseMsBySource, releasesByCategoryByIndexer, indexerDetails
         };
 
         _cache.Set(cacheKey, payload, StatsCacheDuration);
@@ -570,15 +614,32 @@ public sealed class SystemController : ControllerBase
     [HttpGet("stats/providers")]
     public IActionResult StatsProviders()
     {
-        var stats = _providerStats.Snapshot();
+        using var conn = _db.Open();
+        var stats = _providerStats.SnapshotByProvider();
+        var payload = ToProviderStatsPayload(stats);
 
-        return Ok(new
-        {
-            tmdb = new { calls = stats.Tmdb.Calls, failures = stats.Tmdb.Failures, avgMs = stats.Tmdb.AvgMs },
-            tvmaze = new { calls = stats.Tvmaze.Calls, failures = stats.Tvmaze.Failures, avgMs = stats.Tvmaze.AvgMs },
-            fanart = new { calls = stats.Fanart.Calls, failures = stats.Fanart.Failures, avgMs = stats.Fanart.AvgMs },
-            igdb = new { calls = stats.Igdb.Calls, failures = stats.Igdb.Failures, avgMs = stats.Igdb.AvgMs }
-        });
+        var matchingByProvider = conn.Query<(string ProviderKey, long MatchedCount)>(
+            """
+            SELECT providerKey, COUNT(1) as matchedCount
+            FROM (
+                SELECT LOWER(TRIM(COALESCE(
+                    NULLIF(me.ext_provider, ''),
+                    NULLIF(r.ext_provider, ''),
+                    NULLIF(r.poster_provider, '')
+                ))) as providerKey
+                FROM releases r
+                LEFT JOIN media_entities me ON me.id = r.entity_id
+            ) x
+            WHERE providerKey IS NOT NULL AND providerKey <> ''
+            GROUP BY providerKey
+            """
+        ).ToDictionary(
+            x => x.ProviderKey,
+            x => x.MatchedCount,
+            StringComparer.OrdinalIgnoreCase);
+
+        payload["_matchingByProvider"] = matchingByProvider;
+        return Ok(payload);
     }
 
     // GET /api/system/stats/releases - Releases tab
@@ -586,7 +647,7 @@ public sealed class SystemController : ControllerBase
     [HttpGet("stats/releases")]
     public IActionResult StatsReleases()
     {
-        const string cacheKey = "system:stats:releases:v1";
+        const string cacheKey = "system:stats:releases:v2";
         if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
             return Ok(cached);
 
@@ -603,11 +664,26 @@ public sealed class SystemController : ControllerBase
             """);
         var missingPoster = releasesCount - withPoster;
 
-        var releasesByCategory = conn.Query<(int categoryId, int count)>(
-            @"SELECT category_id, COUNT(*) as count
-              FROM releases WHERE category_id IS NOT NULL
-              GROUP BY category_id ORDER BY count DESC LIMIT 15"
-        ).Select(r => new { categoryId = r.categoryId, count = r.count }).ToList();
+        var releasesByCategory = conn.Query<(string unifiedCategory, int count)>(
+            """
+            SELECT TRIM(unified_category) as unifiedCategory, COUNT(*) as count
+            FROM releases
+            WHERE unified_category IS NOT NULL
+              AND TRIM(unified_category) <> ''
+            GROUP BY TRIM(unified_category)
+            ORDER BY count DESC
+            LIMIT 15
+            """
+        ).Select(r =>
+        {
+            var key = (r.unifiedCategory ?? string.Empty).Trim();
+            return new
+            {
+                key,
+                label = ToUnifiedCategoryLabel(key),
+                count = r.count
+            };
+        }).ToList();
 
         var sizeDistribution = conn.Query<(string range, int count)>(
             @"SELECT
@@ -641,13 +717,25 @@ public sealed class SystemController : ControllerBase
               ORDER BY MIN(COALESCE(seeders, -1))"
         ).Select(r => new { range = r.range, count = r.count }).ToList();
 
-        var topGrabbed = conn.Query<(string title, int grabs, int? seeders, long? sizeBytes, int? categoryId)>(
-            @"SELECT title, grabs, seeders, size_bytes as sizeBytes, category_id as categoryId
+        var topGrabbed = conn.Query<(string title, int grabs, int? seeders, long? sizeBytes, string? unifiedCategory)>(
+            @"SELECT title, grabs, seeders, size_bytes as sizeBytes, unified_category as unifiedCategory
               FROM releases
               WHERE grabs IS NOT NULL AND grabs > 0
               ORDER BY grabs DESC
               LIMIT 20"
-        ).Select(r => new { title = r.title, grabs = r.grabs, seeders = r.seeders ?? 0, sizeBytes = r.sizeBytes ?? 0, categoryId = r.categoryId ?? 0 }).ToList();
+        ).Select(r =>
+        {
+            var key = (r.unifiedCategory ?? string.Empty).Trim();
+            return new
+            {
+                title = r.title,
+                grabs = r.grabs,
+                seeders = r.seeders ?? 0,
+                sizeBytes = r.sizeBytes ?? 0,
+                categoryKey = key,
+                categoryLabel = ToUnifiedCategoryLabel(key)
+            };
+        }).ToList();
 
         var payload = new
         {
@@ -657,6 +745,20 @@ public sealed class SystemController : ControllerBase
 
         _cache.Set(cacheKey, payload, StatsCacheDuration);
         return Ok(payload);
+    }
+
+    private static string ToUnifiedCategoryLabel(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            return "Autre";
+
+        if (UnifiedCategoryMappings.TryParse(key, out var parsed))
+            return UnifiedCategoryMappings.ToLabel(parsed);
+
+        if (UnifiedCategoryMappings.TryParseKey(key, out var parsedFromKey))
+            return UnifiedCategoryMappings.ToLabel(parsedFromKey);
+
+        return key;
     }
 
     // GET /api/system/stats - Extended statistics for dashboard (legacy)
@@ -675,12 +777,12 @@ public sealed class SystemController : ControllerBase
         var totalIndexers = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM sources;");
         var releasesCount = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM releases;");
 
-        var storage = GetStorageUsageSnapshot();
+        var storage = _storageCache.GetSnapshot();
         var dbSizeMb = Math.Round(storage.DatabaseBytes / 1024d / 1024d, 2);
         var localPosters = storage.PostersTopLevelCount;
 
         // Provider stats
-        var providerStats = _providerStats.Snapshot();
+        var providerStats = _providerStats.SnapshotByProvider();
         var indexerStats = _providerStats.IndexerSnapshot();
 
         // Releases by category (for charts)
@@ -734,13 +836,7 @@ public sealed class SystemController : ControllerBase
             releasesCount,
 
             // Provider stats
-            providers = new
-            {
-                tmdb = new { calls = providerStats.Tmdb.Calls, failures = providerStats.Tmdb.Failures, avgMs = providerStats.Tmdb.AvgMs },
-                tvmaze = new { calls = providerStats.Tvmaze.Calls, failures = providerStats.Tvmaze.Failures, avgMs = providerStats.Tvmaze.AvgMs },
-                fanart = new { calls = providerStats.Fanart.Calls, failures = providerStats.Fanart.Failures, avgMs = providerStats.Fanart.AvgMs },
-                igdb = new { calls = providerStats.Igdb.Calls, failures = providerStats.Igdb.Failures, avgMs = providerStats.Igdb.AvgMs }
-            },
+            providers = ToProviderStatsPayload(providerStats),
 
             // Indexer stats
             indexers = new
@@ -759,6 +855,19 @@ public sealed class SystemController : ControllerBase
 
         _cache.Set(cacheKey, payload, StatsCacheDuration);
         return Ok(payload);
+    }
+
+    private static Dictionary<string, object> ToProviderStatsPayload(IReadOnlyDictionary<string, ProviderStats> statsByProvider)
+    {
+        return statsByProvider.ToDictionary(
+            kvp => kvp.Key,
+            kvp => (object)new
+            {
+                calls = kvp.Value.Calls,
+                failures = kvp.Value.Failures,
+                avgMs = kvp.Value.AvgMs
+            },
+            StringComparer.OrdinalIgnoreCase);
     }
 
     private static List<SourceStatsRow> GetSourceStatsRows(IDbConnection conn)
@@ -785,6 +894,7 @@ public sealed class SystemController : ControllerBase
 
     // GET /api/system/storage
     [HttpGet("storage")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult Storage()
     {
         var volumes = new List<DiskVolumeDto>();
@@ -795,7 +905,7 @@ public sealed class SystemController : ControllerBase
             // On Linux/Docker, show only relevant paths (DataDir and common mount points)
             var pathsToCheck = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                DataDirAbs,
+                _storageCache.DataDirAbs,
                 "/",
                 "/data",
                 "/config",
@@ -861,7 +971,7 @@ public sealed class SystemController : ControllerBase
             }
         }
 
-        var storage = GetStorageUsageSnapshot();
+        var storage = _storageCache.GetSnapshot();
 
         // Calculate usage
         var usage = new StorageUsageDto();
@@ -885,32 +995,41 @@ public sealed class SystemController : ControllerBase
         var infoVersion = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
         var asmVersion = asm.GetName().Version?.ToString();
 
-        if (TryExtractSemVer(envVersion, out var parsedEnv))
+        if (TryResolveVersion(envVersion, out var parsedEnv))
             return parsedEnv;
-        if (TryExtractSemVer(infoVersion, out var parsedInfo))
+        if (TryResolveVersion(infoVersion, out var parsedInfo))
             return parsedInfo;
-        if (TryExtractSemVer(asmVersion, out var parsedAsm))
+        if (TryResolveVersion(asmVersion, out var parsedAsm))
             return parsedAsm;
 
         return "0.0.0";
     }
 
-    private static bool TryExtractSemVer(string? value, out string version)
+    private static bool TryResolveVersion(string? value, out string version)
     {
         version = "";
         if (string.IsNullOrWhiteSpace(value))
             return false;
 
-        var match = _semVerRegex.Match(value);
-        if (!match.Success)
-            return false;
+        var trimmed = value.Trim();
+        if (ReleaseVersionComparer.TryParse(trimmed, out var parsed))
+        {
+            version = ReleaseVersionComparer.ToCanonicalString(parsed);
+            return true;
+        }
 
-        var major = match.Groups["major"].Value;
-        var minor = match.Groups["minor"].Value;
-        var patch = match.Groups["patch"].Value;
-        version = $"{major}.{minor}.{patch}";
-        return true;
+        if (IsBetaTrackVersion(trimmed))
+        {
+            version = trimmed;
+            return true;
+        }
+
+        return false;
     }
+
+    private static bool IsBetaTrackVersion(string? value)
+        => !string.IsNullOrWhiteSpace(value)
+        && value.Trim().StartsWith("beta-", StringComparison.OrdinalIgnoreCase);
 
     private IActionResult ToBackupErrorResult(BackupOperationException ex)
     {
@@ -930,107 +1049,6 @@ public sealed class SystemController : ControllerBase
         };
     }
 
-    private StorageUsageSnapshot GetStorageUsageSnapshot()
-    {
-        if (_cache.TryGetValue(StorageUsageCacheKey, out StorageUsageSnapshot? cached) && cached is not null)
-            return cached;
-
-        StartStorageUsageRefresh();
-
-        // Return last known snapshot (or zeros) while background refresh runs.
-        // This avoids multiple concurrent requests each doing an expensive disk scan.
-        lock (StorageRefreshLock)
-        {
-            return LastKnownStorageUsage;
-        }
-    }
-
-    private void StartStorageUsageRefresh()
-    {
-        lock (StorageRefreshLock)
-        {
-            if (StorageRefreshTask is not null && !StorageRefreshTask.IsCompleted)
-                return;
-
-            StorageRefreshTask = Task.Run(() =>
-            {
-                try
-                {
-                    var snapshot = ComputeStorageUsageSnapshot();
-                    lock (StorageRefreshLock)
-                    {
-                        LastKnownStorageUsage = snapshot;
-                        // snapshot available for subsequent requests
-                    }
-                    _cache.Set(StorageUsageCacheKey, snapshot, StorageUsageCacheDuration);
-                }
-                catch (Exception ex)
-                {
-                    _log.LogWarning(ex, "Background storage usage refresh failed");
-                }
-            });
-        }
-    }
-
-    private StorageUsageSnapshot ComputeStorageUsageSnapshot()
-    {
-        long databaseBytes = 0;
-        int postersTopLevelCount = 0;
-        int postersRecursiveCount = 0;
-        long postersBytes = 0;
-        int backupsCount = 0;
-        long backupsBytes = 0;
-
-        try
-        {
-            if (System.IO.File.Exists(DbPathAbs))
-                databaseBytes = new FileInfo(DbPathAbs).Length;
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Failed to read database size");
-        }
-
-        var postersDir = Path.Combine(DataDirAbs, "posters");
-        try
-        {
-            if (Directory.Exists(postersDir))
-            {
-                postersTopLevelCount = Directory.GetFiles(postersDir, "*.*", SearchOption.TopDirectoryOnly).Length;
-                var files = Directory.GetFiles(postersDir, "*.*", SearchOption.AllDirectories);
-                postersRecursiveCount = files.Length;
-                postersBytes = files.Sum(f => new FileInfo(f).Length);
-            }
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Failed to calculate posters usage in {PostersDir}", postersDir);
-        }
-
-        try
-        {
-            if (Directory.Exists(BackupDirAbs))
-            {
-                var files = Directory.GetFiles(BackupDirAbs, "*.zip", SearchOption.TopDirectoryOnly);
-                backupsCount = files.Length;
-                backupsBytes = files.Sum(f => new FileInfo(f).Length);
-            }
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Failed to calculate backups usage in {BackupDir}", BackupDirAbs);
-        }
-
-        return new StorageUsageSnapshot(
-            databaseBytes,
-            postersTopLevelCount,
-            postersRecursiveCount,
-            postersBytes,
-            backupsCount,
-            backupsBytes
-        );
-    }
-
     private sealed class ArrAppStatsRow
     {
         public long Id { get; set; }
@@ -1042,12 +1060,4 @@ public sealed class SystemController : ControllerBase
         public int LastSyncCount { get; set; }
         public string? LastError { get; set; }
     }
-
-    private sealed record StorageUsageSnapshot(
-        long DatabaseBytes,
-        int PostersTopLevelCount,
-        int PostersRecursiveCount,
-        long PostersBytes,
-        int BackupsCount,
-        long BackupsBytes);
 }

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { apiGet } from "../../api/client.js";
 import { ArrowRight } from "lucide-react";
 import { getAppLabel } from "../../utils/appTypes.js";
+import { tr } from "../../app/uiText.js";
 
 const STORAGE_PROVIDER_CONFIGURED = {
   jackett: "feedarr:jackettConfigured",
@@ -56,17 +57,24 @@ function maskUrl(url) {
   }
 }
 
-function labelForProvider(key) {
-  if (key === "tmdb") return "TMDB";
-  if (key === "tvmaze") return "TVmaze";
-  if (key === "fanart") return "Fanart";
-  if (key === "igdb") return "IGDB";
-  return key;
-}
-
 function labelForIndexerProvider(key) {
   if (key === "prowlarr") return "Prowlarr";
   return "Jackett";
+}
+
+function toHasFlagName(fieldKey) {
+  if (!fieldKey) return "";
+  const trimmed = String(fieldKey).trim();
+  if (!trimmed) return "";
+  return `has${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
+}
+
+function hasRequiredAuth(instance, definition) {
+  if (!definition) return false;
+  const requiredFields = (definition.fieldsSchema || []).filter((field) => field.required);
+  if (requiredFields.length === 0) return true;
+  const authFlags = instance?.authFlags || {};
+  return requiredFields.every((field) => !!authFlags[toHasFlagName(field.key)]);
 }
 
 export default function Step5Summary({ onFinish, finishing }) {
@@ -83,19 +91,28 @@ export default function Step5Summary({ onFinish, finishing }) {
     setLoading(true);
     setError("");
     try {
-      const [ext, providerList, srcList, appsList] = await Promise.all([
-        apiGet("/api/settings/external"),
+      const [externalProviders, providerList, srcList, appsList] = await Promise.all([
+        apiGet("/api/providers/external"),
         apiGet("/api/providers"),
         apiGet("/api/sources"),
         apiGet("/api/apps"),
       ]);
 
-      const providerRows = [
-        { key: "tmdb", configured: !!ext?.hasTmdbApiKey, enabled: ext?.tmdbEnabled !== false },
-        { key: "tvmaze", configured: !!ext?.hasTvmazeApiKey || !!ext?.tvmazeEnabled, enabled: ext?.tvmazeEnabled !== false },
-        { key: "fanart", configured: !!ext?.hasFanartApiKey, enabled: ext?.fanartEnabled !== false },
-        { key: "igdb", configured: !!ext?.hasIgdbClientId && !!ext?.hasIgdbClientSecret, enabled: ext?.igdbEnabled !== false },
-      ];
+      const definitions = Array.isArray(externalProviders?.definitions) ? externalProviders.definitions : [];
+      const definitionByKey = new Map(
+        definitions.map((definition) => [String(definition?.providerKey || "").toLowerCase(), definition])
+      );
+      const providerRows = (Array.isArray(externalProviders?.instances) ? externalProviders.instances : []).map((instance) => {
+        const providerKey = String(instance?.providerKey || "").toLowerCase();
+        const definition = definitionByKey.get(providerKey);
+        const configured = hasRequiredAuth(instance, definition);
+        return {
+          key: String(instance?.instanceId || providerKey),
+          label: instance?.displayName || definition?.displayName || providerKey || tr("Provider", "Provider"),
+          configured,
+          enabled: instance?.enabled !== false,
+        };
+      });
       setProviders(providerRows);
       setIndexerProviders(Array.isArray(providerList) ? providerList : []);
 
@@ -118,7 +135,7 @@ export default function Step5Summary({ onFinish, finishing }) {
 
       setApps(Array.isArray(appsList) ? appsList : []);
     } catch (e) {
-      setError(e?.message || "Erreur chargement résumé");
+      setError(e?.message || tr("Erreur chargement resume", "Summary loading error"));
     } finally {
       setLoading(false);
     }
@@ -147,6 +164,10 @@ export default function Step5Summary({ onFinish, finishing }) {
       };
     });
   }, [indexerProviders]);
+  const configuredIndexerProviderRows = useMemo(
+    () => indexerProviderRows.filter((provider) => provider.configured),
+    [indexerProviderRows]
+  );
 
   const handleFinish = useCallback(async () => {
     if (finishing) return;
@@ -169,11 +190,16 @@ export default function Step5Summary({ onFinish, finishing }) {
         const missing = expectedTypes.filter((type) => !types.has(type));
         if (missing.length > 0) {
           const labels = missing.map((type) => labelForIndexerProvider(type)).join(", ");
-          setLaunchError(`Vérification échouée: fournisseur manquant en API (${labels}).`);
+          setLaunchError(
+            tr(
+              `Verification echouee: fournisseur manquant en API (${labels}).`,
+              `Verification failed: missing provider in API (${labels}).`
+            )
+          );
           return;
         }
       } catch (e) {
-        setLaunchError(e?.message || "Impossible de vérifier les fournisseurs avant lancement.");
+        setLaunchError(e?.message || tr("Impossible de verifier les fournisseurs avant lancement.", "Unable to verify providers before launch."));
         return;
       }
     }
@@ -186,8 +212,8 @@ export default function Step5Summary({ onFinish, finishing }) {
       <div className={`launch-transition-overlay${finishing ? " is-active" : ""}`} />
       <div className="setup-summary__header">
         <div>
-          <h2>Résumé</h2>
-          <p>Vérifie la configuration puis lance Feedarr.</p>
+          <h2>{tr("Resume", "Summary")}</h2>
+          <p>{tr("Verifie la configuration puis lance Feedarr.", "Check the configuration then launch Feedarr.")}</p>
         </div>
       </div>
 
@@ -195,17 +221,20 @@ export default function Step5Summary({ onFinish, finishing }) {
       {launchError && <div className="onboarding__error">{launchError}</div>}
 
       {loading ? (
-        <div className="muted">Chargement...</div>
+        <div className="muted">{tr("Chargement...", "Loading...")}</div>
       ) : (
         <div className="setup-summary__grid">
           <div className="setup-summary__card">
-            <h3>Providers</h3>
+            <h3>{tr("Metadonnees", "Metadata")}</h3>
             <ul>
               {providers.map((p) => (
                 <li key={p.key}>
-                  <ScrollText>{labelForProvider(p.key)}</ScrollText>
-                  <span className={`pill ${p.configured && p.enabled ? "pill-ok" : "pill-warn"}`}>
-                    {p.configured && p.enabled ? "Configuré" : "Non configuré"}
+                  <ScrollText>{p.label || p.key || tr("Provider", "Provider")}</ScrollText>
+                  <span className={`pill ${p.enabled ? "pill-ok" : "pill-warn"}`}>
+                    {p.enabled ? tr("Actif", "Active") : tr("Inactif", "Inactive")}
+                  </span>
+                  <span className={`pill ${p.configured ? "pill-ok" : "pill-warn"}`}>
+                    {p.configured ? tr("Auth OK", "Auth OK") : tr("Auth manquante", "Auth missing")}
                   </span>
                 </li>
               ))}
@@ -213,30 +242,25 @@ export default function Step5Summary({ onFinish, finishing }) {
           </div>
 
           <div className="setup-summary__card">
-            <h3>Fournisseurs</h3>
-            <ul>
-              {indexerProviderRows.map((provider) => (
-                <li key={provider.type}>
-                  <ScrollText>{labelForIndexerProvider(provider.type)}</ScrollText>
-                  <span className={`pill ${provider.configured ? "pill-ok" : "pill-warn"}`}>
-                    {provider.configured ? "Configuré" : "Non configuré"}
-                  </span>
-                </li>
-              ))}
-            </ul>
-            {indexerProviderRows
-              .filter((provider) => !provider.configured && provider.maskedUrl !== "—")
-              .map((provider) => (
-                <div key={`url-${provider.type}`} className="muted">
-                  {labelForIndexerProvider(provider.type)}: {provider.maskedUrl}
-                </div>
-              ))}
+            <h3>{tr("Fournisseurs", "Providers")}</h3>
+            {configuredIndexerProviderRows.length === 0 ? (
+              <div className="muted">{tr("Aucun fournisseur configure", "No configured provider")}</div>
+            ) : (
+              <ul>
+                {configuredIndexerProviderRows.map((provider) => (
+                  <li key={provider.type}>
+                    <ScrollText>{labelForIndexerProvider(provider.type)}</ScrollText>
+                    <span className="pill pill-ok">{tr("Configure", "Configured")}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
           <div className="setup-summary__card">
-            <h3>Sources</h3>
+            <h3>{tr("Sources", "Sources")}</h3>
             {sources.length === 0 ? (
-              <div className="muted">Aucune source ajoutée</div>
+              <div className="muted">{tr("Aucune source ajoutee", "No source added")}</div>
             ) : (
               <ul>
                 {sources.map((s) => {
@@ -245,7 +269,7 @@ export default function Step5Summary({ onFinish, finishing }) {
                     <li key={s.id}>
                       <ScrollText>{s.name}</ScrollText>
                       <span className="pill pill-blue">
-                        {cats.length} catégorie{cats.length > 1 ? "s" : ""}
+                        {cats.length} {tr("categorie", "category")}{cats.length > 1 ? "s" : ""}
                       </span>
                     </li>
                   );
@@ -255,15 +279,15 @@ export default function Step5Summary({ onFinish, finishing }) {
           </div>
 
           <div className="setup-summary__card">
-            <h3>Applications</h3>
+            <h3>{tr("Applications", "Applications")}</h3>
             {apps.length === 0 ? (
-              <div className="muted">Aucune application</div>
+              <div className="muted">{tr("Aucune application", "No application")}</div>
             ) : (
               <ul>
                 {apps.map((a) => (
                   <li key={a.id}>
                     <ScrollText>{a.name || getAppLabel(a.type)}</ScrollText>
-                    <span className="pill pill-ok">Configuré</span>
+                    <span className="pill pill-ok">{tr("Configure", "Configured")}</span>
                   </li>
                 ))}
               </ul>
@@ -279,7 +303,7 @@ export default function Step5Summary({ onFinish, finishing }) {
           onClick={handleFinish}
           disabled={finishing}
         >
-          {finishing ? "Lancement..." : "Lancer Feedarr"}
+          {finishing ? tr("Lancement...", "Launching...") : tr("Lancer Feedarr", "Launch Feedarr")}
           <ArrowRight className="launch-icon" />
         </button>
       </div>

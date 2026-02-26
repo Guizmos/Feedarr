@@ -2,23 +2,59 @@
 
 [Français](configuration-wizard.fr.md) | English
 
-This guide documents Feedarr's 6 setup steps and explains:
-- what to do at each step
-- what each step changes in the app
-- how to create or retrieve API keys for each provider
+⚠️ Feedarr v2 Notice
+
+This guide applies to Feedarr v2 (monolithic architecture).
+Version 1 (split API + Web containers) is deprecated.
+
+Feedarr now runs as a single service and enforces a First Boot Setup Lock.
 
 ## Prerequisites
 
-Before starting `/setup`, make sure you have:
-- at least one metadata provider key (TMDB, Fanart, IGDB, TVmaze optional)
-- one indexer provider ready (Jackett or Prowlarr)
-- optional: Sonarr and/or Radarr URL + API key
+Before starting /setup, make sure you have:
 
-## Step 1 - Intro
+At least one metadata provider key:
+TMDB (recommended)
+Fanart
+IGDB
+TVmaze (optional)
+
+One indexer provider ready:
+Jackett or Prowlarr
+
+Optional:
+Sonarr and/or Radarr URL + API key
+
+🔐 First Boot Behavior (Important)
+
+When starting a fresh instance:
+All routes are locked.
+
+API returns:
+
+{ "error": "setup_required", "message": "Setup required" }
+
+Allowed routes:
+/setup
+/health
+
+Required setup API endpoints
+Static assets
+You must complete the Setup Wizard before accessing the application.
+
+Once completed:
+
+Onboarding state is persisted.
+The lock is removed automatically.
+The app becomes fully accessible.
+
+## Step 1 - Language - Intro
 
 Screenshot:
 
-![Step 1 Intro](screenshots/wizard-step0.png)
+![Step 1 Language](screenshots/wizard-step0.png)
+
+![Step 1.2 Intro](screenshots/wizard-step1.png)
 
 What to do:
 - Read the wizard summary, then click `Next`.
@@ -30,7 +66,7 @@ What it impacts:
 
 Screenshot:
 
-![Step 2 Providers](screenshots/wizard-step1.png)
+![Step 2 Providers](screenshots/wizard-step2.png)
 
 What to do:
 1. Select a provider.
@@ -89,7 +125,7 @@ TVmaze key is optional in Feedarr.
 
 Screenshot:
 
-![Step 3 Indexer Provider](screenshots/wizard-step2.png)
+![Step 3 Indexer Provider](screenshots/wizard-step3.png)
 
 What to do:
 1. Select `Jackett` or `Prowlarr`.
@@ -122,7 +158,7 @@ What it impacts:
 
 Screenshot:
 
-![Step 4 Indexers](screenshots/wizard-step3.png)
+![Step 4 Indexers](screenshots/wizard-step3_ind.png)
 
 Category selector:
 

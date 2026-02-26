@@ -24,7 +24,7 @@ public sealed class SystemControllerBackupRestartRequiredTests
         var db = CreateDb(workspace);
 
         var settings = new SettingsRepository(db);
-        var stats = new ProviderStatsService(new StatsRepository(db));
+        var stats = new ProviderStatsService(new StatsRepository(db, new MemoryCache(new MemoryCacheOptions())));
         var backupService = new BackupService(
             db,
             new TestWebHostEnvironment(workspace.RootDir),
@@ -42,19 +42,28 @@ public sealed class SystemControllerBackupRestartRequiredTests
         backupService.InitializeForStartup();
         File.WriteAllText(Path.Combine(workspace.DataDir, "restore.restart-required.flag"), "required");
 
+        var appOptions = OptionsFactory.Create(new AppOptions
+        {
+            DataDir = workspace.DataDir,
+            DbFileName = "feedarr.db"
+        });
+        var storageCache = new StorageUsageCacheService(
+            new MemoryCache(new MemoryCacheOptions()),
+            new TestWebHostEnvironment(workspace.RootDir),
+            appOptions,
+            db,
+            NullLogger<StorageUsageCacheService>.Instance);
+
         var controller = new SystemController(
             db,
             new TestWebHostEnvironment(workspace.RootDir),
-            OptionsFactory.Create(new AppOptions
-            {
-                DataDir = workspace.DataDir,
-                DbFileName = "feedarr.db"
-            }),
             settings,
             stats,
             new ApiRequestMetricsService(),
             backupService,
             new MemoryCache(new MemoryCacheOptions()),
+            new SetupStateService(settings, new MemoryCache(new MemoryCacheOptions())),
+            storageCache,
             NullLogger<SystemController>.Instance);
 
         var result = controller.RestoreBackup("backup.zip");

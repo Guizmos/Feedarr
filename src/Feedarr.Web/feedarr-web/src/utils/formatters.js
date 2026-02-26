@@ -1,4 +1,5 @@
 import { getActiveUiLanguage } from "../app/locale.js";
+import { normalizeCategoryGroupKey } from "../domain/categories/index.js";
 
 export function fmtBytes(bytes) {
   const n = Number(bytes);
@@ -53,12 +54,20 @@ export function formatSeasonEpisode(it) {
 
 export function getMediaTypeLabel(it) {
   const raw = String(it?.mediaType || it?.unifiedCategoryKey || "").toLowerCase();
+  const canonical = normalizeCategoryGroupKey(raw);
   if (!raw) return it?.unifiedCategoryLabel || "";
-  if (["movie", "film", "films"].includes(raw)) return "Film";
-  if (["tv", "series", "serie", "tv_series", "series_tv", "seriestv"].includes(raw)) return "Serie TV";
-  if (["anime"].includes(raw)) return "Anime";
-  if (["show", "shows", "emission", "emissions"].includes(raw)) return "Emission";
-  if (["game", "games"].includes(raw)) return "Jeu";
-  if (["spectacle"].includes(raw)) return "Spectacle";
+  if (canonical === "films") return "Film";
+  if (canonical === "series") return "Serie TV";
+  if (canonical === "anime") return "Anime";
+  if (canonical === "emissions") return "Emission";
+  if (canonical === "games") return "Jeu";
+  if (canonical === "spectacle") return "Spectacle";
+  if (canonical === "audio") return "Audio";
+  if (canonical === "books") return "Livre";
+  if (canonical === "comics") return "Comic";
+  if (canonical === "animation") return "Animation";
+  if (["audio", "music"].includes(raw)) return "Audio";
+  if (["book", "books", "livre", "livres"].includes(raw)) return "Livre";
+  if (["comic", "comics", "bd", "manga"].includes(raw)) return "Comic";
   return it?.unifiedCategoryLabel || raw;
 }

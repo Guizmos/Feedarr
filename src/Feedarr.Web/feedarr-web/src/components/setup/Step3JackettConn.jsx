@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { apiPost, apiPut } from "../../api/client.js";
 import ItemRow from "../../ui/ItemRow.jsx";
 import Modal from "../../ui/Modal.jsx";
+import { tr } from "../../app/uiText.js";
 
 const STORAGE_PROVIDER = "feedarr:jackettProvider";
 const PROVIDERS = [
@@ -128,8 +129,8 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
       setTestState(activeConfig.manualOnly ? "manual" : "ok");
       setTestMsg(
         activeConfig.manualOnly
-          ? "Configuration enregistrée. Ajoute les indexeurs manuellement à l'étape suivante."
-          : "Clés déjà enregistrées."
+          ? tr("Configuration enregistree. Ajoute les indexeurs manuellement a l'etape suivante.", "Configuration saved. Add indexers manually at the next step.")
+          : tr("Cles deja enregistrees.", "Keys already saved.")
       );
       setSaved(true);
       onStatusChange?.({
@@ -159,8 +160,8 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
     setTestState(initialStatus?.manualOnly ? "manual" : "ok");
     setTestMsg(
       initialStatus?.manualOnly
-        ? "Configuration enregistrée. Ajoute les indexeurs manuellement à l'étape suivante."
-        : "Clés déjà enregistrées."
+        ? tr("Configuration enregistree. Ajoute les indexeurs manuellement a l'etape suivante.", "Configuration saved. Add indexers manually at the next step.")
+        : tr("Cles deja enregistrees.", "Keys already saved.")
     );
     setTestCount(Array.isArray(initialStatus.indexers) ? initialStatus.indexers.length : 0);
     setSaved(true);
@@ -250,8 +251,8 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
       setTestState(cfg.manualOnly ? "manual" : "ok");
       setTestMsg(
         cfg.manualOnly
-          ? "Configuration enregistrée. Ajoute les indexeurs manuellement à l'étape suivante."
-          : "Clés déjà enregistrées."
+          ? tr("Configuration enregistree. Ajoute les indexeurs manuellement a l'etape suivante.", "Configuration saved. Add indexers manually at the next step.")
+          : tr("Cles deja enregistrees.", "Keys already saved.")
       );
       setSaved(true);
     } else {
@@ -300,13 +301,18 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
         const count = Array.isArray(list) ? list.length : 0;
         if (count > 0) {
           nextState = "ok";
-          nextMsg = `Connexion OK (${count} indexeur${count > 1 ? "s" : ""})`;
+          nextMsg = tr(
+            `Connexion OK (${count} indexeur${count > 1 ? "s" : ""})`,
+            `Connection OK (${count} indexer${count > 1 ? "s" : ""})`
+          );
           nextCount = count;
           nextIndexers = Array.isArray(list) ? list : [];
         } else {
           nextState = "manual";
-          nextMsg =
-            "Connexion OK, mais aucun indexeur récupéré automatiquement. Tu pourras les ajouter manuellement à l'étape suivante (Copy Torznab Feed + clé API).";
+          nextMsg = tr(
+            "Connexion OK, mais aucun indexeur recupere automatiquement. Tu pourras les ajouter manuellement a l'etape suivante (Copy Torznab Feed + cle API).",
+            "Connection OK, but no indexer was auto-fetched. You can add them manually at the next step (Copy Torznab Feed + API key)."
+          );
         }
         break;
       } catch (e) {
@@ -318,8 +324,14 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
         nextState = "manual";
         nextMsg =
           /invalid start of a value|unexpected token\s*</i.test(rawMsg)
-            ? `Récupération auto des indexeurs ${providerName} impossible. Enregistre la config puis ajoute les indexeurs manuellement à l'étape suivante (Copy Torznab Feed + clé API).`
-            : `${rawMsg} Tu peux quand même enregistrer et ajouter les indexeurs manuellement à l'étape suivante.`;
+            ? tr(
+              `Recuperation auto des indexeurs ${providerName} impossible. Enregistre la config puis ajoute les indexeurs manuellement a l'etape suivante (Copy Torznab Feed + cle API).`,
+              `Unable to auto-fetch ${providerName} indexers. Save the config then add indexers manually at the next step (Copy Torznab Feed + API key).`
+            )
+            : `${rawMsg} ${tr(
+              "Tu peux quand meme enregistrer et ajouter les indexeurs manuellement a l'etape suivante.",
+              "You can still save and add indexers manually at the next step."
+            )}`;
         break;
       }
     }
@@ -373,7 +385,10 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
       const providerName = getProviderMeta(provider).label;
       setTestState("error");
       setSaved(false);
-      setTestMsg(e?.message || `Impossible d'enregistrer ${providerName}.`);
+      setTestMsg(
+        e?.message
+        || tr(`Impossible d'enregistrer ${providerName}.`, `Unable to save ${providerName}.`)
+      );
       return;
     }
 
@@ -458,12 +473,12 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
 
   return (
     <div className="setup-step setup-jackett-conn">
-      <h2>Fournisseurs</h2>
-      <p>Choisis ton fournisseur d’indexeurs.</p>
+      <h2>{tr("Fournisseurs", "Providers")}</h2>
+      <p>{tr("Choisis ton fournisseur d'indexeurs.", "Choose your indexer provider.")}</p>
 
       {availableProviders.length > 0 && (
         <div className="setup-providers__add settings-row settings-row--ui-select">
-          <label>Fournisseur</label>
+          <label>{tr("Fournisseur", "Provider")}</label>
           <select
             className="settings-field"
             value={selectValue}
@@ -475,7 +490,7 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
             }}
           >
             <option value="" disabled>
-              Sélectionner...
+              {tr("Selectionner...", "Select...")}
             </option>
             {availableProviders.map((opt) => (
               <option key={opt.key} value={opt.key}>
@@ -487,17 +502,17 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
       )}
 
       <div className="setup-providers__list">
-        <h4>Fournisseurs configurés</h4>
+        <h4>{tr("Fournisseurs configures", "Configured providers")}</h4>
         {configuredProviders.length === 0 && (
-          <div className="muted">Aucun fournisseur configuré.</div>
+          <div className="muted">{tr("Aucun fournisseur configure.", "No provider configured.")}</div>
         )}
         {configuredProviders.length > 0 && (
           <div className="indexer-list">
             {configuredProviders.map((cfg, idx) => {
               const meta = configs[cfg.key]?.baseUrl || "";
-              const badges = [{ label: "Configuré", className: "pill-ok" }];
+              const badges = [{ label: tr("Configure", "Configured"), className: "pill-ok" }];
               if (configs[cfg.key]?.manualOnly) {
-                badges.push({ label: "Ajout manuel", className: "pill-warn" });
+                badges.push({ label: tr("Ajout manuel", "Manual add"), className: "pill-warn" });
               }
               return (
                 <ItemRow
@@ -510,13 +525,13 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
                   actions={[
                     {
                       icon: "edit",
-                      title: "Modifier",
+                      title: tr("Modifier", "Edit"),
                       onClick: () => openProviderModal(cfg.key),
                       disabled: testState === "testing",
                     },
                     {
                       icon: "delete",
-                      title: "Supprimer",
+                      title: tr("Supprimer", "Delete"),
                       onClick: () => clearProviderConfig(cfg.key),
                       disabled: testState === "testing",
                       className: "iconbtn--danger",
@@ -532,29 +547,29 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
 
       <Modal
         open={modalOpen}
-        title={`Configurer ${providerMeta.label}`}
+        title={`${tr("Configurer", "Configure")} ${providerMeta.label}`}
         onClose={() => setModalOpen(false)}
         width={520}
       >
         <div className="formgrid formgrid--edit">
           <div className="field">
-            <label>Base URL</label>
+            <label>{tr("Base URL", "Base URL")}</label>
             <input
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
               placeholder={providerMeta.placeholder}
               disabled={testState === "testing"}
             />
-            <span className="field-hint">IP, hostname ou URL reverse proxy (http/https)</span>
+            <span className="field-hint">{tr("IP, hostname ou URL reverse proxy (http/https)", "IP, hostname or reverse proxy URL (http/https)")}</span>
           </div>
           <div className="field">
-            <label>API key</label>
+            <label>{tr("API key", "API key")}</label>
             <div className="setup-jackett-key">
               <input
                 type={showKey ? "text" : "password"}
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                placeholder={`Clé API ${providerMeta.label}`}
+                placeholder={`${tr("Cle API", "API key")} ${providerMeta.label}`}
                 disabled={testState === "testing"}
               />
               <button
@@ -563,25 +578,25 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
                 onClick={() => setShowKey((v) => !v)}
                 disabled={testState === "testing"}
               >
-                {showKey ? "Masquer" : "Afficher"}
+                {showKey ? tr("Masquer", "Hide") : tr("Afficher", "Show")}
               </button>
             </div>
           </div>
         </div>
 
         <div className="setup-jackett-hint">
-          Indexeurs détectés : {testCount || 0}
+          {tr("Indexeurs detectes", "Detected indexers")}: {testCount || 0}
         </div>
 
         {testState === "error" && <div className="onboarding__error">{testMsg}</div>}
         {testState === "ok" && (
           <div className="onboarding__ok">
-            {testMsg} {saved ? "— enregistré" : ""}
+            {testMsg} {saved ? ` - ${tr("enregistre", "saved")}` : ""}
           </div>
         )}
         {testState === "manual" && (
           <div className="onboarding__warn">
-            {testMsg} {saved ? "— enregistré" : ""}
+            {testMsg} {saved ? ` - ${tr("enregistre", "saved")}` : ""}
           </div>
         )}
 
@@ -595,18 +610,18 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
             {isTesting ? (
               <>
                 <span className="btn-spinner" />
-                Test en cours...
+                {tr("Test en cours...", "Test in progress...")}
               </>
             ) : testPulse === "ok" ? (
-              "Valide"
+              tr("Valide", "Valid")
             ) : testPulse === "error" ? (
-              "Invalide"
+              tr("Invalide", "Invalid")
             ) : testState === "ok" ? (
-              "Sauvegarder"
+              tr("Sauvegarder", "Save")
             ) : testState === "manual" ? (
-              "Sauvegarder (manuel)"
+              tr("Sauvegarder (manuel)", "Save (manual)")
             ) : (
-              "Tester"
+              tr("Tester", "Test")
             )}
           </button>
         </div>

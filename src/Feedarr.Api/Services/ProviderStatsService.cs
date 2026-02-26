@@ -1,4 +1,5 @@
 using Feedarr.Api.Data.Repositories;
+using Feedarr.Api.Services.ExternalProviders;
 
 namespace Feedarr.Api.Services;
 
@@ -20,6 +21,21 @@ public sealed record IndexerStatsSnapshot(
 
 public sealed class ProviderStatsService
 {
+    private static readonly HashSet<string> KnownMetadataProviders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ExternalProviderKeys.Tmdb,
+        ExternalProviderKeys.Tvmaze,
+        ExternalProviderKeys.Fanart,
+        ExternalProviderKeys.Igdb,
+        ExternalProviderKeys.Jikan,
+        ExternalProviderKeys.GoogleBooks,
+        ExternalProviderKeys.TheAudioDb,
+        ExternalProviderKeys.ComicVine,
+        ExternalProviderKeys.MusicBrainz,
+        ExternalProviderKeys.OpenLibrary,
+        ExternalProviderKeys.Rawg
+    };
+
     private readonly StatsRepository _repo;
     private readonly object _lock = new();
 
@@ -213,6 +229,79 @@ public sealed class ProviderStatsService
         return new ProviderStatsSnapshot(tmdb, tvmaze, fanart, igdb);
     }
 
+    public void RecordExternal(string providerKey, bool ok, long elapsedMs = 0)
+    {
+        EnsureLoaded();
+        var key = NormalizeProviderKey(providerKey);
+        if (string.IsNullOrWhiteSpace(key))
+            return;
+
+        var safeMs = Math.Max(0, elapsedMs);
+
+        _repo.Increment($"{key}_calls");
+        if (safeMs > 0)
+            _repo.Increment($"{key}_total_ms", safeMs);
+        if (!ok)
+            _repo.Increment($"{key}_failures");
+
+        // Keep legacy in-memory counters consistent when generic recording is used
+        // with existing providers.
+        switch (key)
+        {
+            case "tmdb":
+                Interlocked.Increment(ref _tmdbCalls);
+                if (safeMs > 0) Interlocked.Add(ref _tmdbTotalMs, safeMs);
+                if (!ok) Interlocked.Increment(ref _tmdbFailures);
+                break;
+            case "tvmaze":
+                Interlocked.Increment(ref _tvmazeCalls);
+                if (safeMs > 0) Interlocked.Add(ref _tvmazeTotalMs, safeMs);
+                if (!ok) Interlocked.Increment(ref _tvmazeFailures);
+                break;
+            case "fanart":
+                Interlocked.Increment(ref _fanartCalls);
+                if (safeMs > 0) Interlocked.Add(ref _fanartTotalMs, safeMs);
+                if (!ok) Interlocked.Increment(ref _fanartFailures);
+                break;
+            case "igdb":
+                Interlocked.Increment(ref _igdbCalls);
+                if (safeMs > 0) Interlocked.Add(ref _igdbTotalMs, safeMs);
+                if (!ok) Interlocked.Increment(ref _igdbFailures);
+                break;
+        }
+    }
+
+    public IReadOnlyDictionary<string, ProviderStats> SnapshotByProvider()
+    {
+        EnsureLoaded();
+        var all = _repo.GetAll();
+        var providers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var key in all.Keys)
+        {
+            if (key.EndsWith("_calls", StringComparison.OrdinalIgnoreCase))
+                providers.Add(key[..^"_calls".Length]);
+            else if (key.EndsWith("_failures", StringComparison.OrdinalIgnoreCase))
+                providers.Add(key[..^"_failures".Length]);
+            else if (key.EndsWith("_total_ms", StringComparison.OrdinalIgnoreCase))
+                providers.Add(key[..^"_total_ms".Length]);
+        }
+
+        var result = new Dictionary<string, ProviderStats>(StringComparer.OrdinalIgnoreCase);
+        foreach (var provider in providers
+            .Where(p => KnownMetadataProviders.Contains(p))
+            .OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+        {
+            var calls = all.GetValueOrDefault($"{provider}_calls", 0);
+            var failures = all.GetValueOrDefault($"{provider}_failures", 0);
+            var totalMs = all.GetValueOrDefault($"{provider}_total_ms", 0);
+            var avgMs = calls > 0 ? (long)((double)totalMs / calls) : 0;
+            result[provider] = new ProviderStats(calls, failures, avgMs);
+        }
+
+        return result;
+    }
+
     public void RecordTvmaze(bool ok)
     {
         RecordTvmaze(ok, 0);
@@ -245,5 +334,12 @@ public sealed class ProviderStatsService
             Interlocked.Read(ref _syncJobs),
             Interlocked.Read(ref _syncFailures)
         );
+    }
+
+    private static string NormalizeProviderKey(string? providerKey)
+    {
+        return string.IsNullOrWhiteSpace(providerKey)
+            ? ""
+            : providerKey.Trim().ToLowerInvariant();
     }
 }

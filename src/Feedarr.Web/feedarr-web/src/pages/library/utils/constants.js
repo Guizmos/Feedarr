@@ -9,11 +9,15 @@ export const VIEW_OPTIONS = [
 ];
 
 export const UNIFIED_CATEGORY_OPTIONS = [
-  { key: "films", label: "Films" },
-  { key: "series", label: "Series TV" },
+  { key: "animation", label: "Animation" },
   { key: "anime", label: "Anime" },
+  { key: "audio", label: "Audio" },
+  { key: "comics", label: "Comics" },
+  { key: "emissions", label: "Emissions" },
+  { key: "films", label: "Films" },
   { key: "games", label: "Jeux" },
-  { key: "shows", label: "Emissions" },
+  { key: "books", label: "Livres" },
+  { key: "series", label: "Series TV" },
   { key: "spectacle", label: "Spectacle" },
 ];
 

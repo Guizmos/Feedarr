@@ -1,57 +1,19 @@
 import React, { useEffect, useState } from "react";
 import Modal from "./Modal.jsx";
-import { apiPost, apiPut } from "../api/client.js";
-
-// --- Category helpers (copié depuis Indexers.jsx) ---
-const UNIFIED_LABELS = {
-  films: "Films",
-  series: "Series TV",
-  anime: "Animation",
-  games: "Jeux PC",
-  spectacle: "Spectacle",
-  shows: "Emissions",
-};
+import { apiPatch, apiPost, apiPut } from "../api/client.js";
+import CategoryMappingBoard from "../components/shared/CategoryMappingBoard.jsx";
+import {
+  buildMappingsPayload,
+  mapFromCapsAssignments,
+  normalizeCategoryGroupKey,
+} from "../domain/categories/index.js";
+import { useMetadataProviders, toggleProviderInstance } from "../domain/providers/index.js";
 
 const INDEXER_OPTIONS = ["C411", "YGEGE", "LA-CALE", "TOS"];
-const INDEXER_CATEGORY_MAP = {
-  C411: {
-    102000: "films",
-    105000: "series",
-    105080: "shows",
-  },
-  YGEGE: {
-    102183: "films",
-    102178: "anime",
-    102184: "series",
-    102185: "spectacle",
-    102182: "shows",
-    102161: "games",
-  },
-  LACALE: {
-    131681: "films",
-    117804: "series",
-    4050: "games",
-  },
-  TOS: {
-    100001: "films",
-    100002: "series",
-  },
-};
-
-function normalizeIndexerKey(value) {
-  return String(value || "")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "");
-}
-
-function getAllowedCategoryMap(indexerName) {
-  const key = normalizeIndexerKey(indexerName);
-  return INDEXER_CATEGORY_MAP[key] || null;
-}
-
-// --- Fin category helpers ---
 
 export default function OnboardingWizard({ open, status, onClose, onComplete }) {
+  const providers = useMetadataProviders();
+
   const [idxName, setIdxName] = useState("");
   const [idxUrl, setIdxUrl] = useState("");
   const [idxKey, setIdxKey] = useState("");
@@ -63,8 +25,9 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
   const [idxTested, setIdxTested] = useState(false);
 
   // Category states
-  const [filteredCategories, setFilteredCategories] = useState([]);
-  const [selectedCategoryIds, setSelectedCategoryIds] = useState(() => new Set());
+  const [capsCategories, setCapsCategories] = useState([]);
+  const [categoryMappings, setCategoryMappings] = useState(() => new Map());
+
 
   const [provTmdb, setProvTmdb] = useState("");
   const [provTvmaze, setProvTvmaze] = useState("");
@@ -77,6 +40,7 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
   const [provTesting, setProvTesting] = useState(false);
   const [provTested, setProvTested] = useState(false);
   const [provTestResults, setProvTestResults] = useState({ tmdb: null, tvmaze: null, fanart: null, igdb: null });
+  const [testedInstanceIds, setTestedInstanceIds] = useState({});
 
   // Test indexer function
   async function testIndexer() {
@@ -102,36 +66,31 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
         return;
       }
 
-      const cats = Array.isArray(res?.caps?.categories) ? res.caps.categories : [];
-      const allowedMap = getAllowedCategoryMap(idxName);
-      if (!allowedMap) {
-        setIdxErr("Nom d'indexeur non reconnu pour le mapping des catégories.");
+      // Récupérer les catégories brutes depuis le backend (liste plate).
+      let capsRes;
+      try {
+        capsRes = await apiPost("/api/categories/caps", {
+          torznabUrl:   idxUrl.trim(),
+          apiKey:       idxKey.trim(),
+          authMode:     idxAuthMode,
+          indexerName:  idxName.trim(),
+          includeStandardCatalog: true,
+          includeSpecific: true,
+        });
+      } catch (capsErr) {
+        setIdxErr("Connexion réussie, mais la récupération des catégories a échoué : " + (capsErr?.message || "erreur inconnue"));
         return;
       }
 
-      const filtered = cats
-        .map((cat) => {
-          const unifiedKey = allowedMap[cat?.id];
-          if (!unifiedKey) return null;
-          return {
-            id: cat.id,
-            name: cat.name,
-            isSub: !!cat.isSub,
-            parentId: cat.parentId ?? null,
-            unifiedKey,
-            unifiedLabel: UNIFIED_LABELS[unifiedKey] || unifiedKey,
-            autoSelected: true,
-          };
-        })
-        .filter(Boolean);
+      const categories = Array.isArray(capsRes?.categories) ? capsRes.categories : [];
 
-      if (filtered.length === 0) {
-        setIdxErr("Aucune catégorie compatible détectée.");
+      if (categories.length === 0) {
+        setIdxErr("Connexion réussie, mais aucune catégorie compatible n'a été détectée. Vérifiez l'URL Torznab.");
         return;
       }
 
-      setFilteredCategories(filtered);
-      setSelectedCategoryIds(new Set(filtered.map((c) => c.id)));
+      setCapsCategories(categories);
+      setCategoryMappings(mapFromCapsAssignments(categories));
       setIdxTested(true);
       setIdxOk("Connexion réussie ! Passez à l'étape suivante.");
     } catch (e) {
@@ -146,12 +105,6 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
     setIdxErr("");
     setIdxOk("");
 
-    const selected = filteredCategories.filter((c) => selectedCategoryIds.has(c.id));
-    if (selected.length === 0) {
-      setIdxErr("Sélectionne au moins une catégorie.");
-      return;
-    }
-
     setIdxSaving(true);
     try {
       const res = await apiPost("/api/sources", {
@@ -159,19 +112,15 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
         torznabUrl: idxUrl.trim(),
         authMode: idxAuthMode,
         apiKey: idxKey.trim(),
-        categories: selected.map((c) => ({
-          id: c.id,
-          name: c.name,
-          isSub: c.isSub,
-          parentId: c.parentId,
-          unifiedKey: c.unifiedKey,
-          unifiedLabel: c.unifiedLabel,
-        })),
       });
 
       // Activer l'indexeur
       if (res?.id) {
         await apiPut(`/api/sources/${res.id}/enabled`, { enabled: true });
+        const mappingsPayload = buildMappingsPayload(categoryMappings);
+        if (mappingsPayload.length > 0) {
+          await apiPatch(`/api/sources/${res.id}/category-mappings`, { mappings: mappingsPayload });
+        }
       }
 
       setIdxOk("Indexeur ajouté et activé !");
@@ -182,84 +131,67 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
       // Passer à l'étape suivante
       next();
     } catch (e) {
-      setIdxErr(e?.message || "Erreur ajout indexeur");
+      const msg = e?.message || "";
+      if (msg.toLowerCase().includes("already exists") || msg.includes("409")) {
+        setIdxErr("Cet indexeur est déjà ajouté (URL Torznab déjà utilisée).");
+      } else {
+        setIdxErr(msg || "Erreur ajout indexeur");
+      }
     } finally {
       setIdxSaving(false);
     }
   }
 
   const canTestIndexer = idxName.trim() && idxUrl.trim() && idxKey.trim();
-  const selectedCount = selectedCategoryIds.size;
+  const selectedCount = categoryMappings.size;
 
-  // Test providers function
+  // Test providers function — uses domain hook (/api/providers/external)
   async function testProviders() {
     setProvErr("");
     setProvOk("");
 
     const hasTmdb = !!provTmdb.trim();
-    const hasTvmaze = true;
     const hasFanart = !!provFanart.trim();
     const hasIgdb = !!provIgdbId.trim() && !!provIgdbSecret.trim();
 
-    if (!hasTmdb && !hasTvmaze && !hasFanart && !hasIgdb) {
-      setProvErr("Ajoute au moins une clé/provider complète.");
+    // TVmaze: always attempt (may not require a key depending on backend definition)
+    const providerInputs = [
+      { key: "tmdb",   active: hasTmdb,   auth: { apiKey: provTmdb.trim() } },
+      { key: "tvmaze", active: true,       auth: provTvmaze.trim() ? { apiKey: provTvmaze.trim() } : {} },
+      { key: "fanart", active: hasFanart,  auth: { apiKey: provFanart.trim() } },
+      { key: "igdb",   active: hasIgdb,    auth: { clientId: provIgdbId.trim(), clientSecret: provIgdbSecret.trim() } },
+    ];
+
+    const hasAnyInput = hasTmdb || hasFanart || hasIgdb;
+    if (!hasAnyInput) {
+      setProvErr("Ajoute au moins une clé provider complète.");
       return;
     }
 
     setProvTesting(true);
     const results = { tmdb: null, tvmaze: null, fanart: null, igdb: null };
+    const newInstanceIds = {};
 
     try {
-      // D'abord sauvegarder les clés temporairement pour les tester
-      const payload = {
-        tmdbApiKey: provTmdb.trim() || null,
-        tvmazeApiKey: provTvmaze.trim() || null,
-        fanartApiKey: provFanart.trim() || null,
-        igdbClientId: provIgdbId.trim() || null,
-        igdbClientSecret: provIgdbSecret.trim() || null,
-      };
-      await apiPut("/api/settings/external", payload);
+      for (const { key, active, auth } of providerInputs) {
+        if (!active) continue;
 
-      // Tester chaque provider configuré
-      if (hasTmdb) {
-        try {
-          const res = await apiPost("/api/settings/external/test", { kind: "tmdb" });
-          results.tmdb = res?.ok ? "ok" : "error";
-        } catch {
-          results.tmdb = "error";
+        // Create or update instance as disabled, then test
+        const upsertResult = await providers.upsertDisabled(key, auth);
+        if (!upsertResult.ok || !upsertResult.instanceId) {
+          console.error(`[OnboardingWizard] upsertDisabled failed for ${key}`, upsertResult.errorMessage);
+          results[key] = "error";
+          continue;
         }
+
+        newInstanceIds[key] = upsertResult.instanceId;
+        const testResult = await providers.test(upsertResult.instanceId);
+        results[key] = testResult.ok ? "ok" : "error";
       }
 
-      if (hasTvmaze) {
-        try {
-          const res = await apiPost("/api/settings/external/test", { kind: "tvmaze" });
-          results.tvmaze = res?.ok ? "ok" : "error";
-        } catch {
-          results.tvmaze = "error";
-        }
-      }
-
-      if (hasFanart) {
-        try {
-          const res = await apiPost("/api/settings/external/test", { kind: "fanart" });
-          results.fanart = res?.ok ? "ok" : "error";
-        } catch {
-          results.fanart = "error";
-        }
-      }
-
-      if (hasIgdb) {
-        try {
-          const res = await apiPost("/api/settings/external/test", { kind: "igdb" });
-          results.igdb = res?.ok ? "ok" : "error";
-        } catch {
-          results.igdb = "error";
-        }
-      }
-
+      setTestedInstanceIds(newInstanceIds);
       setProvTestResults(results);
 
-      // Vérifier si au moins un test a réussi
       const hasSuccess = Object.values(results).some((r) => r === "ok");
       const hasError = Object.values(results).some((r) => r === "error");
 
@@ -274,42 +206,52 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
         setProvErr("Aucun provider n'a pu être testé avec succès.");
       }
     } catch (e) {
+      console.error("[OnboardingWizard] testProviders failed", e);
       setProvErr(e?.message || "Erreur test providers");
     } finally {
       setProvTesting(false);
     }
   }
 
-  // Save and activate providers
+  // Save and activate providers — enables only the instances that passed the test
   async function saveProviders() {
     setProvErr("");
     setProvOk("");
     setProvSaving(true);
 
     try {
-      const payload = {
-        tmdbApiKey: provTmdb.trim() || null,
-        tvmazeApiKey: provTvmaze.trim() || null,
-        fanartApiKey: provFanart.trim() || null,
-        igdbClientId: provIgdbId.trim() || null,
-        igdbClientSecret: provIgdbSecret.trim() || null,
-        // Activer les providers qui ont été testés avec succès
-        tmdbEnabled: provTestResults.tmdb === "ok",
-        tvmazeEnabled: provTestResults.tvmaze === "ok",
-        fanartEnabled: provTestResults.fanart === "ok",
-        igdbEnabled: provTestResults.igdb === "ok",
-      };
+      const toEnable = Object.entries(testedInstanceIds).filter(
+        ([key]) => provTestResults[key] === "ok"
+      );
 
-      await apiPut("/api/settings/external", payload);
+      if (toEnable.length === 0) {
+        setProvErr("Aucun provider valide à activer.");
+        return;
+      }
+
+      // Activate all tested-OK instances in parallel
+      const enableResults = await Promise.all(
+        toEnable.map(([, instanceId]) => toggleProviderInstance(instanceId, true))
+      );
+
+      const failures = enableResults.filter((r) => !r.ok);
+      if (failures.length > 0) {
+        const msgs = failures.map((r) => r.errorMessage).filter(Boolean).join(". ");
+        setProvErr(msgs || "Certains providers n'ont pas pu être activés.");
+        return;
+      }
+
+      // Reload domain state after batch enable
+      await providers.loadAll();
+
       setProvOk("Providers enregistrés et activés !");
-
       if (typeof window !== "undefined") {
         window.dispatchEvent(new Event("onboarding:refresh"));
       }
 
-      // Passer à l'étape suivante
       next();
     } catch (e) {
+      console.error("[OnboardingWizard] saveProviders failed", e);
       setProvErr(e?.message || "Erreur sauvegarde providers");
     } finally {
       setProvSaving(false);
@@ -346,20 +288,18 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
             <div className="formgrid">
               <div className="field">
                 <label>Nom</label>
-                <select
+                <input
+                  list="indexer-suggestions"
                   value={idxName}
                   onChange={(e) => setIdxName(e.target.value)}
+                  placeholder="Ex: C411, YGEGE, mon-indexeur…"
                   disabled={idxTested}
-                >
-                  <option value="" disabled>
-                    Choisir un indexeur...
-                  </option>
+                />
+                <datalist id="indexer-suggestions">
                   {INDEXER_OPTIONS.map((opt) => (
-                    <option key={opt} value={opt}>
-                      {opt}
-                    </option>
+                    <option key={opt} value={opt} />
                   ))}
-                </select>
+                </datalist>
               </div>
               <div className="field" style={{ gridColumn: "1 / -1" }}>
                 <label>URL Torznab</label>
@@ -400,8 +340,8 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
                   type="button"
                   onClick={() => {
                     setIdxTested(false);
-                    setFilteredCategories([]);
-                    setSelectedCategoryIds(new Set());
+                    setCapsCategories([]);
+                    setCategoryMappings(new Map());
                     setIdxOk("");
                   }}
                 >
@@ -421,32 +361,24 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
             Sélectionne les catégories à synchroniser depuis cet indexeur.
           </p>
           <div className="onboarding__inline">
-            {filteredCategories.length > 0 ? (
+            {capsCategories.length > 0 ? (
               <>
-                <div className="category-picker" style={{ maxHeight: 240 }}>
-                  {filteredCategories.map((cat) => (
-                    <label key={cat.id} className="category-row">
-                      <input
-                        type="checkbox"
-                        checked={selectedCategoryIds.has(cat.id)}
-                        onChange={(e) => {
-                          const checked = e.target.checked;
-                          setSelectedCategoryIds((prev) => {
-                            const next = new Set(prev);
-                            if (checked) next.add(cat.id);
-                            else next.delete(cat.id);
-                            return next;
-                          });
-                        }}
-                      />
-                      <span className="category-id">{cat.id}</span>
-                      <span className="category-name">{cat.name}</span>
-                      <span className="category-pill">{cat.unifiedLabel}</span>
-                    </label>
-                  ))}
-                </div>
+                <CategoryMappingBoard
+                  variant="wizard"
+                  categories={capsCategories}
+                  mappings={categoryMappings}
+                  onChangeMapping={(catId, groupKey) => {
+                    const normalized = normalizeCategoryGroupKey(groupKey);
+                    setCategoryMappings((prev) => {
+                      const next = new Map(prev);
+                      if (!normalized) next.delete(catId);
+                      else next.set(catId, normalized);
+                      return next;
+                    });
+                  }}
+                />
                 <div className="muted" style={{ marginTop: 8 }}>
-                  {selectedCount} catégorie{selectedCount > 1 ? "s" : ""} sélectionnée{selectedCount > 1 ? "s" : ""}
+                  {selectedCount} catégorie{selectedCount > 1 ? "s" : ""} assignée{selectedCount > 1 ? "s" : ""}
                 </div>
               </>
             ) : (
@@ -462,7 +394,7 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
               <button
                 className="btn btn-accent"
                 type="button"
-                disabled={selectedCount === 0 || idxSaving}
+                disabled={idxSaving}
                 onClick={saveIndexer}
               >
                 {idxSaving ? "Enregistrement..." : "Enregistrer l'indexeur"}
@@ -636,8 +568,8 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
       setIdxSaving(false);
       setIdxTesting(false);
       setIdxTested(false);
-      setFilteredCategories([]);
-      setSelectedCategoryIds(new Set());
+      setCapsCategories([]);
+      setCategoryMappings(new Map());
       // Reset provider states
       setProvTmdb("");
       setProvTvmaze("");
@@ -650,7 +582,12 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
       setProvTesting(false);
       setProvTested(false);
       setProvTestResults({ tmdb: null, tvmaze: null, fanart: null, igdb: null });
+      setTestedInstanceIds({});
+      // Load provider definitions (needed by upsertDisabled)
+      providers.loadAll();
     }
+    // providers.loadAll is stable (useCallback with [] deps)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   function next() {
@@ -685,7 +622,7 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
       title={titleNode}
       titleClassName="onboarding__title"
       onClose={onClose}
-      width={760}
+      width={800}
     >
       <div className="onboarding">
         <div className="onboarding__stepper">

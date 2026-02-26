@@ -11,6 +11,18 @@ namespace Feedarr.Api.Services.Security;
 public sealed class BasicAuthMiddleware
 {
     internal const string AuthPassedKey = "feedarr.auth.passed";
+    private static readonly string[] SetupAllowedApiPrefixes =
+    {
+        "/api/setup",
+        "/api/system/onboarding",
+        "/api/settings/ui",
+        "/api/providers",
+        "/api/sources",
+        "/api/apps",
+        "/api/categories",
+        "/api/jackett/indexers",
+        "/api/prowlarr/indexers"
+    };
 
     private readonly RequestDelegate _next;
 
@@ -19,8 +31,23 @@ public sealed class BasicAuthMiddleware
         _next = next;
     }
 
-    public async Task InvokeAsync(HttpContext context, SettingsRepository settingsRepo, IMemoryCache cache)
+    public async Task InvokeAsync(
+        HttpContext context,
+        SettingsRepository settingsRepo,
+        IMemoryCache cache,
+        SetupStateService setupState,
+        ILogger<BasicAuthMiddleware> log)
     {
+        if (!setupState.IsSetupCompleted() && !IsAllowedDuringSetup(context.Request))
+        {
+            log.LogWarning(
+                "Request rejected by setup lock for {Method} {Path}",
+                context.Request.Method,
+                context.Request.Path.Value ?? "/");
+            await HandleSetupLockRejection(context);
+            return;
+        }
+
         var security = cache.GetOrCreate(SecuritySettingsCache.CacheKey, entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = SecuritySettingsCache.Duration;
@@ -64,6 +91,30 @@ public sealed class BasicAuthMiddleware
     {
         context.Response.Headers.WWWAuthenticate = "Basic realm=\"Feedarr\"";
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+    }
+
+    private static Task HandleSetupLockRejection(HttpContext context)
+    {
+        var path = context.Request.Path.Value ?? "";
+        if (!string.IsNullOrWhiteSpace(path) &&
+            path.StartsWith("/api", StringComparison.OrdinalIgnoreCase))
+        {
+            return RejectSetupRequiredApi(context);
+        }
+
+        context.Response.Redirect("/setup", permanent: false);
+        return Task.CompletedTask;
+    }
+
+    private static Task RejectSetupRequiredApi(HttpContext context)
+    {
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        context.Response.ContentType = "application/json";
+        return context.Response.WriteAsJsonAsync(new
+        {
+            error = "setup_required",
+            message = "Setup required"
+        });
     }
 
     private static string Normalize(string? value, string fallback, IEnumerable<string> allowed)
@@ -150,5 +201,42 @@ public sealed class BasicAuthMiddleware
             192 => bytes[1] == 168,
             _ => false
         };
+    }
+
+    private static bool IsAllowedDuringSetup(HttpRequest request)
+    {
+        if (HttpMethods.IsOptions(request.Method))
+            return true;
+
+        var path = request.Path.Value ?? "";
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        if (path.Equals("/health", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("/api/health", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (PathEqualsOrUnder(path, "/setup") ||
+            PathEqualsOrUnder(path, "/assets") ||
+            path.StartsWith("/favicon", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("/manifest", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("/service-worker", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        foreach (var prefix in SetupAllowedApiPrefixes)
+        {
+            if (PathEqualsOrUnder(path, prefix))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool PathEqualsOrUnder(string path, string prefix)
+    {
+        if (path.Equals(prefix, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return path.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase);
     }
 }

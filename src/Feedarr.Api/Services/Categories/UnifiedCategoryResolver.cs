@@ -43,6 +43,20 @@ public sealed class UnifiedCategoryResolver
         var normalizedKey = NormalizeIndexerKey(indexerKey);
         var (stdId, specId) = ResolveStdSpec(stdCategoryId, specCategoryId, allCategoryIds);
 
+        // Cas spécial Comics : stdId enfant dans 7030-7039
+        // Ex: [7000,7035] → NormalizeCategoryIds supprime parent 7000 → stdId=7035
+        if (stdId is >= 7030 and < 7040)
+            return UnifiedCategory.Comic;
+
+        // Compat ancienne forme : stdId parent du groupe livres + specId Comics
+        if (stdId is >= 7000 and <= 7999 && specId is >= 7030 and < 7040)
+            return UnifiedCategory.Comic;
+
+        // Résoudre stdId via méthode dédiée (5070 → Anime, etc.)
+        UnifiedCategory? fromStd = stdId.HasValue ? ResolveStdId(stdId.Value, normalizedKey) : null;
+
+        // Résoudre specId via SpecMappings indexeur
+        UnifiedCategory? fromSpec = null;
         if (specId.HasValue)
         {
             if (!SpecMappings.TryGetValue(normalizedKey, out var specMap))
@@ -52,28 +66,15 @@ public sealed class UnifiedCategoryResolver
                 if (!string.IsNullOrWhiteSpace(fallbackKey))
                     specMap = SpecMappings[fallbackKey];
             }
-
             if (specMap is not null && specMap.TryGetValue(specId.Value, out var mapped))
-            {
-                return mapped;
-            }
+                fromSpec = mapped;
         }
 
-        if (stdId.HasValue)
-        {
-            if (stdId.Value == 4050 && normalizedKey == "LACALE")
-                return UnifiedCategory.JeuWindows;
-
-            if (stdId.Value >= 2000 && stdId.Value <= 2999)
-                return UnifiedCategory.Film;
-
-            if (stdId.Value >= 5000 && stdId.Value <= 5999)
-                return UnifiedCategory.Serie;
-
-            if (stdId.Value == 4050)
-                return UnifiedCategory.Autre;
-        }
-
+        // Le plus spécifique gagne (ex: Anime > Série même si specId dit Série)
+        if (fromStd.HasValue && fromSpec.HasValue)
+            return Specificity(fromStd.Value) >= Specificity(fromSpec.Value) ? fromStd.Value : fromSpec.Value;
+        if (fromStd.HasValue) return fromStd.Value;
+        if (fromSpec.HasValue) return fromSpec.Value;
         return UnifiedCategory.Autre;
     }
 
@@ -82,24 +83,71 @@ public sealed class UnifiedCategoryResolver
         int? specCategoryId,
         IReadOnlyCollection<int>? allCategoryIds)
     {
-        var stdId = stdCategoryId;
         var specId = specCategoryId;
+        // Classer le stdCategoryId entrant comme parent ou enfant
+        int? parentStdId = stdCategoryId.HasValue && stdCategoryId.Value % 1000 == 0 ? stdCategoryId : null;
+        int? childStdId  = stdCategoryId.HasValue && stdCategoryId.Value % 1000 != 0 ? stdCategoryId : null;
 
-        if ((stdId.HasValue && specId.HasValue) || allCategoryIds is null || allCategoryIds.Count == 0)
-            return (stdId, specId);
-
-        foreach (var id in allCategoryIds)
+        // Toujours scanner allCategoryIds pour trouver un enfant plus spécifique
+        if (allCategoryIds is not null && allCategoryIds.Count > 0)
         {
-            if (!specId.HasValue && id >= 10000)
-                specId = id;
-            else if (!stdId.HasValue && id >= 1000 && id <= 8999)
-                stdId = id;
-
-            if (stdId.HasValue && specId.HasValue)
-                break;
+            foreach (var id in allCategoryIds)
+            {
+                if (id >= 10000)
+                {
+                    specId ??= id;
+                }
+                else if (id >= 1000 && id <= 8999)
+                {
+                    if (id % 1000 == 0)
+                        parentStdId ??= id;
+                    else
+                        childStdId ??= id; // enfant plus spécifique
+                }
+            }
         }
 
-        return (stdId, specId);
+        // L'enfant (ex: 5070) prend priorité sur le parent (ex: 5000)
+        return (childStdId ?? parentStdId, specId);
+    }
+
+    private static UnifiedCategory ResolveStdId(int id, string normalizedKey)
+    {
+        if (id == 5070) return UnifiedCategory.Anime;
+        if (id == 4050) return normalizedKey == "LACALE" ? UnifiedCategory.JeuWindows : UnifiedCategory.Autre;
+        if (id >= 2000 && id <= 2999) return UnifiedCategory.Film;
+        if (id >= 3000 && id <= 3999) return UnifiedCategory.Audio;
+        if (id >= 5000 && id <= 5999) return UnifiedCategory.Serie;
+        if (id >= 7000 && id <= 7999) return UnifiedCategory.Book;
+        return UnifiedCategory.Autre;
+    }
+
+    private static int Specificity(UnifiedCategory cat) => cat switch
+    {
+        UnifiedCategory.Anime      => 10,
+        UnifiedCategory.Comic      => 9,
+        UnifiedCategory.Spectacle  => 8,
+        UnifiedCategory.Animation  => 7,
+        UnifiedCategory.Serie      => 6,
+        UnifiedCategory.Film       => 5,
+        UnifiedCategory.Audio      => 4,
+        UnifiedCategory.Book       => 3,
+        UnifiedCategory.JeuWindows => 2,
+        _                          => 0
+    };
+
+    /// <summary>
+    /// Si le stdCategoryId enfant (ex: 5070→Anime) est plus spécifique que
+    /// la catégorie trouvée via source_categories (ex: 105000→Serie), retourne fromStd.
+    /// Sinon retourne fromMap inchangé.
+    /// Cas : ApplyStdOverride(Serie, 5070) → Anime
+    /// </summary>
+    public static UnifiedCategory ApplyStdOverride(UnifiedCategory fromMap, int? stdCategoryId)
+    {
+        if (!stdCategoryId.HasValue) return fromMap;
+        var fromStd = ResolveStdId(stdCategoryId.Value, "");
+        if (fromStd == UnifiedCategory.Autre) return fromMap;
+        return Specificity(fromStd) > Specificity(fromMap) ? fromStd : fromMap;
     }
 
     private static string NormalizeIndexerKey(string? key)

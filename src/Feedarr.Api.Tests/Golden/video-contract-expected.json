@@ -1,0 +1,90 @@
+{
+  "movie_tmdb_hit": {
+    "ok": true,
+    "statusCode": 200,
+    "posterProvider": "tmdb",
+    "posterFile": "tmdb-100-w500.jpg",
+    "matchSource": "tmdb",
+    "tmdbId": 100,
+    "tvdbId": null,
+    "cached": false,
+    "error": null
+  },
+  "movie_tmdb_fallback_fanart": {
+    "ok": true,
+    "statusCode": 200,
+    "posterProvider": "fanart",
+    "posterFile": "fanart-200.jpg",
+    "matchSource": "fanart",
+    "tmdbId": 200,
+    "tvdbId": null,
+    "cached": false,
+    "error": null
+  },
+  "series_tvmaze_hit": {
+    "ok": true,
+    "statusCode": 200,
+    "posterProvider": "tvmaze",
+    "posterFile": "tvmaze-3001-original.jpg",
+    "matchSource": "tvmaze",
+    "tmdbId": 501,
+    "tvdbId": 3001,
+    "cached": false,
+    "error": null
+  },
+  "series_tvmaze_miss_tmdb": {
+    "ok": true,
+    "statusCode": 200,
+    "posterProvider": "tmdb",
+    "posterFile": "tmdb-600-w500.jpg",
+    "matchSource": "tmdb",
+    "tmdbId": 600,
+    "tvdbId": 8600,
+    "cached": false,
+    "error": null
+  },
+  "series_tmdb_fallback_fanart": {
+    "ok": true,
+    "statusCode": 200,
+    "posterProvider": "fanart",
+    "posterFile": "fanart-700.jpg",
+    "matchSource": "fanart",
+    "tmdbId": 700,
+    "tvdbId": 8700,
+    "cached": false,
+    "error": null
+  },
+  "emission_ambiguous_tmdb": {
+    "ok": false,
+    "statusCode": 404,
+    "posterProvider": "tmdb",
+    "posterFile": null,
+    "matchSource": null,
+    "tmdbId": null,
+    "tvdbId": null,
+    "cached": false,
+    "error": "no tmdb match"
+  },
+  "cache_reuse_first": {
+    "ok": true,
+    "statusCode": 200,
+    "posterProvider": "tmdb",
+    "posterFile": "tmdb-900-w500.jpg",
+    "matchSource": "tmdb",
+    "tmdbId": 900,
+    "tvdbId": null,
+    "cached": false,
+    "error": null
+  },
+  "cache_reuse_second": {
+    "ok": true,
+    "statusCode": 200,
+    "posterProvider": "tmdb",
+    "posterFile": "tmdb-900-w500.jpg",
+    "matchSource": "tmdb",
+    "tmdbId": 900,
+    "tvdbId": null,
+    "cached": true,
+    "error": null
+  }
+}

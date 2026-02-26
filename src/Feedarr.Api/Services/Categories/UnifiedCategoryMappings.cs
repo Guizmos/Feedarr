@@ -10,10 +10,14 @@ public static class UnifiedCategoryMappings
         {
             UnifiedCategory.Film => "films",
             UnifiedCategory.Serie => "series",
-            UnifiedCategory.Emission => "shows",
+            UnifiedCategory.Emission => "emissions",
             UnifiedCategory.Spectacle => "spectacle",
             UnifiedCategory.JeuWindows => "games",
-            UnifiedCategory.Animation => "anime",
+            UnifiedCategory.Animation => "animation",
+            UnifiedCategory.Anime => "anime",
+            UnifiedCategory.Audio => "audio",
+            UnifiedCategory.Book => "books",
+            UnifiedCategory.Comic => "comics",
             _ => "other"
         };
     }
@@ -23,11 +27,15 @@ public static class UnifiedCategoryMappings
         return category switch
         {
             UnifiedCategory.Film => "Films",
-            UnifiedCategory.Serie => "Series TV",
+            UnifiedCategory.Serie => "Série TV",
             UnifiedCategory.Emission => "Emissions",
             UnifiedCategory.Spectacle => "Spectacle",
             UnifiedCategory.JeuWindows => "Jeux PC",
             UnifiedCategory.Animation => "Animation",
+            UnifiedCategory.Anime => "Anime",
+            UnifiedCategory.Audio => "Audio",
+            UnifiedCategory.Book => "Livres",
+            UnifiedCategory.Comic => "Comics",
             _ => "Autre"
         };
     }
@@ -42,6 +50,10 @@ public static class UnifiedCategoryMappings
             UnifiedCategory.Emission => "series",
             UnifiedCategory.JeuWindows => "game",
             UnifiedCategory.Animation => "movie",
+            UnifiedCategory.Anime => "anime",
+            UnifiedCategory.Audio => "audio",
+            UnifiedCategory.Book => "book",
+            UnifiedCategory.Comic => "comic",
             _ => "unknown"
         };
     }
@@ -62,9 +74,10 @@ public static class UnifiedCategoryMappings
     public static bool TryParseKey(string? key, out UnifiedCategory category)
     {
         category = UnifiedCategory.Autre;
-        if (string.IsNullOrWhiteSpace(key)) return false;
+        if (!CategoryGroupCatalog.TryNormalizeKey(key, out var canonicalKey))
+            return false;
 
-        switch (key.Trim().ToLowerInvariant())
+        switch (canonicalKey)
         {
             case "films":
                 category = UnifiedCategory.Film;
@@ -72,7 +85,7 @@ public static class UnifiedCategoryMappings
             case "series":
                 category = UnifiedCategory.Serie;
                 return true;
-            case "shows":
+            case "emissions":
                 category = UnifiedCategory.Emission;
                 return true;
             case "spectacle":
@@ -81,8 +94,22 @@ public static class UnifiedCategoryMappings
             case "games":
                 category = UnifiedCategory.JeuWindows;
                 return true;
-            case "anime":
+            case "animation":
                 category = UnifiedCategory.Animation;
+                return true;
+            case "anime":
+                category = UnifiedCategory.Anime;
+                return true;
+            case "audio":
+                category = UnifiedCategory.Audio;
+                return true;
+            case "book":
+            case "books":
+                category = UnifiedCategory.Book;
+                return true;
+            case "comic":
+            case "comics":
+                category = UnifiedCategory.Comic;
                 return true;
         }
 

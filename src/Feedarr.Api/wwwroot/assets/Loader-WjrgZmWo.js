@@ -1,0 +1,1 @@
+import{j as s}from"./vendor-react-B6j9w5IJ.js";function a({label:e="Chargement..."}){return s.jsxs("div",{className:"loader",children:[s.jsx("div",{className:"spinner"}),s.jsx("div",{className:"muted",children:e})]})}export{a as L};

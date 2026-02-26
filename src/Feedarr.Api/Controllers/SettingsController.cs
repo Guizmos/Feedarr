@@ -6,6 +6,7 @@ using Feedarr.Api.Services.Fanart;
 using Feedarr.Api.Services.Igdb;
 using Feedarr.Api.Services.Tmdb;
 using Feedarr.Api.Services.TvMaze;
+using Feedarr.Api.Services.ExternalProviders;
 using Feedarr.Api.Services.Security;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Caching.Memory;
@@ -23,6 +24,7 @@ public sealed class SettingsController : ControllerBase
     private readonly FanartClient _fanart;
     private readonly IgdbClient _igdb;
     private readonly TvMazeClient _tvmaze;
+    private readonly ExternalProviderInstanceRepository? _externalProviderInstances;
     private readonly IMemoryCache _cache;
     private readonly ILogger<SettingsController> _log;
 
@@ -34,7 +36,8 @@ public sealed class SettingsController : ControllerBase
         IgdbClient igdb,
         TvMazeClient tvmaze,
         IMemoryCache cache,
-        ILogger<SettingsController> log)
+        ILogger<SettingsController> log,
+        ExternalProviderInstanceRepository? externalProviderInstances = null)
     {
         _repo = repo;
         _app = app.Value;
@@ -42,6 +45,7 @@ public sealed class SettingsController : ControllerBase
         _fanart = fanart;
         _igdb = igdb;
         _tvmaze = tvmaze;
+        _externalProviderInstances = externalProviderInstances;
         _cache = cache;
         _log = log;
     }
@@ -218,6 +222,7 @@ public sealed class SettingsController : ControllerBase
         if (dto is null) return Problem(title: "body missing", statusCode: StatusCodes.Status400BadRequest);
 
         var saved = _repo.SaveExternalPartial(dto);
+        _externalProviderInstances?.UpsertFromLegacySettings(saved);
 
         var hasTmdb = !string.IsNullOrWhiteSpace(saved.TmdbApiKey);
         var hasTvmaze = !string.IsNullOrWhiteSpace(saved.TvmazeApiKey);
@@ -251,24 +256,24 @@ public sealed class SettingsController : ControllerBase
     public async Task<IActionResult> TestExternal([FromBody] ExternalTestDto dto, CancellationToken ct)
     {
         var kind = (dto?.Kind ?? "").Trim().ToLowerInvariant();
-        if (kind is not ("tmdb" or "tvmaze" or "fanart" or "igdb"))
+        if (kind is not (ExternalProviderKeys.Tmdb or ExternalProviderKeys.Tvmaze or ExternalProviderKeys.Fanart or ExternalProviderKeys.Igdb))
             return Problem(title: "invalid kind", statusCode: StatusCodes.Status400BadRequest);
 
         try
         {
-            if (kind == "tmdb")
+            if (kind == ExternalProviderKeys.Tmdb)
             {
                 var ok = await _tmdb.TestApiKeyAsync(ct);
                 return Ok(new { ok });
             }
 
-            if (kind == "tvmaze")
+            if (kind == ExternalProviderKeys.Tvmaze)
             {
                 var ok = await _tvmaze.TestApiAsync(ct);
                 return Ok(new { ok });
             }
 
-            if (kind == "fanart")
+            if (kind == ExternalProviderKeys.Fanart)
             {
                 var ok = await _fanart.TestApiKeyAsync(ct);
                 return Ok(new { ok });

@@ -1,11 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiDelete, apiGet, apiPost, apiPut } from "../api/client.js";
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "../api/client.js";
 import Loader from "../ui/Loader.jsx";
 import { useSubbarSetter } from "../layout/useSubbar.js";
 import SubAction from "../ui/SubAction.jsx";
 import Modal from "../ui/Modal.jsx";
 import AppIcon from "../ui/AppIcon.jsx";
-import ToggleSwitch from "../ui/ToggleSwitch.jsx";
 import { startNewIndexerTest, completeNewIndexerTest } from "../tasks/indexerTasks.js";
 import { startCapsRefresh, completeCapsRefresh } from "../tasks/categoriesTasks.js";
 import ItemRow, { CategoryBubble } from "../ui/ItemRow.jsx";
@@ -18,41 +17,31 @@ import {
   getSourceColor,
   normalizeHexColor,
 } from "../utils/sourceColors.js";
+import CategoryMappingBoard from "../components/shared/CategoryMappingBoard.jsx";
+import {
+  CATEGORY_GROUP_LABELS,
+  MAPPING_GROUP_PRIORITY,
+  buildMappingDiff,
+  buildMappingsPayload,
+  dedupeBubblesByUnifiedKey,
+  dedupeCategoriesById,
+  mapFromCapsAssignments,
+  normalizeCategoryGroupKey,
+} from "../domain/categories/index.js";
 
-const UNIFIED_PRIORITY = ["series", "anime", "films", "games", "spectacle", "shows"];
 const MANUAL_INDEXER_VALUE = "__manual__";
 
-function dedupeCategoriesById(categories) {
-  if (!Array.isArray(categories)) return [];
-  const map = new Map();
-  const score = (cat) => {
-    let s = 0;
-    if (cat?.unifiedKey) s += 4;
-    if (cat?.unifiedLabel) s += 2;
-    if (cat?.parentId) s += 1;
-    if (cat?.isSub) s += 1;
-    return s;
-  };
-
-  for (const cat of categories) {
-    const id = Number(cat?.id);
-    if (!Number.isFinite(id) || id <= 0) continue;
-    const normalized = { ...cat, id };
-    const existing = map.get(id);
-    if (!existing || score(normalized) > score(existing)) {
-      map.set(id, normalized);
-    }
-  }
-
-  return Array.from(map.values());
+/** Normalise une URL pour comparaison : lowercase + suppression du slash final. */
+function normalizeUrl(url) {
+  return (url || "").trim().toLowerCase().replace(/\/+$/, "");
 }
 
-function areSetsEqual(a, b) {
+function areMappingMapsEqual(a, b) {
   if (a === b) return true;
-  if (!a || !b) return false;
+  if (!(a instanceof Map) || !(b instanceof Map)) return false;
   if (a.size !== b.size) return false;
-  for (const value of a) {
-    if (!b.has(value)) return false;
+  for (const [key, value] of a.entries()) {
+    if (b.get(key) !== value) return false;
   }
   return true;
 }
@@ -68,8 +57,7 @@ export default function Indexers() {
   const [capsError, setCapsError] = useState("");
   const [capsWarning, setCapsWarning] = useState("");
   const [capsCategories, setCapsCategories] = useState([]);
-  const [useRecommendedFilter, setUseRecommendedFilter] = useState(true);
-  const [selectedCategoryIds, setSelectedCategoryIds] = useState(() => new Set());
+  const [categoryMappings, setCategoryMappings] = useState(() => new Map());
   const [providerOptions, setProviderOptions] = useState([]);
   const [providerOptionsLoading, setProviderOptionsLoading] = useState(false);
   const [providerOptionsWarning, setProviderOptionsWarning] = useState("");
@@ -88,7 +76,8 @@ export default function Indexers() {
   const [testSourceId, setTestSourceId] = useState(null); // ID of source created during test
   const [syncModalOpen, setSyncModalOpen] = useState(false);
   const initialEditRef = useRef(null);
-  const initialCategoryIdsRef = useRef(null);
+  const initialCategoryMappingsRef = useRef(null);
+  const [reclassifying, setReclassifying] = useState(false);
 
   // form fields
   const [name, setName] = useState("");
@@ -117,9 +106,23 @@ export default function Indexers() {
         sources.map(async (s) => {
           if (!s?.id) return;
           try {
-            const cats = await apiGet(`/api/categories/${s.id}`);
-            catsMap[s.id] = Array.isArray(cats) ? cats : [];
-          } catch {
+            const mappings = await apiGet(`/api/sources/${s.id}/category-mappings`);
+            catsMap[s.id] = (Array.isArray(mappings) ? mappings : []).map((mapping) => ({
+              id: Number(mapping?.catId),
+              unifiedKey: normalizeCategoryGroupKey(mapping?.groupKey || mapping?.unifiedKey),
+              unifiedLabel:
+                mapping?.groupLabel ||
+                mapping?.unifiedLabel ||
+                CATEGORY_GROUP_LABELS[normalizeCategoryGroupKey(mapping?.groupKey || mapping?.unifiedKey)] ||
+                "",
+              name:
+                mapping?.groupLabel ||
+                mapping?.unifiedLabel ||
+                CATEGORY_GROUP_LABELS[normalizeCategoryGroupKey(mapping?.groupKey || mapping?.unifiedKey)] ||
+                "",
+            }));
+          } catch (e) {
+            console.error(`[Indexers] Impossible de charger les catégories pour la source #${s.id}.`, e);
             catsMap[s.id] = [];
           }
         })
@@ -239,8 +242,7 @@ export default function Indexers() {
     setCapsError("");
     setCapsWarning("");
     setCapsCategories([]);
-    setUseRecommendedFilter(true);
-    setSelectedCategoryIds(new Set());
+    setCategoryMappings(new Map());
     setProviderOptions([]);
     setProviderOptionsWarning("");
     setSelectedProviderId("");
@@ -249,7 +251,7 @@ export default function Indexers() {
     setIndexerOptionsError("");
     setSelectedIndexerId("");
     initialEditRef.current = null;
-    initialCategoryIdsRef.current = null;
+    initialCategoryMappingsRef.current = null;
     loadProviders();
   }, [loadProviders]);
 
@@ -261,10 +263,10 @@ export default function Indexers() {
       torznabUrl: (s?.torznabUrl ?? "").trim(),
       color: normalizeHexColor(initialColor) || SOURCE_COLOR_PALETTE[0],
     };
-    const existing = (categoriesById[s?.id] || [])
-      .map((row) => Number(row?.id))
-      .filter((id) => Number.isFinite(id) && id > 0);
-    initialCategoryIdsRef.current = new Set(existing);
+    const existingMappings = (categoriesById[s?.id] || [])
+      .map((row) => [Number(row?.id), normalizeCategoryGroupKey(row?.unifiedKey)])
+      .filter(([id, key]) => Number.isFinite(id) && id > 0 && !!key);
+    initialCategoryMappingsRef.current = new Map(existingMappings);
 
     setName(s.name ?? "");
     setTorznabUrl(s.torznabUrl ?? "");
@@ -278,8 +280,7 @@ export default function Indexers() {
     setCapsError("");
     setCapsWarning("");
     setCapsCategories([]);
-    setUseRecommendedFilter(true);
-    setSelectedCategoryIds(new Set());
+    setCategoryMappings(new Map());
     setSelectedProviderId("");
     setSelectedIndexerId("");
   }, [categoriesById]);
@@ -288,8 +289,7 @@ export default function Indexers() {
     setCapsError("");
     setCapsWarning("");
     setCapsCategories([]);
-    setUseRecommendedFilter(true);
-    setSelectedCategoryIds(new Set());
+    setCategoryMappings(new Map());
     setSelectedProviderId("");
     setSelectedIndexerId("");
     setIndexerOptionsError("");
@@ -350,12 +350,14 @@ export default function Indexers() {
 
     try {
       const res = editing?.id
-        ? await apiGet(`/api/categories/caps?sourceId=${editing.id}`)
+        ? await apiGet(`/api/categories/caps?sourceId=${editing.id}&includeStandardCatalog=true&includeSpecific=true`)
         : await apiPost("/api/categories/caps/provider", {
-          providerId: Number(selectedProviderId),
-          torznabUrl: payload.torznabUrl,
-          indexerName: payload.indexerName,
-          indexerId: isManualIndexer ? null : (selectedIndexerId || null),
+          providerId:   Number(selectedProviderId),
+          torznabUrl:   payload.torznabUrl,
+          indexerName:  payload.indexerName,
+          indexerId:    isManualIndexer ? null : (selectedIndexerId || null),
+          includeStandardCatalog: true,
+          includeSpecific: true,
         });
 
       const cats = Array.isArray(res?.categories) ? res.categories : [];
@@ -366,28 +368,17 @@ export default function Indexers() {
       }
 
       setCapsCategories(uniqueCats);
+      const mapped = mapFromCapsAssignments(uniqueCats);
+      setCategoryMappings(mapped);
       if (uniqueCats.length === 0 && warnings.length === 0) {
         setCapsWarning("Aucune catégorie disponible.");
       }
 
       if (editing?.id) {
-        const existing = await apiGet(`/api/categories/${editing.id}`);
-        const existingIds = new Set(
-          (Array.isArray(existing) ? existing : [])
-            .map((row) => Number(row?.id))
-            .filter((id) => Number.isFinite(id) && id > 0)
-        );
-        const selected = uniqueCats
-          .filter((c) => existingIds.has(c.id))
-          .map((c) => c.id);
-        const selectedSet = new Set(selected);
-        setSelectedCategoryIds(selectedSet);
-        initialCategoryIdsRef.current = new Set(selectedSet);
+        initialCategoryMappingsRef.current = new Map(mapped);
         setModalStep(2);
       } else {
-        const recommended = uniqueCats.filter((c) => c?.isRecommended);
-        const base = recommended.length > 0 ? recommended : uniqueCats;
-        setSelectedCategoryIds(new Set(base.map((c) => c.id)));
+        setCategoryMappings(new Map());
         // Capture the source ID if the backend created one during test
         if (res?.sourceId) {
           setTestSourceId(res.sourceId);
@@ -433,59 +424,42 @@ export default function Indexers() {
     };
 
     try {
+      const normalizedMappings = new Map(
+        [...categoryMappings.entries()]
+          .map(([catId, groupKey]) => [Number(catId), normalizeCategoryGroupKey(groupKey)])
+          .filter(([catId, groupKey]) => Number.isFinite(catId) && catId > 0 && !!groupKey)
+      );
+
       if (editing?.id) {
         if (modalStep === 2) {
           await apiPut(`/api/sources/${editing.id}`, payload);
           await apiPut(`/api/sources/${editing.id}/enabled`, { enabled });
-          const selected = dedupeCategoriesById(
-            capsCategories.filter((c) => selectedCategoryIds.has(c.id))
-          );
-          if (selected.length === 0) {
-            setCapsError("Selectionne au moins une categorie.");
-            return;
+          const patch = buildMappingDiff(initialCategoryMappingsRef.current, normalizedMappings);
+          if (patch.length > 0) {
+            await apiPatch(`/api/sources/${editing.id}/category-mappings`, { mappings: patch });
           }
-          await apiPut(`/api/sources/${editing.id}/categories`, {
-            categories: selected.map((c) => ({
-              id: c.id,
-              name: c.name,
-              isSub: c.isSub,
-              parentId: c.parentId,
-              unifiedKey: c.unifiedKey,
-              unifiedLabel: c.unifiedLabel,
-            })),
-          });
         } else {
           await apiPut(`/api/sources/${editing.id}`, payload);
           await apiPut(`/api/sources/${editing.id}/enabled`, { enabled });
         }
       } else {
         if (modalStep !== 2) return;
-        const selected = dedupeCategoriesById(
-          capsCategories.filter((c) => selectedCategoryIds.has(c.id))
-        );
-        if (selected.length === 0) {
-          setCapsError("Selectionne au moins une categorie.");
-          return;
-        }
-        const categoriesPayload = selected.map((c) => ({
-          id: c.id,
-          name: c.name,
-          isSub: c.isSub,
-          parentId: c.parentId,
-          unifiedKey: c.unifiedKey,
-          unifiedLabel: c.unifiedLabel,
-        }));
+        const mappingsPayload = buildMappingsPayload(normalizedMappings);
 
+        let sourceId = testSourceId;
         // If source was already created during test, update it instead of creating
-        if (testSourceId) {
-          await apiPut(`/api/sources/${testSourceId}`, payload);
-          await apiPut(`/api/sources/${testSourceId}/enabled`, { enabled });
-          await apiPut(`/api/sources/${testSourceId}/categories`, { categories: categoriesPayload });
+        if (sourceId) {
+          await apiPut(`/api/sources/${sourceId}`, payload);
+          await apiPut(`/api/sources/${sourceId}/enabled`, { enabled });
         } else {
-          await apiPost("/api/sources", {
+          const created = await apiPost("/api/sources", {
             ...payload,
-            categories: categoriesPayload,
           });
+          sourceId = Number(created?.id) || null;
+        }
+
+        if (sourceId && mappingsPayload.length > 0) {
+          await apiPatch(`/api/sources/${sourceId}/category-mappings`, { mappings: mappingsPayload });
         }
       }
 
@@ -509,6 +483,28 @@ export default function Indexers() {
       await load();
     } catch (e) {
       setErr(e?.message || "Erreur enable/disable");
+    }
+  }
+
+  async function reclassifyExisting() {
+    if (!editing?.id || reclassifying) return;
+    const confirmed =
+      typeof window === "undefined"
+        ? true
+        : window.confirm("Reclasser l'existant pour cette source ? Cette action peut prendre quelques instants.");
+    if (!confirmed) return;
+
+    setErr("");
+    setCapsError("");
+    setReclassifying(true);
+    try {
+      await apiPost(`/api/sources/${editing.id}/reclassify`);
+      await load();
+      setCapsWarning("Reclassement lancé avec succès pour cette source.");
+    } catch (e) {
+      setErr(e?.message || "Erreur reclassification");
+    } finally {
+      setReclassifying(false);
     }
   }
 
@@ -589,21 +585,22 @@ export default function Indexers() {
   }, [isEditing, name, torznabUrl, selectedColor, apiKey]);
   const categoriesDirty = useMemo(() => {
     if (!isEditing || modalStep !== 2) return false;
-    const initial = initialCategoryIdsRef.current;
+    const initial = initialCategoryMappingsRef.current;
     if (!initial) return false;
-    return !areSetsEqual(selectedCategoryIds, initial);
-  }, [isEditing, modalStep, selectedCategoryIds]);
+    return !areMappingMapsEqual(categoryMappings, initial);
+  }, [isEditing, modalStep, categoryMappings]);
   const canSaveEdit = isEditing && (editDirty || categoriesDirty);
-  const selectedCount = selectedCategoryIds.size;
+  const selectedCount = categoryMappings.size;
   const capsCount = capsCategories.length;
 
   // Filter out indexers that are already added (but always keep the currently selected one)
+  // Normalisation URL des deux côtés (trailing slash, casse) pour éviter les faux négatifs.
   const existingIndexerUrls = useMemo(
-    () => new Set((items || []).map((s) => s.torznabUrl).filter(Boolean)),
+    () => new Set((items || []).map((s) => normalizeUrl(s.torznabUrl)).filter(Boolean)),
     [items]
   );
   const availableIndexerOptions = useMemo(() => {
-    const filtered = (indexerOptions || []).filter((opt) => !existingIndexerUrls.has(opt.torznabUrl));
+    const filtered = (indexerOptions || []).filter((opt) => !existingIndexerUrls.has(normalizeUrl(opt.torznabUrl)));
     // Always include the currently selected indexer (in case it was saved during test)
     if (selectedIndexerId) {
       const alreadyIncluded = filtered.some((opt) => String(opt.id) === String(selectedIndexerId));
@@ -614,26 +611,6 @@ export default function Indexers() {
     }
     return filtered;
   }, [indexerOptions, existingIndexerUrls, selectedIndexerId]);
-
-  const allCategories = useMemo(() => capsCategories || [], [capsCategories]);
-  const recommendedCategories = useMemo(
-    () => (capsCategories || []).filter((c) => c?.isRecommended),
-    [capsCategories]
-  );
-  const visibleCategories = useMemo(
-    () => (useRecommendedFilter ? recommendedCategories : allCategories),
-    [useRecommendedFilter, recommendedCategories, allCategories]
-  );
-
-  useEffect(() => {
-    if (!useRecommendedFilter) return;
-    if (allCategories.length > 0 && recommendedCategories.length === 0) {
-      setUseRecommendedFilter(false);
-      setCapsWarning((prev) =>
-        prev || "Aucune catégorie recommandée. Affichage complet activé."
-      );
-    }
-  }, [useRecommendedFilter, recommendedCategories.length, allCategories.length]);
 
   return (
     <div className="page page--indexers">
@@ -669,22 +646,21 @@ export default function Indexers() {
               syncStatusById[s.id] === "error" && "sync-err",
             ].filter(Boolean).join(" ");
 
-            // Categories as badges
-            const categoryBadges = (categoriesById[s.id] || [])
-              .slice()
-              .sort((a, b) => {
-                const orderA = UNIFIED_PRIORITY.indexOf(a.unifiedKey);
-                const orderB = UNIFIED_PRIORITY.indexOf(b.unifiedKey);
+            // Categories as badges — 1 bulle par unifiedKey distinct
+            const categoryBadges = dedupeBubblesByUnifiedKey(
+              (categoriesById[s.id] || []).slice().sort((a, b) => {
+                const orderA = MAPPING_GROUP_PRIORITY.indexOf(a.unifiedKey);
+                const orderB = MAPPING_GROUP_PRIORITY.indexOf(b.unifiedKey);
                 return (orderA === -1 ? 999 : orderA) - (orderB === -1 ? 999 : orderB);
               })
-              .map((cat) => (
-                <CategoryBubble
-                  key={cat.id}
-                  unifiedKey={cat.unifiedKey}
-                  label={cat.unifiedLabel || cat.name}
-                  title={`${cat.name} (${cat.id})`}
-                />
-              ));
+            ).map((cat) => (
+              <CategoryBubble
+                key={cat.unifiedKey || cat.id}
+                unifiedKey={cat.unifiedKey}
+                label={cat.unifiedLabel || cat.name}
+                title={`${cat.name} (${cat.id})`}
+              />
+            ));
 
             return (
               <ItemRow
@@ -783,11 +759,11 @@ export default function Indexers() {
         open={modalOpen}
         title={editing ? `Modifier : ${editing?.name ?? editing?.id}` : "Ajouter une source"}
         onClose={closeModal}
-        width={650}
+        width={780}
       >
         <form onSubmit={(e) => e.preventDefault()} className="formgrid formgrid--edit">
-          {/* Step 1 fields - hidden in step 2 for add mode */}
-          {(isEditing || modalStep === 1) && (
+          {/* Step 1 fields - hidden in step 2 */}
+          {modalStep === 1 && (
             <>
               {isAdding && (
                 <div className="field">
@@ -806,8 +782,7 @@ export default function Indexers() {
                       setCapsError("");
                       setCapsWarning("");
                       setCapsCategories([]);
-                      setUseRecommendedFilter(true);
-                      setSelectedCategoryIds(new Set());
+                      setCategoryMappings(new Map());
                       setTestPassed(false);
                       setTestSourceId(null);
                     }}
@@ -987,7 +962,7 @@ export default function Indexers() {
             </div>
           )}
 
-          {isEditing && showAdvanced && (
+          {isEditing && showAdvanced && modalStep === 1 && (
             <div className="field" style={{ gridColumn: "1 / -1" }}>
               <div className="advanced-fields">
                 <div className="field">
@@ -1014,42 +989,21 @@ export default function Indexers() {
 
           {modalStep === 2 && (
             <div className="field" style={{ gridColumn: "1 / -1" }}>
-              <label className="muted">Categories retenues ({selectedCount}/{capsCount || allCategories.length})</label>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "6px 0 10px" }}>
-                <span className="muted">Afficher seulement les catégories recommandées</span>
-                <ToggleSwitch
-                  checked={useRecommendedFilter}
-                  onIonChange={(e) => setUseRecommendedFilter(e.detail.checked)}
-                  className="settings-toggle settings-toggle--sm"
+              <label className="muted">Catégories assignées ({selectedCount}/{capsCount})</label>
+              <div style={{ marginTop: 8 }}>
+                <CategoryMappingBoard
+                  categories={capsCategories}
+                  mappings={categoryMappings}
+                  onChangeMapping={(catId, groupKey) => {
+                    const normalized = normalizeCategoryGroupKey(groupKey);
+                    setCategoryMappings((prev) => {
+                      const next = new Map(prev);
+                      if (!normalized) next.delete(catId);
+                      else next.set(catId, normalized);
+                      return next;
+                    });
+                  }}
                 />
-              </div>
-              <div className="category-picker">
-                {visibleCategories.map((cat) => (
-                  <div key={cat.id} className="category-row">
-                    <ToggleSwitch
-                      checked={selectedCategoryIds.has(cat.id)}
-                      onIonChange={(e) => {
-                        const checked = e.detail.checked;
-                        setSelectedCategoryIds((prev) => {
-                          const next = new Set(prev);
-                          if (checked) next.add(cat.id);
-                          else next.delete(cat.id);
-                          return next;
-                        });
-                      }}
-                      className="settings-toggle settings-toggle--sm"
-                    />
-                    <span className="category-id">{cat.id}</span>
-                    <span className="category-name">{cat.name}</span>
-                    <span className="category-pill">{cat.unifiedLabel}</span>
-                  </div>
-                ))}
-                {visibleCategories.length === 0 && useRecommendedFilter && (
-                  <div className="muted">Aucune catégorie recommandée. Désactive le filtre pour tout voir.</div>
-                )}
-                {allCategories.length === 0 && (
-                  <div className="muted">Aucune catégorie disponible.</div>
-                )}
               </div>
             </div>
           )}
@@ -1102,10 +1056,19 @@ export default function Indexers() {
               </div>
             ) : isEditing && modalStep === 2 ? (
               <div className="formactions-row">
-                <div className="formactions-left" />
+                <div className="formactions-left">
+                  <button
+                    className="btn btn-hover-info"
+                    type="button"
+                    onClick={reclassifyExisting}
+                    disabled={saving || reclassifying}
+                  >
+                    {reclassifying ? "Reclassement..." : "Reclasser l'existant"}
+                  </button>
+                </div>
                 <div className="formactions-right">
                   {canSaveEdit && (
-                    <button className="btn btn-hover-ok" type="button" onClick={save} disabled={selectedCount === 0 || saving}>
+                    <button className="btn btn-hover-ok" type="button" onClick={save} disabled={saving}>
                       Enregistrer
                     </button>
                   )}
@@ -1152,7 +1115,7 @@ export default function Indexers() {
               <div className="formactions-row">
                 <div className="formactions-left" />
                 <div className="formactions-right">
-                  <button className="btn btn-hover-ok" type="button" onClick={save} disabled={selectedCount === 0 || saving}>
+                  <button className="btn btn-hover-ok" type="button" onClick={save} disabled={saving}>
                     Enregistrer
                   </button>
                   <button className="btn btn-fixed-danger btn-nohover" type="button" onClick={closeModal} disabled={saving}>

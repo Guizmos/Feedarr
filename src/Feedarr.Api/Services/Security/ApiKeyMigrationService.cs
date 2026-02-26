@@ -69,12 +69,13 @@ public sealed class ApiKeyMigrationService
             var arrAppsCount = await MigrateArrApplicationsAsync(conn, tx, cancellationToken);
             var externalSettingsCount = await MigrateExternalSettingsAsync(conn, tx, cancellationToken);
             var legacyExternalCount = await MigrateLegacyExternalJsonAsync(conn, tx, cancellationToken);
+            var externalInstancesCount = await MigrateExternalProviderInstancesAsync(conn, tx, cancellationToken);
 
             tx.Commit();
 
             _logger.LogInformation(
-                "Migration terminée: {Sources} source(s), {Providers} provider(s), {ArrApps} app(s) Arr migrés, {External} setting(s) externes migrés, {LegacyExternal} valeur(s) legacy migrées",
-                sourcesCount, providersCount, arrAppsCount, externalSettingsCount, legacyExternalCount);
+                "Migration terminée: {Sources} source(s), {Providers} provider(s), {ArrApps} app(s) Arr migrés, {External} setting(s) externes migrés, {LegacyExternal} valeur(s) legacy migrées, {ExternalInstances} instance(s) metadata migrées",
+                sourcesCount, providersCount, arrAppsCount, externalSettingsCount, legacyExternalCount, externalInstancesCount);
         }
         catch (Exception ex)
         {
@@ -301,6 +302,68 @@ public sealed class ApiKeyMigrationService
         }
     }
 
+    private async Task<int> MigrateExternalProviderInstancesAsync(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        CancellationToken cancellationToken)
+    {
+        if (!await TableExistsAsync(conn, "external_provider_instances", tx))
+            return 0;
+
+        var rows = await conn.QueryAsync<(string InstanceId, string? AuthJson)>(
+            """
+            SELECT instance_id AS InstanceId, auth_json AS AuthJson
+            FROM external_provider_instances
+            WHERE auth_json IS NOT NULL AND auth_json <> '' AND auth_json <> '{}';
+            """,
+            transaction: tx);
+
+        var migratedCount = 0;
+        foreach (var row in rows)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var auth = DeserializeAuthMap(row.AuthJson);
+            if (auth.Count == 0)
+                continue;
+
+            var changed = false;
+            foreach (var key in auth.Keys.ToList())
+            {
+                var value = auth[key];
+                if (string.IsNullOrWhiteSpace(value))
+                    continue;
+
+                var trimmed = value.Trim();
+                if (_protectionService.IsProtected(trimmed))
+                    continue;
+
+                auth[key] = _protectionService.Protect(trimmed);
+                changed = true;
+            }
+
+            if (!changed)
+                continue;
+
+            try
+            {
+                var updatedJson = JsonSerializer.Serialize(auth, JsonOpts);
+                await conn.ExecuteAsync(
+                    "UPDATE external_provider_instances SET auth_json = @authJson WHERE instance_id = @instanceId",
+                    new { authJson = updatedJson, instanceId = row.InstanceId },
+                    tx);
+                migratedCount++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erreur lors du chiffrement de auth_json pour instance metadata {InstanceId}", row.InstanceId);
+                throw new InvalidOperationException($"API key migration failed for metadata instance {row.InstanceId}", ex);
+            }
+        }
+
+        return migratedCount;
+    }
+
     private static string? DeserializeStringSetting(string valueJson)
     {
         try
@@ -354,8 +417,83 @@ public sealed class ApiKeyMigrationService
         var legacyValueJson = await conn.ExecuteScalarAsync<string?>(
             "SELECT value_json FROM app_settings WHERE key = 'external'");
         pending += CountUnprotectedLegacyExternalKeys(legacyValueJson);
+        pending += await CountPendingExternalProviderInstancesAsync(conn, cancellationToken);
 
         return pending;
+    }
+
+    private async Task<int> CountPendingExternalProviderInstancesAsync(
+        SqliteConnection conn,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!await TableExistsAsync(conn, "external_provider_instances"))
+            return 0;
+
+        var rows = await conn.QueryAsync<string?>(
+            """
+            SELECT auth_json
+            FROM external_provider_instances
+            WHERE auth_json IS NOT NULL AND auth_json <> '' AND auth_json <> '{}';
+            """);
+
+        var pending = 0;
+        foreach (var row in rows)
+        {
+            var auth = DeserializeAuthMap(row);
+            foreach (var value in auth.Values)
+            {
+                if (string.IsNullOrWhiteSpace(value))
+                    continue;
+                if (!_protectionService.IsProtected(value.Trim()))
+                    pending++;
+            }
+        }
+
+        return pending;
+    }
+
+    private static Dictionary<string, string?> DeserializeAuthMap(string? authJson)
+    {
+        if (string.IsNullOrWhiteSpace(authJson))
+            return new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            using var doc = JsonDocument.Parse(authJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+
+            var map = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                map[prop.Name] = prop.Value.ValueKind switch
+                {
+                    JsonValueKind.Null => null,
+                    JsonValueKind.String => prop.Value.GetString(),
+                    _ => prop.Value.GetRawText()
+                };
+            }
+
+            return map;
+        }
+        catch
+        {
+            return new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private static async Task<bool> TableExistsAsync(
+        SqliteConnection conn,
+        string tableName,
+        SqliteTransaction? tx = null)
+    {
+        var exists = await conn.ExecuteScalarAsync<long>(
+            "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = @tableName",
+            new { tableName },
+            tx);
+        return exists > 0;
     }
 
     private int CountUnprotectedLegacyExternalKeys(string? valueJson)

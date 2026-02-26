@@ -9,8 +9,10 @@ using Feedarr.Api.Models.Settings;
 using Feedarr.Api.Options;
 using Feedarr.Api.Services;
 using Feedarr.Api.Services.Backup;
+using Feedarr.Api.Services.ExternalProviders;
 using Feedarr.Api.Services.Fanart;
 using Feedarr.Api.Services.Igdb;
+using Feedarr.Api.Services.Security;
 using Feedarr.Api.Services.Tmdb;
 using Feedarr.Api.Services.TvMaze;
 using Microsoft.AspNetCore.Http;
@@ -89,20 +91,32 @@ public sealed class Lot2ApiReliabilityTests
         var db = CreateDb(workspace);
         new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
 
-        var settingsRepo = new SettingsRepository(db);
+        var protection = new TestProtectionService();
+        var settingsRepo = new SettingsRepository(db, protection, NullLogger<SettingsRepository>.Instance);
         settingsRepo.SaveExternalPartial(new ExternalSettings
         {
             TmdbApiKey = "test-key",
             TmdbEnabled = true
         });
+        var registry = new ExternalProviderRegistry();
+        var externalInstances = new ExternalProviderInstanceRepository(
+            db,
+            settingsRepo,
+            protection,
+            registry,
+            NullLogger<ExternalProviderInstanceRepository>.Instance);
+        var resolver = new ActiveExternalProviderConfigResolver(
+            externalInstances,
+            registry,
+            NullLogger<ActiveExternalProviderConfigResolver>.Instance);
 
-        var stats = new ProviderStatsService(new StatsRepository(db));
+        var stats = new ProviderStatsService(new StatsRepository(db, new MemoryCache(new MemoryCacheOptions())));
         var throwingHttp = new HttpClient(new ThrowingHttpMessageHandler());
 
-        var tmdb = new TmdbClient(throwingHttp, settingsRepo, stats);
-        var tvmaze = new TvMazeClient(throwingHttp, stats);
-        var fanart = new FanartClient(throwingHttp, settingsRepo, stats);
-        var igdb = new IgdbClient(throwingHttp, settingsRepo, stats);
+        var tmdb = new TmdbClient(throwingHttp, settingsRepo, stats, resolver);
+        var tvmaze = new TvMazeClient(throwingHttp, stats, resolver);
+        var fanart = new FanartClient(throwingHttp, stats, resolver, settingsRepo);
+        var igdb = new IgdbClient(throwingHttp, stats, resolver);
 
         var controller = new SettingsController(
             settingsRepo,
@@ -241,6 +255,18 @@ public sealed class Lot2ApiReliabilityTests
         {
             throw new HttpRequestException("simulated upstream failure");
         }
+    }
+
+    private sealed class TestProtectionService : IApiKeyProtectionService
+    {
+        public string Protect(string plainText) => plainText;
+        public string Unprotect(string protectedText) => protectedText;
+        public bool TryUnprotect(string protectedText, out string plainText)
+        {
+            plainText = protectedText;
+            return true;
+        }
+        public bool IsProtected(string value) => false;
     }
 
     private sealed class TestWorkspace : IDisposable

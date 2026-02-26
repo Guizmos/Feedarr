@@ -4,10 +4,9 @@ import Topbar from "./Topbar.jsx";
 import Sidebar from "./Sidebar.jsx";
 import Subbar from "./Subbar.jsx";
 import { SubbarProvider } from "./SubbarContext.jsx";
-import { apiGet, apiPost } from "../api/client.js";
+import { apiGet } from "../api/client.js";
 import { applyTheme } from "../app/theme.js";
 import { applyUiLanguage } from "../app/locale.js";
-import OnboardingWizard from "../ui/OnboardingWizard.jsx";
 import { usePosterQueueMonitoring } from "../hooks/usePosterQueueMonitoring.js";
 import { usePosterPollingService } from "../hooks/usePosterPollingService.js";
 
@@ -15,9 +14,7 @@ export default function Shell() {
   const navigate = useNavigate();
   const location = useLocation();
   const isSetupRoute = location.pathname.startsWith("/setup");
-  const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStatus, setOnboardingStatus] = useState(null);
-  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const [isNavOpen, setIsNavOpen] = useState(false);
   const swipeRef = useRef({
     active: false,
@@ -55,7 +52,7 @@ export default function Shell() {
     };
   }, []);
 
-  const refreshOnboarding = useCallback(async (opts = {}) => {
+  const refreshOnboarding = useCallback(async () => {
     try {
       const status = await apiGet("/api/system/onboarding");
       setOnboardingStatus(status);
@@ -64,38 +61,17 @@ export default function Shell() {
         navigate("/setup", { replace: true });
         return;
       }
-
-      if (!onboardingDismissed && status?.shouldShow && !isSetupRoute) {
-        setOnboardingOpen(true);
-      }
-
-      if (opts.closeIfDone && status?.onboardingDone) {
-        setOnboardingOpen(false);
-      }
     } catch (error) {
       console.error("Failed to refresh onboarding status", error);
     }
-  }, [onboardingDismissed, navigate, isSetupRoute]);
+  }, [navigate, isSetupRoute]);
 
   useEffect(() => {
     refreshOnboarding();
-    const handler = () => refreshOnboarding({ closeIfDone: false });
+    const handler = () => refreshOnboarding();
     window.addEventListener("onboarding:refresh", handler);
     return () => window.removeEventListener("onboarding:refresh", handler);
   }, [refreshOnboarding]);
-
-  async function completeOnboarding() {
-    try {
-      await apiPost("/api/system/onboarding/complete");
-    } catch (error) {
-      console.error("Failed to complete onboarding", error);
-    }
-    setOnboardingOpen(false);
-    setOnboardingDismissed(true);
-    setOnboardingStatus((prev) =>
-      prev ? { ...prev, onboardingDone: true, shouldShow: false } : prev
-    );
-  }
 
   const showOnboardingBar = !isSetupRoute && !!onboardingStatus && !onboardingStatus.onboardingDone;
   const openNav = useCallback(() => setIsNavOpen(true), []);
@@ -226,18 +202,6 @@ export default function Shell() {
           </div>
         </div>
 
-        {!isSetupRoute && (
-          <OnboardingWizard
-            open={onboardingOpen}
-            status={onboardingStatus}
-            onClose={() => {
-              setOnboardingOpen(false);
-              setOnboardingDismissed(true);
-            }}
-            onComplete={completeOnboarding}
-          />
-        )}
-
         {showOnboardingBar && (
           <div className="onboarding-bar">
             <div className="onboarding-bar__content">
@@ -250,8 +214,7 @@ export default function Shell() {
               className="btn btn-accent"
               type="button"
               onClick={() => {
-                setOnboardingDismissed(false);
-                setOnboardingOpen(true);
+                navigate("/setup");
               }}
             >
               Démarrer le wizard

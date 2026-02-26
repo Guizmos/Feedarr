@@ -1,0 +1,118 @@
+:root {
+  --cat-films: #fbbf24;
+  --cat-series: #60a5fa;
+  --cat-animation: #cbd5e1;
+  --cat-anime: #22d3ee;
+  --cat-games: #c084fc;
+  --cat-comics: #f87171;
+  --cat-books: #a3e635;
+  --cat-audio: #f472b6;
+  --cat-spectacle: #fb923c;
+  --cat-emissions: #4ade80;
+
+  --cat-alpha-bg: 0.18;
+  --cat-alpha-border: 0.35;
+
+  --cat-unknown: #94a3b8;
+  --cat-artwork: #6366f1;
+
+  --cat-bubble-default-bg: rgba(156, 163, 175, 0.25);
+  --cat-bubble-default-border: rgba(156, 163, 175, 0.3);
+  --cat-bubble-default-text: #374151;
+
+  --cat-bubble-films-bg: rgba(251, 191, 36, 0.25);
+  --cat-bubble-films-border: rgba(251, 191, 36, 0.4);
+  --cat-bubble-films-text: #92400e;
+  --cat-bubble-films-text-dark: #fde68a;
+
+  --cat-bubble-series-bg: rgba(96, 165, 250, 0.25);
+  --cat-bubble-series-border: rgba(96, 165, 250, 0.4);
+  --cat-bubble-series-text: #1e40af;
+  --cat-bubble-series-text-dark: #bfdbfe;
+
+  --cat-bubble-animation-bg: rgba(203, 213, 225, 0.42);
+  --cat-bubble-animation-border: rgba(148, 163, 184, 0.52);
+  --cat-bubble-animation-text: #334155;
+  --cat-bubble-animation-text-dark: #e2e8f0;
+
+  --cat-bubble-anime-bg: rgba(34, 211, 238, 0.25);
+  --cat-bubble-anime-border: rgba(34, 211, 238, 0.4);
+  --cat-bubble-anime-text: #0e7490;
+  --cat-bubble-anime-text-dark: #a5f3fc;
+
+  --cat-bubble-emissions-bg: rgba(74, 222, 128, 0.25);
+  --cat-bubble-emissions-border: rgba(74, 222, 128, 0.4);
+  --cat-bubble-emissions-text: #166534;
+  --cat-bubble-emissions-text-dark: #bbf7d0;
+
+  --cat-bubble-spectacle-bg: rgba(251, 146, 60, 0.25);
+  --cat-bubble-spectacle-border: rgba(251, 146, 60, 0.4);
+  --cat-bubble-spectacle-text: #c2410c;
+  --cat-bubble-spectacle-text-dark: #fed7aa;
+
+  --cat-bubble-games-bg: rgba(192, 132, 252, 0.25);
+  --cat-bubble-games-border: rgba(192, 132, 252, 0.4);
+  --cat-bubble-games-text: #7c3aed;
+  --cat-bubble-games-text-dark: #e9d5ff;
+
+  --cat-bubble-audio-bg: rgba(244, 114, 182, 0.22);
+  --cat-bubble-audio-border: rgba(244, 114, 182, 0.38);
+  --cat-bubble-audio-text: #9d174d;
+  --cat-bubble-audio-text-dark: #fbcfe8;
+
+  --cat-bubble-books-bg: rgba(163, 230, 53, 0.22);
+  --cat-bubble-books-border: rgba(163, 230, 53, 0.38);
+  --cat-bubble-books-text: #3f6212;
+  --cat-bubble-books-text-dark: #d9f99d;
+
+  --cat-bubble-comics-bg: rgba(248, 113, 113, 0.22);
+  --cat-bubble-comics-border: rgba(248, 113, 113, 0.38);
+  --cat-bubble-comics-text: #991b1b;
+  --cat-bubble-comics-text-dark: #fecaca;
+
+  --cat-bubble-artwork-bg: rgba(99, 102, 241, 0.22);
+  --cat-bubble-artwork-border: rgba(99, 102, 241, 0.38);
+  --cat-bubble-artwork-text: #3730a3;
+  --cat-bubble-artwork-text-dark: #c7d2fe;
+
+  --cat-chip-films-bg: rgba(251, 191, 36, 0.18);
+  --cat-chip-films-border: rgba(251, 191, 36, 0.34);
+  --cat-chip-series-bg: rgba(96, 165, 250, 0.18);
+  --cat-chip-series-border: rgba(96, 165, 250, 0.34);
+  --cat-chip-animation-bg: rgba(203, 213, 225, 0.28);
+  --cat-chip-animation-border: rgba(148, 163, 184, 0.45);
+  --cat-chip-anime-bg: rgba(34, 211, 238, 0.18);
+  --cat-chip-anime-border: rgba(34, 211, 238, 0.34);
+  --cat-chip-games-bg: rgba(192, 132, 252, 0.16);
+  --cat-chip-games-border: rgba(192, 132, 252, 0.34);
+  --cat-chip-comics-bg: rgba(248, 113, 113, 0.16);
+  --cat-chip-comics-border: rgba(248, 113, 113, 0.34);
+  --cat-chip-books-bg: rgba(163, 230, 53, 0.16);
+  --cat-chip-books-border: rgba(163, 230, 53, 0.34);
+  --cat-chip-audio-bg: rgba(244, 114, 182, 0.16);
+  --cat-chip-audio-border: rgba(244, 114, 182, 0.34);
+  --cat-chip-spectacle-bg: rgba(251, 146, 60, 0.16);
+  --cat-chip-spectacle-border: rgba(251, 146, 60, 0.34);
+  --cat-chip-emissions-bg: rgba(74, 222, 128, 0.16);
+  --cat-chip-emissions-border: rgba(74, 222, 128, 0.34);
+
+  /* Stats tokens (legacy palette kept intact) */
+  --cat-stats-films: #3b82f6;
+  --cat-stats-animation: #f472b6;
+  --cat-stats-series: #22c55e;
+  --cat-stats-documentaire: #06b6d4;
+  --cat-stats-emissions: #a855f7;
+  --cat-stats-spectacle: #f97316;
+  --cat-stats-sport: #84cc16;
+  --cat-stats-pc: #ec4899;
+  --cat-stats-audio: #8b5cf6;
+  --cat-stats-books: #ef4444;
+  --cat-stats-games: #f59e0b;
+  --cat-stats-xxx: #14b8a6;
+  --cat-stats-other: #6366f1;
+  --cat-stats-unknown: #94a3b8;
+}
+
+:root[data-theme="dark"] {
+  --cat-bubble-default-text: #e5e7eb;
+}

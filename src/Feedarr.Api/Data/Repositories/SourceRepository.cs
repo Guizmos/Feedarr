@@ -1,6 +1,7 @@
 using Dapper;
 using Feedarr.Api.Data;
 using Feedarr.Api.Models;
+using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services.Security;
 
 namespace Feedarr.Api.Data.Repositories;
@@ -14,6 +15,19 @@ public sealed class SourceRepository
     {
         _db = db;
         _keyProtection = keyProtection;
+    }
+
+    public static bool TryNormalizeGroupKey(string? value, out string normalizedKey)
+        => CategoryGroupCatalog.TryNormalizeKey(value, out normalizedKey);
+
+    public static bool IsAllowedGroupKey(string? value)
+        => TryNormalizeGroupKey(value, out _);
+
+    public static string GetGroupLabel(string key)
+    {
+        return TryNormalizeGroupKey(key, out var normalized)
+            ? CategoryGroupCatalog.LabelForKey(normalized)
+            : key?.Trim() ?? "";
     }
 
     public long Create(string name, string torznabUrl, string apiKey, string authMode, long? providerId = null, string? color = null)
@@ -298,15 +312,18 @@ public sealed class SourceRepository
     }
 
     public Dictionary<int, (string key, string label)> GetUnifiedCategoryMap(long sourceId)
+        => GetCategoryMappingMap(sourceId);
+
+    public Dictionary<int, (string key, string label)> GetCategoryMappingMap(long sourceId)
     {
         using var conn = _db.Open();
         var rows = conn.Query(
             """
-            SELECT cat_id as id, unified_key as unifiedKey, unified_label as unifiedLabel
-            FROM source_categories
+            SELECT cat_id as id, group_key as groupKey, group_label as groupLabel
+            FROM source_category_mappings
             WHERE source_id = @sid
-              AND unified_key IS NOT NULL
-              AND unified_key <> '';
+              AND group_key IS NOT NULL
+              AND group_key <> '';
             """,
             new { sid = sourceId }
         );
@@ -315,29 +332,139 @@ public sealed class SourceRepository
         foreach (var row in rows)
         {
             var id = Convert.ToInt32(row.id);
-            string key = row.unifiedKey ?? "";
-            string label = row.unifiedLabel ?? "";
-            if (id > 0 && !string.IsNullOrWhiteSpace(key))
-                map[id] = (key, label);
+            string key = row.groupKey ?? "";
+            if (id <= 0)
+                continue;
+
+            if (!TryNormalizeGroupKey(key, out var normalizedKey))
+                continue;
+
+            map[id] = (normalizedKey, CategoryGroupCatalog.LabelForKey(normalizedKey));
         }
 
         return map;
     }
 
     public List<int> GetSelectedCategoryIds(long sourceId)
+        => GetActiveCategoryIds(sourceId);
+
+    public List<int> GetActiveCategoryIds(long sourceId)
     {
         using var conn = _db.Open();
         var rows = conn.Query<int>(
             """
             SELECT cat_id
-            FROM source_categories
+            FROM source_category_mappings
             WHERE source_id = @sid
+              AND group_key IS NOT NULL
+              AND group_key <> ''
               AND cat_id > 0;
             """,
             new { sid = sourceId }
         );
 
         return rows.Distinct().ToList();
+    }
+
+    public List<SourceCategoryMapping> GetCategoryMappings(long sourceId)
+    {
+        using var conn = _db.Open();
+        var rows = conn.Query(
+            """
+            SELECT cat_id as catId, group_key as groupKey, group_label as groupLabel
+            FROM source_category_mappings
+            WHERE source_id = @sid
+              AND group_key IS NOT NULL
+              AND group_key <> ''
+            ORDER BY cat_id ASC;
+            """,
+            new { sid = sourceId }
+        );
+
+        var result = new List<SourceCategoryMapping>();
+        foreach (var row in rows)
+        {
+            var catId = Convert.ToInt32(row.catId);
+            var key = Convert.ToString(row.groupKey) ?? "";
+            if (catId <= 0 || string.IsNullOrWhiteSpace(key)) continue;
+            if (!TryNormalizeGroupKey(key, out string normalized)) continue;
+
+            var label = CategoryGroupCatalog.LabelForKey(normalized);
+
+            result.Add(new SourceCategoryMapping
+            {
+                CatId = catId,
+                GroupKey = normalized,
+                GroupLabel = label
+            });
+        }
+
+        return result;
+    }
+
+    public int PatchCategoryMappings(long sourceId, IEnumerable<SourceCategoryMappingPatch> mappings)
+    {
+        var normalizedPatches = (mappings ?? Enumerable.Empty<SourceCategoryMappingPatch>())
+            .Where(m => m is not null && m.CatId > 0)
+            .GroupBy(m => m.CatId)
+            .Select(g => g.Last())
+            .ToList();
+
+        if (normalizedPatches.Count == 0) return 0;
+
+        using var conn = _db.Open();
+        using var tx = conn.BeginTransaction();
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var changed = 0;
+        foreach (var patch in normalizedPatches)
+        {
+            if (string.IsNullOrWhiteSpace(patch.GroupKey))
+            {
+                changed += conn.Execute(
+                    """
+                    DELETE FROM source_category_mappings
+                    WHERE source_id = @sid
+                      AND cat_id = @catId;
+                    """,
+                    new { sid = sourceId, catId = patch.CatId },
+                    tx
+                );
+                continue;
+            }
+
+            if (!TryNormalizeGroupKey(patch.GroupKey, out var normalizedKey))
+                throw new ArgumentException(
+                    $"Invalid category group key '{patch.GroupKey}' for catId={patch.CatId}.",
+                    nameof(mappings));
+
+            CategoryGroupCatalog.AssertCanonicalKey(normalizedKey);
+            var label = CategoryGroupCatalog.LabelForKey(normalizedKey);
+            changed += conn.Execute(
+                """
+                INSERT INTO source_category_mappings(
+                  source_id, cat_id, group_key, group_label, created_at_ts, updated_at_ts
+                )
+                VALUES (@sid, @catId, @key, @label, @now, @now)
+                ON CONFLICT(source_id, cat_id) DO UPDATE SET
+                  group_key = excluded.group_key,
+                  group_label = excluded.group_label,
+                  updated_at_ts = excluded.updated_at_ts;
+                """,
+                new
+                {
+                    sid = sourceId,
+                    catId = patch.CatId,
+                    key = normalizedKey,
+                    label,
+                    now
+                },
+                tx
+            );
+        }
+
+        tx.Commit();
+        return changed;
     }
 
     public int Delete(long id)
@@ -379,6 +506,19 @@ public sealed class SourceRepository
         public int? ParentId { get; set; }
         public string? UnifiedKey { get; set; }
         public string? UnifiedLabel { get; set; }
+    }
+
+    public sealed class SourceCategoryMapping
+    {
+        public int CatId { get; set; }
+        public string GroupKey { get; set; } = "";
+        public string GroupLabel { get; set; } = "";
+    }
+
+    public sealed class SourceCategoryMappingPatch
+    {
+        public int CatId { get; set; }
+        public string? GroupKey { get; set; }
     }
 
     private static List<SourceCategoryInput> NormalizeCategories(IEnumerable<SourceCategoryInput> cats)

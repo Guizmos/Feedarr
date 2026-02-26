@@ -36,6 +36,8 @@ export default function Settings() {
     isDirty,
     openArrModalAdd,
     canAddArrApp,
+    openExternalModalAdd,
+    canAddExternalProvider,
     triggerArrSync,
     arrSyncing,
     hasEnabledArrApps,
@@ -52,11 +54,13 @@ export default function Settings() {
   const openBackupCreateRef = useRef(null);
   const handleSaveRef = useRef(null);
   const openArrModalAddRef = useRef(null);
+  const openExternalModalAddRef = useRef(null);
 
   // Sync refs directly during render (safe because refs don't trigger re-renders)
   openBackupCreateRef.current = backup?.openBackupCreate;
   handleSaveRef.current = handleSave;
   openArrModalAddRef.current = openArrModalAdd;
+  openExternalModalAddRef.current = openExternalModalAdd;
   const [posterModalOpen, setPosterModalOpen] = useState(false);
   const [applicationsOptionsOpen, setApplicationsOptionsOpen] = useState(false);
   const backupActionsLocked = !!backup?.backupState?.isBusy || !!backup?.backupState?.needsRestart;
@@ -137,7 +141,16 @@ export default function Settings() {
           </>
         )}
         {showExternals && (
-          <SubAction icon="settings" label="Options" onClick={() => setPosterModalOpen(true)} />
+          <>
+            <SubAction
+              icon="add_circle"
+              label="Ajouter"
+              onClick={() => openExternalModalAddRef.current?.()}
+              disabled={!canAddExternalProvider}
+              title={!canAddExternalProvider ? "Aucun provider disponible" : "Ajouter"}
+            />
+            <SubAction icon="settings" label="Options" onClick={() => setPosterModalOpen(true)} />
+          </>
         )}
       </div>
     );
@@ -155,6 +168,7 @@ export default function Settings() {
     triggerArrSync,
     arrSyncing,
     hasEnabledArrApps,
+    canAddExternalProvider,
     backupActionsLocked,
     backupLockedTitle,
   ]);
@@ -182,7 +196,7 @@ export default function Settings() {
         <div className="settings-grid">
           {showGeneral && <SettingsGeneral {...general} />}
           {showUi && <SettingsUI {...ui} />}
-          {showExternals && <SettingsProviders {...providers} posterModalOpen={posterModalOpen} closePosterModal={() => setPosterModalOpen(false)} />}
+          {showExternals && <SettingsProviders controller={providers} posterModalOpen={posterModalOpen} closePosterModal={() => setPosterModalOpen(false)} />}
           {showApplications && (
             <SettingsApplications
               {...applications}

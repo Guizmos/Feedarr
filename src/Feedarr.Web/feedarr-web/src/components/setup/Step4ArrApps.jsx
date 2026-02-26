@@ -3,6 +3,7 @@ import { apiDelete, apiGet, apiPost, apiPut } from "../../api/client.js";
 import ItemRow from "../../ui/ItemRow.jsx";
 import Modal from "../../ui/Modal.jsx";
 import { getAppBaseUrlPlaceholder, getAppLabel, isArrLibraryType } from "../../utils/appTypes.js";
+import { tr } from "../../app/uiText.js";
 
 const ALL_APP_TYPES = ["sonarr", "radarr", "overseerr", "jellyseerr", "seer"];
 
@@ -59,7 +60,7 @@ export default function Step4ArrApps() {
       const list = await apiGet("/api/apps");
       setApps(Array.isArray(list) ? list : []);
     } catch (e) {
-      setErr(e?.message || "Erreur chargement applications");
+      setErr(e?.message || tr("Erreur chargement applications", "Applications loading error"));
       setApps([]);
     } finally {
       setLoading(false);
@@ -198,10 +199,10 @@ export default function Step4ArrApps() {
       }
       ok = !!res?.ok;
       if (!ok) {
-        errorMsg = res?.error || "Test échoué";
+        errorMsg = res?.error || tr("Test echoue", "Test failed");
       }
     } catch (e) {
-      errorMsg = e?.message || "Erreur test connexion";
+      errorMsg = e?.message || tr("Erreur test connexion", "Connection test error");
     } finally {
       const elapsed = Date.now() - start;
       if (elapsed < 2000) {
@@ -212,7 +213,7 @@ export default function Step4ArrApps() {
       if (ok) {
         setModalError("");
       } else {
-        setModalError(errorMsg || "Test échoué");
+        setModalError(errorMsg || tr("Test echoue", "Test failed"));
       }
       triggerPulse(ok ? "ok" : "error");
     }
@@ -223,7 +224,7 @@ export default function Step4ArrApps() {
     setModalError("");
     try {
       if (modalMode === "add" && !modalType) {
-        throw new Error("Toutes les applications sont déjà ajoutées.");
+        throw new Error(tr("Toutes les applications sont deja ajoutees.", "All applications are already added."));
       }
 
       const payload = {
@@ -259,7 +260,7 @@ export default function Step4ArrApps() {
       closeModal();
       await loadApps();
     } catch (e) {
-      setModalError(e?.message || "Erreur sauvegarde");
+      setModalError(e?.message || tr("Erreur sauvegarde", "Save error"));
     } finally {
       setModalSaving(false);
     }
@@ -267,11 +268,14 @@ export default function Step4ArrApps() {
 
   async function deleteApp(app) {
     if (!app?.id) return;
-    if (!window.confirm(`Supprimer ${app.name || app.type} ?`)) return;
+    if (!window.confirm(tr(`Supprimer ${app.name || app.type} ?`, `Delete ${app.name || app.type}?`))) return;
     try {
       await apiDelete(`/api/apps/${app.id}`);
       await loadApps();
-    } catch {}
+    } catch (e) {
+      console.error("[Step4 ArrApps] Impossible de supprimer l'application.", e);
+      setErr(e?.message || tr("Impossible de supprimer l'application.", "Failed to delete the application."));
+    }
   }
 
   const configTags = useMemo(
@@ -289,11 +293,11 @@ export default function Step4ArrApps() {
     <div className="setup-step setup-arr">
       <div className="setup-arr__header">
         <div>
-          <h2>Applications (Sonarr / Radarr / Overseerr / Jellyseerr / Seer)</h2>
-          <p>Optionnel — configure une ou plusieurs apps.</p>
+          <h2>{tr("Applications (Sonarr / Radarr / Overseerr / Jellyseerr / Seer)", "Applications (Sonarr / Radarr / Overseerr / Jellyseerr / Seer)")}</h2>
+          <p>{tr("Optionnel - configure une ou plusieurs apps.", "Optional - configure one or more apps.")}</p>
         </div>
         <div className="setup-arr__add settings-row settings-row--ui-select">
-          <label>Ajouter</label>
+          <label>{tr("Ajouter", "Add")}</label>
           <select
             className="settings-field"
             value={addType}
@@ -305,7 +309,9 @@ export default function Step4ArrApps() {
             }}
           >
             <option value="" disabled>
-              {noAvailableAddTypes ? "Toutes les applications sont déjà ajoutées" : "Sélectionner..."}
+              {noAvailableAddTypes
+                ? tr("Toutes les applications sont deja ajoutees", "All applications are already added")
+                : tr("Selectionner...", "Select...")}
             </option>
             {availableAddTypes.map((type) => (
               <option key={type} value={type}>
@@ -322,7 +328,7 @@ export default function Step4ArrApps() {
         {loading && (
           <div className="indexer-card">
             <div className="indexer-row">
-              <span className="indexer-url muted">Chargement...</span>
+              <span className="indexer-url muted">{tr("Chargement...", "Loading...")}</span>
             </div>
           </div>
         )}
@@ -330,7 +336,7 @@ export default function Step4ArrApps() {
         {!loading && apps.length === 0 && (
           <div className="indexer-card">
             <div className="indexer-row">
-              <span className="indexer-url muted">Aucune application configurée</span>
+              <span className="indexer-url muted">{tr("Aucune application configuree", "No configured application")}</span>
             </div>
           </div>
         )}
@@ -356,12 +362,12 @@ export default function Step4ArrApps() {
               actions={[
                 {
                   icon: "edit",
-                  title: "Éditer",
+                  title: tr("Editer", "Edit"),
                   onClick: () => openEdit(app),
                 },
                 {
                   icon: "delete",
-                  title: "Supprimer",
+                  title: tr("Supprimer", "Delete"),
                   onClick: () => deleteApp(app),
                   className: "iconbtn--danger",
                 },
@@ -374,7 +380,11 @@ export default function Step4ArrApps() {
 
       <Modal
         open={modalOpen}
-        title={modalMode === "add" ? "Ajouter une application" : `Éditer : ${modalApp?.name || modalApp?.type || "Application"}`}
+        title={
+          modalMode === "add"
+            ? tr("Ajouter une application", "Add an application")
+            : `${tr("Editer", "Edit")}: ${modalApp?.name || modalApp?.type || tr("Application", "Application")}`
+        }
         onClose={closeModal}
         width={620}
       >
@@ -393,7 +403,7 @@ export default function Step4ArrApps() {
             </div>
           )}
           <div className="field">
-            <label>Nom</label>
+            <label>{tr("Nom", "Name")}</label>
             <input
               value={modalName}
               onChange={(e) => setModalName(e.target.value)}
@@ -412,11 +422,11 @@ export default function Step4ArrApps() {
             <span className="field-hint">IP, hostname ou URL reverse proxy (http/https)</span>
           </div>
           <div className="field">
-            <label>Clé API</label>
+            <label>{tr("Cle API", "API key")}</label>
             <input
               value={modalApiKey}
               onChange={(e) => setModalApiKey(e.target.value)}
-              placeholder={modalMode === "edit" ? "••••••••••••••••" : "Entrez la clé API"}
+              placeholder={modalMode === "edit" ? "••••••••••••••••" : tr("Entrez la cle API", "Enter API key")}
               disabled={modalSaving || modalTesting}
             />
           </div>
@@ -425,13 +435,13 @@ export default function Step4ArrApps() {
         <div className="setup-arr__modal-actions">
           {isLibraryType && (
             <button className="btn" type="button" onClick={() => setAdvancedOpen((v) => !v)}>
-              {advancedOpen ? "Masquer options avancées" : "Options avancées"}
+              {advancedOpen ? tr("Masquer options avancees", "Hide advanced options") : tr("Options avancees", "Advanced options")}
             </button>
           )}
         </div>
 
         {modalError && <div className="onboarding__error">{modalError}</div>}
-        {modalTestState === "ok" && <div className="onboarding__ok">Connexion OK</div>}
+        {modalTestState === "ok" && <div className="onboarding__ok">{tr("Connexion OK", "Connection OK")}</div>}
 
         {advancedOpen && isLibraryType && (
           <div className="setup-arr__advanced">
@@ -443,7 +453,7 @@ export default function Step4ArrApps() {
                   onClick={() => loadConfig(modalApp.id)}
                   disabled={configLoading}
                 >
-                  {configLoading ? "Chargement..." : "Charger la config"}
+                  {configLoading ? tr("Chargement...", "Loading...") : tr("Charger la config", "Load config")}
                 </button>
               </div>
             )}
@@ -453,7 +463,7 @@ export default function Step4ArrApps() {
                 <label>Root folder</label>
                 {config?.rootFolders?.length > 0 ? (
                   <select value={rootFolder} onChange={(e) => setRootFolder(e.target.value)}>
-                    <option value="" disabled>Sélectionner...</option>
+                    <option value="" disabled>{tr("Selectionner...", "Select...")}</option>
                     {config.rootFolders.map((rf) => (
                       <option key={rf.id} value={rf.path}>
                         {rf.path}
@@ -473,7 +483,7 @@ export default function Step4ArrApps() {
                 <label>Quality profile</label>
                 {config?.qualityProfiles?.length > 0 ? (
                   <select value={qualityProfile} onChange={(e) => setQualityProfile(e.target.value)}>
-                    <option value="" disabled>Sélectionner...</option>
+                    <option value="" disabled>{tr("Selectionner...", "Select...")}</option>
                     {config.qualityProfiles.map((qp) => (
                       <option key={qp.id} value={qp.id}>
                         {qp.name}
@@ -538,22 +548,22 @@ export default function Step4ArrApps() {
                 <div className="field">
                   <label>Season folder</label>
                   <select value={seasonFolder ? "yes" : "no"} onChange={(e) => setSeasonFolder(e.target.value === "yes")}>
-                    <option value="yes">Oui</option>
-                    <option value="no">Non</option>
+                    <option value="yes">{tr("Oui", "Yes")}</option>
+                    <option value="no">{tr("Non", "No")}</option>
                   </select>
                 </div>
                 <div className="field">
                   <label>Search missing</label>
                   <select value={searchMissing ? "yes" : "no"} onChange={(e) => setSearchMissing(e.target.value === "yes")}>
-                    <option value="yes">Oui</option>
-                    <option value="no">Non</option>
+                    <option value="yes">{tr("Oui", "Yes")}</option>
+                    <option value="no">{tr("Non", "No")}</option>
                   </select>
                 </div>
                 <div className="field">
                   <label>Search cutoff</label>
                   <select value={searchCutoff ? "yes" : "no"} onChange={(e) => setSearchCutoff(e.target.value === "yes")}>
-                    <option value="yes">Oui</option>
-                    <option value="no">Non</option>
+                    <option value="yes">{tr("Oui", "Yes")}</option>
+                    <option value="no">{tr("Non", "No")}</option>
                   </select>
                 </div>
               </div>
@@ -570,8 +580,8 @@ export default function Step4ArrApps() {
                 <div className="field">
                   <label>Search for movie</label>
                   <select value={searchForMovie ? "yes" : "no"} onChange={(e) => setSearchForMovie(e.target.value === "yes")}>
-                    <option value="yes">Oui</option>
-                    <option value="no">Non</option>
+                    <option value="yes">{tr("Oui", "Yes")}</option>
+                    <option value="no">{tr("Non", "No")}</option>
                   </select>
                 </div>
               </div>
@@ -582,7 +592,7 @@ export default function Step4ArrApps() {
         {advancedOpen && !isLibraryType && (
           <div className="setup-arr__advanced">
             <div className="muted">
-              Pas d&apos;options avancées pour {getAppLabel(modalType)}.
+              {tr("Pas d'options avancees pour", "No advanced options for")} {getAppLabel(modalType)}.
             </div>
           </div>
         )}
@@ -597,16 +607,16 @@ export default function Step4ArrApps() {
             {modalTesting ? (
               <>
                 <span className="btn-spinner" />
-                Test en cours...
+                {tr("Test en cours...", "Test in progress...")}
               </>
             ) : modalPulse === "ok" ? (
-              "Valide"
+              tr("Valide", "Valid")
             ) : modalPulse === "error" ? (
-              "Invalide"
+              tr("Invalide", "Invalid")
             ) : modalTestState === "ok" ? (
-              "Sauvegarder"
+              tr("Sauvegarder", "Save")
             ) : (
-              "Tester"
+              tr("Tester", "Test")
             )}
           </button>
         </div>

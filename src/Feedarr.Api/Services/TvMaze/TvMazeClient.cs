@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Feedarr.Api.Services.ExternalProviders;
 using Feedarr.Api.Services;
 
 namespace Feedarr.Api.Services.TvMaze;
@@ -18,22 +19,30 @@ public sealed class TvMazeClient
 
     private readonly HttpClient _http;
     private readonly ProviderStatsService _stats;
+    private readonly ActiveExternalProviderConfigResolver _activeConfigResolver;
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNameCaseInsensitive = true
     };
 
-    public TvMazeClient(HttpClient http, ProviderStatsService stats)
+    public TvMazeClient(
+        HttpClient http,
+        ProviderStatsService stats,
+        ActiveExternalProviderConfigResolver activeConfigResolver)
     {
         _http = http;
         _stats = stats;
+        _activeConfigResolver = activeConfigResolver;
         _http.BaseAddress = new Uri("https://api.tvmaze.com/");
         _http.Timeout = TimeSpan.FromSeconds(20);
     }
 
     public async Task<List<ShowResult>> SearchShowsAsync(string query, CancellationToken ct, int limit = 10)
     {
+        if (!IsEnabled())
+            return new List<ShowResult>();
+
         query = CleanQuery(query);
         if (string.IsNullOrWhiteSpace(query)) return new List<ShowResult>();
 
@@ -66,6 +75,9 @@ public sealed class TvMazeClient
 
     public async Task<ShowResult?> GetShowAsync(int id, CancellationToken ct)
     {
+        if (!IsEnabled())
+            return null;
+
         if (id <= 0) return null;
         var url = $"shows/{id}";
         using var resp = await GetAsyncRecorded(url, ct);
@@ -85,16 +97,28 @@ public sealed class TvMazeClient
 
     public async Task<bool> TestApiAsync(CancellationToken ct)
     {
+        if (!IsEnabled())
+            return false;
+
         var results = await SearchShowsAsync("the", ct, 1);
         return results.Count > 0;
     }
 
     public async Task<byte[]?> DownloadImageAsync(string url, CancellationToken ct)
     {
+        if (!IsEnabled())
+            return null;
+
         if (string.IsNullOrWhiteSpace(url)) return null;
         using var resp = await GetAsyncRecorded(url, ct);
         if (!resp.IsSuccessStatusCode) return null;
         return await resp.Content.ReadAsByteArrayAsync(ct);
+    }
+
+    private bool IsEnabled()
+    {
+        var active = _activeConfigResolver.Resolve(ExternalProviderKeys.Tvmaze);
+        return active.Enabled;
     }
 
     private async Task<HttpResponseMessage> GetAsyncRecorded(string relativeUrl, CancellationToken ct)

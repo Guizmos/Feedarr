@@ -2,27 +2,34 @@
 
 Feedarr is a smart release dashboard for Torznab, Jackett, and Prowlarr.
 
-This Docker Hub repository is used as the stack overview page.
+🚀 Monolithic image — API and Web UI are now served from a single container (no nginx, no split services).
 
-## Stack Images
+Docker Image
+------------
+Official image:
 
-- API image: [`guizmos/feedarr-api`](https://hub.docker.com/r/guizmos/feedarr-api)
-- Web image: [`guizmos/feedarr-web`](https://hub.docker.com/r/guizmos/feedarr-web)
+guizmos/feedarr
 
-## Source Code
+Tags:
+latest → stable release
+beta → beta channel
+vX.Y.Z → specific version
 
-- Main project: [`Guizmos/Feedarr`](https://github.com/Guizmos/Feedarr)
-- API source path: [`src/Feedarr.Api`](https://github.com/Guizmos/Feedarr/tree/main/src/Feedarr.Api)
-- Web source path: [`src/Feedarr.Web/feedarr-web`](https://github.com/Guizmos/Feedarr/tree/main/src/Feedarr.Web/feedarr-web)
+⚠️ The old images guizmos/feedarr-api and guizmos/feedarr-web are deprecated and should no longer be used.
 
-## Quick Start (Docker Compose)
+Source Code
 
-```yaml
+Main project: https://github.com/Guizmos/Feedarr
+Backend: https://github.com/Guizmos/Feedarr/tree/main/src/Feedarr.Api
+Frontend: https://github.com/Guizmos/Feedarr/tree/main/src/Feedarr.Web/feedarr-web
+
+# Quick Start (Docker Compose)
 version: "3.9"
 
 services:
-  api:
-    image: guizmos/feedarr-api:latest
+  feedarr:
+    image: guizmos/feedarr:latest
+    container_name: FEEDARR
     restart: unless-stopped
     environment:
       ASPNETCORE_URLS: http://+:8080
@@ -30,24 +37,54 @@ services:
     volumes:
       - /volume1/Docker/Feedarr/data:/app/data
     ports:
-      - "9999:8080"
+      - "8888:8080"
 
-  web:
-    image: guizmos/feedarr-web:latest
-    restart: unless-stopped
-    depends_on:
-      - api
-    ports:
-      - "8888:80"
-```
+# Start:
 
-Start:
-
-```bash
 docker compose up -d
-```
+Access
 
-Default endpoints:
+Web UI: http://localhost:8888
+API: http://localhost:8888/api
+Health endpoint: http://localhost:8888/health
+Reverse Proxy (Nginx Proxy Manager / Traefik / Caddy)
 
-- Web UI: `http://localhost:8888`
-- API: `http://localhost:9999`
+Feedarr now runs as a single upstream service.
+
+# Point your reverse proxy to:
+
+http://feedarr:8080
+or
+http://<host-ip>:8888
+
+You no longer need separate rules for /api and /.
+
+# Data Directory
+
+All persistent data is stored in:
+
+/app/data
+
+This includes:
+
+SQLite database
+API keys
+Posters cache
+Backups
+Logs
+
+Mount this path to keep your data safe.
+
+Upgrade from older versions (split API/Web)
+
+Stop your old containers
+
+Remove feedarr-api and feedarr-web services from compose
+
+Replace them with the single feedarr service
+
+Keep the same /app/data volume
+
+Start again
+
+No data migration is required.

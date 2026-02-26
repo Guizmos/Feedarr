@@ -76,7 +76,7 @@ public sealed class SyncOrchestrationService
 
         try
         {
-            var categoryMap = _sources.GetUnifiedCategoryMap(id);
+            var categoryMap = _sources.GetCategoryMappingMap(id);
             var perCatLimit = _opts.RssLimitPerCategory > 0 ? _opts.RssLimitPerCategory : _opts.RssLimit;
             if (perCatLimit <= 0) perCatLimit = 50;
             perCatLimit = Math.Clamp(perCatLimit, 1, 200);
@@ -105,9 +105,7 @@ public sealed class SyncOrchestrationService
             {
             }
 
-            var selectedCategoryIds = _sources.GetSelectedCategoryIds(id);
-            if (selectedCategoryIds.Count == 0 && categoryMap.Count > 0)
-                selectedCategoryIds = categoryMap.Keys.ToList();
+            var selectedCategoryIds = CategorySelection.NormalizeSelectedCategoryIds(_sources.GetActiveCategoryIds(id));
 
             var selectedUnifiedKeys = new HashSet<string>(
                 categoryMap.Values.Select(v => v.key).Where(k => !string.IsNullOrWhiteSpace(k)),
@@ -145,7 +143,7 @@ public sealed class SyncOrchestrationService
             {
                 if (rssItems.Count == 0 || fallbackCandidates.Count > 0)
                 {
-                    var fallbackCats = rssItems.Count == 0 ? selectedCategoryIds : fallbackCandidates.ToList();
+                    var fallbackCats = rssItems.Count == 0 ? selectedCategoryIds.ToList() : fallbackCandidates.ToList();
                     if (fallbackCats.Count > 0)
                     {
                         _log.LogInformation(
@@ -175,17 +173,6 @@ public sealed class SyncOrchestrationService
                 items = rssItems;
             }
 
-            if (!rssOnly && rssItems.Count == 0 && selectedCategoryIds.Count == 0)
-            {
-                _log.LogInformation("Torznab fallback start [{Name}] catIds=ALL (no selected categories)", name);
-                var fallback = await _torznab.FetchLatestAsync(url, mode, key, perCatLimit, syncCt, allowSearch: true);
-                fallbackMode = fallback.usedMode;
-                items = fallback.items;
-                _log.LogInformation(
-                    "Torznab fallback done [{Name}] itemsCount={Count} cats={Cats}",
-                    name, items.Count, SummarizeCats(items));
-            }
-
             sw.Stop();
             var elapsedMs = sw.ElapsedMilliseconds;
             _sources.SaveRssMode(id, usedMode);
@@ -206,7 +193,7 @@ public sealed class SyncOrchestrationService
 
             if (selectedCategoryIds.Count > 0)
             {
-                var selectedSet = new HashSet<int>(selectedCategoryIds);
+                var selectedSet = selectedCategoryIds;
                 var fetchedCats = new HashSet<int>();
                 var keptCats = new HashSet<int>();
                 var droppedNotSelected = 0;
@@ -227,7 +214,8 @@ public sealed class SyncOrchestrationService
                         continue;
                     }
 
-                    var intersects = ids.Any(selectedSet.Contains);
+                    var intersects = CategorySelection.MatchesSelectedCategoryIds(ids, selectedSet);
+
                     var matchesUnified = false;
                     if (!intersects && selectedUnifiedKeys.Count > 0)
                     {
@@ -258,6 +246,11 @@ public sealed class SyncOrchestrationService
                     fetchedCats.Count > 0 ? string.Join(",", fetchedCats.OrderBy(x => x)) : "-",
                     keptCats.Count > 0 ? string.Join(",", keptCats.OrderBy(x => x)) : "-",
                     droppedNotSelected + droppedMissingCategory);
+            }
+            else
+            {
+                _log.LogInformation("ManualSync CATEGORY FILTER [{Name}] no active category mappings; dropping all fetched items", name);
+                items = new List<TorznabItem>();
             }
 
             var countBeforeCategoryMapFilter = items.Count;
@@ -298,7 +291,10 @@ public sealed class SyncOrchestrationService
 
                 var filtered = new List<TorznabItem>();
                 var missingCategory = 0;
-                var noMapMatch = 0;
+                var noMapMatchCount = 0;
+                var fallbackSelectedCategoryCount = 0;
+                var fallbackSamples = new List<string>();
+                var noMapSamples = new List<string>();
                 foreach (var item in items)
                 {
                     var ids = GetRawCategoryIds(item);
@@ -311,8 +307,32 @@ public sealed class SyncOrchestrationService
                     var picked = CategorySelection.PickBestCategoryId(ids, categoryMap);
                     if (!picked.HasValue)
                     {
-                        noMapMatch++;
-                        continue;
+                        var fallbackPicked = CategorySelection.PickSelectedFallbackCategoryId(ids, selectedCategoryIds);
+                        if (fallbackPicked.HasValue)
+                        {
+                            picked = fallbackPicked.Value;
+                            fallbackSelectedCategoryCount++;
+                            if (fallbackSamples.Count < 5)
+                            {
+                                var intersections = ids.Where(selectedCategoryIds.Contains).Distinct().ToList();
+                                if (intersections.Count == 0)
+                                {
+                                    intersections = CategorySelection.ExpandCategoryIdsForMatching(ids)
+                                        .Where(selectedCategoryIds.Contains)
+                                        .Distinct()
+                                        .ToList();
+                                }
+                                fallbackSamples.Add(
+                                    $"title={BuildCategoryLogTitle(item.Title)}, ids={string.Join("/", ids)}, selected={string.Join("/", intersections)}, picked={picked.Value}");
+                            }
+                        }
+                        else
+                        {
+                            noMapMatchCount++;
+                            if (noMapSamples.Count < 5)
+                                noMapSamples.Add($"title={BuildCategoryLogTitle(item.Title)}, ids={string.Join("/", ids)}");
+                            continue;
+                        }
                     }
 
                     item.CategoryId = picked.Value;
@@ -324,8 +344,17 @@ public sealed class SyncOrchestrationService
                 var filteredCount = items.Count;
                 var dropped = countBeforeCategoryMapFilter - filteredCount;
                 _log.LogInformation(
-                    "ManualSync AFTER CATEGORY FILTER [{Name}] raw={RawCount} filtered={FilteredCount} dropped={Dropped} missingCategory={MissingCategory} noMapMatch={NoMapMatch}",
-                    name, countBeforeCategoryMapFilter, filteredCount, dropped, missingCategory, noMapMatch);
+                    "ManualSync AFTER CATEGORY FILTER [{Name}] raw={RawCount} filtered={FilteredCount} dropped={Dropped} missingCategory={MissingCategory} noMapMatchCount={NoMapMatchCount} fallbackSelectedCategoryCount={FallbackSelectedCategoryCount}",
+                    name, countBeforeCategoryMapFilter, filteredCount, dropped, missingCategory, noMapMatchCount, fallbackSelectedCategoryCount);
+
+                if (fallbackSelectedCategoryCount > 0 || noMapMatchCount > 0)
+                {
+                    _activity.Add(
+                        id,
+                        "info",
+                        "sync",
+                        $"Sync category-map: fallbackSelectedCategoryCount={fallbackSelectedCategoryCount}, noMapMatchCount={noMapMatchCount}, fallbackSamples={(fallbackSamples.Count > 0 ? string.Join(" | ", fallbackSamples) : "-")}, droppedSamples={(noMapSamples.Count > 0 ? string.Join(" | ", noMapSamples) : "-")}");
+                }
 
                 if (_log.IsEnabled(LogLevel.Debug))
                 {
@@ -352,7 +381,7 @@ public sealed class SyncOrchestrationService
             {
                 var job = _posterJobs.Create(releaseId, forceRefresh: false);
                 if (job is null) continue;
-                _posterQueue.Enqueue(job);
+                _posterQueue.TryEnqueue(job);
             }
 
             _sources.UpdateLastSync(id, "ok", null);
@@ -393,6 +422,15 @@ public sealed class SyncOrchestrationService
         return item.CategoryId.HasValue ? new List<int> { item.CategoryId.Value } : new List<int>();
     }
 
+    private static string BuildCategoryLogTitle(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+            return "-";
+
+        var trimmed = title.Trim();
+        return trimmed.Length <= 80 ? trimmed : trimmed[..80] + "...";
+    }
+
     private static (List<int> missing, List<int> low, int targetPerCat) ComputeFallbackCategories(
         IEnumerable<TorznabItem> items,
         IReadOnlyCollection<int> selectedIds,
@@ -409,7 +447,7 @@ public sealed class SyncOrchestrationService
         foreach (var item in items)
         {
             var ids = GetRawCategoryIds(item);
-            foreach (var id in ids)
+            foreach (var id in CategorySelection.ExpandCategoryIdsForMatching(ids))
             {
                 if (id <= 0) continue;
                 countsById[id] = countsById.TryGetValue(id, out var current) ? current + 1 : 1;

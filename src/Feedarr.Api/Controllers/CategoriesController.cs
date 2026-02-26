@@ -9,6 +9,7 @@ using Feedarr.Api.Dtos.Providers;
 using Feedarr.Api.Services.Categories;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Logging;
 
 namespace Feedarr.Api.Controllers;
 
@@ -17,22 +18,36 @@ namespace Feedarr.Api.Controllers;
 public sealed class CategoriesController : ControllerBase
 {
     private readonly Db _db;
-    private readonly UnifiedCategoryService _unified;
     private readonly CategoryRecommendationService _caps;
     private readonly ProviderRepository _providers;
     private readonly IMemoryCache _cache;
+    private readonly ILogger<CategoriesController> _log;
+
     public CategoriesController(
         Db db,
-        UnifiedCategoryService unified,
         CategoryRecommendationService caps,
         ProviderRepository providers,
-        IMemoryCache cache)
+        IMemoryCache cache,
+        ILogger<CategoriesController> log)
     {
         _db = db;
-        _unified = unified;
         _caps = caps;
         _providers = providers;
         _cache = cache;
+        _log = log;
+    }
+
+    /// <summary>[DEBUG] Log les métriques de la réponse caps.</summary>
+    private void LogCapsDebug(string endpoint, CapsCategoriesRequestDto req, CapsCategoriesResponseDto res)
+    {
+        var highIds = res.Categories.Where(c => c.Id >= 10000).Select(c => c.Id).Take(10).ToList();
+        var supportedStandard = res.Categories.Count(c => c.IsStandard && c.IsSupported);
+        var unsupportedStandard = res.Categories.Count(c => c.IsStandard && !c.IsSupported);
+        _log.LogInformation(
+            "[CAPS-DEBUG] endpoint={E} includeStandardCatalog={ISC} includeSpecific={IS} totalCats={TC} supportedStandard={SS} unsupportedStandard={US} highIds={HI} sampleHighIds={SH}",
+            endpoint, req.IncludeStandardCatalog, req.IncludeSpecific, res.Categories.Count,
+            supportedStandard, unsupportedStandard,
+            highIds.Count, string.Join(",", highIds));
     }
 
     [HttpGet("caps")]
@@ -43,14 +58,7 @@ public sealed class CategoriesController : ControllerBase
     {
         var payload = dto ?? new CapsCategoriesRequestDto();
         var res = await _caps.GetDecoratedCapsCategoriesAsync(payload, ct);
-        if (debug != 1)
-        {
-            foreach (var cat in res.Categories)
-            {
-                cat.Reason = null;
-                cat.Score = null;
-            }
-        }
+        LogCapsDebug("GET caps", payload, res);
         return Ok(res);
     }
 
@@ -59,11 +67,7 @@ public sealed class CategoriesController : ControllerBase
     {
         var payload = dto ?? new CapsCategoriesRequestDto();
         var res = await _caps.GetDecoratedCapsCategoriesAsync(payload, ct);
-        foreach (var cat in res.Categories)
-        {
-            cat.Reason = null;
-            cat.Score = null;
-        }
+        LogCapsDebug("POST caps", payload, res);
         return Ok(res);
     }
 
@@ -107,18 +111,17 @@ public sealed class CategoriesController : ControllerBase
 
         var req = new CapsCategoriesRequestDto
         {
-            TorznabUrl = torznabUrl,
-            ApiKey = apiKey,
-            AuthMode = "query",
-            IndexerName = payload.IndexerName
+            SourceId     = payload.SourceId,
+            TorznabUrl   = torznabUrl,
+            ApiKey       = apiKey,
+            AuthMode     = "query",
+            IndexerName  = payload.IndexerName,
+            IncludeStandardCatalog = payload.IncludeStandardCatalog,
+            IncludeSpecific = payload.IncludeSpecific
         };
 
         var res = await _caps.GetDecoratedCapsCategoriesAsync(req, ct);
-        foreach (var cat in res.Categories)
-        {
-            cat.Reason = null;
-            cat.Score = null;
-        }
+        LogCapsDebug("POST caps/provider", req, res);
         return Ok(res);
     }
 
@@ -142,94 +145,47 @@ public sealed class CategoriesController : ControllerBase
     }
 
     // GET /api/categories/stats
+    // Agrégation directe sur releases.unified_category (champ pré-calculé, toujours cohérent).
+    // Remplace l'ancienne version basée sur releases.category_id + JOIN source_categories
+    // qui produisait des stats incohérentes quand unified_category et category_id divergeaient.
     [EnableRateLimiting("stats-heavy")]
     [HttpGet("stats")]
     public IActionResult Stats()
     {
-        const string cacheKey = "categories:stats:v2";
+        const string cacheKey = "categories:stats:v3";
         if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
             return Ok(cached);
 
         using var conn = _db.Open();
-        var hasCategories = conn.ExecuteScalar<long>(
-            "SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name='source_categories';"
-        ) > 0;
 
-        if (!hasCategories)
-        {
-            return Ok(new { stats = Array.Empty<object>() });
-        }
-
-        var counts = new Dictionary<string, (string label, int count)>(StringComparer.OrdinalIgnoreCase);
-
-        var mappedRows = conn.Query<(string UnifiedKey, string UnifiedLabel, int Count)>(
+        var rows = conn.Query<(string? UnifiedCategory, int Count)>(
             """
-            SELECT
-              lower(sc.unified_key) as UnifiedKey,
-              COALESCE(NULLIF(sc.unified_label, ''), sc.unified_key) as UnifiedLabel,
-              COUNT(1) as Count
-            FROM releases r
-            INNER JOIN source_categories sc
-              ON sc.source_id = r.source_id AND sc.cat_id = r.category_id
-            WHERE sc.unified_key IS NOT NULL AND sc.unified_key <> ''
-            GROUP BY lower(sc.unified_key), COALESCE(NULLIF(sc.unified_label, ''), sc.unified_key);
+            SELECT unified_category AS UnifiedCategory, COUNT(1) AS Count
+            FROM releases
+            WHERE unified_category IS NOT NULL
+              AND unified_category <> ''
+              AND unified_category <> 'Autre'
+            GROUP BY unified_category
+            ORDER BY Count DESC;
             """
         );
 
-        foreach (var row in mappedRows)
+        var counts = new Dictionary<string, (string label, int count)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows)
         {
-            var key = row.UnifiedKey?.Trim();
-            if (string.IsNullOrWhiteSpace(key)) continue;
-            var label = string.IsNullOrWhiteSpace(row.UnifiedLabel) ? key : row.UnifiedLabel;
+            if (!UnifiedCategoryMappings.TryParse(row.UnifiedCategory, out var cat) ||
+                cat == UnifiedCategory.Autre)
+                continue;
+
+            var key   = UnifiedCategoryMappings.ToKey(cat);
+            var label = UnifiedCategoryMappings.ToLabel(cat);
             if (counts.TryGetValue(key, out var current))
                 counts[key] = (current.label, current.count + row.Count);
             else
                 counts[key] = (label, row.Count);
         }
 
-        var unresolvedRows = conn.Query<(string? UnifiedCategory, string? CategoryName, int Count)>(
-            """
-            SELECT
-              r.unified_category as UnifiedCategory,
-              sc.name as CategoryName,
-              COUNT(1) as Count
-            FROM releases r
-            LEFT JOIN source_categories sc
-              ON sc.source_id = r.source_id AND sc.cat_id = r.category_id
-            WHERE (sc.unified_key IS NULL OR sc.unified_key = '')
-            GROUP BY r.unified_category, sc.name;
-            """
-        );
-
-        foreach (var row in unresolvedRows)
-        {
-            if (UnifiedCategoryMappings.TryParse(row.UnifiedCategory, out var unifiedCategory) &&
-                unifiedCategory != UnifiedCategory.Autre)
-            {
-                var key = UnifiedCategoryMappings.ToKey(unifiedCategory);
-                var label = UnifiedCategoryMappings.ToLabel(unifiedCategory);
-                if (counts.TryGetValue(key, out var current))
-                    counts[key] = (current.label, current.count + row.Count);
-                else
-                    counts[key] = (label, row.Count);
-                continue;
-            }
-
-            if (string.IsNullOrWhiteSpace(row.CategoryName))
-                continue;
-
-            var unified = _unified.Get(row.CategoryName, null);
-            if (unified is null) continue;
-            var heuristicKey = unified.Key;
-            var heuristicLabel = unified.Label;
-
-            if (counts.TryGetValue(heuristicKey, out var heuristicCurrent))
-                counts[heuristicKey] = (heuristicCurrent.label, heuristicCurrent.count + row.Count);
-            else
-                counts[heuristicKey] = (heuristicLabel ?? heuristicKey, row.Count);
-        }
-
-        var stats = counts
+        var stats   = counts
             .Select(kvp => new { key = kvp.Key, name = kvp.Value.label, count = kvp.Value.count })
             .OrderByDescending(x => x.count)
             .ToList();

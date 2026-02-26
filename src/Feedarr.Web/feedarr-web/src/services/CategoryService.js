@@ -1,14 +1,15 @@
+import {
+  CATEGORY_GROUP_LABELS,
+  RELEASES_GROUP_PRIORITY,
+  normalizeCategoryGroupKey,
+} from "../domain/categories/index.js";
+
 const UNIFIED_LABELS = {
-  films: "Films",
-  series: "Series TV",
-  anime: "Animation",
-  games: "Jeux PC",
-  spectacle: "Spectacle",
-  shows: "Emissions",
+  ...CATEGORY_GROUP_LABELS,
   other: "Autre",
 };
 
-const UNIFIED_PRIORITY = ["series", "anime", "films", "games", "spectacle", "shows", "other"];
+const CATEGORY_CLASSIFICATION_PRIORITY = RELEASES_GROUP_PRIORITY;
 
 const EXCLUDED_TOKENS = [
   "application",
@@ -54,38 +55,6 @@ const EXCLUDED_TOKENS = [
   "imprimantes",
   "printer",
   "printers",
-  "audio",
-  "music",
-  "mp3",
-  "aac",
-  "ogg",
-  "wav",
-  "m4a",
-  "opus",
-  "flac",
-  "alac",
-  "ost",
-  "album",
-  "albums",
-  "soundtrack",
-  "ebook",
-  "ebooks",
-  "book",
-  "books",
-  "livre",
-  "livres",
-  "epub",
-  "mobi",
-  "kindle",
-  "comic",
-  "comics",
-  "manga",
-  "scan",
-  "scans",
-  "audiobook",
-  "audiobooks",
-  "podcast",
-  "podcasts",
   "console",
   "xbox",
   "ps4",
@@ -118,30 +87,9 @@ const EXCLUDED_TOKENS = [
   "divers",
 ];
 
-const LEGACY_INDEXER_CATEGORY_MAP = {
-  C411: {
-    102000: "films",
-    105000: "series",
-    105080: "shows",
-  },
-  YGEGE: {
-    102183: "films",
-    102178: "anime",
-    102184: "series",
-    102185: "spectacle",
-    102182: "shows",
-    102161: "games",
-  },
-  LACALE: {
-    131681: "films",
-    117804: "series",
-    4050: "games",
-  },
-  TOS: {
-    100001: "films",
-    100002: "series",
-  },
-};
+// DEPRECATED (unused): runtime category mapping is now backend-driven.
+// Keep the export surface for compatibility, but neutralize legacy hardcoded maps.
+const LEGACY_INDEXER_CATEGORY_MAP = {};
 
 function normalizeIndexerKey(value) {
   return String(value || "")
@@ -208,7 +156,10 @@ function classifyByTokens(tokens) {
     anime: 0,
     games: 0,
     spectacle: 0,
-    shows: 0,
+    emissions: 0,
+    audio: 0,
+    books: 0,
+    comics: 0,
   };
 
   const hasSeriesToken = hasAnyToken(tokens, ["serie", "series", "tv", "tele"]);
@@ -256,6 +207,9 @@ function classifyByTokens(tokens) {
   ]);
 
   if (hasAnyToken(tokens, ["anime", "animation"])) scores.anime = 4;
+  if (hasAnyToken(tokens, ["audio", "music", "musique", "mp3", "flac", "wav", "aac", "m4a", "opus", "podcast", "audiobook", "audiobooks", "album", "albums", "soundtrack", "ost"])) scores.audio = 4;
+  if (hasAnyToken(tokens, ["book", "books", "livre", "livres", "ebook", "ebooks", "epub", "mobi", "kindle", "isbn"])) scores.books = 4;
+  if (hasAnyToken(tokens, ["comic", "comics", "bd", "manga", "scan", "scans", "graphic", "novel", "novels"])) scores.comics = 4;
   if (hasSpectacleToken) scores.spectacle = 4;
   if (hasAnyToken(tokens, [
     "emission",
@@ -269,7 +223,7 @@ function classifyByTokens(tokens) {
     "enquete",
     "quotidien",
     "quotidienne",
-  ])) scores.shows = 4;
+  ])) scores.emissions = 4;
 
   const hasPc = hasAnyToken(tokens, ["pc", "windows", "win32", "win64"]);
   const hasGame = hasAnyToken(tokens, ["jeu", "jeux", "game", "games"]);
@@ -283,16 +237,21 @@ function classifyByTokens(tokens) {
   const maxScore = Math.max(...Object.values(scores));
   if (maxScore < 3) return null;
 
-  return UNIFIED_PRIORITY.find((key) => scores[key] === maxScore) || null;
+  return CATEGORY_CLASSIFICATION_PRIORITY.find((key) => scores[key] === maxScore) || null;
 }
 
 function classifyById(id, tokens) {
   if (!Number.isFinite(id)) return null;
 
   if (id === 5070) return "anime";
+  if (id >= 3000 && id < 4000) return "audio";
   if (id >= 2000 && id < 3000) return "films";
   if (id >= 5000 && id < 6000) return "series";
   if (id === 4050) return "games";
+  if (id >= 7000 && id < 8000) {
+    if (id >= 7030 && id < 7040) return "comics";
+    return "books";
+  }
   if (id >= 4000 && id < 5000) {
     if (hasAnyToken(tokens, ["jeu", "jeux", "game", "games", "pc", "windows"])) return "games";
   }
@@ -355,19 +314,22 @@ export function decorateCategories(categories, context = {}) {
       if (!Number.isFinite(id) || !name) return null;
 
       const existingKey = String(cat.unifiedKey || "").trim().toLowerCase();
-      if (existingKey) {
+      const normalizedExistingKey =
+        normalizeCategoryGroupKey(existingKey) || (existingKey === "other" ? "other" : null);
+      if (normalizedExistingKey) {
         return {
           ...cat,
           id,
           name,
-          unifiedKey: existingKey,
-          unifiedLabel: cat.unifiedLabel || UNIFIED_LABELS[existingKey] || existingKey,
+          unifiedKey: normalizedExistingKey,
+          unifiedLabel: cat.unifiedLabel || UNIFIED_LABELS[normalizedExistingKey] || normalizedExistingKey,
         };
       }
 
       const tokens = tokenizeLabel(name);
       const normalizedId = normalizeCategoryId(id);
-      const legacyKey = legacyMap ? (legacyMap[id] || legacyMap[normalizedId]) : null;
+      const legacyKeyRaw = legacyMap ? (legacyMap[id] || legacyMap[normalizedId]) : null;
+      const legacyKey = normalizeCategoryGroupKey(legacyKeyRaw) || (legacyKeyRaw === "other" ? "other" : null);
       const byId = classifyById(normalizedId, tokens);
       const byLabel = classifyByTokens(tokens);
       const unifiedKey = legacyKey || byId || byLabel || "other";
@@ -383,20 +345,4 @@ export function decorateCategories(categories, context = {}) {
     .filter(Boolean);
 }
 
-export function applyRecommendedFilter(categories, context = {}) {
-  const decorated = decorateCategories(categories, context);
-  const recommendedKeys = new Set(["films", "series", "anime", "games", "spectacle", "shows"]);
-  const filtered = decorated.filter((cat) => {
-    const unifiedKey = String(cat.unifiedKey || "");
-    if (!recommendedKeys.has(unifiedKey)) return false;
-    const tokens = tokenizeLabel(cat.name);
-    if (unifiedKey === "games") {
-      if (!isPcWindowsGameTokens(tokens)) return false;
-      return !isBlacklistedTokens(tokens, ["windows", "win32", "win64"]);
-    }
-    return !isBlacklistedTokens(tokens);
-  });
-  return { decorated, filtered };
-}
-
-export { UNIFIED_LABELS, UNIFIED_PRIORITY };
+export { UNIFIED_LABELS };

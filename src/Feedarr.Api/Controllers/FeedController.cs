@@ -21,6 +21,84 @@ public sealed class FeedController : ControllerBase
     private static readonly TimeSpan TopCacheDuration = TimeSpan.FromSeconds(20);
     private static readonly Regex SearchTokenRegex = new(@"[a-zA-Z0-9_-]+", RegexOptions.Compiled);
     private const int MaxFtsTokenLength = 64;
+    private static readonly string[] TopCategoryKeys =
+    {
+        "films",
+        "series",
+        "animation",
+        "anime",
+        "games",
+        "emissions",
+        "spectacle",
+        "audio",
+        "books",
+        "comics"
+    };
+    private const string UnifiedCategoryToKeySql =
+        "CASE releases.unified_category " +
+        "WHEN 'Film' THEN 'films' " +
+        "WHEN 'Serie' THEN 'series' " +
+        "WHEN 'Emission' THEN 'emissions' " +
+        "WHEN 'Spectacle' THEN 'spectacle' " +
+        "WHEN 'JeuWindows' THEN 'games' " +
+        "WHEN 'Animation' THEN 'animation' " +
+        "WHEN 'Anime' THEN 'anime' " +
+        "WHEN 'Audio' THEN 'audio' " +
+        "WHEN 'Book' THEN 'books' " +
+        "WHEN 'Comic' THEN 'comics' " +
+        "ELSE NULL END";
+    private const string MappingKeyToCanonicalSql =
+        "CASE lower(trim(COALESCE(scm.group_key, ''))) " +
+        "WHEN '' THEN NULL " +
+        "WHEN 'movie' THEN 'films' " +
+        "WHEN 'movies' THEN 'films' " +
+        "WHEN 'film' THEN 'films' " +
+        "WHEN 'films' THEN 'films' " +
+        "WHEN 'tv' THEN 'series' " +
+        "WHEN 'serie' THEN 'series' " +
+        "WHEN 'series' THEN 'series' " +
+        "WHEN 'show' THEN 'emissions' " +
+        "WHEN 'shows' THEN 'emissions' " +
+        "WHEN 'emission' THEN 'emissions' " +
+        "WHEN 'emissions' THEN 'emissions' " +
+        "WHEN 'game' THEN 'games' " +
+        "WHEN 'games' THEN 'games' " +
+        "WHEN 'book' THEN 'books' " +
+        "WHEN 'books' THEN 'books' " +
+        "WHEN 'comic' THEN 'comics' " +
+        "WHEN 'comics' THEN 'comics' " +
+        "WHEN 'animation' THEN 'animation' " +
+        "WHEN 'anime' THEN 'anime' " +
+        "WHEN 'audio' THEN 'audio' " +
+        "WHEN 'spectacle' THEN 'spectacle' " +
+        "ELSE lower(trim(scm.group_key)) END";
+    private const string LegacySourceCategoryKeyToCanonicalSql =
+        "CASE lower(trim(COALESCE(sc.unified_key, ''))) " +
+        "WHEN '' THEN NULL " +
+        "WHEN 'movie' THEN 'films' " +
+        "WHEN 'movies' THEN 'films' " +
+        "WHEN 'film' THEN 'films' " +
+        "WHEN 'films' THEN 'films' " +
+        "WHEN 'tv' THEN 'series' " +
+        "WHEN 'serie' THEN 'series' " +
+        "WHEN 'series' THEN 'series' " +
+        "WHEN 'show' THEN 'emissions' " +
+        "WHEN 'shows' THEN 'emissions' " +
+        "WHEN 'emission' THEN 'emissions' " +
+        "WHEN 'emissions' THEN 'emissions' " +
+        "WHEN 'game' THEN 'games' " +
+        "WHEN 'games' THEN 'games' " +
+        "WHEN 'book' THEN 'books' " +
+        "WHEN 'books' THEN 'books' " +
+        "WHEN 'comic' THEN 'comics' " +
+        "WHEN 'comics' THEN 'comics' " +
+        "WHEN 'animation' THEN 'animation' " +
+        "WHEN 'anime' THEN 'anime' " +
+        "WHEN 'audio' THEN 'audio' " +
+        "WHEN 'spectacle' THEN 'spectacle' " +
+        "ELSE lower(trim(sc.unified_key)) END";
+    private const string EffectiveTopCategoryKeySql =
+        "COALESCE(" + UnifiedCategoryToKeySql + ", " + MappingKeyToCanonicalSql + ", " + LegacySourceCategoryKeyToCanonicalSql + ")";
 
     public FeedController(Db db, UnifiedCategoryService unified, IMemoryCache cache)
     {
@@ -370,7 +448,7 @@ public sealed class FeedController : ControllerBase
         foreach (var row in rows)
         {
             var hasMappedKey = !string.IsNullOrWhiteSpace(row.UnifiedCategoryKey);
-            if (hasMappedKey && string.IsNullOrWhiteSpace(row.UnifiedCategoryLabel) &&
+            if (hasMappedKey &&
                 UnifiedCategoryMappings.TryParseKey(row.UnifiedCategoryKey, out var mappedFromKey))
             {
                 row.UnifiedCategoryLabel = UnifiedCategoryMappings.ToLabel(mappedFromKey);
@@ -385,7 +463,7 @@ public sealed class FeedController : ControllerBase
             else
             {
                 var unified = _unified.Get(row.CategoryName, row.TitleClean ?? row.Title);
-                var overrideKey = unified?.Key is "shows" or "spectacle";
+                var overrideKey = unified?.Key is "shows" or "spectacle" or "audio" or "books" or "comics";
 
                 if (!hasMappedKey && (overrideKey || string.IsNullOrWhiteSpace(row.UnifiedCategoryKey)))
                 {
@@ -412,6 +490,20 @@ public sealed class FeedController : ControllerBase
 
         var topWhere = GetTopSortWhereClause(topSort);
         var topOrder = GetTopSortOrderClause(topSort);
+        var topWhereProjected = topSort switch
+        {
+            "rating" => "normalizedRating IS NOT NULL AND normalizedRating > 0",
+            "downloads" => "grabs IS NOT NULL AND grabs > 0",
+            "recent" => "1=1",
+            _ => "seeders IS NOT NULL AND seeders > 0"
+        };
+        var topOrderProjected = topSort switch
+        {
+            "rating" => "normalizedRating DESC, ratingVotesSort DESC, seeders DESC, publishedAt DESC",
+            "downloads" => "grabs DESC, seeders DESC, publishedAt DESC",
+            "recent" => "publishedAt DESC, seeders DESC",
+            _ => "seeders DESC, publishedAt DESC"
+        };
 
         using var conn = _db.Open();
         var hasCategories = conn.ExecuteScalar<long>(
@@ -427,7 +519,6 @@ public sealed class FeedController : ControllerBase
             });
         }
 
-        var categories = new[] { "films", "series", "anime", "games", "shows", "spectacle" };
         var result = new Dictionary<string, object>
         {
             ["sortBy"] = topSort
@@ -462,8 +553,8 @@ public sealed class FeedController : ControllerBase
           spec_category_id as specCategoryId,
           category_ids as categoryIds,
           releases.unified_category as unifiedCategory,
-          sc.unified_key as unifiedCategoryKey,
-          sc.unified_label as unifiedCategoryLabel,
+          ({EffectiveTopCategoryKeySql}) as unifiedCategoryKey,
+          COALESCE(scm.group_label, sc.unified_label) as unifiedCategoryLabel,
           seen,
           ('/api/releases/' || releases.id || '/download') as downloadPath,
           releases.entity_id as entityId,
@@ -500,8 +591,10 @@ public sealed class FeedController : ControllerBase
         FROM releases
         LEFT JOIN media_entities me
           ON me.id = releases.entity_id
-        INNER JOIN source_categories sc
+        LEFT JOIN source_categories sc
           ON sc.source_id = releases.source_id AND sc.cat_id = releases.category_id
+        LEFT JOIN source_category_mappings scm
+          ON scm.source_id = releases.source_id AND scm.cat_id = releases.category_id
         LEFT JOIN release_arr_status ras
           ON ras.release_id = releases.id
         WHERE {topWhere}
@@ -518,6 +611,11 @@ public sealed class FeedController : ControllerBase
         foreach (var row in globalRows)
         {
             var hasMappedKey = !string.IsNullOrWhiteSpace(row.UnifiedCategoryKey);
+            if (hasMappedKey &&
+                UnifiedCategoryMappings.TryParseKey(row.UnifiedCategoryKey, out var mappedFromKey))
+            {
+                row.UnifiedCategoryLabel = UnifiedCategoryMappings.ToLabel(mappedFromKey);
+            }
             if (!hasMappedKey &&
                 UnifiedCategoryMappings.TryParse(row.UnifiedCategory, out var unifiedCategory) &&
                 unifiedCategory != UnifiedCategory.Autre)
@@ -528,7 +626,7 @@ public sealed class FeedController : ControllerBase
             else
             {
                 var unified = _unified.Get(row.CategoryName, row.TitleClean ?? row.Title);
-                var overrideKey = unified?.Key is "shows" or "spectacle";
+                var overrideKey = unified?.Key is "shows" or "spectacle" or "audio" or "books" or "comics";
                 if (!hasMappedKey && (overrideKey || string.IsNullOrWhiteSpace(row.UnifiedCategoryKey)))
                 {
                     row.UnifiedCategoryKey = unified?.Key;
@@ -538,15 +636,18 @@ public sealed class FeedController : ControllerBase
         }
         result["global"] = globalRows;
 
-        // Top par catégorie
-        var byCategory = new Dictionary<string, object>();
-        foreach (var cat in categories)
-        {
-            var catWhere = sourceId.HasValue
-                ? "sc.source_id = @sid AND sc.unified_key = @cat"
-                : "sc.unified_key = @cat";
+        // Top par catégorie (single round-trip with window function per category key)
+        var byCategory = TopCategoryKeys.ToDictionary(
+            key => key,
+            _ => new List<FeedRow>(),
+            StringComparer.OrdinalIgnoreCase);
 
-            var catSql = $"""
+        var sourceFilterSql = sourceId.HasValue
+            ? "releases.source_id = @sid AND "
+            : string.Empty;
+
+        var byCategorySql = $"""
+        WITH categorized AS (
             SELECT
               releases.id as id,
               releases.source_id as sourceId,
@@ -571,8 +672,8 @@ public sealed class FeedController : ControllerBase
               spec_category_id as specCategoryId,
               category_ids as categoryIds,
               releases.unified_category as unifiedCategory,
-              sc.unified_key as unifiedCategoryKey,
-              sc.unified_label as unifiedCategoryLabel,
+              ({EffectiveTopCategoryKeySql}) as topCategoryKey,
+              COALESCE(scm.group_label, sc.unified_label) as unifiedCategoryLabel,
               seen,
               ('/api/releases/' || releases.id || '/download') as downloadPath,
               releases.entity_id as entityId,
@@ -581,81 +682,158 @@ public sealed class FeedController : ControllerBase
                        AND COALESCE(releases.poster_file, me.poster_file) <> ''
                   THEN ('/api/posters/release/' || releases.id || '?v=' || COALESCE(releases.poster_updated_at_ts, me.poster_updated_at_ts, 0))
                   ELSE NULL
-              END as posterUrl
-              ,COALESCE(releases.poster_updated_at_ts, me.poster_updated_at_ts, 0) as posterUpdatedAtTs
-              ,poster_last_error as posterLastError
-              ,poster_last_attempt_ts as posterLastAttemptTs
-              ,COALESCE(me.ext_overview, releases.ext_overview) as overview
-              ,COALESCE(me.ext_tagline, releases.ext_tagline) as tagline
-              ,COALESCE(me.ext_genres, releases.ext_genres) as genres
-              ,COALESCE(me.ext_release_date, releases.ext_release_date) as releaseDate
-              ,CAST(COALESCE(me.ext_runtime_minutes, releases.ext_runtime_minutes) AS INTEGER) as runtimeMinutes
-              ,COALESCE(me.ext_rating, releases.ext_rating) as rating
-              ,CAST(COALESCE(me.ext_votes, releases.ext_votes) AS INTEGER) as ratingVotes
-              ,COALESCE(me.ext_provider, releases.ext_provider) as detailsProvider
-              ,COALESCE(me.ext_provider_id, releases.ext_provider_id) as detailsProviderId
-              ,COALESCE(me.ext_updated_at_ts, releases.ext_updated_at_ts) as detailsUpdatedAtTs
-              ,COALESCE(me.ext_directors, releases.ext_directors) as directors
-              ,COALESCE(me.ext_writers, releases.ext_writers) as writers
-              ,COALESCE(me.ext_cast, releases.ext_cast) as cast
-              ,CAST(COALESCE(me.tmdb_id, releases.tmdb_id) AS INTEGER) as tmdbId
-              ,CAST(COALESCE(me.tvdb_id, releases.tvdb_id) AS INTEGER) as tvdbId
-              ,ras.in_sonarr as isInSonarr
-              ,ras.in_radarr as isInRadarr
-              ,ras.sonarr_url as sonarrUrl
-              ,ras.radarr_url as radarrUrl
-              ,COALESCE(ras.sonarr_url, ras.radarr_url) as openUrl
-              ,ras.checked_at_ts as arrCheckedAtTs
+              END as posterUrl,
+              COALESCE(releases.poster_updated_at_ts, me.poster_updated_at_ts, 0) as posterUpdatedAtTs,
+              poster_last_error as posterLastError,
+              poster_last_attempt_ts as posterLastAttemptTs,
+              COALESCE(me.ext_overview, releases.ext_overview) as overview,
+              COALESCE(me.ext_tagline, releases.ext_tagline) as tagline,
+              COALESCE(me.ext_genres, releases.ext_genres) as genres,
+              COALESCE(me.ext_release_date, releases.ext_release_date) as releaseDate,
+              CAST(COALESCE(me.ext_runtime_minutes, releases.ext_runtime_minutes) AS INTEGER) as runtimeMinutes,
+              COALESCE(me.ext_rating, releases.ext_rating) as rating,
+              CAST(COALESCE(me.ext_votes, releases.ext_votes) AS INTEGER) as ratingVotes,
+              COALESCE(me.ext_provider, releases.ext_provider) as detailsProvider,
+              COALESCE(me.ext_provider_id, releases.ext_provider_id) as detailsProviderId,
+              COALESCE(me.ext_updated_at_ts, releases.ext_updated_at_ts) as detailsUpdatedAtTs,
+              COALESCE(me.ext_directors, releases.ext_directors) as directors,
+              COALESCE(me.ext_writers, releases.ext_writers) as writers,
+              COALESCE(me.ext_cast, releases.ext_cast) as cast,
+              CAST(COALESCE(me.tmdb_id, releases.tmdb_id) AS INTEGER) as tmdbId,
+              CAST(COALESCE(me.tvdb_id, releases.tvdb_id) AS INTEGER) as tvdbId,
+              ras.in_sonarr as isInSonarr,
+              ras.in_radarr as isInRadarr,
+              ras.sonarr_url as sonarrUrl,
+              ras.radarr_url as radarrUrl,
+              COALESCE(ras.sonarr_url, ras.radarr_url) as openUrl,
+              ras.checked_at_ts as arrCheckedAtTs,
+              {NormalizedRatingExpr} as normalizedRating,
+              CAST(COALESCE(me.ext_votes, releases.ext_votes, 0) AS INTEGER) as ratingVotesSort
             FROM releases
             LEFT JOIN media_entities me
               ON me.id = releases.entity_id
-            INNER JOIN source_categories sc
+            LEFT JOIN source_categories sc
               ON sc.source_id = releases.source_id AND sc.cat_id = releases.category_id
+            LEFT JOIN source_category_mappings scm
+              ON scm.source_id = releases.source_id AND scm.cat_id = releases.category_id
             LEFT JOIN release_arr_status ras
               ON ras.release_id = releases.id
-            WHERE {catWhere}
-              AND {topWhere}
+            WHERE {sourceFilterSql}({EffectiveTopCategoryKeySql}) IN @cats
               AND published_at_ts >= @minTs
-            ORDER BY {topOrder}
-            LIMIT @lim;
-            """;
+        ),
+        filtered AS (
+            SELECT *
+            FROM categorized
+            WHERE {topWhereProjected}
+        ),
+        ranked AS (
+            SELECT *,
+                   ROW_NUMBER() OVER (PARTITION BY topCategoryKey ORDER BY {topOrderProjected}) as rn
+            FROM filtered
+        )
+        SELECT
+            id,
+            sourceId,
+            title,
+            titleClean,
+            year,
+            season,
+            episode,
+            resolution,
+            source,
+            codec,
+            releaseGroup,
+            mediaType,
+            seeders,
+            leechers,
+            grabs,
+            sizeBytes,
+            publishedAt,
+            categoryId,
+            categoryName,
+            stdCategoryId,
+            specCategoryId,
+            categoryIds,
+            unifiedCategory,
+            topCategoryKey as unifiedCategoryKey,
+            unifiedCategoryLabel,
+            seen,
+            downloadPath,
+            entityId,
+            posterUrl,
+            posterUpdatedAtTs,
+            posterLastError,
+            posterLastAttemptTs,
+            overview,
+            tagline,
+            genres,
+            releaseDate,
+            runtimeMinutes,
+            rating,
+            ratingVotes,
+            detailsProvider,
+            detailsProviderId,
+            detailsUpdatedAtTs,
+            directors,
+            writers,
+            "cast",
+            tmdbId,
+            tvdbId,
+            isInSonarr,
+            isInRadarr,
+            sonarrUrl,
+            radarrUrl,
+            openUrl,
+            arrCheckedAtTs
+        FROM ranked
+        WHERE rn <= @lim
+        ORDER BY unifiedCategoryKey, rn;
+        """;
 
-            var catArgs = new DynamicParameters();
-            catArgs.Add("cat", cat);
-            catArgs.Add("lim", lim);
-            catArgs.Add("minTs", twentyFourHoursAgo);
-            if (sourceId.HasValue) catArgs.Add("sid", sourceId.Value);
+        var byCategoryArgs = new DynamicParameters();
+        byCategoryArgs.Add("cats", TopCategoryKeys);
+        byCategoryArgs.Add("lim", lim);
+        byCategoryArgs.Add("minTs", twentyFourHoursAgo);
+        if (sourceId.HasValue) byCategoryArgs.Add("sid", sourceId.Value);
 
-            var catRows = conn.Query<FeedRow>(catSql, catArgs).ToList();
-            foreach (var row in catRows)
+        var byCategoryRows = conn.Query<FeedRow>(byCategorySql, byCategoryArgs).ToList();
+        foreach (var row in byCategoryRows)
+        {
+            var hasMappedKey = !string.IsNullOrWhiteSpace(row.UnifiedCategoryKey);
+            if (hasMappedKey &&
+                UnifiedCategoryMappings.TryParseKey(row.UnifiedCategoryKey, out var mappedFromKey))
             {
-                var hasMappedKey = !string.IsNullOrWhiteSpace(row.UnifiedCategoryKey);
-                if (hasMappedKey && string.IsNullOrWhiteSpace(row.UnifiedCategoryLabel) &&
-                    UnifiedCategoryMappings.TryParseKey(row.UnifiedCategoryKey, out var mappedFromKey))
+                row.UnifiedCategoryLabel = UnifiedCategoryMappings.ToLabel(mappedFromKey);
+            }
+            if (!hasMappedKey &&
+                UnifiedCategoryMappings.TryParse(row.UnifiedCategory, out var unifiedCategory) &&
+                unifiedCategory != UnifiedCategory.Autre)
+            {
+                row.UnifiedCategoryKey = UnifiedCategoryMappings.ToKey(unifiedCategory);
+                row.UnifiedCategoryLabel = UnifiedCategoryMappings.ToLabel(unifiedCategory);
+            }
+            else
+            {
+                var unified = _unified.Get(row.CategoryName, row.TitleClean ?? row.Title);
+                var overrideKey = unified?.Key is "shows" or "spectacle" or "audio" or "books" or "comics";
+                if (!hasMappedKey && (overrideKey || string.IsNullOrWhiteSpace(row.UnifiedCategoryKey)))
                 {
-                    row.UnifiedCategoryLabel = UnifiedCategoryMappings.ToLabel(mappedFromKey);
-                }
-                if (!hasMappedKey &&
-                    UnifiedCategoryMappings.TryParse(row.UnifiedCategory, out var unifiedCategory) &&
-                    unifiedCategory != UnifiedCategory.Autre)
-                {
-                    row.UnifiedCategoryKey = UnifiedCategoryMappings.ToKey(unifiedCategory);
-                    row.UnifiedCategoryLabel = UnifiedCategoryMappings.ToLabel(unifiedCategory);
-                }
-                else
-                {
-                    var unified = _unified.Get(row.CategoryName, row.TitleClean ?? row.Title);
-                    var overrideKey = unified?.Key is "shows" or "spectacle";
-                    if (!hasMappedKey && (overrideKey || string.IsNullOrWhiteSpace(row.UnifiedCategoryKey)))
-                    {
-                        row.UnifiedCategoryKey = unified?.Key;
-                        row.UnifiedCategoryLabel = unified?.Label;
-                    }
+                    row.UnifiedCategoryKey = unified?.Key;
+                    row.UnifiedCategoryLabel = unified?.Label;
                 }
             }
-            byCategory[cat] = catRows;
+
+            if (!string.IsNullOrWhiteSpace(row.UnifiedCategoryKey) &&
+                byCategory.TryGetValue(row.UnifiedCategoryKey, out var bucket))
+            {
+                bucket.Add(row);
+            }
         }
-        result["byCategory"] = byCategory;
+
+        result["byCategory"] = byCategory.ToDictionary(
+            kvp => kvp.Key,
+            kvp => (object)kvp.Value,
+            StringComparer.OrdinalIgnoreCase);
 
         _cache.Set(cacheKey, result, TopCacheDuration);
         return Ok(result);

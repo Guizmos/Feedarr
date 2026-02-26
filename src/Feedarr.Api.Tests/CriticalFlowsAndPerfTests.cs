@@ -150,19 +150,28 @@ public sealed class CriticalFlowsAndPerfTests
             NullLogger<BackupService>.Instance);
         backup.InitializeForStartup();
 
+        var appOptions = OptionsFactory.Create(new AppOptions
+        {
+            DataDir = workspace.DataDir,
+            DbFileName = "feedarr.db"
+        });
+        var storageCache = new StorageUsageCacheService(
+            new MemoryCache(new MemoryCacheOptions()),
+            new TestWebHostEnvironment(workspace.RootDir),
+            appOptions,
+            db,
+            NullLogger<StorageUsageCacheService>.Instance);
+
         var system = new SystemController(
             db,
             new TestWebHostEnvironment(workspace.RootDir),
-            OptionsFactory.Create(new AppOptions
-            {
-                DataDir = workspace.DataDir,
-                DbFileName = "feedarr.db"
-            }),
             settings,
-            new ProviderStatsService(new StatsRepository(db)),
+            new ProviderStatsService(new StatsRepository(db, new MemoryCache(new MemoryCacheOptions()))),
             new ApiRequestMetricsService(),
             backup,
             new MemoryCache(new MemoryCacheOptions()),
+            new SetupStateService(settings, new MemoryCache(new MemoryCacheOptions())),
+            storageCache,
             NullLogger<SystemController>.Instance);
 
         var before = Assert.IsType<OkObjectResult>(system.Onboarding());

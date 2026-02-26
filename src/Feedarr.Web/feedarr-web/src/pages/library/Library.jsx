@@ -11,6 +11,7 @@ import { triggerPosterPolling } from "@hooks/usePosterPollingService.js";
 import { normalizeRequestMode } from "@utils/appTypes.js";
 import { LayoutGrid } from "lucide-react";
 import { getActiveUiLanguage } from "../../app/locale.js";
+import { normalizeCategoryGroupKey } from "../../domain/categories/index.js";
 
 // Local imports
 import { fmtBytes, fmtDateFromTs } from "./utils/formatters.js";
@@ -841,7 +842,18 @@ export default function Library() {
     const it = (items || []).find((x) => x.id === id);
     if (!it) return;
     const q = it.titleClean?.trim() ? it.titleClean : it.title;
-    const nextMediaType = isGameCategoryKey(it.unifiedCategoryKey) ? "game" : (it.mediaType || "");
+    const rawMediaType = String(it.mediaType || "").trim().toLowerCase();
+    const unifiedKey = normalizeCategoryGroupKey(it.unifiedCategoryKey);
+    let nextMediaType = rawMediaType;
+    if (!nextMediaType || nextMediaType === "unknown") {
+      if (isGameCategoryKey(unifiedKey)) nextMediaType = "game";
+      else if (unifiedKey === "audio") nextMediaType = "audio";
+      else if (unifiedKey === "books" || unifiedKey === "book") nextMediaType = "book";
+      else if (unifiedKey === "comics" || unifiedKey === "comic") nextMediaType = "comic";
+      else if (unifiedKey === "anime") nextMediaType = "anime";
+      else if (unifiedKey === "series" || unifiedKey === "emissions") nextMediaType = "series";
+      else nextMediaType = "movie";
+    }
     setManualTarget(it);
     setManualQuery(q || "");
     setManualResults([]);
@@ -869,6 +881,30 @@ export default function Library() {
         const posterPath = result.posterPath || result.posterUrl;
         if (!posterPath) return;
         payload = { provider: "igdb", igdbId: result.igdbId, posterPath };
+      } else if (provider === "theaudiodb") {
+        const posterPath = result.posterPath || result.posterUrl;
+        if (!posterPath) return;
+        payload = { provider: "theaudiodb", providerId: result.providerId || null, posterPath };
+      } else if (provider === "googlebooks") {
+        const posterPath = result.posterPath || result.posterUrl;
+        if (!posterPath) return;
+        payload = { provider: "googlebooks", providerId: result.providerId || null, posterPath };
+      } else if (provider === "comicvine") {
+        const posterPath = result.posterPath || result.posterUrl;
+        if (!posterPath) return;
+        payload = { provider: "comicvine", providerId: result.providerId || null, posterPath };
+      } else if (provider === "musicbrainz") {
+        const posterPath = result.posterPath || result.posterUrl;
+        if (!posterPath) return;
+        payload = { provider: "musicbrainz", providerId: result.providerId || null, posterPath };
+      } else if (provider === "openlibrary") {
+        const posterPath = result.posterPath || result.posterUrl;
+        if (!posterPath) return;
+        payload = { provider: "openlibrary", providerId: result.providerId || null, posterPath };
+      } else if (provider === "rawg") {
+        const posterPath = result.posterPath || result.posterUrl;
+        if (!posterPath) return;
+        payload = { provider: "rawg", providerId: result.providerId || null, posterPath };
       } else {
         if (!result.posterPath) return;
         payload = { provider: "tmdb", tmdbId: result.tmdbId, posterPath: result.posterPath };

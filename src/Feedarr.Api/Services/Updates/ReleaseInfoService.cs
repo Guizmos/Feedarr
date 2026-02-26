@@ -26,6 +26,12 @@ public sealed record UpdateCheckResult(
 
 public sealed class ReleaseInfoService
 {
+    private enum ReleaseTrack
+    {
+        Stable,
+        Prerelease
+    }
+
     private const string CacheKey = "updates:latest-release:v1";
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -74,12 +80,12 @@ public sealed class ReleaseInfoService
         var cached = _cache.Get<CachedReleaseState>(CacheKey);
         if (!forceRefresh && cached is not null && now < cached.ExpiresAtUtc)
         {
-            return BuildResult(cfg, currentVersion, cached.LatestRelease, cached.Releases);
+            return BuildResult(cfg, currentVersion, cached.Releases);
         }
 
-        if (!forceRefresh && now < _circuitOpenUntil && (cached?.LatestRelease is not null || cached?.Releases?.Count > 0))
+        if (!forceRefresh && now < _circuitOpenUntil && cached?.Releases?.Count > 0)
         {
-            return BuildResult(cfg, currentVersion, cached.LatestRelease, cached.Releases);
+            return BuildResult(cfg, currentVersion, cached.Releases);
         }
 
         await _refreshLock.WaitAsync(ct);
@@ -89,25 +95,24 @@ public sealed class ReleaseInfoService
             cached = _cache.Get<CachedReleaseState>(CacheKey);
             if (!forceRefresh && cached is not null && now < cached.ExpiresAtUtc)
             {
-                return BuildResult(cfg, currentVersion, cached.LatestRelease, cached.Releases);
+                return BuildResult(cfg, currentVersion, cached.Releases);
             }
 
-            if (!forceRefresh && now < _circuitOpenUntil && (cached?.LatestRelease is not null || cached?.Releases?.Count > 0))
+            if (!forceRefresh && now < _circuitOpenUntil && cached?.Releases?.Count > 0)
             {
-                return BuildResult(cfg, currentVersion, cached.LatestRelease, cached.Releases);
+                return BuildResult(cfg, currentVersion, cached.Releases);
             }
 
             try
             {
                 var releases = await FetchReleasesAsync(cfg, ct);
-                var latest = SelectLatestBySemVer(releases);
-                var cacheState = new CachedReleaseState(latest, releases, now.Add(ttl));
+                var cacheState = new CachedReleaseState(releases, now.Add(ttl));
                 _cache.Set(CacheKey, cacheState, ttl);
 
                 _consecutiveFailures = 0;
                 _circuitOpenUntil = DateTimeOffset.MinValue;
 
-                return BuildResult(cfg, currentVersion, latest, releases);
+                return BuildResult(cfg, currentVersion, releases);
             }
             catch (Exception ex)
             {
@@ -115,7 +120,7 @@ public sealed class ReleaseInfoService
                 var openMinutes = Math.Min(30, Math.Max(2, _consecutiveFailures * 2));
                 _circuitOpenUntil = now.AddMinutes(openMinutes);
 
-                if (cached?.LatestRelease is not null || cached?.Releases?.Count > 0)
+                if (cached?.Releases?.Count > 0)
                 {
                     _log.LogWarning(
                         ex,
@@ -123,7 +128,7 @@ public sealed class ReleaseInfoService
                         cfg.RepoOwner,
                         cfg.RepoName,
                         _consecutiveFailures);
-                    return BuildResult(cfg, currentVersion, cached.LatestRelease, cached.Releases);
+                    return BuildResult(cfg, currentVersion, cached.Releases);
                 }
 
                 _log.LogWarning(
@@ -132,7 +137,7 @@ public sealed class ReleaseInfoService
                     cfg.RepoOwner,
                     cfg.RepoName,
                     _consecutiveFailures);
-                return BuildResult(cfg, currentVersion, null, Array.Empty<LatestReleaseInfo>());
+                return BuildResult(cfg, currentVersion, Array.Empty<LatestReleaseInfo>());
             }
         }
         finally
@@ -144,11 +149,13 @@ public sealed class ReleaseInfoService
     private UpdateCheckResult BuildResult(
         NormalizedOptions cfg,
         string currentVersion,
-        LatestReleaseInfo? latest,
         IReadOnlyList<LatestReleaseInfo> releases)
     {
+        var track = DetectTrack(currentVersion);
+        var releasesForTrack = FilterReleasesForTrack(cfg, track, releases);
+        var latest = SelectLatestBySemVer(releasesForTrack);
         var isUpdateAvailable = latest is not null
-            && ReleaseVersionComparer.IsUpdateAvailable(currentVersion, latest.TagName, cfg.AllowPrerelease);
+            && IsUpdateAvailableForTrack(currentVersion, latest.TagName, track, cfg.AllowPrerelease);
 
         return new UpdateCheckResult(
             Enabled: true,
@@ -156,7 +163,7 @@ public sealed class ReleaseInfoService
             IsUpdateAvailable: isUpdateAvailable,
             CheckIntervalHours: cfg.CheckIntervalHours,
             LatestRelease: latest,
-            Releases: releases);
+            Releases: releasesForTrack);
     }
 
     private async Task<IReadOnlyList<LatestReleaseInfo>> FetchReleasesAsync(NormalizedOptions cfg, CancellationToken ct)
@@ -177,8 +184,6 @@ public sealed class ReleaseInfoService
             if (item is null || item.Draft)
                 continue;
             if (!ReleaseVersionComparer.TryParse(item.TagName, out _))
-                continue;
-            if (!cfg.AllowPrerelease && item.Prerelease)
                 continue;
 
             items.Add(ToLatestReleaseInfo(item));
@@ -278,26 +283,116 @@ public sealed class ReleaseInfoService
             GitHubToken: string.IsNullOrWhiteSpace(source.GitHubToken) ? null : source.GitHubToken.Trim());
     }
 
+    private static IReadOnlyList<LatestReleaseInfo> FilterReleasesForTrack(
+        NormalizedOptions cfg,
+        ReleaseTrack track,
+        IReadOnlyList<LatestReleaseInfo> releases)
+    {
+        if (releases is null || releases.Count == 0)
+            return Array.Empty<LatestReleaseInfo>();
+
+        var selected = new List<LatestReleaseInfo>(releases.Count);
+
+        foreach (var release in releases)
+        {
+            if (!ReleaseVersionComparer.TryParse(release.TagName, out var parsed))
+                continue;
+
+            var isPrerelease = parsed.IsPrerelease || release.IsPrerelease;
+            if (track == ReleaseTrack.Prerelease)
+            {
+                if (isPrerelease)
+                    selected.Add(release);
+                continue;
+            }
+
+            if (cfg.AllowPrerelease || !isPrerelease)
+                selected.Add(release);
+        }
+
+        return selected;
+    }
+
+    private static bool IsUpdateAvailableForTrack(
+        string currentVersion,
+        string? latestVersion,
+        ReleaseTrack track,
+        bool allowPrerelease)
+    {
+        if (!ReleaseVersionComparer.TryParse(currentVersion, out var current))
+            return false;
+        if (!ReleaseVersionComparer.TryParse(latestVersion, out var latest))
+            return false;
+
+        if (track == ReleaseTrack.Prerelease)
+        {
+            if (!latest.IsPrerelease)
+                return false;
+        }
+        else if (!allowPrerelease && latest.IsPrerelease)
+        {
+            return false;
+        }
+
+        return ReleaseVersionComparer.Compare(latest, current) > 0;
+    }
+
+    private static ReleaseTrack DetectTrack(string currentVersion)
+    {
+        if (IsBetaTrackVersion(currentVersion))
+            return ReleaseTrack.Prerelease;
+
+        if (ReleaseVersionComparer.TryParse(currentVersion, out var parsed))
+            return parsed.IsPrerelease ? ReleaseTrack.Prerelease : ReleaseTrack.Stable;
+
+        return ReleaseTrack.Stable;
+    }
+
     private static string ResolveCurrentVersion()
     {
         var envVersion = Environment.GetEnvironmentVariable("FEEDARR_VERSION");
-        if (ReleaseVersionComparer.TryParse(envVersion, out var env))
-            return $"{env.Major}.{env.Minor}.{env.Patch}";
+        if (TryResolveVersion(envVersion, out var resolvedEnv))
+            return resolvedEnv;
 
         var asm = typeof(Program).Assembly;
         var infoVersion = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
-        if (ReleaseVersionComparer.TryParse(infoVersion, out var info))
-            return $"{info.Major}.{info.Minor}.{info.Patch}";
+        if (TryResolveVersion(infoVersion, out var resolvedInfo))
+            return resolvedInfo;
 
         var asmVersion = asm.GetName().Version?.ToString();
-        if (ReleaseVersionComparer.TryParse(asmVersion, out var ver))
-            return $"{ver.Major}.{ver.Minor}.{ver.Patch}";
+        if (TryResolveVersion(asmVersion, out var resolvedAsm))
+            return resolvedAsm;
 
         return "0.0.0";
     }
 
+    private static bool TryResolveVersion(string? rawValue, out string version)
+    {
+        version = "";
+        if (string.IsNullOrWhiteSpace(rawValue))
+            return false;
+
+        var trimmed = rawValue.Trim();
+        if (ReleaseVersionComparer.TryParse(trimmed, out var semVer))
+        {
+            version = ReleaseVersionComparer.ToCanonicalString(semVer);
+            return true;
+        }
+
+        if (IsBetaTrackVersion(trimmed))
+        {
+            version = trimmed;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsBetaTrackVersion(string? value)
+        => !string.IsNullOrWhiteSpace(value)
+        && value.Trim().StartsWith("beta-", StringComparison.OrdinalIgnoreCase);
+
     private sealed record CachedReleaseState(
-        LatestReleaseInfo? LatestRelease,
         IReadOnlyList<LatestReleaseInfo> Releases,
         DateTimeOffset ExpiresAtUtc);
 
