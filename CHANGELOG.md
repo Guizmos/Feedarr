@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.7.2](https://github.com/Guizmos/Feedarr/compare/v1.7.1...v1.7.2) (2026-02-24)
+
+
+### Bug Fixes
+
+* **docker:** remap feedarr user to PUID/PGID in entrypoint ([dbd180f](https://github.com/Guizmos/Feedarr/commit/dbd180f0290952ab92472156ab8badf96cc47658))
+
+## [1.7.1](https://github.com/Guizmos/Feedarr/compare/v1.7.0...v1.7.1) (2026-02-20)
+
+
+### Bug Fixes
+
+* ajust parsing engine ([256639f](https://github.com/Guizmos/Feedarr/commit/256639f830f93ca36e41ab818eb02a38f71aeb60))
+* button animation for détails modal ([371eb4a](https://github.com/Guizmos/Feedarr/commit/371eb4a7fd535bc45f3432cfe3cf84591860cb67))
+
 ## [1.7.0](https://github.com/Guizmos/Feedarr/compare/v1.6.3...v1.7.0) (2026-02-19)
 
 
