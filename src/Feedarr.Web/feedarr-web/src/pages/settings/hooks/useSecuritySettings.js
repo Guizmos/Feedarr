@@ -47,7 +47,8 @@ export default function useSecuritySettings() {
     !!security.passwordConfirmation;
   const isProtectedMode = security.authMode === "smart" || security.authMode === "strict";
   const isExposedConfig = isExposedPublicBaseUrl(security.publicBaseUrl);
-  const credentialsRequiredForMode = isProtectedMode && isExposedConfig;
+  const statusRequiresCredentials = isProtectedMode && !!security.authRequired && !security.authConfigured;
+  const credentialsRequiredForMode = isProtectedMode && (isExposedConfig || statusRequiresCredentials);
   const usernameMissing = credentialsRequiredForMode && !String(security.username || "").trim();
   const hasPasswordPresent = security.hasPassword || !!String(security.password || "").trim();
   const passwordMissing = credentialsRequiredForMode && !hasPasswordPresent;
@@ -59,7 +60,7 @@ export default function useSecuritySettings() {
       security.password !== security.passwordConfirmation);
   const canSave = !(usernameMissing || passwordMissing || passwordUpdateInvalid);
   const credentialsWarning =
-    "Credentials are required when AuthMode is smart/strict and instance is exposed. Set username/password or switch to open.";
+    "Credentials are required when AuthMode is smart/strict and auth is required (public URL or proxy). Set username/password or switch to open.";
 
   const setSecurity = useCallback((updater) => {
     setSecurityMessage("");

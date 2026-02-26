@@ -25,7 +25,7 @@ export default function SettingsUsers({
       <div className="settings-card__title">Authentification</div>
       {credentialsRequiredForMode && (
         <div className="onboarding__error">
-          Credentials required: in Smart/Strict mode with a non-local public URL, set username and password.
+          Credentials required: in Smart/Strict mode when auth is required (public URL or proxy), set username and password.
         </div>
       )}
       {!!securityMessage && <div className="onboarding__error">{securityMessage}</div>}

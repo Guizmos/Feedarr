@@ -378,14 +378,12 @@ public sealed class SettingsController : ControllerBase
             next.PasswordSalt = salt;
         }
 
+        var bootstrapSecret = SmartAuthPolicy.GetBootstrapSecret(_config);
         if (authMode is "smart" or "strict")
         {
-            var exposedConfig = SmartAuthPolicy.IsExposedConfig(next.PublicBaseUrl);
-            var hasCredentials =
-                !string.IsNullOrWhiteSpace(next.Username) &&
-                !string.IsNullOrWhiteSpace(next.PasswordHash) &&
-                !string.IsNullOrWhiteSpace(next.PasswordSalt);
-            if (exposedConfig && !hasCredentials)
+            var exposed = SmartAuthPolicy.IsExposedRequest(HttpContext, next);
+            var authConfiguredCandidate = SmartAuthPolicy.IsAuthConfigured(next, bootstrapSecret);
+            if (exposed && !authConfiguredCandidate)
             {
                 return BadRequest(new
                 {
@@ -397,7 +395,6 @@ public sealed class SettingsController : ControllerBase
 
         _repo.SaveSecurity(next);
         _cache.Remove(SecuritySettingsCache.CacheKey);
-        var bootstrapSecret = SmartAuthPolicy.GetBootstrapSecret(_config);
         var authConfigured = SmartAuthPolicy.IsAuthConfigured(next, bootstrapSecret);
         var effectiveAuthRequired = SmartAuthPolicy.IsAuthRequired(HttpContext, next);
         return Ok(new

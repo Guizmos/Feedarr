@@ -54,6 +54,48 @@ public sealed class SecuritySettingsValidationTests
     }
 
     [Fact]
+    public void SavingSmartWithForwardedHeadersAndNoCreds_Returns400()
+    {
+        using var fixture = new ControllerFixture();
+        var controller = fixture.CreateController(headers: new Dictionary<string, string>
+        {
+            ["X-Forwarded-Host"] = "feedarr.example.com"
+        });
+
+        var result = controller.PutSecurity(new SettingsController.SecuritySettingsDto
+        {
+            AuthMode = "smart",
+            PublicBaseUrl = "",
+            Username = "",
+            Password = "",
+            PasswordConfirmation = ""
+        });
+
+        var bad = Assert.IsType<BadRequestObjectResult>(result);
+        var payload = SerializeToElement(bad.Value);
+        Assert.Equal("credentials_required", payload.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public void SavingSmartWithoutForwardedHeadersAndEmptyPublicBaseUrl_OK()
+    {
+        using var fixture = new ControllerFixture();
+        var controller = fixture.CreateController();
+
+        var result = controller.PutSecurity(new SettingsController.SecuritySettingsDto
+        {
+            AuthMode = "smart",
+            PublicBaseUrl = "",
+            Username = "",
+            Password = "",
+            PasswordConfirmation = ""
+        });
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.NotNull(ok.Value);
+    }
+
+    [Fact]
     public void SavingSmartLocalWithoutCreds_OK()
     {
         using var fixture = new ControllerFixture();
@@ -114,7 +156,9 @@ public sealed class SecuritySettingsValidationTests
 
         public SettingsRepository Settings { get; }
 
-        public SettingsController CreateController()
+        public SettingsController CreateController(
+            string host = "localhost",
+            Dictionary<string, string>? headers = null)
         {
             var controller = new SettingsController(
                 Settings,
@@ -131,8 +175,13 @@ public sealed class SecuritySettingsValidationTests
             {
                 HttpContext = new DefaultHttpContext()
             };
-            controller.HttpContext.Request.Host = new HostString("localhost");
+            controller.HttpContext.Request.Host = new HostString(host);
             controller.HttpContext.Connection.RemoteIpAddress = System.Net.IPAddress.Loopback;
+            if (headers is not null)
+            {
+                foreach (var (key, value) in headers)
+                    controller.HttpContext.Request.Headers[key] = value;
+            }
             return controller;
         }
 

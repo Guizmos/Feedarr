@@ -65,7 +65,8 @@ export default function Step2Security({ required = false, onStatusChange }) {
 
   const isProtectedMode = form.authMode === "smart" || form.authMode === "strict";
   const isExposedConfig = isExposedPublicBaseUrl(form.publicBaseUrl);
-  const credentialsRequiredForMode = isProtectedMode && isExposedConfig;
+  const statusRequiresCredentials = isProtectedMode && !!form.authRequired && !form.authConfigured;
+  const credentialsRequiredForMode = isProtectedMode && (isExposedConfig || statusRequiresCredentials);
   const usernameMissing = credentialsRequiredForMode && !String(form.username || "").trim();
   const hasPasswordPresent = form.hasPassword || !!String(form.password || "").trim();
   const passwordMissing = credentialsRequiredForMode && !hasPasswordPresent;
@@ -78,8 +79,8 @@ export default function Step2Security({ required = false, onStatusChange }) {
   const credentialsInvalid = usernameMissing || passwordMissing || passwordUpdateInvalid;
   const validationWarning = credentialsRequiredForMode
     ? tr(
-        "Identifiants obligatoires: en mode Smart/Strict avec une URL publique non-locale, renseigne username et password.",
-        "Credentials required: in Smart/Strict mode with a non-local public URL, set username and password."
+        "Identifiants obligatoires: en mode Smart/Strict quand l'auth est requise (URL publique ou proxy), renseigne username et password.",
+        "Credentials required: in Smart/Strict mode when auth is required (public URL or proxy), set username and password."
       )
     : "";
 
