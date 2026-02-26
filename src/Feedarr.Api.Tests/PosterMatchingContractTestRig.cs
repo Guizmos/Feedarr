@@ -226,7 +226,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             Error: TryGetString(root, "error"));
     }
 
-    public PosterMatch? TryGetCachedMatch(string mediaType, string normalizedTitle, int? year, int? season = null, int? episode = null)
+    public Feedarr.Api.Services.Posters.PosterMatch? TryGetCachedMatch(string mediaType, string normalizedTitle, int? year, int? season = null, int? episode = null)
     {
         var fingerprint = PosterMatchCacheService.BuildFingerprint(
             new PosterTitleKey(mediaType, normalizedTitle, year, season, episode));
