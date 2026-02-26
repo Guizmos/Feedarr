@@ -255,11 +255,11 @@ public sealed class PosterMatchCacheService
                 season = excluded.season,
                 episode = excluded.episode,
                 ids_json = COALESCE(excluded.ids_json, poster_matches.ids_json),
-                -- COALESCE would accept 0.0 (non-null) and overwrite a good value;
-                -- use CASE WHEN so that an explicit zero is treated as "unset".
-                confidence = CASE WHEN excluded.confidence > 0
-                                  THEN excluded.confidence
-                                  ELSE poster_matches.confidence
+                -- Preserve existing confidence unless incoming value is explicitly meaningful.
+                confidence = CASE
+                                 WHEN excluded.confidence IS NOT NULL AND excluded.confidence > 0
+                                     THEN excluded.confidence
+                                 ELSE poster_matches.confidence
                              END,
                 match_source = COALESCE(excluded.match_source, poster_matches.match_source),
                 poster_file = COALESCE(excluded.poster_file, poster_matches.poster_file),

@@ -88,7 +88,7 @@ public sealed class PosterMatchCacheServiceTests
     // ── Fix 2: Upsert with confidence = 0 must not overwrite a good confidence ──
 
     [Fact]
-    public void Upsert_ZeroConfidence_PreservesExistingConfidence()
+    public void PosterMatchUpsert_DoesNotOverwriteConfidence_WhenIncomingIsZero()
     {
         var (db, workspace) = CreateDb();
         using var _ = workspace;
@@ -107,6 +107,23 @@ public sealed class PosterMatchCacheServiceTests
         var result = cache.TryGet(fp);
         Assert.NotNull(result);
         Assert.Equal(0.85, result.Confidence, precision: 6);
+    }
+
+    [Fact]
+    public void PosterMatchUpsert_OverwritesConfidence_WhenIncomingIsPositive()
+    {
+        var (db, workspace) = CreateDb();
+        using var _ = workspace;
+
+        var cache = new PosterMatchCacheService(db);
+        const string fp = "fp-positive-confidence-test";
+
+        cache.Upsert(MakePosterMatch(fp, confidence: 0.72));
+        cache.Upsert(MakePosterMatch(fp, confidence: 0.65));
+
+        var result = cache.TryGet(fp);
+        Assert.NotNull(result);
+        Assert.Equal(0.65, result.Confidence, precision: 6);
     }
 
     // ── Fix 3: UpdateExternalDetails must delete related poster_matches entry ──
