@@ -97,6 +97,37 @@ public sealed class FeedTopByCategoryTests
         Assert.True(anime.GetArrayLength() >= 1);
     }
 
+    [Fact]
+    public void Top_WhenFallbackClassifierReturnsShowsAlias_ExposesCanonicalEmissionsKey()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var sourceId = InsertSource(db, "source-fallback-shows");
+        InsertSourceCategory(db, sourceId, 9000, "Unclassified", unifiedKey: null, unifiedLabel: null);
+        InsertRelease(
+            db,
+            sourceId,
+            guid: "guid-fallback-show",
+            categoryId: 9000,
+            unifiedCategory: "",
+            seeders: 65,
+            categoryIds: "9000",
+            title: "Daily Show");
+
+        var controller = CreateController(db);
+        var action = controller.Top(sourceId: null, limit: 5, sortBy: "seeders");
+        var ok = Assert.IsType<OkObjectResult>(action);
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var global = doc.RootElement.GetProperty("global");
+        Assert.True(global.GetArrayLength() >= 1);
+
+        var first = global[0];
+        Assert.Equal("emissions", first.GetProperty("UnifiedCategoryKey").GetString());
+    }
+
     private static FeedController CreateController(Db db)
     {
         return new FeedController(
@@ -161,7 +192,8 @@ public sealed class FeedTopByCategoryTests
         int categoryId,
         string unifiedCategory,
         int seeders,
-        string categoryIds)
+        string categoryIds,
+        string? title = null)
     {
         using var conn = db.Open();
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -178,7 +210,7 @@ public sealed class FeedTopByCategoryTests
             {
                 sid = sourceId,
                 guid,
-                title = $"Release {guid}",
+                title = string.IsNullOrWhiteSpace(title) ? $"Release {guid}" : title,
                 publishedAt = now,
                 catId = categoryId,
                 unified = unifiedCategory,

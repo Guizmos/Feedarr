@@ -308,6 +308,18 @@ public sealed class SourceRepository
             );
         }
 
+        ReplaceActiveCategoryMappings(conn, tx, sourceId, normalized, now);
+
+        tx.Commit();
+    }
+
+    public void ReplaceActiveCategoryMappings(long sourceId, IEnumerable<SourceCategoryInput> cats)
+    {
+        using var conn = _db.Open();
+        using var tx = conn.BeginTransaction();
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var normalized = NormalizeCategories(cats);
+        ReplaceActiveCategoryMappings(conn, tx, sourceId, normalized, now);
         tx.Commit();
     }
 
@@ -356,8 +368,6 @@ public sealed class SourceRepository
             SELECT cat_id
             FROM source_category_mappings
             WHERE source_id = @sid
-              AND group_key IS NOT NULL
-              AND group_key <> ''
               AND cat_id > 0;
             """,
             new { sid = sourceId }
@@ -571,4 +581,73 @@ public sealed class SourceRepository
 
     private static string? NormalizeNullable(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static void ReplaceActiveCategoryMappings(
+        System.Data.IDbConnection conn,
+        System.Data.IDbTransaction tx,
+        long sourceId,
+        IReadOnlyCollection<SourceCategoryInput> normalized,
+        long now)
+    {
+        var selectedCatIds = normalized
+            .Select(c => c.Id)
+            .Distinct()
+            .ToArray();
+
+        if (selectedCatIds.Length == 0)
+        {
+            conn.Execute(
+                "DELETE FROM source_category_mappings WHERE source_id = @sid;",
+                new { sid = sourceId },
+                tx);
+            return;
+        }
+
+        conn.Execute(
+            """
+            DELETE FROM source_category_mappings
+            WHERE source_id = @sid
+              AND cat_id NOT IN @catIds;
+            """,
+            new { sid = sourceId, catIds = selectedCatIds },
+            tx);
+
+        conn.Execute(
+            """
+            INSERT INTO source_category_mappings(
+              source_id, cat_id, group_key, group_label, created_at_ts, updated_at_ts
+            )
+            VALUES (@sid, @catId, @groupKey, @groupLabel, @now, @now)
+            ON CONFLICT(source_id, cat_id) DO UPDATE SET
+              group_key = excluded.group_key,
+              group_label = excluded.group_label,
+              updated_at_ts = excluded.updated_at_ts;
+            """,
+            normalized.Select(c =>
+            {
+                var groupKey = NormalizeGroupKeyOrNull(c.UnifiedKey);
+                var groupLabel = groupKey is not null
+                    ? CategoryGroupCatalog.LabelForKey(groupKey)
+                    : NormalizeNullable(c.UnifiedLabel);
+                return new
+                {
+                    sid = sourceId,
+                    catId = c.Id,
+                    groupKey,
+                    groupLabel,
+                    now
+                };
+            }),
+            tx);
+    }
+
+    private static string? NormalizeGroupKeyOrNull(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        return TryNormalizeGroupKey(value, out var normalizedKey)
+            ? normalizedKey
+            : null;
+    }
 }

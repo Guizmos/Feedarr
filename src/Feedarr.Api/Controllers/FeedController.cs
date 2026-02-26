@@ -204,6 +204,53 @@ public sealed class FeedController : ControllerBase
         };
     }
 
+    private static string? CanonicalizeUnifiedCategoryKey(string? key)
+    {
+        return CategoryGroupCatalog.TryNormalizeKey(key, out var canonicalKey)
+            ? canonicalKey
+            : null;
+    }
+
+    private void PopulateUnifiedCategoryMetadata(FeedRow row)
+    {
+        var hasMappedKey = !string.IsNullOrWhiteSpace(row.UnifiedCategoryKey);
+        if (hasMappedKey &&
+            UnifiedCategoryMappings.TryParseKey(row.UnifiedCategoryKey, out var mappedFromKey))
+        {
+            row.UnifiedCategoryKey = UnifiedCategoryMappings.ToKey(mappedFromKey);
+            row.UnifiedCategoryLabel = UnifiedCategoryMappings.ToLabel(mappedFromKey);
+        }
+        else if (!hasMappedKey &&
+                 UnifiedCategoryMappings.TryParse(row.UnifiedCategory, out var unifiedCategory) &&
+                 unifiedCategory != UnifiedCategory.Autre)
+        {
+            row.UnifiedCategoryKey = UnifiedCategoryMappings.ToKey(unifiedCategory);
+            row.UnifiedCategoryLabel = UnifiedCategoryMappings.ToLabel(unifiedCategory);
+        }
+        else
+        {
+            var unified = _unified.Get(row.CategoryName, row.TitleClean ?? row.Title);
+            var overrideKey = unified?.Key is "shows" or "spectacle" or "audio" or "books" or "comics";
+
+            if (!hasMappedKey && (overrideKey || string.IsNullOrWhiteSpace(row.UnifiedCategoryKey)))
+            {
+                row.UnifiedCategoryKey = unified?.Key;
+                row.UnifiedCategoryLabel = unified?.Label;
+            }
+        }
+
+        var canonicalKey = CanonicalizeUnifiedCategoryKey(row.UnifiedCategoryKey);
+        if (!string.IsNullOrWhiteSpace(canonicalKey))
+        {
+            row.UnifiedCategoryKey = canonicalKey;
+            row.UnifiedCategoryLabel = CategoryGroupCatalog.LabelForKey(canonicalKey);
+        }
+        else if (!string.IsNullOrWhiteSpace(row.UnifiedCategoryKey))
+        {
+            row.UnifiedCategoryKey = null;
+        }
+    }
+
     private static string? BuildFtsQuery(string input)
     {
         if (string.IsNullOrWhiteSpace(input))
@@ -447,30 +494,7 @@ public sealed class FeedController : ControllerBase
         var rows = conn.Query<FeedRow>(sql, args).ToList();
         foreach (var row in rows)
         {
-            var hasMappedKey = !string.IsNullOrWhiteSpace(row.UnifiedCategoryKey);
-            if (hasMappedKey &&
-                UnifiedCategoryMappings.TryParseKey(row.UnifiedCategoryKey, out var mappedFromKey))
-            {
-                row.UnifiedCategoryLabel = UnifiedCategoryMappings.ToLabel(mappedFromKey);
-            }
-            if (!hasMappedKey &&
-                UnifiedCategoryMappings.TryParse(row.UnifiedCategory, out var unifiedCategory) &&
-                unifiedCategory != UnifiedCategory.Autre)
-            {
-                row.UnifiedCategoryKey = UnifiedCategoryMappings.ToKey(unifiedCategory);
-                row.UnifiedCategoryLabel = UnifiedCategoryMappings.ToLabel(unifiedCategory);
-            }
-            else
-            {
-                var unified = _unified.Get(row.CategoryName, row.TitleClean ?? row.Title);
-                var overrideKey = unified?.Key is "shows" or "spectacle" or "audio" or "books" or "comics";
-
-                if (!hasMappedKey && (overrideKey || string.IsNullOrWhiteSpace(row.UnifiedCategoryKey)))
-                {
-                    row.UnifiedCategoryKey = unified?.Key;
-                    row.UnifiedCategoryLabel = unified?.Label;
-                }
-            }
+            PopulateUnifiedCategoryMetadata(row);
         }
 
         return Ok(rows);
@@ -610,29 +634,7 @@ public sealed class FeedController : ControllerBase
         var globalRows = conn.Query<FeedRow>(globalSql, globalArgs).ToList();
         foreach (var row in globalRows)
         {
-            var hasMappedKey = !string.IsNullOrWhiteSpace(row.UnifiedCategoryKey);
-            if (hasMappedKey &&
-                UnifiedCategoryMappings.TryParseKey(row.UnifiedCategoryKey, out var mappedFromKey))
-            {
-                row.UnifiedCategoryLabel = UnifiedCategoryMappings.ToLabel(mappedFromKey);
-            }
-            if (!hasMappedKey &&
-                UnifiedCategoryMappings.TryParse(row.UnifiedCategory, out var unifiedCategory) &&
-                unifiedCategory != UnifiedCategory.Autre)
-            {
-                row.UnifiedCategoryKey = UnifiedCategoryMappings.ToKey(unifiedCategory);
-                row.UnifiedCategoryLabel = UnifiedCategoryMappings.ToLabel(unifiedCategory);
-            }
-            else
-            {
-                var unified = _unified.Get(row.CategoryName, row.TitleClean ?? row.Title);
-                var overrideKey = unified?.Key is "shows" or "spectacle" or "audio" or "books" or "comics";
-                if (!hasMappedKey && (overrideKey || string.IsNullOrWhiteSpace(row.UnifiedCategoryKey)))
-                {
-                    row.UnifiedCategoryKey = unified?.Key;
-                    row.UnifiedCategoryLabel = unified?.Label;
-                }
-            }
+            PopulateUnifiedCategoryMetadata(row);
         }
         result["global"] = globalRows;
 
@@ -799,29 +801,7 @@ public sealed class FeedController : ControllerBase
         var byCategoryRows = conn.Query<FeedRow>(byCategorySql, byCategoryArgs).ToList();
         foreach (var row in byCategoryRows)
         {
-            var hasMappedKey = !string.IsNullOrWhiteSpace(row.UnifiedCategoryKey);
-            if (hasMappedKey &&
-                UnifiedCategoryMappings.TryParseKey(row.UnifiedCategoryKey, out var mappedFromKey))
-            {
-                row.UnifiedCategoryLabel = UnifiedCategoryMappings.ToLabel(mappedFromKey);
-            }
-            if (!hasMappedKey &&
-                UnifiedCategoryMappings.TryParse(row.UnifiedCategory, out var unifiedCategory) &&
-                unifiedCategory != UnifiedCategory.Autre)
-            {
-                row.UnifiedCategoryKey = UnifiedCategoryMappings.ToKey(unifiedCategory);
-                row.UnifiedCategoryLabel = UnifiedCategoryMappings.ToLabel(unifiedCategory);
-            }
-            else
-            {
-                var unified = _unified.Get(row.CategoryName, row.TitleClean ?? row.Title);
-                var overrideKey = unified?.Key is "shows" or "spectacle" or "audio" or "books" or "comics";
-                if (!hasMappedKey && (overrideKey || string.IsNullOrWhiteSpace(row.UnifiedCategoryKey)))
-                {
-                    row.UnifiedCategoryKey = unified?.Key;
-                    row.UnifiedCategoryLabel = unified?.Label;
-                }
-            }
+            PopulateUnifiedCategoryMetadata(row);
 
             if (!string.IsNullOrWhiteSpace(row.UnifiedCategoryKey) &&
                 byCategory.TryGetValue(row.UnifiedCategoryKey, out var bucket))
