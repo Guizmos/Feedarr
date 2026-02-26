@@ -986,7 +986,6 @@ public sealed class PosterFetchService
             }
 
             var bytesTmdb = await _tmdb.DownloadPosterW500Async(selectedPosterPath, ct);
-            var posterSaved = false;
             string? posterFileFinal = null;
             if (bytesTmdb is not null && bytesTmdb.Length > 0)
             {
@@ -997,11 +996,10 @@ public sealed class PosterFetchService
                 await UpdateExternalDetailsFromTmdbAsync(id, tmdbMatch.Candidate.TmdbId, mediaType, ct);
                 var hash = ComputeSha256Hex(bytesTmdb);
                 PosterAudit.UpdateAttemptSuccess(_releases, id, "tmdb", tmdbMatch.Candidate.TmdbId.ToString(CultureInfo.InvariantCulture), null, "w500", hash);
-                posterSaved = true;
                 posterFileFinal = file;
             }
 
-            if (posterSaved && !string.IsNullOrWhiteSpace(posterFileFinal))
+            if (!string.IsNullOrWhiteSpace(posterFileFinal))
             {
                 var tmdbIds = new PosterMatchIds(tmdbMatch.Candidate.TmdbId, tvdbIdResolved, null, null, null);
                 var tmdbConfidence = AdjustConfidence(tmdbMatch.Score, ambiguity, unifiedCategory == UnifiedCategory.Emission);
@@ -1049,11 +1047,13 @@ public sealed class PosterFetchService
                     posterUrl = $"/api/posters/release/{id}"
                 }, sourceId);
             }
-
-            _logger.LogDebug(
-                "No poster saved; skip poster_match cache for {Fingerprint} {Provider}.",
-                fingerprint,
-                "tmdb");
+            else
+            {
+                _logger.LogDebug(
+                    "No poster saved; skip poster_match cache for {Fingerprint} {Provider}.",
+                    fingerprint,
+                    "tmdb");
+            }
         }
 
         // TMDB poster failed -> try Fanart.
