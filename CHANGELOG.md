@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.8.0](https://github.com/Guizmos/Feedarr/compare/v1.7.2...v1.8.0) (2026-02-26)
+
+
+### Features
+
+* IMPORTANT UPDATE - BREAKING CHANGE, monolithique bloc ([1f6e8be](https://github.com/Guizmos/Feedarr/commit/1f6e8be2a462bd3fd9ca622fa861a5d212080543))
+* **medium-low:** Swagger, correlation ID, StatsRepository cache, ProducesResponseType ([f36b95e](https://github.com/Guizmos/Feedarr/commit/f36b95e9d97d40169a11f9b54f0b77cfa1766cfd))
+* **perf:** add-response-compression — Brotli + Gzip for API and static responses ([948c4f2](https://github.com/Guizmos/Feedarr/commit/948c4f24def2ef5b3b32228f68dc5ed6755aeb5e))
+* **v2:** monolith + setup lock + security P0/P1 ([34ef3a3](https://github.com/Guizmos/Feedarr/commit/34ef3a355123cf7eec8c6c524f7160381c2bfe7c))
+
+
+### Bug Fixes
+
+* **critical:** extract storage state to service, add error boundaries, prod cert guard ([0671124](https://github.com/Guizmos/Feedarr/commit/0671124ec3135ff29017d3b01e4adc7b09664394))
+* CSP strict, allow img-src ([5790ff9](https://github.com/Guizmos/Feedarr/commit/5790ff9b88dee69b9e532c9600c73a54f15e19d1))
+* **health:** fix-health-deep-parallel — parallel checks, per-check timeout, auth guard ([820a260](https://github.com/Guizmos/Feedarr/commit/820a26009dbe9fb6ddba773be36cb1d58065c509))
+* **high:** bounded poster queue, DTO validation, deep health check ([277c8d7](https://github.com/Guizmos/Feedarr/commit/277c8d79c8f27b8a9319104bb56a73bc35bac264))
+* log level rebuild ([de92f69](https://github.com/Guizmos/Feedarr/commit/de92f693c1740868bf4f3828acd4619c8236083a))
+* **middleware:** fix-correlation-scope — constructor-injected logger + header sanitization ([3410aba](https://github.com/Guizmos/Feedarr/commit/3410ababe5d932bace7a833a1163ac7b8d304174))
+* poster fetch bug ([03971fd](https://github.com/Guizmos/Feedarr/commit/03971fd5ba391093e1a91bb21b82590cb979c231))
+* **poster:** log skip cache only when tmdb poster not saved ([d23a8db](https://github.com/Guizmos/Feedarr/commit/d23a8dbb3bbf03c2e76657841987d6cbf3e2024c))
+* readme update + bug correction ([d91d816](https://github.com/Guizmos/Feedarr/commit/d91d816f7daf7c715479a85eb11f30c5b71f6287))
+* **tests:** update test constructors after SystemController + StatsRepository signature changes ([717dd11](https://github.com/Guizmos/Feedarr/commit/717dd113d6a1f1ec8aaedf00f995a3ef5dbc2591))
+* Top24 fix cat ([3a072de](https://github.com/Guizmos/Feedarr/commit/3a072dec5834f87c11e799d6dc6eb46f7016498f))
+* **ui:** error feedback + perf stats cache + providers domain ([6a8804c](https://github.com/Guizmos/Feedarr/commit/6a8804cf39bfeccb15ff2cb12c611c73595e502c))
+* **ui:** optimisation UI + bug fix + security update ([67a9e23](https://github.com/Guizmos/Feedarr/commit/67a9e239bd7fc23d1151cdcb828cdb912c32803f))
+* update docs ([0925c5f](https://github.com/Guizmos/Feedarr/commit/0925c5f9a172d7bddc68fb95ae6fb6e8e08bae3a))
+* **v2:** persist source category mappings + backfill legacy + canonic… ([2b10d25](https://github.com/Guizmos/Feedarr/commit/2b10d254f55748ee69f46e27d1ed6ddf114407cb))
+* **v2:** persist source category mappings + backfill legacy + canonicalize top keys ([1accdab](https://github.com/Guizmos/Feedarr/commit/1accdabeb8f30b5d37cc2117cda8e76c73fe9093))
+
+
+### Performance Improvements
+
+* **filter:** cache-apierror-properties — ConcurrentDictionary&lt;Type,PropertyInfo[]&gt; cache ([8712042](https://github.com/Guizmos/Feedarr/commit/8712042ed930abf49a818926395f27050674abc9))
+* **stats:** optimize-statsfeedarr-querymultiple — single QueryMultiple replaces 4 ExecuteScalar ([db94ea3](https://github.com/Guizmos/Feedarr/commit/db94ea31ed8d443933d4b9e11bf5cc5b5a893241))
+
 ## [1.7.2](https://github.com/Guizmos/Feedarr/compare/v1.7.1...v1.7.2) (2026-02-24)
 
 
