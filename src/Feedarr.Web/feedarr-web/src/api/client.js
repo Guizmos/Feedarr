@@ -28,7 +28,8 @@ async function parseError(res) {
       const detail = typeof data?.detail === "string" ? data.detail : "";
       const title = typeof data?.title === "string" ? data.title : "";
       const error = typeof data?.error === "string" ? data.error : "";
-      msg = data?.message || error || detail || title || msg;
+      // Prefer problem title for user-facing message, keep detail on the error object.
+      msg = data?.message || title || error || detail || msg;
       return {
         message: msg,
         status: res.status,

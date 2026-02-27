@@ -252,6 +252,56 @@ public sealed class TorznabClient
         return (new List<TorznabItem>(), "none");
     }
 
+    // =========================
+    // CATEGORY PREVIEW (single category, 1-2 HTTP calls)
+    // =========================
+
+    /// <summary>
+    /// Fetches the latest results for a single category.
+    /// Makes at most 2 HTTP calls: t=search&amp;cat={catId}&amp;q= (then q=* if empty).
+    /// Equivalent to Jackett's dashboard category filter.
+    /// </summary>
+    public async Task<List<TorznabItem>> FetchSingleCategoryPreviewAsync(
+        string torznabUrl,
+        string authMode,
+        string apiKey,
+        int catId,
+        int limit,
+        CancellationToken ct)
+    {
+        var isProwlarr = IsProwlarrTorznabUrl(torznabUrl);
+        authMode = isProwlarr ? "query" : NormalizeAuthMode(authMode);
+        limit = Math.Clamp(limit, 1, 50);
+
+        async Task<List<TorznabItem>> SearchAsync(string q)
+        {
+            var query = new Dictionary<string, string>
+            {
+                ["t"] = "search",
+                ["limit"] = limit.ToString(),
+                ["q"] = q,
+                ["cat"] = catId.ToString()
+            };
+            var url = BuildUrl(torznabUrl, authMode, apiKey, query);
+            if (_log.IsEnabled(LogLevel.Debug))
+                _log.LogDebug("CategoryPreview url={Url} catId={CatId} q={Q}", SanitizeUrl(url), catId, q);
+            using var resp = await SendWithRetryAsync(() => BuildReq(url, authMode, apiKey), ct);
+            await EnsureSuccessOrLogAsync(resp, ct);
+            var xml = await resp.Content.ReadAsStringAsync(ct);
+            return _parser.Parse(xml);
+        }
+
+        var items = await SearchAsync("");
+        if (items.Count == 0)
+            items = await SearchAsync("*"); // some indexers require a non-empty q
+
+        _log.LogInformation(
+            "CategoryPreview: catId={CatId} limit={Limit} count={Count}",
+            catId, limit, items.Count);
+
+        return items;
+    }
+
     public async Task<(List<TorznabItem> items, string usedMode, bool usedAggregated)> FetchLatestByCategoriesAsync(
         string torznabUrl,
         string authMode,

@@ -815,33 +815,30 @@ public sealed class SourcesController : ControllerBase
 
         try
         {
-            var (items, _, _) = await _torznab.FetchLatestByCategoriesAsync(
+            var rawItems = await _torznab.FetchSingleCategoryPreviewAsync(
                 src.TorznabUrl,
                 src.AuthMode,
                 src.ApiKey ?? "",
+                catId.Value,
                 effectiveLimit,
-                new[] { catId.Value },
                 timeoutCts.Token);
 
-            var results = items
+            var results = rawItems
                 .Where(x => x.CategoryId == catId.Value)
                 .OrderByDescending(x => x.PublishedAtTs ?? 0)
                 .Take(effectiveLimit)
-                .Select(x =>
+                .Select(x => new CategoryPreviewItemDto
                 {
-                    return new CategoryPreviewItemDto
-                    {
-                        PublishedAtTs = x.PublishedAtTs ?? 0,
-                        SourceName = src.Name,
-                        Title = x.Title,
-                        SizeBytes = x.SizeBytes ?? 0,
-                        CategoryId = catId.Value,
-                        ResultCategoryName = catNameMap.TryGetValue(catId.Value, out var n) ? n : null,
-                        UnifiedCategory = null,
-                        TmdbId = null,
-                        TvdbId = null,
-                        Seeders = x.Seeders
-                    };
+                    PublishedAtTs = x.PublishedAtTs ?? 0,
+                    SourceName = src.Name,
+                    Title = x.Title,
+                    SizeBytes = x.SizeBytes ?? 0,
+                    CategoryId = catId.Value,
+                    ResultCategoryName = catNameMap.TryGetValue(catId.Value, out var n) ? n : null,
+                    UnifiedCategory = null,
+                    TmdbId = null,
+                    TvdbId = null,
+                    Seeders = x.Seeders
                 })
                 .ToList();
 
