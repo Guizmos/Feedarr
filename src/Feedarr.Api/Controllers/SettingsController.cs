@@ -28,6 +28,7 @@ public sealed class SettingsController : ControllerBase
     private readonly ExternalProviderInstanceRepository? _externalProviderInstances;
     private readonly IMemoryCache _cache;
     private readonly IConfiguration _config;
+    private readonly BootstrapTokenService _bootstrapTokens;
     private readonly ILogger<SettingsController> _log;
 
     public SettingsController(
@@ -39,6 +40,7 @@ public sealed class SettingsController : ControllerBase
         TvMazeClient tvmaze,
         IMemoryCache cache,
         IConfiguration config,
+        BootstrapTokenService bootstrapTokens,
         ILogger<SettingsController> log,
         ExternalProviderInstanceRepository? externalProviderInstances = null)
     {
@@ -51,6 +53,7 @@ public sealed class SettingsController : ControllerBase
         _externalProviderInstances = externalProviderInstances;
         _cache = cache;
         _config = config;
+        _bootstrapTokens = bootstrapTokens;
         _log = log;
     }
 
@@ -332,6 +335,12 @@ public sealed class SettingsController : ControllerBase
         public string? Username { get; set; }
         public string? Password { get; set; }
         public string? PasswordConfirmation { get; set; }
+
+        /// <summary>
+        /// Required (must be true) when switching from smart/strict to open on an instance
+        /// that already has credentials configured, to prevent accidental auth removal.
+        /// </summary>
+        public bool? AllowDowngradeToOpen { get; set; }
     }
 
     [HttpPut("security")]
@@ -345,6 +354,24 @@ public sealed class SettingsController : ControllerBase
         var legacyRequired = Normalize(dto.AuthenticationRequired, current.AuthenticationRequired, new[] { "local", "all" });
         var fallbackMode = SmartAuthPolicy.NormalizeAuthMode(current);
         var authMode = SmartAuthPolicy.NormalizeAuthMode(dto.AuthMode ?? LegacyModeProjection(legacyAuth, legacyRequired) ?? fallbackMode);
+
+        // Scope 5 — guard against accidental downgrade from a secured config to open mode.
+        // Only fires when credentials are already set (i.e., this is a downgrade, not an initial setup).
+        if (authMode == "open")
+        {
+            var currentHasCreds = !string.IsNullOrWhiteSpace(current.Username) &&
+                                  !string.IsNullOrWhiteSpace(current.PasswordHash);
+            var currentMode = SmartAuthPolicy.NormalizeAuthMode(current);
+            if (currentMode != "open" && currentHasCreds && dto.AllowDowngradeToOpen != true)
+            {
+                return BadRequest(new
+                {
+                    error = "downgrade_confirmation_required",
+                    message = "Switching to 'open' mode removes authentication from an existing secured config. " +
+                              "Set allowDowngradeToOpen=true in the request body to confirm."
+                });
+            }
+        }
 
         var username = dto.Username is not null ? dto.Username.Trim() : current.Username;
         var publicBaseUrl = dto.PublicBaseUrl is not null ? dto.PublicBaseUrl.Trim() : current.PublicBaseUrl;
@@ -370,8 +397,17 @@ public sealed class SettingsController : ControllerBase
             if (!string.Equals(dto.Password, dto.PasswordConfirmation, StringComparison.Ordinal))
                 return Problem(title: "password confirmation mismatch", statusCode: StatusCodes.Status400BadRequest);
 
-            if (!TryValidatePasswordStrength(dto.Password, out var passwordError))
-                return Problem(title: passwordError, statusCode: StatusCodes.Status400BadRequest);
+            if (!TryValidatePasswordStrength(dto.Password, out var passwordError, out var requirements))
+            {
+                var details = new ProblemDetails
+                {
+                    Title = "password_complexity_required",
+                    Detail = passwordError,
+                    Status = StatusCodes.Status400BadRequest
+                };
+                details.Extensions["requirements"] = requirements;
+                return BadRequest(details);
+            }
 
             var (hash, salt) = HashPassword(dto.Password);
             next.PasswordHash = hash;
@@ -379,22 +415,36 @@ public sealed class SettingsController : ControllerBase
         }
 
         var bootstrapSecret = SmartAuthPolicy.GetBootstrapSecret(_config);
-        if (authMode is "smart" or "strict")
+        var authConfiguredCandidate = SmartAuthPolicy.IsAuthConfigured(next, bootstrapSecret);
+        if (authMode == "strict" && !authConfiguredCandidate)
+        {
+            return BadRequest(new
+            {
+                error = "credentials_required",
+                message = "Credentials are required when AuthMode is strict. Set username/password or switch to open."
+            });
+        }
+
+        if (authMode == "smart")
         {
             var exposed = SmartAuthPolicy.IsExposedRequest(HttpContext, next);
-            var authConfiguredCandidate = SmartAuthPolicy.IsAuthConfigured(next, bootstrapSecret);
             if (exposed && !authConfiguredCandidate)
             {
                 return BadRequest(new
                 {
                     error = "credentials_required",
-                    message = "Credentials are required when AuthMode is smart/strict and instance is exposed. Set username/password or switch to open."
+                    message = "Credentials are required when AuthMode is smart and instance is exposed. Set username/password or switch to open."
                 });
             }
         }
 
         _repo.SaveSecurity(next);
         _cache.Remove(SecuritySettingsCache.CacheKey);
+
+        // Invalidate all outstanding bootstrap tokens — security is now configured,
+        // so temporary setup tokens must no longer grant access.
+        _bootstrapTokens.InvalidateAll();
+
         var authConfigured = SmartAuthPolicy.IsAuthConfigured(next, bootstrapSecret);
         var effectiveAuthRequired = SmartAuthPolicy.IsAuthRequired(HttpContext, next);
         return Ok(new
@@ -445,14 +495,22 @@ public sealed class SettingsController : ControllerBase
         return (Convert.ToBase64String(hash), Convert.ToBase64String(salt));
     }
 
-    private static bool TryValidatePasswordStrength(string password, out string error)
+    private static bool TryValidatePasswordStrength(string password, out string error, out object requirements)
     {
         const int minLength = 12;
         error = "";
+        requirements = new
+        {
+            minLength,
+            requireUpper = true,
+            requireLower = true,
+            requireDigit = true,
+            requireSymbol = true
+        };
 
         if (password.Length < minLength)
         {
-            error = $"password must contain at least {minLength} characters";
+            error = $"Password too simple: minimum {minLength} characters with uppercase, lowercase, digit and symbol.";
             return false;
         }
 
@@ -463,7 +521,7 @@ public sealed class SettingsController : ControllerBase
 
         if (!hasLower || !hasUpper || !hasDigit || !hasSymbol)
         {
-            error = "password must include uppercase, lowercase, digit and symbol";
+            error = "Password too simple: minimum 12 characters with uppercase, lowercase, digit and symbol.";
             return false;
         }
 

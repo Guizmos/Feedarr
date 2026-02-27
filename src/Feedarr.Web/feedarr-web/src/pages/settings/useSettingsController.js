@@ -644,7 +644,18 @@ export default function useSettingsController(section = "general") {
       setSecurity: security.setSecurity,
       securityErrors: security.securityErrors,
       securityMessage: security.securityMessage,
+      passwordMessage: security.passwordMessage,
+      showExistingCredentialsHint: security.showExistingCredentialsHint,
+      allowDowngradeToOpen: security.allowDowngradeToOpen,
+      setAllowDowngradeToOpen: security.setAllowDowngradeToOpen,
+      requiresDowngradeConfirmation: security.requiresDowngradeConfirmation,
       credentialsRequiredForMode: security.credentialsRequiredForMode,
+      usernameRequired: security.usernameRequired,
+      passwordRequired: security.passwordRequired,
+      confirmRequired: security.confirmRequired,
+      usernameFieldState: security.usernameFieldState,
+      passwordFieldState: security.passwordFieldState,
+      confirmFieldState: security.confirmFieldState,
     },
   };
 }
