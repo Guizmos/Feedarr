@@ -1,0 +1,8 @@
+C:\Users\GuIzMoS\Downloads\Feedarr\src\Feedarr.Api\.tmp-test-obj\Debug\net8.0\Feedarr.Api.csproj.AssemblyReference.cache
+C:\Users\GuIzMoS\Downloads\Feedarr\src\Feedarr.Api\.tmp-test-obj\Debug\net8.0\Feedarr.Api.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\GuIzMoS\Downloads\Feedarr\src\Feedarr.Api\.tmp-test-obj\Debug\net8.0\Feedarr.Api.AssemblyInfoInputs.cache
+C:\Users\GuIzMoS\Downloads\Feedarr\src\Feedarr.Api\.tmp-test-obj\Debug\net8.0\Feedarr.Api.AssemblyInfo.cs
+C:\Users\GuIzMoS\Downloads\Feedarr\src\Feedarr.Api\.tmp-test-obj\Debug\net8.0\Feedarr.Api.csproj.CoreCompileInputs.cache
+C:\Users\GuIzMoS\Downloads\Feedarr\src\Feedarr.Api\.tmp-test-obj\Debug\net8.0\Feedarr.Api.MvcApplicationPartsAssemblyInfo.cs
+C:\Users\GuIzMoS\Downloads\Feedarr\src\Feedarr.Api\.tmp-test-obj\Debug\net8.0\Feedarr.Api.MvcApplicationPartsAssemblyInfo.cache
+C:\Users\GuIzMoS\Downloads\Feedarr\src\Feedarr.Api\.tmp-test-obj\Debug\net8.0\Feedarr.Api.sourcelink.json

@@ -11,6 +11,7 @@ using Feedarr.Api.Services.Posters;
 using Feedarr.Api.Services.Security;
 using Feedarr.Api.Services.Tmdb;
 using Feedarr.Api.Services.TvMaze;
+using Feedarr.Api.Services.Categories;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
 
@@ -160,6 +161,204 @@ public sealed class MaintenanceController : ControllerBase
             dataJson: $"{{\"scope\":\"{scope}\",\"olderThanDays\":{dto?.OlderThanDays ?? 0},\"deleted\":{deleted},\"csvDeleted\":{csvDeleted}}}");
 
         return Ok(new { ok = true, deleted, scope, olderThanDays = dto?.OlderThanDays, csvDeleted });
+    }
+
+    // GET /api/maintenance/audit-indexer-category-selection
+    [HttpGet("audit-indexer-category-selection")]
+    public IActionResult AuditIndexerCategorySelection()
+    {
+        using var conn = _db.Open();
+
+        var onboardingDone = _settings.GetUi(new UiSettings()).OnboardingDone;
+
+        var sourceRows = conn.Query<AuditSourceRow>(
+            """
+            SELECT
+              id AS SourceId,
+              name AS Name,
+              enabled AS Enabled,
+              torznab_url AS TorznabUrl
+            FROM sources
+            ORDER BY id ASC;
+            """
+        ).ToList();
+
+        var selectedRows = conn.Query<AuditSelectedRow>(
+            """
+            SELECT
+              source_id AS SourceId,
+              cat_id AS CatId
+            FROM source_selected_categories
+            ORDER BY source_id ASC, cat_id ASC;
+            """
+        ).ToList();
+
+        var mappingRows = conn.Query<AuditMappingRow>(
+            """
+            SELECT
+              source_id AS SourceId,
+              cat_id AS CatId,
+              group_key AS GroupKey,
+              group_label AS GroupLabel
+            FROM source_category_mappings
+            ORDER BY source_id ASC, cat_id ASC;
+            """
+        ).ToList();
+
+        var latestFallbackRows = conn.Query<AuditFallbackRow>(
+            """
+            WITH ranked AS (
+              SELECT
+                source_id AS SourceId,
+                created_at_ts AS CreatedAtTs,
+                message AS Message,
+                ROW_NUMBER() OVER (
+                  PARTITION BY source_id
+                  ORDER BY created_at_ts DESC, id DESC
+                ) AS rn
+              FROM activity_log
+              WHERE source_id IS NOT NULL
+                AND event_type = 'sync'
+                AND (
+                  message LIKE '%Sync category-map:%'
+                  OR message LIKE '%AutoSync category-map:%'
+                )
+            )
+            SELECT SourceId, CreatedAtTs, Message
+            FROM ranked
+            WHERE rn = 1;
+            """
+        ).ToDictionary(row => row.SourceId, row => row);
+
+        var mappingsBySource = mappingRows
+            .GroupBy(row => row.SourceId)
+            .ToDictionary(group => group.Key, group => group.ToList());
+        var selectedBySource = selectedRows
+            .GroupBy(row => row.SourceId)
+            .ToDictionary(group => group.Key, group => group.ToList());
+
+        var indexers = sourceRows.Select(source =>
+        {
+            var selected = selectedBySource.TryGetValue(source.SourceId, out var selectedList)
+                ? selectedList
+                : new List<AuditSelectedRow>();
+            var mapping = mappingsBySource.TryGetValue(source.SourceId, out var list)
+                ? list
+                : new List<AuditMappingRow>();
+
+            var persistedIds = selected
+                .Select(row => row.CatId)
+                .Where(catId => catId > 0)
+                .Distinct()
+                .OrderBy(catId => catId)
+                .ToList();
+
+            var persistedRaw = persistedIds.Count > 0
+                ? string.Join(",", persistedIds)
+                : null;
+
+            var parsedPersisted = CategorySelectionAudit.ParseRawIds(persistedRaw, out var parseErrorCount)
+                .ToList();
+
+            var mappedIds = mapping
+                .Where(row => !string.IsNullOrWhiteSpace(row.GroupKey))
+                .Select(row => row.CatId)
+                .Where(catId => catId > 0)
+                .Distinct()
+                .OrderBy(catId => catId)
+                .ToList();
+
+            var mappingOnlyIds = mappedIds
+                .Except(parsedPersisted)
+                .OrderBy(catId => catId)
+                .ToList();
+
+            var effectiveSelection = CategorySelection.NormalizeSelectedCategoryIds(parsedPersisted)
+                .OrderBy(catId => catId)
+                .ToList();
+
+            var reason = CategorySelectionAudit.InferReason(
+                persistedWasNull: persistedRaw is null,
+                persistedCount: parsedPersisted.Count,
+                parseErrorCount: parseErrorCount,
+                mappedCount: parsedPersisted.Count,
+                wizardIncomplete: !onboardingDone && parsedPersisted.Count == 0);
+
+            var fallbackCount = 0;
+            var noMapMatchCount = 0;
+            string? fallbackMessage = null;
+            long? fallbackAtTs = null;
+
+            if (latestFallbackRows.TryGetValue(source.SourceId, out var fallbackRow))
+            {
+                fallbackMessage = fallbackRow.Message;
+                fallbackAtTs = fallbackRow.CreatedAtTs;
+                fallbackCount = ExtractMetricValue(fallbackRow.Message, "fallbackSelectedCategoryCount");
+                noMapMatchCount = ExtractMetricValue(fallbackRow.Message, "noMapMatchCount");
+            }
+
+            return new
+            {
+                sourceId = source.SourceId,
+                name = source.Name,
+                enabled = source.Enabled == 1,
+                torznabUrl = source.TorznabUrl,
+                selectionSource = "source_selected_categories.cat_id",
+                persistedSelection = new
+                {
+                    raw = persistedRaw,
+                    parsed = parsedPersisted,
+                    count = parsedPersisted.Count,
+                    isNull = persistedRaw is null,
+                    isEmpty = parsedPersisted.Count == 0,
+                    parseErrorCount,
+                    contains = new
+                    {
+                        id7000 = parsedPersisted.Contains(7000),
+                        id107000 = parsedPersisted.Contains(107000),
+                        id3000 = parsedPersisted.Contains(3000),
+                        id103000 = parsedPersisted.Contains(103000),
+                        id5070 = parsedPersisted.Contains(5070)
+                    }
+                },
+                mappingStats = new
+                {
+                    source = "source_category_mappings",
+                    mappedCatIds = mappedIds,
+                    mappedCount = mappedIds.Count,
+                    mappedNotSelectedCatIds = mappingOnlyIds,
+                    mappedNotSelectedCount = mappingOnlyIds.Count
+                },
+                effectiveSelection = new
+                {
+                    ids = effectiveSelection,
+                    count = effectiveSelection.Count,
+                    sampleIds = effectiveSelection.Take(10).ToList()
+                },
+                usedFallback = CategorySelectionAudit.ShouldUseFallback(effectiveSelection),
+                fallbackCount,
+                noMapMatchCount,
+                reason,
+                lastCategoryMapEvidence = fallbackMessage is null
+                    ? null
+                    : new
+                    {
+                        createdAtTs = fallbackAtTs,
+                        createdAtIso = fallbackAtTs.HasValue
+                            ? DateTimeOffset.FromUnixTimeSeconds(fallbackAtTs.Value).ToString("O")
+                            : null,
+                        message = fallbackMessage
+                    }
+            };
+        }).ToList();
+
+        return Ok(new
+        {
+            generatedAtTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            generatedAtIso = DateTimeOffset.UtcNow.ToString("O"),
+            onboardingDone,
+            indexers
+        });
     }
 
     // GET /api/maintenance/stats
@@ -510,5 +709,55 @@ public sealed class MaintenanceController : ControllerBase
         {
             _maintenanceLock.Release();
         }
+    }
+
+    private static int ExtractMetricValue(string? message, string metricName)
+    {
+        if (string.IsNullOrWhiteSpace(message) || string.IsNullOrWhiteSpace(metricName))
+            return 0;
+
+        var token = metricName + "=";
+        var start = message.IndexOf(token, StringComparison.OrdinalIgnoreCase);
+        if (start < 0)
+            return 0;
+
+        start += token.Length;
+        var end = start;
+        while (end < message.Length && char.IsDigit(message[end]))
+            end++;
+
+        if (end <= start)
+            return 0;
+
+        return int.TryParse(message.AsSpan(start, end - start), out var parsed) ? parsed : 0;
+    }
+
+    private sealed class AuditSourceRow
+    {
+        public long SourceId { get; set; }
+        public string Name { get; set; } = "";
+        public int Enabled { get; set; }
+        public string TorznabUrl { get; set; } = "";
+    }
+
+    private sealed class AuditMappingRow
+    {
+        public long SourceId { get; set; }
+        public int CatId { get; set; }
+        public string? GroupKey { get; set; }
+        public string? GroupLabel { get; set; }
+    }
+
+    private sealed class AuditSelectedRow
+    {
+        public long SourceId { get; set; }
+        public int CatId { get; set; }
+    }
+
+    private sealed class AuditFallbackRow
+    {
+        public long SourceId { get; set; }
+        public long CreatedAtTs { get; set; }
+        public string Message { get; set; } = "";
     }
 }

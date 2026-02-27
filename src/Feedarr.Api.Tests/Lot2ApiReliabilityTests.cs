@@ -128,6 +128,7 @@ public sealed class Lot2ApiReliabilityTests
             tvmaze,
             new MemoryCache(new MemoryCacheOptions()),
             BuildConfiguration(),
+            new Feedarr.Api.Services.Security.BootstrapTokenService(),
             NullLogger<SettingsController>.Instance);
 
         var action = await controller.TestExternal(

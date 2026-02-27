@@ -1,5 +1,6 @@
 using Dapper;
 using Feedarr.Api.Data;
+using Feedarr.Api.Dtos.Sources;
 using Feedarr.Api.Models;
 using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services.Torznab;
@@ -2211,6 +2212,46 @@ LEFT JOIN media_entities me
         }
 
         return (processed, rebound);
+    }
+
+    public async Task<IReadOnlyList<CategoryPreviewItemDto>> GetPreviewByCategoryAsync(
+        long sourceId,
+        int catId,
+        int limit,
+        CancellationToken ct)
+    {
+        var safeLimit = Math.Clamp(limit, 1, 50);
+
+        const string sql = """
+            SELECT
+                r.published_at_ts  AS PublishedAtTs,
+                s.name             AS SourceName,
+                r.title            AS Title,
+                r.size_bytes       AS SizeBytes,
+                r.category_id      AS CategoryId,
+                sc.name            AS ResultCategoryName,
+                r.unified_category AS UnifiedCategory,
+                r.tmdb_id          AS TmdbId,
+                r.tvdb_id          AS TvdbId,
+                r.seeders          AS Seeders
+            FROM releases r
+            JOIN sources s ON s.id = r.source_id
+            LEFT JOIN source_categories sc
+              ON sc.source_id = r.source_id AND sc.cat_id = r.category_id
+            WHERE r.source_id = @sourceId
+              AND (
+                    r.category_id = @catId
+                 OR (',' || COALESCE(r.category_ids, '') || ',') LIKE '%,' || @catId || ',%'
+              )
+            ORDER BY r.published_at_ts DESC
+            LIMIT @limit;
+            """;
+
+        using var conn = _db.Open();
+        var rows = await conn.QueryAsync<CategoryPreviewItemDto>(
+            new CommandDefinition(sql, new { sourceId, catId, limit = safeLimit }, cancellationToken: ct));
+
+        return rows.ToList();
     }
 
 }

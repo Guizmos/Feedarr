@@ -20,6 +20,7 @@ import {
 import CategoryMappingBoard from "../components/shared/CategoryMappingBoard.jsx";
 import {
   CATEGORY_GROUP_LABELS,
+  buildCategoryMappingsPatchDto,
   MAPPING_GROUP_PRIORITY,
   buildMappingDiff,
   buildMappingsPayload,
@@ -429,15 +430,23 @@ export default function Indexers() {
           .map(([catId, groupKey]) => [Number(catId), normalizeCategoryGroupKey(groupKey)])
           .filter(([catId, groupKey]) => Number.isFinite(catId) && catId > 0 && !!groupKey)
       );
+      const selectedCategoryIds = [...normalizedMappings.keys()]
+        .map((catId) => Number(catId))
+        .filter((catId) => Number.isFinite(catId) && catId > 0)
+        .sort((a, b) => a - b);
 
       if (editing?.id) {
         if (modalStep === 2) {
           await apiPut(`/api/sources/${editing.id}`, payload);
           await apiPut(`/api/sources/${editing.id}/enabled`, { enabled });
           const patch = buildMappingDiff(initialCategoryMappingsRef.current, normalizedMappings);
-          if (patch.length > 0) {
-            await apiPatch(`/api/sources/${editing.id}/category-mappings`, { mappings: patch });
-          }
+          await apiPatch(
+            `/api/sources/${editing.id}/category-mappings`,
+            buildCategoryMappingsPatchDto({
+              mappings: patch,
+              selectedCategoryIds,
+            })
+          );
         } else {
           await apiPut(`/api/sources/${editing.id}`, payload);
           await apiPut(`/api/sources/${editing.id}/enabled`, { enabled });
@@ -458,8 +467,14 @@ export default function Indexers() {
           sourceId = Number(created?.id) || null;
         }
 
-        if (sourceId && mappingsPayload.length > 0) {
-          await apiPatch(`/api/sources/${sourceId}/category-mappings`, { mappings: mappingsPayload });
+        if (sourceId) {
+          await apiPatch(
+            `/api/sources/${sourceId}/category-mappings`,
+            buildCategoryMappingsPatchDto({
+              mappings: mappingsPayload,
+              selectedCategoryIds,
+            })
+          );
         }
       }
 
@@ -994,6 +1009,7 @@ export default function Indexers() {
                 <CategoryMappingBoard
                   categories={capsCategories}
                   mappings={categoryMappings}
+                  sourceId={editing?.id}
                   onChangeMapping={(catId, groupKey) => {
                     const normalized = normalizeCategoryGroupKey(groupKey);
                     setCategoryMappings((prev) => {

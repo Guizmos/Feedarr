@@ -206,6 +206,8 @@ builder.Services.AddHttpClient("github-updates", c =>
 // Resilience: transient retry handler for external HTTP clients
 builder.Services.AddTransient<TransientHttpRetryHandler>();
 builder.Services.AddTransient<ProtocolDowngradeRedirectHandler>();
+// SSRF guard: DNS re-validates the destination before each call on user-configurable clients
+builder.Services.AddTransient<SsrfGuardHandler>();
 
 // Torznab (already has its own retry logic in TorznabClient)
 builder.Services.AddSingleton<TorznabRssParser>();
@@ -215,12 +217,14 @@ builder.Services.AddHttpClient<TorznabClient>(c =>
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
 {
-    AllowAutoRedirect = true,
-    MaxAutomaticRedirections = 5,
+    // AllowAutoRedirect=false: redirects are followed manually by ProtocolDowngradeRedirectHandler
+    // so we can validate the destination IP before following (SSRF guard).
+    AllowAutoRedirect = false,
     ServerCertificateCustomValidationCallback = allowInvalidCerts
         ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
         : null
-});
+}).AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
+  .AddHttpMessageHandler<SsrfGuardHandler>();
 
 // TMDB
 builder.Services.AddHttpClient<TmdbClient>(c =>
@@ -317,12 +321,13 @@ builder.Services.AddHttpClient<SonarrClient>(c =>
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
 {
-    AllowAutoRedirect = true,
-    MaxAutomaticRedirections = 5,
+    AllowAutoRedirect = false,
     ServerCertificateCustomValidationCallback = allowInvalidCerts
         ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
         : null
-}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+}).AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
+  .AddHttpMessageHandler<SsrfGuardHandler>()
+  .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Radarr
 builder.Services.AddHttpClient<RadarrClient>(c =>
@@ -331,12 +336,13 @@ builder.Services.AddHttpClient<RadarrClient>(c =>
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
 {
-    AllowAutoRedirect = true,
-    MaxAutomaticRedirections = 5,
+    AllowAutoRedirect = false,
     ServerCertificateCustomValidationCallback = allowInvalidCerts
         ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
         : null
-}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+}).AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
+  .AddHttpMessageHandler<SsrfGuardHandler>()
+  .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Overseerr/Jellyseerr/Seer
 builder.Services.AddHttpClient<EerrRequestClient>(c =>
@@ -345,15 +351,16 @@ builder.Services.AddHttpClient<EerrRequestClient>(c =>
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
 {
-    AllowAutoRedirect = true,
-    MaxAutomaticRedirections = 5,
+    AllowAutoRedirect = false,
     ServerCertificateCustomValidationCallback = allowInvalidCerts
         ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
         : null
-}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+}).AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
+  .AddHttpMessageHandler<SsrfGuardHandler>()
+  .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
-// Jackett — AllowAutoRedirect=false + ProtocolDowngradeRedirectHandler
-// pour suivre les redirections HTTPS → HTTP (reverse proxy)
+// Jackett — AllowAutoRedirect=false + ProtocolDowngradeRedirectHandler (HTTPS→HTTP)
+//         + SsrfGuardHandler (DNS re-check before each call)
 builder.Services.AddHttpClient<JackettClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(30);
@@ -365,6 +372,7 @@ builder.Services.AddHttpClient<JackettClient>(c =>
         ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
         : null
 }).AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
+  .AddHttpMessageHandler<SsrfGuardHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Prowlarr — même traitement
@@ -379,6 +387,7 @@ builder.Services.AddHttpClient<ProwlarrClient>(c =>
         ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
         : null
 }).AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
+  .AddHttpMessageHandler<SsrfGuardHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Arr Library Cache (in-memory, will be deprecated)
@@ -431,6 +440,24 @@ builder.Services.AddRateLimiter(options =>
                 cancellationToken: token);
         }
     };
+
+    // Strict rate limit on bootstrap-token issuance: 5 per minute per IP.
+    // Prevents brute-forcing the X-Bootstrap-Secret header.
+    var bootstrapTokenRateLimit = Math.Max(1, builder.Configuration.GetValue("App:RateLimit:BootstrapToken:PermitLimit", 5));
+    var bootstrapTokenWindowSeconds = Math.Clamp(builder.Configuration.GetValue("App:RateLimit:BootstrapToken:WindowSeconds", 60), 10, 3600);
+    options.AddPolicy("bootstrap-token", httpContext =>
+    {
+        var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            $"bootstrap:{ip}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = bootstrapTokenRateLimit,
+                Window = TimeSpan.FromSeconds(bootstrapTokenWindowSeconds),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            });
+    });
 
     options.AddPolicy("stats-heavy", httpContext =>
     {
@@ -636,6 +663,25 @@ var _startupLog = app.Services.GetRequiredService<ILoggerFactory>()
 var _asm = typeof(Feedarr.Api.Controllers.CategoriesController).Assembly;
 var _buildTs = System.IO.File.GetLastWriteTimeUtc(_asm.Location).ToString("yyyy-MM-dd HH:mm:ss UTC");
 _startupLog.LogInformation("[BUILD] Feedarr.Api built={T} — CATS_STANDARDONLY_V2", _buildTs);
+
+// Scope 4 — warn if Basic Auth is active but HTTPS is not enforced.
+// Basic Auth transmits credentials in base64 (effectively plaintext) over HTTP.
+{
+    var startupSecSettings = app.Services
+        .GetRequiredService<Feedarr.Api.Data.Repositories.SettingsRepository>()
+        .GetSecurity(new Feedarr.Api.Models.Settings.SecuritySettings());
+    var startupAuthMode = Feedarr.Api.Services.Security.SmartAuthPolicy.NormalizeAuthMode(startupSecSettings);
+
+    if (startupAuthMode != "open" && !enforceHttps)
+    {
+        _startupLog.LogWarning(
+            "[SECURITY] Basic Auth is active (mode={AuthMode}) but App:Security:EnforceHttps=false. " +
+            "If this instance is reachable over plain HTTP, credentials will be transmitted in base64 (cleartext). " +
+            "Set App:Security:EnforceHttps=true if ASP.NET Core terminates TLS directly, " +
+            "or ensure your reverse proxy enforces HTTPS and strips plain-HTTP access.",
+            startupAuthMode);
+    }
+}
 
 if (allowInvalidCerts)
 {

@@ -323,6 +323,15 @@ public sealed class SourceRepository
         tx.Commit();
     }
 
+    public Dictionary<int, string> GetCategoryNameMap(long sourceId)
+    {
+        using var conn = _db.Open();
+        var rows = conn.Query<(int catId, string name)>(
+            "SELECT cat_id, name FROM source_categories WHERE source_id = @sid",
+            new { sid = sourceId });
+        return rows.ToDictionary(x => x.catId, x => x.name);
+    }
+
     public Dictionary<int, (string key, string label)> GetUnifiedCategoryMap(long sourceId)
         => GetCategoryMappingMap(sourceId);
 
@@ -358,15 +367,12 @@ public sealed class SourceRepository
     }
 
     public List<int> GetSelectedCategoryIds(long sourceId)
-        => GetActiveCategoryIds(sourceId);
-
-    public List<int> GetActiveCategoryIds(long sourceId)
     {
         using var conn = _db.Open();
         var rows = conn.Query<int>(
             """
             SELECT cat_id
-            FROM source_category_mappings
+            FROM source_selected_categories
             WHERE source_id = @sid
               AND cat_id > 0;
             """,
@@ -374,6 +380,39 @@ public sealed class SourceRepository
         );
 
         return rows.Distinct().ToList();
+    }
+
+    public List<int> GetActiveCategoryIds(long sourceId)
+        => GetSelectedCategoryIds(sourceId);
+
+    public void ReplaceSelectedCategoryIds(long sourceId, IEnumerable<int> categoryIds)
+    {
+        using var conn = _db.Open();
+        using var tx = conn.BeginTransaction();
+
+        var selectedCatIds = (categoryIds ?? Enumerable.Empty<int>())
+            .Where(catId => catId > 0)
+            .Distinct()
+            .OrderBy(catId => catId)
+            .ToArray();
+
+        conn.Execute(
+            "DELETE FROM source_selected_categories WHERE source_id = @sid;",
+            new { sid = sourceId },
+            tx);
+
+        if (selectedCatIds.Length > 0)
+        {
+            conn.Execute(
+                """
+                INSERT INTO source_selected_categories(source_id, cat_id)
+                VALUES (@sid, @catId);
+                """,
+                selectedCatIds.Select(catId => new { sid = sourceId, catId }),
+                tx);
+        }
+
+        tx.Commit();
     }
 
     public List<SourceCategoryMapping> GetCategoryMappings(long sourceId)
@@ -589,12 +628,30 @@ public sealed class SourceRepository
         IReadOnlyCollection<SourceCategoryInput> normalized,
         long now)
     {
-        var selectedCatIds = normalized
-            .Select(c => c.Id)
+        var mappedCategories = normalized
+            .Select(c =>
+            {
+                var groupKey = NormalizeGroupKeyOrNull(c.UnifiedKey);
+                if (groupKey is null)
+                    return null;
+
+                return new
+                {
+                    CatId = c.Id,
+                    GroupKey = groupKey,
+                    GroupLabel = CategoryGroupCatalog.LabelForKey(groupKey)
+                };
+            })
+            .Where(c => c is not null)
+            .Select(c => c!)
+            .ToList();
+
+        var mappedCatIds = mappedCategories
+            .Select(c => c.CatId)
             .Distinct()
             .ToArray();
 
-        if (selectedCatIds.Length == 0)
+        if (mappedCatIds.Length == 0)
         {
             conn.Execute(
                 "DELETE FROM source_category_mappings WHERE source_id = @sid;",
@@ -609,7 +666,7 @@ public sealed class SourceRepository
             WHERE source_id = @sid
               AND cat_id NOT IN @catIds;
             """,
-            new { sid = sourceId, catIds = selectedCatIds },
+            new { sid = sourceId, catIds = mappedCatIds },
             tx);
 
         conn.Execute(
@@ -623,20 +680,13 @@ public sealed class SourceRepository
               group_label = excluded.group_label,
               updated_at_ts = excluded.updated_at_ts;
             """,
-            normalized.Select(c =>
+            mappedCategories.Select(c => new
             {
-                var groupKey = NormalizeGroupKeyOrNull(c.UnifiedKey);
-                var groupLabel = groupKey is not null
-                    ? CategoryGroupCatalog.LabelForKey(groupKey)
-                    : NormalizeNullable(c.UnifiedLabel);
-                return new
-                {
-                    sid = sourceId,
-                    catId = c.Id,
-                    groupKey,
-                    groupLabel,
-                    now
-                };
+                sid = sourceId,
+                catId = c.CatId,
+                groupKey = c.GroupKey,
+                groupLabel = c.GroupLabel,
+                now
             }),
             tx);
     }

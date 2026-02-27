@@ -29,12 +29,14 @@ public sealed class SetupIndexerProvidersPersistenceTests
         var providers = new ProviderRepository(db, protection);
         var sources = new SourceRepository(db, protection);
 
+        using var setupCache = new MemoryCache(new MemoryCacheOptions());
         var setup = new SetupController(
             db,
             settings,
             providers,
             BuildConfiguration(),
-            new BootstrapTokenService(new MemoryCache(new MemoryCacheOptions())),
+            new BootstrapTokenService(),
+            new SetupStateService(settings, setupCache),
             NullLogger<SetupController>.Instance);
 
         var first = setup.UpsertIndexerProvider("jackett", new SetupController.SetupIndexerProviderUpsertDto
@@ -91,12 +93,14 @@ public sealed class SetupIndexerProvidersPersistenceTests
         var settings = new SettingsRepository(db);
         var providers = new ProviderRepository(db, protection);
 
+        using var setupCache = new MemoryCache(new MemoryCacheOptions());
         var setup = new SetupController(
             db,
             settings,
             providers,
             BuildConfiguration(),
-            new BootstrapTokenService(new MemoryCache(new MemoryCacheOptions())),
+            new BootstrapTokenService(),
+            new SetupStateService(settings, setupCache),
             NullLogger<SetupController>.Instance);
 
         setup.UpsertIndexerProvider("jackett", new SetupController.SetupIndexerProviderUpsertDto

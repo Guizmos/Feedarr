@@ -37,6 +37,7 @@ export default function useSettingsController(section = "general") {
   const [hostPort, setHostPort] = useState("");
   const [initialHostPort, setInitialHostPort] = useState("");
   const [urlBase] = useState("");
+  const [securityDowngradeModalOpen, setSecurityDowngradeModalOpen] = useState(false);
 
   // Compose specialized hooks
   const uiSettings = useUiSettings();
@@ -151,7 +152,7 @@ export default function useSettingsController(section = "general") {
   }, []);
 
   // Handle save
-  const handleSave = useCallback(async () => {
+  const performSave = useCallback(async (securityOptions = {}) => {
     setErr("");
     const startedAt = Date.now();
     let ok = false;
@@ -161,7 +162,7 @@ export default function useSettingsController(section = "general") {
       // Save all settings
       await saveUiSettingsRef.current();
       await saveExternalKeysRef.current();
-      await saveSecuritySettingsRef.current();
+      await saveSecuritySettingsRef.current(securityOptions);
       await saveArrRequestModeDraftRef.current();
 
       // Handle port change redirect
@@ -178,7 +179,9 @@ export default function useSettingsController(section = "general") {
 
       ok = true;
     } catch (e) {
-      setErr(e?.message || "Erreur sauvegarde settings");
+      if (!e?.isSecuritySettingsError) {
+        setErr(e?.message || "Erreur sauvegarde settings");
+      }
     } finally {
       const elapsed = Date.now() - startedAt;
       if (elapsed < 1000) {
@@ -188,6 +191,23 @@ export default function useSettingsController(section = "general") {
       setTimeout(() => setSaveState("idle"), 1000);
     }
   }, [hostPort, initialHostPort]);
+
+  const handleSave = useCallback(async () => {
+    if (showUsers && security.requiresDowngradeConfirmation) {
+      setSecurityDowngradeModalOpen(true);
+      return;
+    }
+    await performSave();
+  }, [showUsers, security.requiresDowngradeConfirmation, performSave]);
+
+  const closeSecurityDowngradeModal = useCallback(() => {
+    setSecurityDowngradeModalOpen(false);
+  }, []);
+
+  const confirmSecurityDowngradeSave = useCallback(async () => {
+    setSecurityDowngradeModalOpen(false);
+    await performSave({ allowDowngradeToOpen: true });
+  }, [performSave]);
 
   // Handle refresh
   const handleRefresh = useCallback(() => {
@@ -456,6 +476,9 @@ export default function useSettingsController(section = "general") {
     handleRefresh,
     handleSave,
     saveState,
+    securityDowngradeModalOpen,
+    closeSecurityDowngradeModal,
+    confirmSecurityDowngradeSave,
     isDirty,
     isSaveBlocked,
     openArrModalAdd: applications.openArrModalAdd,
@@ -646,10 +669,8 @@ export default function useSettingsController(section = "general") {
       securityMessage: security.securityMessage,
       passwordMessage: security.passwordMessage,
       showExistingCredentialsHint: security.showExistingCredentialsHint,
-      allowDowngradeToOpen: security.allowDowngradeToOpen,
-      setAllowDowngradeToOpen: security.setAllowDowngradeToOpen,
-      requiresDowngradeConfirmation: security.requiresDowngradeConfirmation,
       credentialsRequiredForMode: security.credentialsRequiredForMode,
+      effectiveAuthRequired: security.effectiveAuthRequired,
       usernameRequired: security.usernameRequired,
       passwordRequired: security.passwordRequired,
       confirmRequired: security.confirmRequired,

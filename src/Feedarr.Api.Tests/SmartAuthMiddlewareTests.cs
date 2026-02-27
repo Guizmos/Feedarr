@@ -267,6 +267,7 @@ public sealed class SmartAuthMiddlewareTests
                 Settings,
                 _cache,
                 SetupState,
+                new BootstrapTokenService(),
                 NullLogger<BasicAuthMiddleware>.Instance);
 
             return (nextCalled, context);

@@ -310,7 +310,7 @@ public sealed class SettingsController : ControllerBase
         var authMode = SmartAuthPolicy.NormalizeAuthMode(sec);
         var bootstrapSecret = SmartAuthPolicy.GetBootstrapSecret(_config);
         var authConfigured = SmartAuthPolicy.IsAuthConfigured(sec, bootstrapSecret);
-        var authRequired = SmartAuthPolicy.IsAuthRequired(HttpContext, sec);
+        var authRequired = authMode == "strict" || SmartAuthPolicy.IsAuthRequired(HttpContext, sec);
         var (authentication, authenticationRequired) = LegacyAuthProjection(authMode);
 
         return Ok(new
@@ -388,7 +388,9 @@ public sealed class SettingsController : ControllerBase
             PasswordSalt = current.PasswordSalt
         };
 
-        var hasPasswordUpdate = !string.IsNullOrWhiteSpace(dto.Password) || !string.IsNullOrWhiteSpace(dto.PasswordConfirmation);
+        var hasPasswordUpdate =
+            authMode != "open" &&
+            (!string.IsNullOrWhiteSpace(dto.Password) || !string.IsNullOrWhiteSpace(dto.PasswordConfirmation));
         if (hasPasswordUpdate)
         {
             if (string.IsNullOrWhiteSpace(dto.Password) || string.IsNullOrWhiteSpace(dto.PasswordConfirmation))
@@ -412,6 +414,14 @@ public sealed class SettingsController : ControllerBase
             var (hash, salt) = HashPassword(dto.Password);
             next.PasswordHash = hash;
             next.PasswordSalt = salt;
+        }
+
+        if (authMode == "open")
+        {
+            // Open mode must drop all credentials from persisted settings.
+            next.Username = "";
+            next.PasswordHash = "";
+            next.PasswordSalt = "";
         }
 
         var bootstrapSecret = SmartAuthPolicy.GetBootstrapSecret(_config);
@@ -446,7 +456,7 @@ public sealed class SettingsController : ControllerBase
         _bootstrapTokens.InvalidateAll();
 
         var authConfigured = SmartAuthPolicy.IsAuthConfigured(next, bootstrapSecret);
-        var effectiveAuthRequired = SmartAuthPolicy.IsAuthRequired(HttpContext, next);
+        var effectiveAuthRequired = authMode == "strict" || SmartAuthPolicy.IsAuthRequired(HttpContext, next);
         return Ok(new
         {
             authMode = next.AuthMode,

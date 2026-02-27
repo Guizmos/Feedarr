@@ -10,7 +10,7 @@ namespace Feedarr.Api.Tests;
 public sealed class SourceCategoryMappingsRepositoryTests
 {
     [Fact]
-    public void PatchMappings_UpsertDelete_AndReadActiveIds()
+    public void PatchMappings_UpsertDelete_AndReadMappingMap()
     {
         using var workspace = new TestWorkspace();
         var db = CreateDb(workspace);
@@ -29,9 +29,6 @@ public sealed class SourceCategoryMappingsRepositoryTests
 
         Assert.True(changed >= 2);
 
-        var active = repository.GetActiveCategoryIds(sourceId).OrderBy(id => id).ToArray();
-        Assert.Equal(new[] { 2020, 5050 }, active);
-
         var map = repository.GetCategoryMappingMap(sourceId);
         Assert.Equal("films", map[2020].key);
         Assert.Equal("Films", map[2020].label);
@@ -42,10 +39,10 @@ public sealed class SourceCategoryMappingsRepositoryTests
             sourceId,
             new[]
             {
-                new SourceRepository.SourceCategoryMappingPatch { CatId = 2020, GroupKey = null }
+                    new SourceRepository.SourceCategoryMappingPatch { CatId = 2020, GroupKey = null }
             });
 
-        var remaining = repository.GetActiveCategoryIds(sourceId).ToArray();
+        var remaining = repository.GetCategoryMappingMap(sourceId).Keys.OrderBy(id => id).ToArray();
         Assert.Single(remaining);
         Assert.Equal(5050, remaining[0]);
     }
@@ -95,6 +92,23 @@ public sealed class SourceCategoryMappingsRepositoryTests
                 }));
 
         Assert.Contains("Invalid category group key", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ReplaceSelectedCategoryIds_IsStrictReplace()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var repository = new SourceRepository(db, new PassthroughProtectionService());
+        var sourceId = repository.Create("Selected source", "http://localhost:9117/api", "key", "query");
+
+        repository.ReplaceSelectedCategoryIds(sourceId, new[] { 2000, 5000, 7000 });
+        repository.ReplaceSelectedCategoryIds(sourceId, new[] { 2000, 5000 });
+
+        var selected = repository.GetSelectedCategoryIds(sourceId).OrderBy(id => id).ToArray();
+        Assert.Equal(new[] { 2000, 5000 }, selected);
     }
 
     private static Db CreateDb(TestWorkspace workspace)

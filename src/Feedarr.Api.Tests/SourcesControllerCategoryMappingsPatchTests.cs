@@ -24,6 +24,7 @@ public sealed class SourcesControllerCategoryMappingsPatchTests
             ctx.SourceId,
             new SourceCategoryMappingsPatchDto
             {
+                SelectedCategoryIds = new List<int> { 2020 },
                 Mappings =
                 {
                     new SourceCategoryMappingPatchItemDto
@@ -51,6 +52,7 @@ public sealed class SourcesControllerCategoryMappingsPatchTests
             ctx.SourceId,
             new SourceCategoryMappingsPatchDto
             {
+                SelectedCategoryIds = new List<int> { 5050 },
                 Mappings =
                 {
                     new SourceCategoryMappingPatchItemDto { CatId = 5050, GroupKey = "shows" }
@@ -72,6 +74,7 @@ public sealed class SourcesControllerCategoryMappingsPatchTests
             ctx.SourceId,
             new SourceCategoryMappingsPatchDto
             {
+                SelectedCategoryIds = new List<int>(),
                 Mappings =
                 {
                     new SourceCategoryMappingPatchItemDto { CatId = 2020, GroupKey = "other" }
@@ -83,6 +86,48 @@ public sealed class SourcesControllerCategoryMappingsPatchTests
     }
 
     [Fact]
+    public void PatchMappings_MissingSelectedCategoryIds_ReturnsBadRequest()
+    {
+        using var ctx = TestContext.Create();
+
+        var result = Assert.IsType<BadRequestObjectResult>(ctx.Controller.PatchCategoryMappings(
+            ctx.SourceId,
+            new SourceCategoryMappingsPatchDto
+            {
+                SelectedCategoryIds = null,
+                Mappings =
+                {
+                    new SourceCategoryMappingPatchItemDto { CatId = 2020, GroupKey = "films" }
+                }
+            }));
+        var error = result.Value?.GetType().GetProperty("error")?.GetValue(result.Value)?.ToString();
+        Assert.Equal("selectedCategoryIds missing; send selectedCategoryIds: [] if empty", error);
+    }
+
+    [Fact]
+    public void PatchMappings_LegacyCategoryIds_IsAccepted()
+    {
+        using var ctx = TestContext.Create();
+
+        var result = ctx.Controller.PatchCategoryMappings(
+            ctx.SourceId,
+            new SourceCategoryMappingsPatchDto
+            {
+                SelectedCategoryIds = null,
+                CategoryIds = new List<int> { 2020, 5050, 2020 },
+                Mappings =
+                {
+                    new SourceCategoryMappingPatchItemDto { CatId = 2020, GroupKey = "films" },
+                    new SourceCategoryMappingPatchItemDto { CatId = 5050, GroupKey = "series" }
+                }
+            });
+
+        Assert.IsType<OkObjectResult>(result);
+        var selected = ctx.Sources.GetSelectedCategoryIds(ctx.SourceId).OrderBy(id => id).ToArray();
+        Assert.Equal(new[] { 2020, 5050 }, selected);
+    }
+
+    [Fact]
     public void PatchMappings_GroupKeyNull_RemovesMapping()
     {
         using var ctx = TestContext.Create();
@@ -91,6 +136,7 @@ public sealed class SourcesControllerCategoryMappingsPatchTests
             ctx.SourceId,
             new SourceCategoryMappingsPatchDto
             {
+                SelectedCategoryIds = new List<int> { 2020 },
                 Mappings =
                 {
                     new SourceCategoryMappingPatchItemDto { CatId = 2020, GroupKey = "films" }
@@ -103,6 +149,7 @@ public sealed class SourcesControllerCategoryMappingsPatchTests
             ctx.SourceId,
             new SourceCategoryMappingsPatchDto
             {
+                SelectedCategoryIds = new List<int>(),
                 Mappings =
                 {
                     new SourceCategoryMappingPatchItemDto
@@ -127,6 +174,7 @@ public sealed class SourcesControllerCategoryMappingsPatchTests
             ctx.SourceId,
             new SourceCategoryMappingsPatchDto
             {
+                SelectedCategoryIds = new List<int> { 2020, 5050, 7000 },
                 Mappings =
                 {
                     new SourceCategoryMappingPatchItemDto { CatId = 2020, GroupKey = "film" },
@@ -142,6 +190,9 @@ public sealed class SourcesControllerCategoryMappingsPatchTests
         Assert.Equal("emissions", byCat[5050].GroupKey);
         Assert.Equal("books", byCat[7000].GroupKey);
         Assert.Equal("Livres", byCat[7000].GroupLabel);
+
+        var selected = ctx.Sources.GetSelectedCategoryIds(ctx.SourceId).OrderBy(id => id).ToArray();
+        Assert.Equal(new[] { 2020, 5050, 7000 }, selected);
     }
 
     private sealed class TestContext : IDisposable

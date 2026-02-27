@@ -12,6 +12,13 @@ public sealed class BasicAuthMiddleware
 {
     internal const string AuthPassedKey = "feedarr.auth.passed";
 
+    /// <summary>
+    /// Set in HttpContext.Items when the request was authenticated via a bootstrap token.
+    /// Controllers can read this to call <see cref="BootstrapTokenService.InvalidateAll"/>
+    /// after a successful security config save.
+    /// </summary>
+    internal const string BootstrapTokenActiveKey = "feedarr.auth.bootstrap_token_active";
+
     private static readonly string[] SetupAllowedApiPrefixes =
     {
         "/api/setup",
@@ -48,6 +55,7 @@ public sealed class BasicAuthMiddleware
         SettingsRepository settingsRepo,
         IMemoryCache cache,
         SetupStateService setupState,
+        BootstrapTokenService bootstrapTokens,
         ILogger<BasicAuthMiddleware> log)
     {
         if (!setupState.IsSetupCompleted() && !IsAllowedDuringSetup(context.Request))
@@ -103,6 +111,29 @@ public sealed class BasicAuthMiddleware
 
         if (!authConfigured)
         {
+            // A valid issued bootstrap token grants access to security-setup paths only
+            // (principle of least privilege). It does NOT open the full API.
+            var issuedToken = TryGetBootstrapTokenHeader(context.Request);
+            if (issuedToken is not null && bootstrapTokens.IsValid(issuedToken))
+            {
+                if (IsAllowedWithBootstrapToken(context.Request))
+                {
+                    context.Items[AuthPassedKey] = true;
+                    context.Items[BootstrapTokenActiveKey] = true;
+                    await _next(context);
+                    return;
+                }
+
+                // Token is valid but the path is outside the bootstrap scope — reject rather
+                // than silently falling through to the security-setup lock check below.
+                log.LogWarning(
+                    "Bootstrap token presented for out-of-scope path {Method} {Path} — rejected",
+                    context.Request.Method,
+                    context.Request.Path.Value ?? "/");
+                await RejectBootstrapTokenOutOfScope(context);
+                return;
+            }
+
             if (IsAllowedDuringSecuritySetup(context.Request))
             {
                 context.Items[AuthPassedKey] = true;
@@ -325,5 +356,64 @@ public sealed class BasicAuthMiddleware
             return true;
 
         return path.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Paths that a bootstrap token may access — limited to what is strictly needed
+    /// to configure authentication during the security setup phase.
+    /// The full API is NOT accessible via a bootstrap token (principle of least privilege).
+    /// </summary>
+    private static bool IsAllowedWithBootstrapToken(HttpRequest request)
+    {
+        if (HttpMethods.IsOptions(request.Method))
+            return true;
+
+        var path = request.Path.Value ?? "";
+
+        // Health / static assets — always allowed
+        if (path.Equals("/health", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("/api/health", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (PathEqualsOrUnder(path, "/setup") ||
+            PathEqualsOrUnder(path, "/assets") ||
+            path.StartsWith("/favicon", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("/manifest", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("/service-worker", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // The bootstrap token endpoint itself (POST to re-issue a token)
+        if (SmartAuthPolicy.IsBootstrapTokenRequest(request))
+            return true;
+
+        // The only API paths this token needs: security + setup state
+        foreach (var prefix in SecuritySetupAllowedApiPrefixes)
+        {
+            if (PathEqualsOrUnder(path, prefix))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static Task RejectBootstrapTokenOutOfScope(HttpContext context)
+    {
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        context.Response.ContentType = "application/json";
+        return context.Response.WriteAsJsonAsync(new
+        {
+            error = "bootstrap_token_scope_exceeded",
+            message = "The bootstrap token only grants access to security setup endpoints. " +
+                      "Complete security configuration first, then use regular credentials."
+        });
+    }
+
+    private static string? TryGetBootstrapTokenHeader(HttpRequest request)
+    {
+        if (!request.Headers.TryGetValue(SmartAuthPolicy.BootstrapTokenHeader, out var values))
+            return null;
+
+        var value = values.ToString().Trim();
+        return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 }

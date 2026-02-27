@@ -10,6 +10,7 @@ public sealed class CapsFlatMergeTests
         IDictionary<int, string> capsById,
         IEnumerable<int> supportedIds,
         IDictionary<int, (string key, string label)>? assignedById = null,
+        IEnumerable<int>? selectedIds = null,
         bool includeStandardCatalog = true,
         bool includeSpecific = true)
     {
@@ -23,6 +24,7 @@ public sealed class CapsFlatMergeTests
             capsById,
             supportedIds.ToHashSet(),
             assignedById ?? new Dictionary<int, (string key, string label)>(),
+            (selectedIds ?? Enumerable.Empty<int>()).ToHashSet(),
             includeStandardCatalog,
             includeSpecific
         });
@@ -97,7 +99,11 @@ public sealed class CapsFlatMergeTests
             [120001] = ("anime", "Anime")
         };
 
-        var result = BuildFlatCategories(capsById, new[] { 5050, 120001 }, assignedById: assigned);
+        var result = BuildFlatCategories(
+            capsById,
+            new[] { 5050, 120001 },
+            assignedById: assigned,
+            selectedIds: new[] { 5050, 120001 });
         var byId = result.ToDictionary(c => c.Id);
 
         Assert.True(byId[5050].IsAssigned);

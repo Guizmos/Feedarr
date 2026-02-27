@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { apiGet, apiPut } from "../../../api/client.js";
+import { getSecurityText } from "../securityI18n.js";
 
 function isLocalHost(host) {
   if (!host) return false;
@@ -18,13 +19,6 @@ function isExposedPublicBaseUrl(publicBaseUrl) {
   }
 }
 
-const CREDS_WARNING =
-  "Credentials are required when AuthMode is smart/strict and auth is required (public URL or proxy). Set username/password or switch to open.";
-const DOWNGRADE_WARNING =
-  "Passer en mode Open desactive l'authentification. Confirme la desactivation pour enregistrer.";
-const PASSWORD_COMPLEXITY_FALLBACK =
-  "Mot de passe trop simple: minimum 12 caracteres avec au moins une majuscule, une minuscule, un chiffre et un caractere special.";
-
 function isPasswordComplexityError(error) {
   const title = String(error?.title || "").toLowerCase();
   const message = String(error?.message || "").toLowerCase();
@@ -32,19 +26,30 @@ function isPasswordComplexityError(error) {
 }
 
 function formatPasswordComplexityMessage(error) {
+  const t = getSecurityText();
   const req = error?.requirements;
   if (req && typeof req === "object") {
     const minLength = Number(req.minLength);
     const clauses = [];
-    if (req.requireUpper) clauses.push("une majuscule");
-    if (req.requireLower) clauses.push("une minuscule");
-    if (req.requireDigit) clauses.push("un chiffre");
-    if (req.requireSymbol) clauses.push("un caractere special");
+    if (req.requireUpper) clauses.push(t("settings.security.error.passwordClause.upper"));
+    if (req.requireLower) clauses.push(t("settings.security.error.passwordClause.lower"));
+    if (req.requireDigit) clauses.push(t("settings.security.error.passwordClause.digit"));
+    if (req.requireSymbol) clauses.push(t("settings.security.error.passwordClause.symbol"));
     if (minLength > 0 && clauses.length > 0) {
-      return `Mot de passe trop simple: minimum ${minLength} caracteres avec au moins ${clauses.join(", ")}.`;
+      return `${t("settings.security.error.passwordComplexityPrefix")} ${minLength} ${t("settings.security.error.passwordComplexityWithAtLeast")} ${clauses.join(", ")}.`;
     }
   }
-  return PASSWORD_COMPLEXITY_FALLBACK;
+  return t("settings.security.error.passwordComplexityFallback");
+}
+
+function markSecuritySettingsError(error) {
+  if (error && typeof error === "object") {
+    error.isSecuritySettingsError = true;
+    return error;
+  }
+  const wrapped = new Error(String(error || "Security settings error"));
+  wrapped.isSecuritySettingsError = true;
+  return wrapped;
 }
 
 export default function useSecuritySettings() {
@@ -67,7 +72,6 @@ export default function useSecuritySettings() {
   const [securityErrors, setSecurityErrors] = useState([]);
   const [securityMessage, setSecurityMessage] = useState("");
   const [passwordMessage, setPasswordMessage] = useState("");
-  const [allowDowngradeToOpen, setAllowDowngradeToOpen] = useState(false);
 
   // ── Derived state ────────────────────────────────────────────────────────
 
@@ -93,7 +97,8 @@ export default function useSecuritySettings() {
 
   // Banner: existing logic for public-URL / proxy exposure warning (unrelated to field states)
   const isExposedConfig = isExposedPublicBaseUrl(security.publicBaseUrl);
-  const statusRequiresCredentials = isSmart && !!security.authRequired && !security.authConfigured;
+  const effectiveAuthRequired = isStrict ? true : !!security.authRequired;
+  const statusRequiresCredentials = isSmart && effectiveAuthRequired && !security.authConfigured;
   const credentialsRequiredForMode = isStrict || (isSmart && (isExposedConfig || statusRequiresCredentials));
 
   // ── Validation ───────────────────────────────────────────────────────────
@@ -163,10 +168,9 @@ export default function useSecuritySettings() {
     loaded &&
     security.authMode === "open" &&
     (initialSecurity.authMode !== "open" || security.authConfigured);
-  const downgradeConfirmed = !requiresDowngradeConfirmation || allowDowngradeToOpen;
 
   // Save requires: data loaded + something changed + no validation errors
-  const canSave = loaded && isDirty && !credsMissing && downgradeConfirmed;
+  const canSave = loaded && isDirty && !credsMissing;
 
   const showExistingCredentialsHint =
     loaded &&
@@ -183,12 +187,6 @@ export default function useSecuritySettings() {
     setPasswordMessage("");
     setSecurityState(updater);
   }, []);
-
-  useEffect(() => {
-    if (security.authMode !== "open" && allowDowngradeToOpen) {
-      setAllowDowngradeToOpen(false);
-    }
-  }, [security.authMode, allowDowngradeToOpen]);
 
   const loadSecuritySettings = useCallback(async () => {
     try {
@@ -213,7 +211,6 @@ export default function useSecuritySettings() {
         setSecurityErrors([]);
         setSecurityMessage("");
         setPasswordMessage("");
-        setAllowDowngradeToOpen(false);
       }
     } catch {
       // Ignore load errors — keep default state, show no red
@@ -223,7 +220,11 @@ export default function useSecuritySettings() {
     }
   }, []);
 
-  const saveSecuritySettings = useCallback(async () => {
+  const saveSecuritySettings = useCallback(async (options = {}) => {
+    const t = getSecurityText();
+    const credsWarning = t("settings.security.notice.credsRequired");
+    const downgradeWarning = t("settings.security.warning.downgradeOpen");
+
     setSecurityErrors([]);
     setSecurityMessage("");
     setPasswordMessage("");
@@ -234,12 +235,13 @@ export default function useSecuritySettings() {
       if (usernameMissing) next.push("username");
       if (passwordMissing || confirmMissing) next.push("password", "passwordConfirmation");
       setSecurityErrors(next);
-      setSecurityMessage(CREDS_WARNING);
-      throw new Error(CREDS_WARNING);
+      setSecurityMessage(credsWarning);
+      throw markSecuritySettingsError(new Error(credsWarning));
     }
-    if (requiresDowngradeConfirmation && !allowDowngradeToOpen) {
-      setSecurityMessage(DOWNGRADE_WARNING);
-      throw new Error(DOWNGRADE_WARNING);
+    const shouldAllowDowngrade = options?.allowDowngradeToOpen === true;
+    if (requiresDowngradeConfirmation && !shouldAllowDowngrade) {
+      setSecurityMessage(downgradeWarning);
+      throw markSecuritySettingsError(new Error(downgradeWarning));
     }
 
     const payload = {
@@ -247,11 +249,11 @@ export default function useSecuritySettings() {
       publicBaseUrl: security.publicBaseUrl,
       username: security.username,
     };
-    if (requiresDowngradeConfirmation && allowDowngradeToOpen) {
+    if (requiresDowngradeConfirmation && shouldAllowDowngrade) {
       payload.allowDowngradeToOpen = true;
     }
 
-    if (security.password || security.passwordConfirmation) {
+    if (security.authMode !== "open" && (security.password || security.passwordConfirmation)) {
       payload.password = security.password;
       payload.passwordConfirmation = security.passwordConfirmation;
     }
@@ -259,15 +261,15 @@ export default function useSecuritySettings() {
     try {
       const saved = await apiPut("/api/settings/security", payload);
       setInitialSecurity({
-        authMode: saved?.authMode || security.authMode,
-        publicBaseUrl: saved?.publicBaseUrl || security.publicBaseUrl,
-        username: saved?.username || security.username,
+        authMode: saved?.authMode ?? security.authMode,
+        publicBaseUrl: saved?.publicBaseUrl ?? security.publicBaseUrl,
+        username: saved?.username ?? security.username,
       });
       setSecurityState((prev) => ({
         ...prev,
-        authMode: saved?.authMode || prev.authMode,
-        publicBaseUrl: saved?.publicBaseUrl || prev.publicBaseUrl,
-        username: saved?.username || prev.username,
+        authMode: saved?.authMode ?? prev.authMode,
+        publicBaseUrl: saved?.publicBaseUrl ?? prev.publicBaseUrl,
+        username: saved?.username ?? prev.username,
         hasPassword: !!saved?.hasPassword,
         authConfigured: !!saved?.authConfigured,
         authRequired: !!saved?.authRequired,
@@ -282,19 +284,27 @@ export default function useSecuritySettings() {
         setPasswordMessage(message);
         setSecurityMessage(message);
         if (e && typeof e === "object") e.message = message;
-        throw e;
+        throw markSecuritySettingsError(e);
       }
       if (String(e?.error || "").toLowerCase() === "downgrade_confirmation_required") {
-        setSecurityMessage(DOWNGRADE_WARNING);
-        throw e;
+        setSecurityMessage(downgradeWarning);
+        throw markSecuritySettingsError(e);
       }
       if (typeof e?.message === "string") {
         const msgLower = e.message.toLowerCase();
         const next = [];
-        if (msgLower.includes("credentials_required") || msgLower.includes("credentials are required")) {
+        if (
+          msgLower.includes("credentials_required") ||
+          msgLower.includes("credentials are required") ||
+          msgLower.includes("identifiants requis")
+        ) {
           if (!usernameValue) next.push("username");
           if (!passwordValue) next.push("password", "passwordConfirmation");
-          setSecurityMessage(e.message);
+          setSecurityMessage(credsWarning);
+        } else if (msgLower.includes("password and confirmation required")) {
+          setSecurityMessage(t("settings.security.error.passwordAndConfirmationRequired"));
+        } else if (msgLower.includes("password confirmation mismatch")) {
+          setSecurityMessage(t("settings.security.error.passwordConfirmationMismatch"));
         } else {
           if (msgLower.includes("username")) next.push("username");
           if (msgLower.includes("password")) next.push("password", "passwordConfirmation");
@@ -302,7 +312,7 @@ export default function useSecuritySettings() {
         }
         if (next.length > 0) setSecurityErrors(next);
       }
-      throw e;
+      throw markSecuritySettingsError(e);
     }
   }, [
     credsMissing,
@@ -310,7 +320,6 @@ export default function useSecuritySettings() {
     passwordMissing,
     confirmMissing,
     requiresDowngradeConfirmation,
-    allowDowngradeToOpen,
     security,
     usernameValue,
     passwordValue,
@@ -324,10 +333,9 @@ export default function useSecuritySettings() {
     securityErrors,
     securityMessage,
     passwordMessage,
-    allowDowngradeToOpen,
-    setAllowDowngradeToOpen,
     requiresDowngradeConfirmation,
     credentialsRequiredForMode,
+    effectiveAuthRequired,
     usernameRequired,
     passwordRequired,
     confirmRequired,

@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import { useSubbarSetter } from "../layout/useSubbar.js";
 import SubAction from "../ui/SubAction.jsx";
 import Loader from "../ui/Loader.jsx";
+import Modal from "../ui/Modal.jsx";
 
 import useSettingsController from "./settings/useSettingsController.js";
 import SettingsGeneral from "./settings/SettingsGeneral.jsx";
@@ -12,8 +13,10 @@ import SettingsApplications from "./settings/SettingsApplications.jsx";
 import SettingsMaintenance from "./settings/SettingsMaintenance.jsx";
 import SettingsBackup from "./settings/SettingsBackup.jsx";
 import SettingsUsers from "./settings/SettingsUsers.jsx";
+import { getSecurityText } from "./settings/securityI18n.js";
 
 export default function Settings() {
+  const tSecurity = getSecurityText();
   const setContent = useSubbarSetter();
   const location = useLocation();
   const section = location.pathname.split("/")[2] || "general";
@@ -33,6 +36,9 @@ export default function Settings() {
     handleRefresh,
     handleSave,
     saveState,
+    securityDowngradeModalOpen,
+    closeSecurityDowngradeModal,
+    confirmSecurityDowngradeSave,
     isDirty,
     isSaveBlocked,
     openArrModalAdd,
@@ -64,6 +70,7 @@ export default function Settings() {
   openExternalModalAddRef.current = openExternalModalAdd;
   const [posterModalOpen, setPosterModalOpen] = useState(false);
   const [applicationsOptionsOpen, setApplicationsOptionsOpen] = useState(false);
+  const [authModesInfoOpen, setAuthModesInfoOpen] = useState(false);
   const backupActionsLocked = !!backup?.backupState?.isBusy || !!backup?.backupState?.needsRestart;
   const backupLockedTitle = backup?.backupState?.needsRestart
     ? "Redemarrage requis apres restauration"
@@ -128,6 +135,16 @@ export default function Settings() {
             }
           />
         )}
+        {showUsers && (
+          <>
+            <div className="subspacer" />
+            <SubAction
+              icon="info"
+              label={tSecurity("settings.security.subbar.info")}
+              onClick={() => setAuthModesInfoOpen(true)}
+            />
+          </>
+        )}
         {showApplications && (
           <>
             <div className="subspacer" />
@@ -173,6 +190,7 @@ export default function Settings() {
     canAddExternalProvider,
     backupActionsLocked,
     backupLockedTitle,
+    showUsers,
   ]);
 
   return (
@@ -211,6 +229,57 @@ export default function Settings() {
           {showUsers && <SettingsUsers {...users} />}
         </div>
       )}
+
+      <Modal
+        open={securityDowngradeModalOpen}
+        title={tSecurity("settings.security.modal.disableAuth.title")}
+        onClose={closeSecurityDowngradeModal}
+        width={560}
+      >
+        <div style={{ padding: 12 }}>
+          <div className="muted" style={{ marginBottom: 12 }}>
+            {tSecurity("settings.security.modal.disableAuth.message")}
+          </div>
+          <div className="formactions">
+            <button className="btn" type="button" onClick={closeSecurityDowngradeModal} disabled={saveState === "loading"}>
+              {tSecurity("settings.security.modal.cancel")}
+            </button>
+            <button className="btn btn-danger" type="button" onClick={confirmSecurityDowngradeSave} disabled={saveState === "loading"}>
+              {tSecurity("settings.security.modal.confirm")}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={authModesInfoOpen}
+        title={tSecurity("settings.security.infoModal.title")}
+        onClose={() => setAuthModesInfoOpen(false)}
+        width={640}
+      >
+        <div style={{ padding: 12, display: "grid", gap: 12 }}>
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>{tSecurity("settings.security.infoModal.none.title")}</div>
+            <div className="muted">{tSecurity("settings.security.infoModal.none.description")}</div>
+          </div>
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>{tSecurity("settings.security.infoModal.smart.title")}</div>
+            <div className="muted">{tSecurity("settings.security.infoModal.smart.description")}</div>
+          </div>
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>{tSecurity("settings.security.infoModal.strict.title")}</div>
+            <div className="muted">{tSecurity("settings.security.infoModal.strict.description")}</div>
+          </div>
+          <div className="muted" style={{ fontStyle: "italic" }}>
+            {tSecurity("settings.security.infoModal.note")}
+          </div>
+          <div className="formactions">
+            <button className="btn" type="button" onClick={() => setAuthModesInfoOpen(false)}>
+              {tSecurity("settings.security.infoModal.close")}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

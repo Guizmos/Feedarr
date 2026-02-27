@@ -5,6 +5,8 @@ import {
   normalizeCategoryGroupKey,
 } from "../../domain/categories/index.js";
 import { tr } from "../../app/uiText.js";
+import AppIcon from "../../ui/AppIcon.jsx";
+import CategoryPreviewModal from "./CategoryPreviewModal.jsx";
 
 const CATEGORY_GROUP_LABELS_EN = {
   films: "Movies",
@@ -46,11 +48,12 @@ function categoryMatchesFilter(category, search, mode, mappings) {
   return haystack.includes(search.toLowerCase());
 }
 
-export default function CategoryMappingBoard({ categories, mappings, onChangeMapping, variant = "default" }) {
+export default function CategoryMappingBoard({ categories, mappings, onChangeMapping, variant = "default", sourceId }) {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState("all");
   const [openMenuId, setOpenMenuId] = useState(null);
   const [menuPosition, setMenuPosition] = useState(null);
+  const [previewCat, setPreviewCat] = useState(null); // { id, name }
   const rootRef = useRef(null);
   const assignButtonRefs = useRef(new Map());
 
@@ -235,6 +238,8 @@ export default function CategoryMappingBoard({ categories, mappings, onChangeMap
           openMenuId={openMenuId}
           onToggleMenu={toggleMenu}
           registerAssignButton={registerAssignButton}
+          sourceId={sourceId}
+          onPreview={sourceId ? setPreviewCat : null}
         />
         <MappingColumn
           title={tr("Spécifiques", "Specific")}
@@ -244,6 +249,8 @@ export default function CategoryMappingBoard({ categories, mappings, onChangeMap
           openMenuId={openMenuId}
           onToggleMenu={toggleMenu}
           registerAssignButton={registerAssignButton}
+          sourceId={sourceId}
+          onPreview={sourceId ? setPreviewCat : null}
         />
       </div>
       {openMenuId && menuPosition && (
@@ -261,11 +268,19 @@ export default function CategoryMappingBoard({ categories, mappings, onChangeMap
           }}
         />
       )}
+      {previewCat && sourceId && (
+        <CategoryPreviewModal
+          sourceId={sourceId}
+          catId={previewCat.id}
+          catName={previewCat.name}
+          onClose={() => setPreviewCat(null)}
+        />
+      )}
     </div>
   );
 }
 
-function MappingColumn({ title, categories, mappings, groupLabels, openMenuId, onToggleMenu, registerAssignButton }) {
+function MappingColumn({ title, categories, mappings, groupLabels, openMenuId, onToggleMenu, registerAssignButton, onPreview }) {
   return (
     <div className="category-mapping-board__column">
       <div className="category-mapping-board__column-title">{title}</div>
@@ -283,6 +298,16 @@ function MappingColumn({ title, categories, mappings, groupLabels, openMenuId, o
               <div className="mapping-chip__line">
                 <span className="mapping-chip__id">{category.id}</span>
                 <span className="mapping-chip__name">{category.name}</span>
+                {onPreview && (
+                  <button
+                    type="button"
+                    className="iconbtn mapping-chip__preview"
+                    title={tr("Aperçu des 20 derniers résultats", "Preview last 20 results")}
+                    onClick={() => onPreview({ id: category.id, name: category.name })}
+                  >
+                    <AppIcon name="search" />
+                  </button>
+                )}
               </div>
               <div className="mapping-chip__line">
                 <button

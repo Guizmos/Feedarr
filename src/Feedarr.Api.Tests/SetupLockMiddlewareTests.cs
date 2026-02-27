@@ -42,6 +42,7 @@ public sealed class SetupLockMiddlewareTests
             settings,
             cache,
             setupState,
+            new BootstrapTokenService(),
             NullLogger<BasicAuthMiddleware>.Instance);
 
         Assert.False(nextCalled);
@@ -76,6 +77,7 @@ public sealed class SetupLockMiddlewareTests
             settings,
             cache,
             setupState,
+            new BootstrapTokenService(),
             NullLogger<BasicAuthMiddleware>.Instance);
 
         Assert.False(nextCalled);
@@ -121,6 +123,7 @@ public sealed class SetupLockMiddlewareTests
             settings,
             cache,
             setupState,
+            new BootstrapTokenService(),
             NullLogger<BasicAuthMiddleware>.Instance);
 
         Assert.True(nextCalled);
@@ -156,6 +159,7 @@ public sealed class SetupLockMiddlewareTests
             settings,
             cache,
             setupState,
+            new BootstrapTokenService(),
             NullLogger<BasicAuthMiddleware>.Instance);
 
         Assert.True(nextCalled);

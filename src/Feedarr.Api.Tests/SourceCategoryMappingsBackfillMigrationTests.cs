@@ -11,7 +11,7 @@ namespace Feedarr.Api.Tests;
 public sealed class SourceCategoryMappingsBackfillMigrationTests
 {
     [Fact]
-    public void Migration_BackfillsMappings_FromLegacy()
+    public void Migration_BackfillsSelectedCategories_FromMappedLegacyRows()
     {
         using var workspace = new TestWorkspace();
         var db = CreateDb(workspace);
@@ -53,14 +53,21 @@ public sealed class SourceCategoryMappingsBackfillMigrationTests
                 "Migrations",
                 "0040_backfill_source_category_mappings_from_legacy.sql");
             var sql = File.ReadAllText(migrationPath);
+            var selectedMigrationPath = Path.Combine(
+                AppContext.BaseDirectory,
+                "Data",
+                "Migrations",
+                "0041_source_selected_categories.sql");
+            var selectedSql = File.ReadAllText(selectedMigrationPath);
 
             conn.Execute(sql);
             conn.Execute(sql); // idempotence guard
+            conn.Execute(selectedSql);
         }
 
         var repository = new SourceRepository(db, new PassthroughProtectionService());
-        var activeIds = repository.GetActiveCategoryIds(sourceId).OrderBy(x => x).ToArray();
-        Assert.Equal(new[] { 5000, 7000 }, activeIds);
+        var selectedIds = repository.GetSelectedCategoryIds(sourceId).OrderBy(x => x).ToArray();
+        Assert.Equal(new[] { 5000 }, selectedIds);
 
         using (var conn = db.Open())
         {
@@ -81,6 +88,56 @@ public sealed class SourceCategoryMappingsBackfillMigrationTests
             Assert.Equal("Emissions", mappings.Single(m => m.CatId == 5000).GroupLabel);
             Assert.Null(mappings.Single(m => m.CatId == 7000).GroupKey);
         }
+    }
+
+    [Fact]
+    public void Migration_DoesNotOverrideExistingExplicitSelection()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        long sourceId;
+        using (var conn = db.Open())
+        {
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            sourceId = conn.ExecuteScalar<long>(
+                """
+                INSERT INTO sources(name, enabled, torznab_url, api_key, auth_mode, created_at_ts, updated_at_ts)
+                VALUES ('legacy-source-2', 1, 'http://localhost/legacy-2', 'key', 'query', @now, @now);
+                SELECT last_insert_rowid();
+                """,
+                new { now });
+
+            conn.Execute(
+                """
+                INSERT INTO source_category_mappings(source_id, cat_id, group_key, group_label, created_at_ts, updated_at_ts)
+                VALUES
+                    (@sid, 2000, 'films', 'Films', @now, @now),
+                    (@sid, 5000, 'series', 'Série TV', @now, @now);
+                """,
+                new { sid = sourceId, now });
+
+            conn.Execute(
+                """
+                INSERT INTO source_selected_categories(source_id, cat_id)
+                VALUES (@sid, 7000);
+                """,
+                new { sid = sourceId });
+
+            var migrationPath = Path.Combine(
+                AppContext.BaseDirectory,
+                "Data",
+                "Migrations",
+                "0041_source_selected_categories.sql");
+            var sql = File.ReadAllText(migrationPath);
+
+            conn.Execute(sql);
+        }
+
+        var repository = new SourceRepository(db, new PassthroughProtectionService());
+        var selectedIds = repository.GetSelectedCategoryIds(sourceId).OrderBy(x => x).ToArray();
+        Assert.Equal(new[] { 7000 }, selectedIds);
     }
 
     private sealed class MappingRow

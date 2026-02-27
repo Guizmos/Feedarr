@@ -6,6 +6,7 @@ import { tr } from "../../app/uiText.js";
 import CategoryMappingBoard from "../shared/CategoryMappingBoard.jsx";
 import {
   CATEGORY_GROUP_LABELS,
+  buildCategoryMappingsPatchDto,
   buildMappingsPayload,
   mapFromCapsAssignments,
   normalizeCategoryGroupKey,
@@ -433,9 +434,17 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
       if (res?.id) {
         await apiPut(`/api/sources/${res.id}/enabled`, { enabled: true });
         const mappingsPayload = buildMappingsPayload(categoryMappings);
-        if (mappingsPayload.length > 0) {
-          await apiPatch(`/api/sources/${res.id}/category-mappings`, { mappings: mappingsPayload });
-        }
+        const selectedCategoryIds = [...categoryMappings.keys()]
+          .map((catId) => Number(catId))
+          .filter((catId) => Number.isFinite(catId) && catId > 0)
+          .sort((a, b) => a - b);
+        await apiPatch(
+          `/api/sources/${res.id}/category-mappings`,
+          buildCategoryMappingsPatchDto({
+            mappings: mappingsPayload,
+            selectedCategoryIds,
+          })
+        );
       }
       await loadSources();
       setCapsOk(tr("Indexeur ajoute.", "Indexer added."));
@@ -508,13 +517,23 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
         };
       })
       .filter(Boolean);
+    const selectedCategoryIds = [...categoryMappings.keys()]
+      .map((catId) => Number(catId))
+      .filter((catId) => Number.isFinite(catId) && catId > 0)
+      .sort((a, b) => a - b);
     if (mappingsPayload.length === 0) {
       setCapsError(tr("Aucune categorie a mettre a jour.", "No category to update."));
       return;
     }
     setSaving(true);
     try {
-      await apiPatch(`/api/sources/${editingSource.id}/category-mappings`, { mappings: mappingsPayload });
+      await apiPatch(
+        `/api/sources/${editingSource.id}/category-mappings`,
+        buildCategoryMappingsPatchDto({
+          mappings: mappingsPayload,
+          selectedCategoryIds,
+        })
+      );
       await loadSources();
       setCapsOk(tr("Categories mises a jour.", "Categories updated."));
       closeModal();
@@ -753,6 +772,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
               variant="wizard"
               categories={capsCategories}
               mappings={categoryMappings}
+              sourceId={editingSource?.id}
               onChangeMapping={(catId, groupKey) => {
                 const normalized = normalizeCategoryGroupKey(groupKey);
                 setCategoryMappings((prev) => {

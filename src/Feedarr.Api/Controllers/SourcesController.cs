@@ -7,6 +7,7 @@ using Feedarr.Api.Services.Torznab;
 using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services;
 using Feedarr.Api.Services.Backup;
+using Feedarr.Api.Middleware;
 using Feedarr.Api.Services.Security;
 using Microsoft.Extensions.Logging;
 
@@ -335,6 +336,7 @@ public sealed class SourcesController : ControllerBase
         if (filtered is not null)
         {
             _sources.ReplaceCategories(id, filtered);
+            _sources.ReplaceSelectedCategoryIds(id, filtered.Select(category => category.Id));
         }
         else
         {
@@ -532,7 +534,7 @@ public sealed class SourcesController : ControllerBase
         var src = _sources.Get(id);
         if (src is null) return NotFound(new { error = "source not found" });
 
-        _log.LogWarning("Legacy endpoint PUT /api/sources/{SourceId}/categories called; category mappings remain source of truth.", id);
+        _log.LogWarning("Legacy endpoint PUT /api/sources/{SourceId}/categories called; selected categories now use source_selected_categories.", id);
 
         var existingMap = _sources.GetUnifiedCategoryMap(id);
 
@@ -557,11 +559,33 @@ public sealed class SourcesController : ControllerBase
             return BadRequest(new { error = "categories missing" });
 
         _sources.ReplaceCategories(id, filtered);
+        _sources.ReplaceSelectedCategoryIds(id, filtered.Select(category => category.Id));
         _caps.InvalidateSource(id);
         _activity.Add(id, "info", "source", $"Source categories updated: {src.Name}",
             dataJson: $"{{\"sourceId\":{id},\"categories\":{filtered.Count}}}");
 
         return Ok(new { id, categories = filtered.Count });
+    }
+
+    // GET /api/sources/{id}/selected-categories
+    [HttpGet("{id:long}/selected-categories")]
+    public IActionResult GetSelectedCategories([FromRoute] long id)
+    {
+        var src = _sources.Get(id);
+        if (src is null) return NotFound(new { error = "source not found" });
+
+        var selectedCategoryIds = _sources.GetSelectedCategoryIds(id)
+            .Where(catId => catId > 0)
+            .Distinct()
+            .OrderBy(catId => catId)
+            .ToList();
+
+        return Ok(new
+        {
+            sourceId = id,
+            selectedCategoryIds,
+            count = selectedCategoryIds.Count
+        });
     }
 
     // GET /api/sources/{id}/category-mappings
@@ -590,9 +614,71 @@ public sealed class SourcesController : ControllerBase
         var src = _sources.Get(id);
         if (src is null) return NotFound(new { error = "source not found" });
 
-        var rawMappings = (dto?.Mappings ?? new List<SourceCategoryMappingPatchItemDto>()).ToList();
-        if (rawMappings.Count == 0)
-            return BadRequest(new { error = "mappings missing" });
+        if (dto is null)
+            return BadRequest(new { error = "payload missing" });
+
+        var rawMappings = (dto.Mappings ?? new List<SourceCategoryMappingPatchItemDto>()).ToList();
+        var hasSelectedCategoryIds = dto.SelectedCategoryIds is not null;
+        var selectedIdsSource = "selectedCategoryIds";
+        IEnumerable<int>? selectedCategoryIdsInput = dto.SelectedCategoryIds;
+        if (selectedCategoryIdsInput is null && dto.CategoryIds is not null)
+        {
+            selectedCategoryIdsInput = dto.CategoryIds;
+            selectedIdsSource = "categoryIds";
+        }
+        else if (selectedCategoryIdsInput is null && dto.ActiveCategoryIds is not null)
+        {
+            selectedCategoryIdsInput = dto.ActiveCategoryIds;
+            selectedIdsSource = "activeCategoryIds";
+        }
+
+        if (selectedCategoryIdsInput is null)
+        {
+            _log.LogWarning(
+                "PATCH category-mappings received: sourceId={SourceId} hasSelectedCategoryIds={HasSelectedCategoryIds} selectedCount={SelectedCount}",
+                id,
+                hasSelectedCategoryIds,
+                0);
+            return BadRequest(new { error = "selectedCategoryIds missing; send selectedCategoryIds: [] if empty" });
+        }
+
+        var selectedCategoryIds = selectedCategoryIdsInput
+            .Where(catId => catId > 0)
+            .Distinct()
+            .OrderBy(catId => catId)
+            .ToList();
+
+        var payloadCategoryIds = rawMappings
+            .Where(mapping => mapping is not null && mapping.CatId > 0)
+            .Select(mapping => mapping.CatId)
+            .Distinct()
+            .OrderBy(catId => catId)
+            .ToList();
+        var payloadAssignedCategoryIds = rawMappings
+            .Where(mapping => mapping is not null && mapping.CatId > 0 && !string.IsNullOrWhiteSpace(mapping.GroupKey))
+            .Select(mapping => mapping.CatId)
+            .Distinct()
+            .OrderBy(catId => catId)
+            .ToList();
+        var payloadSelectedCategoryIds = selectedCategoryIds
+            .OrderBy(catId => catId)
+            .ToList();
+        var correlationId = ControllerContext?.HttpContext is { } httpContext &&
+                            httpContext.Items.TryGetValue(CorrelationIdMiddleware.CorrelationIdKey, out var correlation)
+            ? Convert.ToString(correlation)
+            : null;
+        _log.LogInformation(
+            "Source category-mappings payload: sourceId={SourceId} correlationId={CorrelationId} categoryIds={CategoryIds} categoryCount={CategoryCount} assignedCategoryIds={AssignedCategoryIds} assignedCount={AssignedCount} hasSelectedCategoryIds={HasSelectedCategoryIds} selectedIdsSource={SelectedIdsSource} selectedCategoryIds={SelectedCategoryIds} selectedCount={SelectedCount}",
+            id,
+            string.IsNullOrWhiteSpace(correlationId) ? "-" : correlationId,
+            payloadCategoryIds.Count > 0 ? string.Join(",", payloadCategoryIds) : "-",
+            payloadCategoryIds.Count,
+            payloadAssignedCategoryIds.Count > 0 ? string.Join(",", payloadAssignedCategoryIds) : "-",
+            payloadAssignedCategoryIds.Count,
+            hasSelectedCategoryIds,
+            selectedIdsSource,
+            payloadSelectedCategoryIds.Count > 0 ? string.Join(",", payloadSelectedCategoryIds) : "-",
+            payloadSelectedCategoryIds.Count);
 
         foreach (var mapping in rawMappings)
         {
@@ -608,19 +694,28 @@ public sealed class SourcesController : ControllerBase
             }
         }
 
-        var changed = _sources.PatchCategoryMappings(
-            id,
-            rawMappings.Select(m => new SourceRepository.SourceCategoryMappingPatch
-            {
-                CatId = m.CatId,
-                GroupKey = string.IsNullOrWhiteSpace(m.GroupKey)
-                    ? null
-                    : (CategoryGroupCatalog.TryNormalizeKey(m.GroupKey, out var canonicalKey) ? canonicalKey : null)
-            }));
+        var changed = 0;
+        if (rawMappings.Count > 0)
+        {
+            changed = _sources.PatchCategoryMappings(
+                id,
+                rawMappings.Select(m => new SourceRepository.SourceCategoryMappingPatch
+                {
+                    CatId = m.CatId,
+                    GroupKey = string.IsNullOrWhiteSpace(m.GroupKey)
+                        ? null
+                        : (CategoryGroupCatalog.TryNormalizeKey(m.GroupKey, out var canonicalKey) ? canonicalKey : null)
+                }));
+        }
+        _sources.ReplaceSelectedCategoryIds(id, selectedCategoryIds);
 
         _caps.InvalidateSource(id);
         _activity.Add(id, "info", "source", $"Source category mappings patched: {src.Name}",
-            dataJson: $"{{\"sourceId\":{id},\"changed\":{changed},\"patched\":{rawMappings.Count}}}");
+            dataJson: $"{{\"sourceId\":{id},\"changed\":{changed},\"patched\":{rawMappings.Count},\"selected\":{selectedCategoryIds.Count}}}");
+        _log.LogInformation(
+            "Source selected categories saved: sourceId={SourceId} selectedCount={SelectedCount}",
+            id,
+            selectedCategoryIds.Count);
 
         var updated = _sources.GetCategoryMappings(id)
             .Select(m => new SourceCategoryMappingDto
@@ -631,7 +726,13 @@ public sealed class SourcesController : ControllerBase
             })
             .ToList();
 
-        return Ok(new { changed, mappings = updated });
+        return Ok(new
+        {
+            changed,
+            mappings = updated,
+            selectedCategoryIds,
+            selectedCount = selectedCategoryIds.Count
+        });
     }
 
     // POST /api/sources/{id}/reclassify
@@ -664,6 +765,105 @@ public sealed class SourcesController : ControllerBase
         {
             _log.LogError(ex, "Source reclassify failed for sourceId={SourceId}", id);
             return StatusCode(500, new { ok = false, error = "internal server error" });
+        }
+    }
+
+    // GET /api/sources/{id}/category-preview
+    [HttpGet("{id:long}/category-preview")]
+    public async Task<IActionResult> GetCategoryPreview(
+        [FromRoute] long id,
+        [FromQuery] int? catId,
+        [FromQuery] int? limit,
+        CancellationToken ct)
+    {
+        if (catId is null or <= 0)
+            return BadRequest(new { error = "catId missing or invalid" });
+
+        var src = _sources.Get(id);
+        if (src is null) return NotFound(new { error = "source not found" });
+
+        var effectiveLimit = Math.Clamp(limit ?? 20, 1, 50);
+
+        var items = await _releases.GetPreviewByCategoryAsync(id, catId.Value, effectiveLimit, ct);
+
+        _log.LogInformation(
+            "CategoryPreview: sourceId={SourceId} catId={CatId} limit={Limit} count={Count}",
+            id, catId.Value, effectiveLimit, items.Count);
+
+        return Ok(items);
+    }
+
+    // GET /api/sources/{id}/category-preview-live
+    [HttpGet("{id:long}/category-preview-live")]
+    public async Task<IActionResult> GetCategoryPreviewLive(
+        [FromRoute] long id,
+        [FromQuery] int? catId,
+        [FromQuery] int? limit,
+        CancellationToken ct)
+    {
+        if (catId is null or <= 0)
+            return BadRequest(new { error = "catId missing or invalid" });
+
+        var src = _sources.Get(id);
+        if (src is null) return NotFound(new { error = "source not found" });
+
+        var effectiveLimit = Math.Clamp(limit ?? 20, 1, 50);
+        var catNameMap = _sources.GetCategoryNameMap(id);
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(10));
+
+        try
+        {
+            var (items, _, _) = await _torznab.FetchLatestByCategoriesAsync(
+                src.TorznabUrl,
+                src.AuthMode,
+                src.ApiKey ?? "",
+                effectiveLimit,
+                new[] { catId.Value },
+                timeoutCts.Token);
+
+            var results = items
+                .Where(x => x.CategoryId == catId.Value)
+                .OrderByDescending(x => x.PublishedAtTs ?? 0)
+                .Take(effectiveLimit)
+                .Select(x =>
+                {
+                    return new CategoryPreviewItemDto
+                    {
+                        PublishedAtTs = x.PublishedAtTs ?? 0,
+                        SourceName = src.Name,
+                        Title = x.Title,
+                        SizeBytes = x.SizeBytes ?? 0,
+                        CategoryId = catId.Value,
+                        ResultCategoryName = catNameMap.TryGetValue(catId.Value, out var n) ? n : null,
+                        UnifiedCategory = null,
+                        TmdbId = null,
+                        TvdbId = null,
+                        Seeders = x.Seeders
+                    };
+                })
+                .ToList();
+
+            _log.LogInformation(
+                "CategoryPreviewLive: sourceId={SourceId} catId={CatId} limit={Limit} count={Count}",
+                id, catId.Value, effectiveLimit, results.Count);
+
+            return Ok(results);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            _log.LogWarning(
+                "CategoryPreviewLive timed out: sourceId={SourceId} catId={CatId}", id, catId.Value);
+            return StatusCode(504, new { error = "indexer timed out" });
+        }
+        catch (Exception ex)
+        {
+            var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "live preview failed");
+            _log.LogWarning(ex,
+                "CategoryPreviewLive failed: sourceId={SourceId} catId={CatId} error={Error}",
+                id, catId.Value, safeError);
+            return StatusCode(502, new { error = safeError });
         }
     }
 

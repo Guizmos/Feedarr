@@ -210,7 +210,45 @@ public sealed class RssSyncHostedService : BackgroundService
             try
             {
                 var categoryMap = sources.GetCategoryMappingMap(id);
-                var selectedCategoryIds = CategorySelection.NormalizeSelectedCategoryIds(sources.GetActiveCategoryIds(id));
+                var syncCorrelationId = Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N");
+                var persistedCategoryIds = sources.GetActiveCategoryIds(id)
+                    .Where(categoryId => categoryId > 0)
+                    .Distinct()
+                    .OrderBy(categoryId => categoryId)
+                    .ToList();
+                var selectedCategoryIds = CategorySelection.NormalizeSelectedCategoryIds(persistedCategoryIds);
+                var mappedCategoryIds = categoryMap.Keys
+                    .Where(categoryId => categoryId > 0)
+                    .Distinct()
+                    .OrderBy(categoryId => categoryId)
+                    .ToList();
+                var unmappedCategoryIds = persistedCategoryIds
+                    .Where(categoryId => !categoryMap.ContainsKey(categoryId))
+                    .Distinct()
+                    .OrderBy(categoryId => categoryId)
+                    .ToList();
+                var selectionReason = CategorySelectionAudit.InferReason(
+                    persistedWasNull: false,
+                    persistedCount: persistedCategoryIds.Count,
+                    parseErrorCount: 0,
+                    mappedCount: persistedCategoryIds.Count);
+                _log.LogInformation(
+                    "AutoSync CATEGORY SELECTION LOAD [{Name}] correlationId={CorrelationId} sourceId={SourceId} source=source_category_mappings.cat_id persistedRaw={PersistedRaw} persistedCount={PersistedCount} mappedCount={MappedCount} unmappedCount={UnmappedCount} reason={Reason}",
+                    name,
+                    syncCorrelationId,
+                    id,
+                    CategorySelectionAudit.SummarizeIds(persistedCategoryIds, max: 60),
+                    persistedCategoryIds.Count,
+                    mappedCategoryIds.Count,
+                    unmappedCategoryIds.Count,
+                    selectionReason);
+                _log.LogInformation(
+                    "AutoSync CATEGORY SELECTION EFFECTIVE [{Name}] correlationId={CorrelationId} sourceId={SourceId} normalizedSelection={NormalizedSelection} normalizedCount={NormalizedCount}",
+                    name,
+                    syncCorrelationId,
+                    id,
+                    CategorySelectionAudit.SummarizeIds(selectedCategoryIds, max: 60),
+                    selectedCategoryIds.Count);
                 var selectedUnifiedKeys = new HashSet<string>(
                     categoryMap.Values.Select(v => v.key).Where(k => !string.IsNullOrWhiteSpace(k)),
                     StringComparer.OrdinalIgnoreCase);
@@ -296,6 +334,7 @@ public sealed class RssSyncHostedService : BackgroundService
                     "AutoSync RAW [{Name}] raw={RawCount} perCatLimit={PerCatLimit} globalLimit={GlobalLimit} mode={Mode} syncMode={SyncMode} fallbackMode={FallbackMode} aggregated={Aggregated}",
                     name, rawCount, perCatLimit, globalLimit, usedMode, syncMode, fallbackMode ?? "-", usedAggregated);
 
+                var selectionFallbackUsed = CategorySelectionAudit.ShouldUseFallback(selectedCategoryIds);
                 if (selectedCategoryIds.Count > 0)
                 {
                     var selectedSet = selectedCategoryIds;
@@ -358,12 +397,12 @@ public sealed class RssSyncHostedService : BackgroundService
                 }
 
                 var countBeforeCategoryMapFilter = items.Count;
+                var noMapMatchCount = 0;
+                var fallbackSelectedCategoryCount = 0;
                 if (categoryMap.Count > 0)
                 {
                     var filtered = new List<TorznabItem>();
                     var missingCategory = 0;
-                    var noMapMatchCount = 0;
-                    var fallbackSelectedCategoryCount = 0;
                     var fallbackSamples = new List<string>();
                     var noMapSamples = new List<string>();
                     foreach (var it in items)
@@ -440,6 +479,16 @@ public sealed class RssSyncHostedService : BackgroundService
                         }
                     }
                 }
+
+                _log.LogInformation(
+                    "AutoSync CATEGORY SELECTION FALLBACK [{Name}] correlationId={CorrelationId} sourceId={SourceId} usedFallback={UsedFallback} fallbackSelectedCategoryCount={FallbackSelectedCategoryCount} noMapMatchCount={NoMapMatchCount} reason={Reason}",
+                    name,
+                    syncCorrelationId,
+                    id,
+                    selectionFallbackUsed,
+                    fallbackSelectedCategoryCount,
+                    noMapMatchCount,
+                    selectionReason);
 
                 var nowTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 var insertedNew = releases.UpsertMany(id, name, items, nowTs, defaultSeen, categoryMap);

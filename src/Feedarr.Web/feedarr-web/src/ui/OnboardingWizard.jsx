@@ -3,6 +3,7 @@ import Modal from "./Modal.jsx";
 import { apiPatch, apiPost, apiPut } from "../api/client.js";
 import CategoryMappingBoard from "../components/shared/CategoryMappingBoard.jsx";
 import {
+  buildCategoryMappingsPatchDto,
   buildMappingsPayload,
   mapFromCapsAssignments,
   normalizeCategoryGroupKey,
@@ -118,9 +119,17 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
       if (res?.id) {
         await apiPut(`/api/sources/${res.id}/enabled`, { enabled: true });
         const mappingsPayload = buildMappingsPayload(categoryMappings);
-        if (mappingsPayload.length > 0) {
-          await apiPatch(`/api/sources/${res.id}/category-mappings`, { mappings: mappingsPayload });
-        }
+        const selectedCategoryIds = [...categoryMappings.keys()]
+          .map((catId) => Number(catId))
+          .filter((catId) => Number.isFinite(catId) && catId > 0)
+          .sort((a, b) => a - b);
+        await apiPatch(
+          `/api/sources/${res.id}/category-mappings`,
+          buildCategoryMappingsPatchDto({
+            mappings: mappingsPayload,
+            selectedCategoryIds,
+          })
+        );
       }
 
       setIdxOk("Indexeur ajouté et activé !");
@@ -367,6 +376,7 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
                   variant="wizard"
                   categories={capsCategories}
                   mappings={categoryMappings}
+                  sourceId={undefined}
                   onChangeMapping={(catId, groupKey) => {
                     const normalized = normalizeCategoryGroupKey(groupKey);
                     setCategoryMappings((prev) => {

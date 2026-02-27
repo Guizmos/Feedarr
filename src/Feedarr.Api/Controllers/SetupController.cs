@@ -6,6 +6,7 @@ using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Models.Settings;
 using Feedarr.Api.Services.Security;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Configuration;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http;
@@ -21,6 +22,7 @@ public sealed class SetupController : ControllerBase
     private readonly ProviderRepository _providers;
     private readonly IConfiguration _config;
     private readonly BootstrapTokenService _bootstrapTokens;
+    private readonly SetupStateService _setupState;
     private readonly ILogger<SetupController> _log;
 
     public SetupController(
@@ -29,6 +31,7 @@ public sealed class SetupController : ControllerBase
         ProviderRepository providers,
         IConfiguration config,
         BootstrapTokenService bootstrapTokens,
+        SetupStateService setupState,
         ILogger<SetupController> log)
     {
         _db = db;
@@ -36,6 +39,7 @@ public sealed class SetupController : ControllerBase
         _providers = providers;
         _config = config;
         _bootstrapTokens = bootstrapTokens;
+        _setupState = setupState;
         _log = log;
     }
 
@@ -128,8 +132,24 @@ public sealed class SetupController : ControllerBase
 
     // POST /api/setup/bootstrap-token
     [HttpPost("bootstrap-token")]
+    [EnableRateLimiting("bootstrap-token")]
     public IActionResult IssueBootstrapToken()
     {
+        // Bootstrap tokens are only valid during the initial setup phase.
+        // Once security is configured (onboarding done), issuing new tokens is not necessary
+        // and could be a sign of a misconfigured or attacked instance.
+        if (_setupState.IsSetupCompleted())
+        {
+            _log.LogWarning(
+                "Bootstrap token request rejected: setup is already completed (remoteIp={RemoteIp})",
+                HttpContext.Connection.RemoteIpAddress?.ToString() ?? "");
+            return Conflict(new
+            {
+                error = "setup_already_completed",
+                message = "Bootstrap tokens can only be issued during initial setup. Setup has already been completed."
+            });
+        }
+
         var bootstrapSecret = SmartAuthPolicy.GetBootstrapSecret(_config);
         var allowed =
             SmartAuthPolicy.IsLoopbackRequest(HttpContext) ||

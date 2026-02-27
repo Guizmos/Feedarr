@@ -1,4 +1,6 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import InlineNotice from "./InlineNotice.jsx";
+import { getSecurityText } from "./securityI18n.js";
 
 export default function SettingsUsers({
   security,
@@ -7,10 +9,8 @@ export default function SettingsUsers({
   securityMessage,
   passwordMessage,
   showExistingCredentialsHint,
-  allowDowngradeToOpen,
-  setAllowDowngradeToOpen,
-  requiresDowngradeConfirmation,
   credentialsRequiredForMode,
+  effectiveAuthRequired,
   usernameRequired,
   passwordRequired,
   confirmRequired,
@@ -20,24 +20,24 @@ export default function SettingsUsers({
 }) {
   const usernameInputRef = useRef(null);
   const passwordInputRef = useRef(null);
-
-  const fieldBorder = (state) => ({
-    border:
-      state === "error"
-        ? "3px solid #ef4444"
-        : state === "valid"
-        ? "3px solid #22c55e"
-        : "3px solid rgba(148, 163, 184, 0.5)",
-    borderRadius: 6,
-    padding: 2,
-    background:
-      state === "error"
-        ? "rgba(239, 68, 68, 0.08)"
-        : state === "valid"
-        ? "rgba(34, 197, 94, 0.08)"
-        : "rgba(148, 163, 184, 0.06)",
-    display: "inline-block",
+  const t = getSecurityText();
+  const CREDENTIALS_REQUIRED_MESSAGE = t("settings.security.notice.credsRequired");
+  const EXISTING_CREDENTIALS_MESSAGE = t("settings.security.notice.credsExisting");
+  const prevFieldStatesRef = useRef({
+    username: "",
+    password: "",
+    confirm: "",
   });
+  const pulseTimerRef = useRef(null);
+  const [pulseKeys, setPulseKeys] = useState(() => new Set());
+
+  useEffect(() => {
+    return () => {
+      if (pulseTimerRef.current) {
+        clearTimeout(pulseTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (securityErrors.includes("username")) {
@@ -49,51 +49,102 @@ export default function SettingsUsers({
     }
   }, [securityErrors]);
 
+  useEffect(() => {
+    const nextStates = {
+      username: securityErrors.includes("username") ? "error" : usernameFieldState,
+      password: securityErrors.includes("password") ? "error" : passwordFieldState,
+      confirm: securityErrors.includes("passwordConfirmation") ? "error" : confirmFieldState,
+    };
+
+    const changed = [];
+    for (const key of Object.keys(nextStates)) {
+      const prev = prevFieldStatesRef.current[key];
+      const next = nextStates[key];
+      if (next && next !== prev) changed.push(key);
+    }
+
+    prevFieldStatesRef.current = nextStates;
+
+    if (changed.length > 0) {
+      if (pulseTimerRef.current) clearTimeout(pulseTimerRef.current);
+      setPulseKeys(new Set(changed));
+      pulseTimerRef.current = setTimeout(() => {
+        setPulseKeys(new Set());
+      }, 850);
+    }
+  }, [
+    securityErrors,
+    usernameFieldState,
+    passwordFieldState,
+    confirmFieldState,
+  ]);
+
+  const fieldClassName = (key, state) => {
+    const resolvedState = state === "error" || state === "valid" ? state : "";
+    let classes = "fieldWrap";
+    if (resolvedState === "error") classes += " fieldWrap--error";
+    if (resolvedState === "valid") classes += " fieldWrap--valid";
+    if (pulseKeys.has(key)) classes += " fieldWrap--pulse";
+    return classes;
+  };
+
+  const normalizedSecurityMessage = String(passwordMessage || securityMessage || "").trim();
+  const normalizedSecurityMessageLower = normalizedSecurityMessage.toLowerCase();
+  const credentialsWarningInline = credentialsRequiredForMode && !security.authConfigured;
+  const credentialsWarningLower = CREDENTIALS_REQUIRED_MESSAGE.toLowerCase();
+  const credentialsWarningAltLower = "credentials required";
+  const credentialsWarningAltFrLower = "identifiants requis";
+  const messageLooksLikeCredentialsWarning =
+    normalizedSecurityMessageLower.includes(credentialsWarningLower) ||
+    normalizedSecurityMessageLower.includes(credentialsWarningAltLower) ||
+    normalizedSecurityMessageLower.includes(credentialsWarningAltFrLower);
+
+  const notices = [];
+  if (credentialsWarningInline) {
+    notices.push({ key: "warn-required", variant: "warning", message: CREDENTIALS_REQUIRED_MESSAGE });
+  }
+  if (normalizedSecurityMessage) {
+    const duplicateCredentialsWarning =
+      credentialsWarningInline &&
+      (messageLooksLikeCredentialsWarning || normalizedSecurityMessage === CREDENTIALS_REQUIRED_MESSAGE);
+    if (!duplicateCredentialsWarning) {
+      notices.push({
+        key: "security-message",
+        variant: messageLooksLikeCredentialsWarning ? "warning" : "error",
+        message: normalizedSecurityMessage,
+      });
+    }
+  }
+  if (showExistingCredentialsHint) {
+    notices.push({ key: "info-existing", variant: "info", message: EXISTING_CREDENTIALS_MESSAGE });
+  }
+
   return (
     <div className="settings-card" id="security">
-      <div className="settings-card__title">Authentification</div>
-      {credentialsRequiredForMode && !security.authConfigured && (
-        <div className="onboarding__error">
-          Credentials required: in Smart/Strict mode when auth is required (public URL or proxy), set username and password.
-        </div>
-      )}
-      {requiresDowngradeConfirmation && (
-        <div className="onboarding__warn">
-          <div>Passer en mode Open desactive l&apos;authentification.</div>
-          <label style={{ display: "inline-flex", gap: 8, alignItems: "center", marginTop: 6 }}>
-            <input
-              type="checkbox"
-              checked={allowDowngradeToOpen}
-              onChange={(e) => setAllowDowngradeToOpen(e.target.checked)}
-            />
-            Je confirme desactiver l&apos;authentification
-          </label>
-        </div>
-      )}
-      {!!securityMessage && <div className="onboarding__error">{securityMessage}</div>}
+      <div className="settings-card__title">{t("settings.security.title")}</div>
       <div className="indexer-list">
         <div className="indexer-card">
           <div className="indexer-row indexer-row--settings">
-            <span className="indexer-title">Auth Mode</span>
+            <span className="indexer-title">{t("settings.security.authMode")}</span>
             <div className="indexer-actions">
               <select
                 value={security.authMode}
                 onChange={(e) => setSecurity((s) => ({ ...s, authMode: e.target.value }))}
               >
-                <option value="smart">Smart (default)</option>
-                <option value="strict">Strict</option>
-                <option value="open">Open</option>
+                <option value="smart">{t("settings.security.authMode.smart")}</option>
+                <option value="strict">{t("settings.security.authMode.strict")}</option>
+                <option value="open">{t("settings.security.authMode.none")}</option>
               </select>
             </div>
           </div>
           <div className="settings-help">
-            Smart protects automatically when the instance is exposed
+            {t("settings.security.help.smartExposure")}
           </div>
         </div>
 
         <div className="indexer-card">
           <div className="indexer-row indexer-row--settings">
-            <span className="indexer-title">Public Base URL</span>
+            <span className="indexer-title">{t("settings.security.publicBaseUrl")}</span>
             <div className="indexer-actions">
               <input
                 type="text"
@@ -109,13 +160,17 @@ export default function SettingsUsers({
           <>
             <div className="indexer-card">
               <div className="indexer-row indexer-row--settings">
-                <span className="indexer-title">Status</span>
+                <span className="indexer-title">{t("settings.security.status")}</span>
                 <div className="indexer-actions">
                   <span className={`pill ${security.authConfigured ? "pill-ok" : "pill-warn"}`}>
-                    {security.authConfigured ? "Configured" : "Not configured"}
+                    {security.authConfigured
+                      ? t("settings.security.status.configured")
+                      : t("settings.security.status.notConfigured")}
                   </span>
-                  <span className={`pill ${security.authRequired ? "pill-warn" : "pill-blue"}`}>
-                    {security.authRequired ? "Auth required" : "Auth not required"}
+                  <span className={`pill ${effectiveAuthRequired ? "pill-warn" : "pill-blue"}`}>
+                    {effectiveAuthRequired
+                      ? t("settings.security.status.authRequired")
+                      : t("settings.security.status.authNotRequired")}
                   </span>
                 </div>
               </div>
@@ -123,19 +178,16 @@ export default function SettingsUsers({
 
             <div className="indexer-card">
               <div className="indexer-row indexer-row--settings">
-                <span className="indexer-title">Username</span>
+                <span className="indexer-title">{t("settings.security.username")}</span>
                 <div className="indexer-actions">
-                  <div
-                    style={fieldBorder(securityErrors.includes("username") ? "error" : usernameFieldState)}
-                    data-state={usernameFieldState || "neutral"}
-                  >
+                  <div className={fieldClassName("username", securityErrors.includes("username") ? "error" : usernameFieldState)}>
                     <input
                       ref={usernameInputRef}
                       type="text"
                       value={security.username}
                       onChange={(e) => setSecurity((s) => ({ ...s, username: e.target.value }))}
                       required={usernameRequired}
-                      placeholder="Enter username"
+                      placeholder={t("settings.security.username.placeholder")}
                     />
                   </div>
                 </div>
@@ -144,45 +196,35 @@ export default function SettingsUsers({
 
             <div className="indexer-card">
               <div className="indexer-row indexer-row--settings">
-                <span className="indexer-title">Password</span>
+                <span className="indexer-title">{t("settings.security.password")}</span>
                 <div className="indexer-actions">
-                  <div
-                    style={fieldBorder(securityErrors.includes("password") ? "error" : passwordFieldState)}
-                    data-state={passwordFieldState || "neutral"}
-                  >
+                  <div className={fieldClassName("password", securityErrors.includes("password") ? "error" : passwordFieldState)}>
                     <input
                       ref={passwordInputRef}
                       type="password"
                       value={security.password}
                       onChange={(e) => setSecurity((s) => ({ ...s, password: e.target.value }))}
                       required={passwordRequired}
-                      placeholder={security.hasPassword ? "Leave blank to keep current" : "Enter password"}
+                      placeholder={security.hasPassword
+                        ? t("settings.security.password.placeholderKeepCurrent")
+                        : t("settings.security.password.placeholderEnter")}
                     />
                   </div>
                 </div>
               </div>
-              {showExistingCredentialsHint && (
-                <div className="onboarding__hint">
-                  Identifiants deja configures. Laisse vide pour conserver le mot de passe actuel.
-                </div>
-              )}
-              {!!passwordMessage && <div className="onboarding__error">{passwordMessage}</div>}
             </div>
 
             <div className="indexer-card">
               <div className="indexer-row indexer-row--settings">
-                <span className="indexer-title">Password Confirmation</span>
+                <span className="indexer-title">{t("settings.security.confirm")}</span>
                 <div className="indexer-actions">
-                  <div
-                    style={fieldBorder(securityErrors.includes("passwordConfirmation") ? "error" : confirmFieldState)}
-                    data-state={confirmFieldState || "neutral"}
-                  >
+                  <div className={fieldClassName("confirm", securityErrors.includes("passwordConfirmation") ? "error" : confirmFieldState)}>
                     <input
                       type="password"
                       value={security.passwordConfirmation}
                       onChange={(e) => setSecurity((s) => ({ ...s, passwordConfirmation: e.target.value }))}
                       required={confirmRequired}
-                      placeholder="Confirm password"
+                      placeholder={t("settings.security.confirm.placeholder")}
                     />
                   </div>
                 </div>
@@ -191,6 +233,17 @@ export default function SettingsUsers({
           </>
         )}
       </div>
+      {notices.length > 0 && (
+        <div className="security-notices">
+          {notices.slice(0, 3).map((notice) => (
+            <InlineNotice
+              key={notice.key}
+              variant={notice.variant}
+              message={notice.message}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
