@@ -5,10 +5,39 @@ export default function SettingsUsers({
   setSecurity,
   securityErrors,
   securityMessage,
+  passwordMessage,
+  showExistingCredentialsHint,
+  allowDowngradeToOpen,
+  setAllowDowngradeToOpen,
+  requiresDowngradeConfirmation,
   credentialsRequiredForMode,
+  usernameRequired,
+  passwordRequired,
+  confirmRequired,
+  usernameFieldState,
+  passwordFieldState,
+  confirmFieldState,
 }) {
   const usernameInputRef = useRef(null);
   const passwordInputRef = useRef(null);
+
+  const fieldBorder = (state) => ({
+    border:
+      state === "error"
+        ? "3px solid #ef4444"
+        : state === "valid"
+        ? "3px solid #22c55e"
+        : "3px solid rgba(148, 163, 184, 0.5)",
+    borderRadius: 6,
+    padding: 2,
+    background:
+      state === "error"
+        ? "rgba(239, 68, 68, 0.08)"
+        : state === "valid"
+        ? "rgba(34, 197, 94, 0.08)"
+        : "rgba(148, 163, 184, 0.06)",
+    display: "inline-block",
+  });
 
   useEffect(() => {
     if (securityErrors.includes("username")) {
@@ -23,9 +52,22 @@ export default function SettingsUsers({
   return (
     <div className="settings-card" id="security">
       <div className="settings-card__title">Authentification</div>
-      {credentialsRequiredForMode && (
+      {credentialsRequiredForMode && !security.authConfigured && (
         <div className="onboarding__error">
           Credentials required: in Smart/Strict mode when auth is required (public URL or proxy), set username and password.
+        </div>
+      )}
+      {requiresDowngradeConfirmation && (
+        <div className="onboarding__warn">
+          <div>Passer en mode Open desactive l&apos;authentification.</div>
+          <label style={{ display: "inline-flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+            <input
+              type="checkbox"
+              checked={allowDowngradeToOpen}
+              onChange={(e) => setAllowDowngradeToOpen(e.target.checked)}
+            />
+            Je confirme desactiver l&apos;authentification
+          </label>
         </div>
       )}
       {!!securityMessage && <div className="onboarding__error">{securityMessage}</div>}
@@ -83,15 +125,19 @@ export default function SettingsUsers({
               <div className="indexer-row indexer-row--settings">
                 <span className="indexer-title">Username</span>
                 <div className="indexer-actions">
-                  <input
-                    ref={usernameInputRef}
-                    type="text"
-                    value={security.username}
-                    onChange={(e) => setSecurity((s) => ({ ...s, username: e.target.value }))}
-                    className={securityErrors.includes("username") ? "is-error" : ""}
-                    required={credentialsRequiredForMode}
-                    placeholder="Enter username"
-                  />
+                  <div
+                    style={fieldBorder(securityErrors.includes("username") ? "error" : usernameFieldState)}
+                    data-state={usernameFieldState || "neutral"}
+                  >
+                    <input
+                      ref={usernameInputRef}
+                      type="text"
+                      value={security.username}
+                      onChange={(e) => setSecurity((s) => ({ ...s, username: e.target.value }))}
+                      required={usernameRequired}
+                      placeholder="Enter username"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -100,31 +146,45 @@ export default function SettingsUsers({
               <div className="indexer-row indexer-row--settings">
                 <span className="indexer-title">Password</span>
                 <div className="indexer-actions">
-                  <input
-                    ref={passwordInputRef}
-                    type="password"
-                    value={security.password}
-                    onChange={(e) => setSecurity((s) => ({ ...s, password: e.target.value }))}
-                    className={securityErrors.includes("password") ? "is-error" : ""}
-                    required={credentialsRequiredForMode && !security.hasPassword}
-                    placeholder={security.hasPassword ? "Leave blank to keep current" : "Enter password"}
-                  />
+                  <div
+                    style={fieldBorder(securityErrors.includes("password") ? "error" : passwordFieldState)}
+                    data-state={passwordFieldState || "neutral"}
+                  >
+                    <input
+                      ref={passwordInputRef}
+                      type="password"
+                      value={security.password}
+                      onChange={(e) => setSecurity((s) => ({ ...s, password: e.target.value }))}
+                      required={passwordRequired}
+                      placeholder={security.hasPassword ? "Leave blank to keep current" : "Enter password"}
+                    />
+                  </div>
                 </div>
               </div>
+              {showExistingCredentialsHint && (
+                <div className="onboarding__hint">
+                  Identifiants deja configures. Laisse vide pour conserver le mot de passe actuel.
+                </div>
+              )}
+              {!!passwordMessage && <div className="onboarding__error">{passwordMessage}</div>}
             </div>
 
             <div className="indexer-card">
               <div className="indexer-row indexer-row--settings">
                 <span className="indexer-title">Password Confirmation</span>
                 <div className="indexer-actions">
-                  <input
-                    type="password"
-                    value={security.passwordConfirmation}
-                    onChange={(e) => setSecurity((s) => ({ ...s, passwordConfirmation: e.target.value }))}
-                    className={securityErrors.includes("passwordConfirmation") ? "is-error" : ""}
-                    required={credentialsRequiredForMode && !security.hasPassword}
-                    placeholder="Confirm password"
-                  />
+                  <div
+                    style={fieldBorder(securityErrors.includes("passwordConfirmation") ? "error" : confirmFieldState)}
+                    data-state={confirmFieldState || "neutral"}
+                  >
+                    <input
+                      type="password"
+                      value={security.passwordConfirmation}
+                      onChange={(e) => setSecurity((s) => ({ ...s, passwordConfirmation: e.target.value }))}
+                      required={confirmRequired}
+                      placeholder="Confirm password"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
