@@ -830,7 +830,7 @@ public sealed class SourcesController : ControllerBase
                 .Take(effectiveLimit)
                 .Select(x =>
                 {
-                    var itemCatId = x.CategoryId ?? catId.Value;
+                    var itemCatId = x.CategoryId;
                     return new CategoryPreviewItemDto
                     {
                         PublishedAtTs = x.PublishedAtTs ?? 0,
@@ -838,7 +838,7 @@ public sealed class SourcesController : ControllerBase
                         Title = x.Title,
                         SizeBytes = x.SizeBytes ?? 0,
                         CategoryId = itemCatId,
-                        ResultCategoryName = catNameMap.TryGetValue(itemCatId, out var n) ? n : null,
+                        ResultCategoryName = itemCatId.HasValue && catNameMap.TryGetValue(itemCatId.Value, out var n) ? n : null,
                         UnifiedCategory = null,
                         TmdbId = null,
                         TvdbId = null,
@@ -874,6 +874,113 @@ public sealed class SourcesController : ControllerBase
             _log.LogWarning(ex,
                 "CategoryPreviewLive failed: sourceId={SourceId} catId={CatId} error={Error}",
                 id, catId.Value, safeError);
+            return StatusCode(502, new { error = safeError });
+        }
+    }
+
+    // POST /api/sources/category-preview-live-temp
+    // Preview without a saved source (wizard add mode / onboarding).
+    // Credentials are supplied in the request body instead of looked up by sourceId.
+    [HttpPost("category-preview-live-temp")]
+    public async Task<IActionResult> GetCategoryPreviewLiveTemp(
+        [FromBody] CategoryPreviewLiveTempDto dto,
+        CancellationToken ct)
+    {
+        if (dto.CatId <= 0)
+            return BadRequest(new { error = "catId missing or invalid" });
+
+        var effectiveLimit = Math.Clamp(dto.Limit ?? 20, 1, 50);
+        var torznabUrl = (dto.TorznabUrl ?? "").Trim();
+        var apiKey = dto.ApiKey ?? "";
+        var authMode = string.IsNullOrWhiteSpace(dto.AuthMode) ? "query" : dto.AuthMode;
+        var sourceName = string.IsNullOrWhiteSpace(dto.SourceName) ? "Preview" : dto.SourceName;
+
+        if (dto.ProviderId is > 0)
+        {
+            var provider = _providers.Get(dto.ProviderId.Value);
+            if (provider is null)
+                return NotFound(new { error = "provider not found" });
+
+            var providerType = provider.Type ?? "";
+            var providerBaseUrl = (provider.BaseUrl ?? "").Trim();
+            var providerApiKey = provider.ApiKey ?? "";
+
+            if (!providerType.Equals("jackett", StringComparison.OrdinalIgnoreCase) &&
+                !providerType.Equals("prowlarr", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(new { error = "provider type not supported" });
+
+            if (string.IsNullOrWhiteSpace(providerBaseUrl) || string.IsNullOrWhiteSpace(providerApiKey))
+                return BadRequest(new { error = "provider configuration incomplete" });
+
+            if (string.IsNullOrWhiteSpace(torznabUrl) && !string.IsNullOrWhiteSpace(dto.IndexerId))
+            {
+                var baseTrim = providerBaseUrl.TrimEnd('/');
+                torznabUrl = providerType.Equals("prowlarr", StringComparison.OrdinalIgnoreCase)
+                    ? $"{baseTrim}/{dto.IndexerId.Trim()}/api"
+                    : $"{baseTrim}/api/v2.0/indexers/{dto.IndexerId.Trim()}/results/torznab/";
+            }
+
+            if (string.IsNullOrWhiteSpace(apiKey))
+                apiKey = providerApiKey;
+
+            authMode = "query";
+        }
+
+        if (string.IsNullOrWhiteSpace(torznabUrl))
+            return BadRequest(new { error = "torznabUrl required" });
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(10));
+
+        try
+        {
+            var rawItems = await _torznab.FetchSingleCategoryPreviewAsync(
+                torznabUrl,
+                authMode,
+                apiKey,
+                dto.CatId,
+                effectiveLimit,
+                timeoutCts.Token);
+
+            var results = rawItems
+                .OrderByDescending(x => x.PublishedAtTs ?? 0)
+                .Take(effectiveLimit)
+                .Select(x =>
+                {
+                    var itemCatId = x.CategoryId;
+                    return new CategoryPreviewItemDto
+                    {
+                        PublishedAtTs = x.PublishedAtTs ?? 0,
+                        SourceName = sourceName,
+                        Title = x.Title,
+                        SizeBytes = x.SizeBytes ?? 0,
+                        CategoryId = itemCatId,
+                        ResultCategoryName = null,
+                        UnifiedCategory = null,
+                        TmdbId = null,
+                        TvdbId = null,
+                        Seeders = x.Seeders
+                    };
+                })
+                .ToList();
+
+            _log.LogInformation(
+                "CategoryPreviewLiveTemp: catId={CatId} limit={Limit} rawCount={RawCount} resultCount={ResultCount}",
+                dto.CatId, effectiveLimit, rawItems.Count, results.Count);
+
+            return Ok(results);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            _log.LogWarning("CategoryPreviewLiveTemp timed out: catId={CatId}", dto.CatId);
+            return StatusCode(504, new { error = "indexer timed out" });
+        }
+        catch (Exception ex)
+        {
+            var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "live preview failed");
+            _log.LogWarning(ex,
+                "CategoryPreviewLiveTemp failed: catId={CatId} error={Error}",
+                dto.CatId, safeError);
             return StatusCode(502, new { error = safeError });
         }
     }

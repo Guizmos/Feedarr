@@ -607,6 +607,7 @@ export default function Indexers() {
   const canSaveEdit = isEditing && (editDirty || categoriesDirty);
   const selectedCount = categoryMappings.size;
   const capsCount = capsCategories.length;
+  const indexerModalWidth = modalStep === 2 ? "75vw" : 560;
 
   // Filter out indexers that are already added (but always keep the currently selected one)
   // Normalisation URL des deux côtés (trailing slash, casse) pour éviter les faux négatifs.
@@ -626,6 +627,21 @@ export default function Indexers() {
     }
     return filtered;
   }, [indexerOptions, existingIndexerUrls, selectedIndexerId]);
+  const modalPreviewCredentials = useMemo(() => {
+    if (isEditing) return null;
+
+    const trimmedTorznabUrl = torznabUrl.trim();
+    if (!trimmedTorznabUrl) return null;
+
+    return {
+      providerId: selectedProviderId ? Number(selectedProviderId) : null,
+      torznabUrl: trimmedTorznabUrl,
+      indexerId: isManualIndexer ? null : (selectedIndexerId || null),
+      authMode: "query",
+      apiKey: apiKey.trim(),
+      sourceName: name.trim(),
+    };
+  }, [isEditing, torznabUrl, selectedProviderId, isManualIndexer, selectedIndexerId, apiKey, name]);
 
   return (
     <div className="page page--indexers">
@@ -774,7 +790,7 @@ export default function Indexers() {
         open={modalOpen}
         title={editing ? `Modifier : ${editing?.name ?? editing?.id}` : "Ajouter une source"}
         onClose={closeModal}
-        width={780}
+        width={indexerModalWidth}
       >
         <form onSubmit={(e) => e.preventDefault()} className="formgrid formgrid--edit">
           {/* Step 1 fields - hidden in step 2 */}
@@ -1010,6 +1026,7 @@ export default function Indexers() {
                   categories={capsCategories}
                   mappings={categoryMappings}
                   sourceId={editing?.id}
+                  previewCredentials={modalPreviewCredentials}
                   onChangeMapping={(catId, groupKey) => {
                     const normalized = normalizeCategoryGroupKey(groupKey);
                     setCategoryMappings((prev) => {

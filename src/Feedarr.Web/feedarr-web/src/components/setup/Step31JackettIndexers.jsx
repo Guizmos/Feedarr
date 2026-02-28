@@ -713,7 +713,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
         open={modalOpen}
         title={modalTitle}
         onClose={closeModal}
-        width={840}
+        width="75vw"
       >
         {manualMode && !editingSource && (
           <div className="formgrid formgrid--edit" style={{ marginBottom: 12 }}>
@@ -773,6 +773,33 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
               categories={capsCategories}
               mappings={categoryMappings}
               sourceId={editingSource?.id}
+              infoNote={(
+                <div className="setup-jackett__info-note" role="note">
+                  <span className="setup-jackett__info-note-icon" aria-hidden="true">i</span>
+                  <div className="setup-jackett__info-note-copy">
+                    <div className="setup-jackett__info-note-title">
+                      {tr("Conseil de tri", "Sorting tip")}
+                    </div>
+                    <div>
+                      {tr(
+                        "Choisissez de preference les categories specifiques, plus pertinentes. Les categories \"parents\" incluent souvent des sous-categories qui peuvent provoquer un mauvais tri.",
+                        "Prefer specific categories when possible. Parent categories often include subcategories that can cause incorrect sorting."
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+              previewCredentials={!editingSource?.id ? {
+                providerId: Number(providerConfigs[selectedProviderKey]?.providerId || 0) || null,
+                torznabUrl: manualMode
+                  ? normalizeUrl(manualTorznabUrl)
+                  : (selectedIndexer?.torznabUrl ?? ""),
+                indexerId: manualMode ? null : (selectedIndexer?.id ?? null),
+                authMode: "query",
+                sourceName: manualMode
+                  ? (manualName.trim() || tr("Manuel", "Manual"))
+                  : (selectedIndexer?.name ?? ""),
+              } : null}
               onChangeMapping={(catId, groupKey) => {
                 const normalized = normalizeCategoryGroupKey(groupKey);
                 setCategoryMappings((prev) => {
@@ -793,15 +820,6 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
         )}
 
         <div className="setup-jackett__actions setup-jackett__footer">
-          <div className="setup-jackett__footer-note" role="note">
-            <span className="setup-jackett__footer-note-icon" aria-hidden="true">i</span>
-            <span>
-              {tr(
-                "Choisissez de preference les categories specifiques, plus pertinentes. Les categories \"parents\" incluent souvent des sous-categories qui peuvent provoquer un mauvais tri.",
-                "Prefer specific categories when possible. Parent categories often include subcategories that can cause incorrect sorting."
-              )}
-            </span>
-          </div>
           {editingSource ? (
             <div style={{ display: "flex", gap: 8 }}>
               <button

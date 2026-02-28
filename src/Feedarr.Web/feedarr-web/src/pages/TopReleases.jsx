@@ -87,7 +87,7 @@ function TopReleasesSubbar({
         icon="sort"
         label="Tri"
         value={sortBy}
-        active={sortBy !== "seeders"}
+        active={sortBy !== "downloads"}
         onChange={(e) => setSortBy(e.target.value)}
         title="Tri"
       >
@@ -139,7 +139,7 @@ function formatRating(it) {
 
 function getSortLabel(sortBy) {
   const found = sortOptions.find((opt) => opt.value === sortBy);
-  return found?.label || "Seeders";
+  return found?.label || "Téléchargé";
 }
 
 function getSortSummaryLabelFr(sortBy) {
@@ -196,7 +196,7 @@ export default function TopReleases() {
   const [sourceId, setSourceId] = useState("");
   const [sources, setSources] = useState([]);
   const [viewMode, setViewMode] = useState("grid");
-  const [sortBy, setSortBy] = useState("seeders");
+  const [sortBy, setSortBy] = useState("downloads");
   const [selectedItem, setSelectedItem] = useState(null);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");

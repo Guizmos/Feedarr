@@ -376,7 +376,12 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
                   variant="wizard"
                   categories={capsCategories}
                   mappings={categoryMappings}
-                  sourceId={undefined}
+                  previewCredentials={idxTested ? {
+                    torznabUrl: idxUrl.trim(),
+                    authMode: idxAuthMode,
+                    apiKey: idxKey.trim(),
+                    sourceName: idxName.trim(),
+                  } : null}
                   onChangeMapping={(catId, groupKey) => {
                     const normalized = normalizeCategoryGroupKey(groupKey);
                     setCategoryMappings((prev) => {

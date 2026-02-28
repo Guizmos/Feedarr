@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiGet, apiPost } from "../api/client.js";
 import { tr } from "../app/uiText.js";
@@ -70,6 +70,7 @@ export default function SetupWizard() {
   });
   const [jackettHasSources, setJackettHasSources] = useState(false);
   const [jackettResetToken, setJackettResetToken] = useState(0);
+  const securitySaveRef = useRef(null);
 
   useEffect(() => {
     setMaxStep((prev) => Math.max(prev, step));
@@ -177,6 +178,7 @@ export default function SetupWizard() {
         <Step2Security
           required={securityStepStatus.authRequired && !securityStepStatus.authConfigured}
           onStatusChange={setSecurityStepStatus}
+          saveRef={securitySaveRef}
         />
       ),
     },
@@ -285,14 +287,13 @@ export default function SetupWizard() {
                   {tr("Passer", "Skip")}
                 </button>
               )}
-              {step < MAX_STEP && (
+              {step < MAX_STEP && step !== 3 && (
                 <button
                   className="btn btn-accent"
                   type="button"
                   onClick={() => goStep(step + 1)}
                   disabled={
                     (step === 1 && (!languageStepStatus.ready || languageStepStatus.saving)) ||
-                    (step === 3 && (!securityStepStatus.ready || securityStepStatus.saving)) ||
                     (step === 4 && !providersOk) ||
                     (step === 5 && !isJackettReady) ||
                     (step === 6 && !jackettHasSources)
@@ -300,6 +301,28 @@ export default function SetupWizard() {
                 >
                   {tr("Suivant", "Next")}
                 </button>
+              )}
+              {step === 3 && (
+                securityStepStatus.saved ? (
+                  <button
+                    className="btn btn-accent"
+                    type="button"
+                    onClick={() => goStep(step + 1)}
+                  >
+                    {tr("Suivant", "Next")}
+                  </button>
+                ) : (
+                  <button
+                    className="btn btn-accent"
+                    type="button"
+                    onClick={() => securitySaveRef.current?.()}
+                    disabled={securityStepStatus.saving}
+                  >
+                    {securityStepStatus.saving
+                      ? tr("Enregistrement...", "Saving...")
+                      : tr("Enregistrer", "Save")}
+                  </button>
+                )
               )}
             </div>
           </div>
