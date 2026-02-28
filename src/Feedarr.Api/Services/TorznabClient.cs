@@ -467,6 +467,19 @@ public sealed class TorznabClient
 
             var after = merged.Count;
             if (after > before) perCatAdded += (after - before);
+
+            // Prune the merged dict to prevent unbounded memory growth when many
+            // categories are requested (each per-cat call can add up to `limit` items).
+            if (merged.Count > limit * 10)
+            {
+                var pruned = merged.Values
+                    .OrderByDescending(item => item.PublishedAtTs ?? 0)
+                    .Take(limit * 5)
+                    .ToList();
+                merged.Clear();
+                foreach (var item in pruned)
+                    merged[GetMergeKey(item)] = item;
+            }
         }
 
         var mergedItems = merged.Values.ToList();

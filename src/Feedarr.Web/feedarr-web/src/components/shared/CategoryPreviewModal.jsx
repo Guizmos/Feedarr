@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Modal from "../../ui/Modal.jsx";
 import Loader from "../../ui/Loader.jsx";
 import { apiGet, apiPost } from "../../api/client.js";
@@ -23,6 +23,7 @@ export default function CategoryPreviewModal({ sourceId, previewCredentials, cat
   const [items, setItems] = useState([]);
   const [isLive, setIsLive] = useState(false);
   const requestedCatId = Number(catId);
+  const abortCtrlRef = useRef(null);
 
   const fetchData = useCallback(
     (signal) => {
@@ -83,8 +84,14 @@ export default function CategoryPreviewModal({ sourceId, previewCredentials, cat
 
   useEffect(() => {
     const controller = new AbortController();
+    abortCtrlRef.current = controller;
     fetchData(controller.signal);
-    return () => controller.abort();
+    return () => {
+      // Abort whatever is currently active (may differ from `controller` if
+      // the retry button was clicked while this effect's fetch was in flight).
+      abortCtrlRef.current?.abort();
+      abortCtrlRef.current = null;
+    };
   }, [fetchData]);
 
   const catSummary = useMemo(() => {
@@ -152,7 +159,9 @@ export default function CategoryPreviewModal({ sourceId, previewCredentials, cat
               type="button"
               className="btn btn--sm"
               onClick={() => {
+                abortCtrlRef.current?.abort();
                 const controller = new AbortController();
+                abortCtrlRef.current = controller;
                 fetchData(controller.signal);
               }}
             >

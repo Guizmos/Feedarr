@@ -306,10 +306,25 @@ public sealed class BasicAuthMiddleware
     private static bool Validate(string user, string pass, SecuritySettings settings)
     {
         if (string.IsNullOrWhiteSpace(settings.Username)) return false;
-        if (!string.Equals(user, settings.Username, StringComparison.Ordinal)) return false;
-        if (string.IsNullOrWhiteSpace(settings.PasswordHash) || string.IsNullOrWhiteSpace(settings.PasswordSalt)) return false;
 
-        return VerifyPassword(pass, settings.PasswordHash, settings.PasswordSalt);
+        // Constant-time username comparison — prevents username enumeration via response timing.
+        var userBytes = Encoding.UTF8.GetBytes(user);
+        var expectedBytes = Encoding.UTF8.GetBytes(settings.Username);
+        var maxLen = Math.Max(userBytes.Length, expectedBytes.Length);
+        var paddedUser = new byte[maxLen];
+        var paddedExpected = new byte[maxLen];
+        userBytes.CopyTo(paddedUser, 0);
+        expectedBytes.CopyTo(paddedExpected, 0);
+        var usernameMatch = CryptographicOperations.FixedTimeEquals(paddedUser, paddedExpected);
+
+        if (string.IsNullOrWhiteSpace(settings.PasswordHash) || string.IsNullOrWhiteSpace(settings.PasswordSalt))
+            return false;
+
+        // Always verify the password (even when the username didn't match) so that an
+        // attacker cannot enumerate valid usernames by timing the PBKDF2 computation.
+        var passwordMatch = VerifyPassword(pass, settings.PasswordHash, settings.PasswordSalt);
+
+        return usernameMatch && passwordMatch;
     }
 
     private static bool VerifyPassword(string password, string hashBase64, string saltBase64)

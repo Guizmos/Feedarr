@@ -307,14 +307,18 @@ export default function useMaintenanceActions() {
 
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = name;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-      setBackupNotice("Téléchargement terminé.");
+      let a;
+      try {
+        a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        setBackupNotice("Téléchargement terminé.");
+      } finally {
+        window.URL.revokeObjectURL(url);
+        if (a && document.body.contains(a)) document.body.removeChild(a);
+      }
     } catch (e) {
       setBackupError(e?.message || "Erreur telechargement backup");
     } finally {

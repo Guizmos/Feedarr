@@ -380,6 +380,66 @@ public sealed class SmartAuthMiddlewareTests
         Assert.Equal(StatusCodes.Status401Unauthorized, afterReset.Response.StatusCode);
     }
 
+    // -------------------------------------------------------------------------
+    // Fix: constant-time username comparison (FixedTimeEquals)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task BasicAuth_WrongUsername_CorrectPassword_Returns401()
+    {
+        using var fixture = new MiddlewareFixture();
+        fixture.SetupState.MarkSetupCompleted();
+        var (hash, salt) = HashPassword("CorrectPass!");
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        {
+            AuthMode = "strict",
+            Username = "admin",
+            PasswordHash = hash,
+            PasswordSalt = salt
+        });
+
+        var (nextCalled, context) = await fixture.InvokeAsync(
+            path: "/api/sources",
+            host: "feedarr.example.com",
+            remoteIp: System.Net.IPAddress.Parse("203.0.113.99"),
+            headers: new Dictionary<string, string>
+            {
+                // correct password, WRONG username
+                ["Authorization"] = ToBasicAuth("notadmin", "CorrectPass!")
+            });
+
+        Assert.False(nextCalled);
+        Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task BasicAuth_PrefixUsername_Returns401()
+    {
+        // "admi" is a prefix of "admin" — FixedTimeEquals must not match partial bytes
+        using var fixture = new MiddlewareFixture();
+        fixture.SetupState.MarkSetupCompleted();
+        var (hash, salt) = HashPassword("CorrectPass!");
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        {
+            AuthMode = "strict",
+            Username = "admin",
+            PasswordHash = hash,
+            PasswordSalt = salt
+        });
+
+        var (nextCalled, context) = await fixture.InvokeAsync(
+            path: "/api/sources",
+            host: "feedarr.example.com",
+            remoteIp: System.Net.IPAddress.Parse("203.0.113.98"),
+            headers: new Dictionary<string, string>
+            {
+                ["Authorization"] = ToBasicAuth("admi", "CorrectPass!")
+            });
+
+        Assert.False(nextCalled);
+        Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
+    }
+
     private static (string hash, string salt) HashPassword(string password)
     {
         var salt = RandomNumberGenerator.GetBytes(16);
