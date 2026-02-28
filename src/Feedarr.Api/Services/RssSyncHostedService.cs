@@ -14,22 +14,6 @@ namespace Feedarr.Api.Services;
 
 public sealed class RssSyncHostedService : BackgroundService
 {
-    private static readonly HashSet<string> SensitiveQueryKeys = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "apikey",
-        "api_key",
-        "token",
-        "access_token",
-        "refresh_token",
-        "key",
-        "password",
-        "pass",
-        "secret",
-        "client_secret",
-        "authorization",
-        "x-api-key"
-    };
-
     private readonly ILogger<RssSyncHostedService> _log;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly AppOptions _opts;
@@ -258,7 +242,7 @@ public sealed class RssSyncHostedService : BackgroundService
                 string? fallbackMode = null;
                 bool usedAggregated = false;
                 var rssOnly = _opts.RssOnlySync;
-                _log.LogInformation("RSS fetch start [{Name}] url={Url} limit={Limit}", name, SanitizeUrl(url), perCatLimit);
+                _log.LogInformation("RSS fetch start [{Name}] url={Url} limit={Limit}", name, SensitiveUrlSanitizer.Sanitize(url), perCatLimit);
                 var rssRes = await torznab.FetchLatestAsync(url, mode, apiKey, perCatLimit, ct, allowSearch: false);
                 var rssItems = rssRes.items;
                 usedMode = rssRes.usedMode;
@@ -713,48 +697,4 @@ public sealed class RssSyncHostedService : BackgroundService
         return UnifiedCategoryMappings.ToKey(unified);
     }
 
-    private static string SanitizeUrl(string url)
-    {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            return url;
-
-        var query = uri.Query.TrimStart('?');
-        if (string.IsNullOrWhiteSpace(query))
-            return url;
-
-        var parts = query.Split('&', StringSplitOptions.RemoveEmptyEntries);
-        var kept = new List<string>();
-        foreach (var part in parts)
-        {
-            var kv = part.Split('=', 2);
-            if (kv.Length == 0) continue;
-            var key = Uri.UnescapeDataString(kv[0] ?? string.Empty);
-            if (IsSensitiveQueryKey(key))
-                continue;
-            kept.Add(part);
-        }
-
-        var ub = new UriBuilder(uri) { Query = string.Join("&", kept) };
-        return ub.Uri.ToString();
-    }
-
-    private static bool IsSensitiveQueryKey(string key)
-    {
-        if (string.IsNullOrWhiteSpace(key))
-            return false;
-
-        if (SensitiveQueryKeys.Contains(key))
-            return true;
-
-        var compact = key
-            .Replace("-", string.Empty, StringComparison.Ordinal)
-            .Replace("_", string.Empty, StringComparison.Ordinal)
-            .ToLowerInvariant();
-
-        return compact.Contains("token", StringComparison.Ordinal) ||
-               compact.Contains("secret", StringComparison.Ordinal) ||
-               compact.Contains("password", StringComparison.Ordinal) ||
-               compact.Contains("auth", StringComparison.Ordinal) ||
-               compact.EndsWith("key", StringComparison.Ordinal);
-    }
 }

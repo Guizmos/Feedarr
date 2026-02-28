@@ -345,7 +345,10 @@ export default function useBadges({
       refreshRef.current?.();
     };
     const onBadge = () => refreshRef.current?.();
-    const onError = () => setSseConnected(false);
+    const onError = () => {
+      setSseConnected(false);
+      es.close();
+    };
     const onOpen = () => setSseConnected(true);
     es.addEventListener("ready", onReady);
     es.addEventListener("badge", onBadge);

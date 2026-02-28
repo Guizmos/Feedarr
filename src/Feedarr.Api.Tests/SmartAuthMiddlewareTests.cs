@@ -1,6 +1,7 @@
 using System.IO;
 using System.Net;
 using System.Security.Cryptography;
+using System.Text;
 using Feedarr.Api.Data;
 using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Models.Settings;
@@ -199,6 +200,186 @@ public sealed class SmartAuthMiddlewareTests
         Assert.Equal(StatusCodes.Status200OK, bootstrap.Response.StatusCode);
     }
 
+    [Fact]
+    public async Task BootstrapToken_IsSingleUse_OnSecuritySetupRoutes()
+    {
+        using var fixture = new MiddlewareFixture();
+        fixture.SetupState.MarkSetupCompleted();
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        {
+            AuthMode = "smart",
+            PublicBaseUrl = "https://feedarr.example.com"
+        });
+
+        var token = fixture.BootstrapTokens.IssueToken();
+
+        var (firstNextCalled, firstContext) = await fixture.InvokeAsync(
+            path: "/api/settings/security",
+            method: "GET",
+            host: "feedarr.example.com",
+            remoteIp: IPAddress.Parse("203.0.113.44"),
+            headers: new Dictionary<string, string>
+            {
+                [SmartAuthPolicy.BootstrapTokenHeader] = token
+            });
+
+        Assert.True(firstNextCalled);
+        Assert.Equal(StatusCodes.Status200OK, firstContext.Response.StatusCode);
+
+        var (secondNextCalled, secondContext) = await fixture.InvokeAsync(
+            path: "/api/settings/security",
+            method: "GET",
+            host: "feedarr.example.com",
+            remoteIp: IPAddress.Parse("203.0.113.44"),
+            headers: new Dictionary<string, string>
+            {
+                [SmartAuthPolicy.BootstrapTokenHeader] = token
+            });
+
+        Assert.False(secondNextCalled);
+        Assert.Equal(StatusCodes.Status401Unauthorized, secondContext.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task BootstrapToken_ConcurrentRequests_OnlyOneSucceeds()
+    {
+        using var fixture = new MiddlewareFixture();
+        fixture.SetupState.MarkSetupCompleted();
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        {
+            AuthMode = "smart",
+            PublicBaseUrl = "https://feedarr.example.com"
+        });
+
+        var token = fixture.BootstrapTokens.IssueToken();
+        var headers = new Dictionary<string, string>
+        {
+            [SmartAuthPolicy.BootstrapTokenHeader] = token
+        };
+
+        var first = fixture.InvokeAsync(
+            path: "/api/settings/security",
+            method: "GET",
+            host: "feedarr.example.com",
+            remoteIp: IPAddress.Parse("203.0.113.45"),
+            headers: headers);
+        var second = fixture.InvokeAsync(
+            path: "/api/settings/security",
+            method: "GET",
+            host: "feedarr.example.com",
+            remoteIp: IPAddress.Parse("203.0.113.45"),
+            headers: headers);
+
+        var results = await Task.WhenAll(first, second);
+        Assert.Equal(1, results.Count(r => r.nextCalled));
+        Assert.Equal(1, results.Count(r => r.context.Response.StatusCode == StatusCodes.Status401Unauthorized));
+    }
+
+    [Fact]
+    public async Task BasicAuth_ThrottleAfterSixFailures_Returns429WithRetryAfter()
+    {
+        using var fixture = new MiddlewareFixture();
+        fixture.SetupState.MarkSetupCompleted();
+        var (hash, salt) = HashPassword("StrongP@ssw0rd!");
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        {
+            AuthMode = "strict",
+            Username = "admin",
+            PasswordHash = hash,
+            PasswordSalt = salt
+        });
+
+        for (var i = 0; i < 5; i++)
+        {
+            var (nextCalled, context) = await fixture.InvokeAsync(
+                path: "/api/sources",
+                host: "feedarr.example.com",
+                remoteIp: IPAddress.Parse("203.0.113.70"),
+                headers: new Dictionary<string, string>
+                {
+                    ["Authorization"] = ToBasicAuth("admin", "wrong-password")
+                });
+
+            Assert.False(nextCalled);
+            Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
+        }
+
+        var (throttledNextCalled, throttledContext) = await fixture.InvokeAsync(
+            path: "/api/sources",
+            host: "feedarr.example.com",
+            remoteIp: IPAddress.Parse("203.0.113.70"),
+            headers: new Dictionary<string, string>
+            {
+                ["Authorization"] = ToBasicAuth("admin", "wrong-password")
+            });
+
+        Assert.False(throttledNextCalled);
+        Assert.Equal(StatusCodes.Status429TooManyRequests, throttledContext.Response.StatusCode);
+        Assert.True(throttledContext.Response.Headers.TryGetValue("Retry-After", out var retryAfter));
+        Assert.True(int.TryParse(retryAfter.ToString(), out var retryAfterSeconds));
+        Assert.True(retryAfterSeconds >= 1);
+    }
+
+    [Fact]
+    public async Task BasicAuth_SuccessResetsThrottleWindow()
+    {
+        using var fixture = new MiddlewareFixture();
+        fixture.SetupState.MarkSetupCompleted();
+        var (hash, salt) = HashPassword("StrongP@ssw0rd!");
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        {
+            AuthMode = "strict",
+            Username = "admin",
+            PasswordHash = hash,
+            PasswordSalt = salt
+        });
+
+        for (var i = 0; i < 5; i++)
+        {
+            await fixture.InvokeAsync(
+                path: "/api/sources",
+                host: "feedarr.example.com",
+                remoteIp: IPAddress.Parse("203.0.113.71"),
+                headers: new Dictionary<string, string>
+                {
+                    ["Authorization"] = ToBasicAuth("admin", "wrong-password")
+                });
+        }
+
+        var (_, throttled) = await fixture.InvokeAsync(
+            path: "/api/sources",
+            host: "feedarr.example.com",
+            remoteIp: IPAddress.Parse("203.0.113.71"),
+            headers: new Dictionary<string, string>
+            {
+                ["Authorization"] = ToBasicAuth("admin", "wrong-password")
+            });
+        Assert.Equal(StatusCodes.Status429TooManyRequests, throttled.Response.StatusCode);
+
+        fixture.Advance(TimeSpan.FromSeconds(6));
+
+        var (successNextCalled, success) = await fixture.InvokeAsync(
+            path: "/api/sources",
+            host: "feedarr.example.com",
+            remoteIp: IPAddress.Parse("203.0.113.71"),
+            headers: new Dictionary<string, string>
+            {
+                ["Authorization"] = ToBasicAuth("admin", "StrongP@ssw0rd!")
+            });
+        Assert.True(successNextCalled);
+        Assert.Equal(StatusCodes.Status200OK, success.Response.StatusCode);
+
+        var (_, afterReset) = await fixture.InvokeAsync(
+            path: "/api/sources",
+            host: "feedarr.example.com",
+            remoteIp: IPAddress.Parse("203.0.113.71"),
+            headers: new Dictionary<string, string>
+            {
+                ["Authorization"] = ToBasicAuth("admin", "wrong-password")
+            });
+        Assert.Equal(StatusCodes.Status401Unauthorized, afterReset.Response.StatusCode);
+    }
+
     private static (string hash, string salt) HashPassword(string password)
     {
         var salt = RandomNumberGenerator.GetBytes(16);
@@ -214,11 +395,15 @@ public sealed class SmartAuthMiddlewareTests
         return await reader.ReadToEndAsync();
     }
 
+    private static string ToBasicAuth(string username, string password)
+        => "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{password}"));
+
     private sealed class MiddlewareFixture : IDisposable
     {
         private readonly MemoryCache _cache = new(new MemoryCacheOptions());
         private readonly IConfiguration _configuration;
         private readonly TestWorkspace _workspace = new();
+        private readonly FakeTimeProvider _timeProvider = new();
 
         public MiddlewareFixture(Dictionary<string, string?>? config = null)
         {
@@ -226,13 +411,17 @@ public sealed class SmartAuthMiddlewareTests
             new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
             Settings = new SettingsRepository(db);
             SetupState = new SetupStateService(Settings, _cache);
+            BootstrapTokens = new BootstrapTokenService();
             _configuration = new ConfigurationBuilder()
                 .AddInMemoryCollection(config ?? new Dictionary<string, string?>())
                 .Build();
+            AuthThrottle = new AuthThrottleService(new BasicAuthThrottleOptions(), _timeProvider);
         }
 
         public SettingsRepository Settings { get; }
         public SetupStateService SetupState { get; }
+        public BootstrapTokenService BootstrapTokens { get; }
+        public AuthThrottleService AuthThrottle { get; }
 
         public async Task<(bool nextCalled, DefaultHttpContext context)> InvokeAsync(
             string path,
@@ -267,17 +456,29 @@ public sealed class SmartAuthMiddlewareTests
                 Settings,
                 _cache,
                 SetupState,
-                new BootstrapTokenService(),
+                BootstrapTokens,
+                AuthThrottle,
                 NullLogger<BasicAuthMiddleware>.Instance);
 
             return (nextCalled, context);
         }
+
+        public void Advance(TimeSpan by) => _timeProvider.Advance(by);
 
         public void Dispose()
         {
             _cache.Dispose();
             _workspace.Dispose();
         }
+    }
+
+    private sealed class FakeTimeProvider : TimeProvider
+    {
+        private DateTimeOffset _utcNow = DateTimeOffset.UtcNow;
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+
+        public void Advance(TimeSpan by) => _utcNow = _utcNow.Add(by);
     }
 
     private static Db CreateDb(TestWorkspace workspace)

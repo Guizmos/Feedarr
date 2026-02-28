@@ -46,15 +46,38 @@ test("apiPost returns null for 204 and non-json responses", async () => {
 
 test("apiPost parses json when content-type is json", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () =>
-    new Response(JSON.stringify({ ok: true, count: 3 }), {
+  let capturedInit = null;
+  globalThis.fetch = async (_, init) => {
+    capturedInit = init;
+    return new Response(JSON.stringify({ ok: true, count: 3 }), {
       status: 200,
       headers: { "content-type": "application/json; charset=utf-8" },
     });
+  };
 
   try {
     const data = await apiPost("/api/sources/sync/all", {});
     assert.deepEqual(data, { ok: true, count: 3 });
+    assert.equal(capturedInit?.headers?.["X-Feedarr-Request"], "1");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("apiGet does not force anti-csrf header on safe methods", async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedInit = null;
+  globalThis.fetch = async (_, init) => {
+    capturedInit = init;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    await apiGet("/api/system/status");
+    assert.equal(capturedInit?.headers?.["X-Feedarr-Request"], undefined);
   } finally {
     globalThis.fetch = originalFetch;
   }

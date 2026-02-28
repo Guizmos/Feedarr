@@ -11,7 +11,7 @@ public sealed class TorznabRssParser
 
     public List<TorznabItem> Parse(string xml)
     {
-        var doc = XDocument.Parse(xml);
+        var doc = XmlSecureParser.Parse(xml);
         var items = doc.Descendants("item");
 
         var result = new List<TorznabItem>();

@@ -27,9 +27,6 @@ public sealed class ExternalProvidersController : ControllerBase
     [HttpGet]
     public IActionResult Get()
     {
-        _instances.UpsertFromLegacyDefaults();
-        _instances.SeedFreeProviders();
-
         var definitions = _registry.List().Select(MapDefinition).ToList();
         var definitionByKey = definitions.ToDictionary(d => d.ProviderKey, StringComparer.OrdinalIgnoreCase);
 

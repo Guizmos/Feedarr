@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Xml.Linq;
 using Microsoft.Extensions.Logging;
+using Feedarr.Api.Services.Security;
 
 namespace Feedarr.Api.Services.Torznab;
 
@@ -42,30 +43,6 @@ public sealed class TorznabClient
 
         var ub = new UriBuilder(uri) { Query = string.Join("&", q) };
         return ub.ToString();
-    }
-
-    private static string SanitizeUrl(string url)
-    {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            return url;
-
-        var query = uri.Query.TrimStart('?');
-        if (string.IsNullOrWhiteSpace(query))
-            return url;
-
-        var parts = query.Split('&', StringSplitOptions.RemoveEmptyEntries);
-        var kept = new List<string>();
-        foreach (var part in parts)
-        {
-            var kv = part.Split('=', 2);
-            if (kv.Length == 0) continue;
-            if (string.Equals(kv[0], "apikey", StringComparison.OrdinalIgnoreCase))
-                continue;
-            kept.Add(part);
-        }
-
-        var ub = new UriBuilder(uri) { Query = string.Join("&", kept) };
-        return ub.Uri.ToString();
     }
 
     private HttpRequestMessage BuildReq(string url, string authMode, string apiKey)
@@ -156,7 +133,7 @@ public sealed class TorznabClient
     {
         var xml = await FetchCapsRawAsync(torznabUrl, authMode, apiKey, ct);
 
-        var doc = XDocument.Parse(xml);
+        var doc = XmlSecureParser.Parse(xml);
         var cats = new List<(int, string, bool, int?)>();
 
         foreach (var cat in doc.Descendants().Where(x => x.Name.LocalName == "category"))
@@ -228,7 +205,7 @@ public sealed class TorznabClient
 
             var url = BuildUrl(torznabUrl, authMode, apiKey, query);
             if (_log.IsEnabled(LogLevel.Debug))
-                _log.LogDebug("Torznab fetch url={Url} mode={Mode}", SanitizeUrl(url), mode);
+                _log.LogDebug("Torznab fetch url={Url} mode={Mode}", SensitiveUrlSanitizer.Sanitize(url), mode);
 
             try
             {
@@ -284,7 +261,7 @@ public sealed class TorznabClient
             };
             var url = BuildUrl(torznabUrl, authMode, apiKey, query);
             if (_log.IsEnabled(LogLevel.Debug))
-                _log.LogDebug("CategoryPreview url={Url} catId={CatId} q={Q}", SanitizeUrl(url), catId, q);
+                _log.LogDebug("CategoryPreview url={Url} catId={CatId} q={Q}", SensitiveUrlSanitizer.Sanitize(url), catId, q);
             using var resp = await SendWithRetryAsync(() => BuildReq(url, authMode, apiKey), ct);
             await EnsureSuccessOrLogAsync(resp, ct);
             var xml = await resp.Content.ReadAsStringAsync(ct);
@@ -341,7 +318,7 @@ public sealed class TorznabClient
 
             var url = BuildUrl(torznabUrl, authMode, apiKey, query);
             if (_log.IsEnabled(LogLevel.Debug))
-                _log.LogDebug("Torznab search url={Url} cat={Cat} q={Query}", SanitizeUrl(url), cat ?? "-", searchQuery ?? "");
+                _log.LogDebug("Torznab search url={Url} cat={Cat} q={Query}", SensitiveUrlSanitizer.Sanitize(url), cat ?? "-", searchQuery ?? "");
             using var resp = await SendWithRetryAsync(() => BuildReq(url, authMode, apiKey), ct);
             await EnsureSuccessOrLogAsync(resp, ct);
 

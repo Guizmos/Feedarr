@@ -1,4 +1,5 @@
 const API_BASE = ((import.meta.env?.VITE_API_BASE) || "").replace(/\/+$/, "");
+const TRUSTED_REQUEST_HEADER = "X-Feedarr-Request";
 
 export function resolveApiUrl(path) {
   if (!path) return path;
@@ -91,6 +92,7 @@ async function apiSend(method, path, body, { signal, timeoutMs } = {}) {
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
+        [TRUSTED_REQUEST_HEADER]: "1",
       },
       credentials: "include",
       body: body ? JSON.stringify(body) : null,

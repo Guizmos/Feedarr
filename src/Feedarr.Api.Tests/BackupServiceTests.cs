@@ -20,7 +20,7 @@ namespace Feedarr.Api.Tests;
 public sealed class BackupServiceTests
 {
     [Fact]
-    public void CreateBackup_RedactsExternalSecretsInConfig()
+    public async Task CreateBackup_RedactsExternalSecretsInConfig()
     {
         using var workspace = new TestWorkspace();
         var db = CreateDb(workspace);
@@ -41,7 +41,7 @@ public sealed class BackupServiceTests
         });
 
         var service = CreateBackupService(workspace, db, settings, new FakeApiKeyProtectionService());
-        var backup = service.CreateBackup("1.2.3");
+        var backup = await service.CreateBackupAsync("1.2.3");
         var backupPath = Path.Combine(workspace.BackupsDir, backup.Name);
 
         using var archive = ZipFile.OpenRead(backupPath);
@@ -67,7 +67,7 @@ public sealed class BackupServiceTests
     }
 
     [Fact]
-    public void RestoreBackup_ReencryptsPlaintextAndClearsUndecryptableCredentials()
+    public async Task RestoreBackup_ReencryptsPlaintextAndClearsUndecryptableCredentials()
     {
         using var workspace = new TestWorkspace();
         var db = CreateDb(workspace);
@@ -95,7 +95,7 @@ public sealed class BackupServiceTests
             });
         }
 
-        var result = service.RestoreBackup(backupName, "1.0.0");
+        var result = await service.RestoreBackupAsync(backupName, "1.0.0");
         Assert.Equal(2, result.ReencryptedCredentials);
         Assert.Equal(1, result.ClearedUndecryptableCredentials);
 
@@ -110,7 +110,7 @@ public sealed class BackupServiceTests
     }
 
     [Fact]
-    public void RestoreBackup_RejectsChecksumMismatch()
+    public async Task RestoreBackup_RejectsChecksumMismatch()
     {
         using var workspace = new TestWorkspace();
         var db = CreateDb(workspace);
@@ -134,13 +134,13 @@ public sealed class BackupServiceTests
             });
         }
 
-        var ex = Assert.Throws<BackupOperationException>(() => service.RestoreBackup(backupName, "1.0.0"));
+        var ex = await Assert.ThrowsAsync<BackupOperationException>(() => service.RestoreBackupAsync(backupName, "1.0.0"));
         Assert.Equal(StatusCodes.Status400BadRequest, ex.StatusCode);
         Assert.Contains("checksum mismatch", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void RestoreBackup_RejectsMissingChecksumMetadata()
+    public async Task RestoreBackup_RejectsMissingChecksumMetadata()
     {
         using var workspace = new TestWorkspace();
         var db = CreateDb(workspace);
@@ -163,7 +163,7 @@ public sealed class BackupServiceTests
             });
         }
 
-        var ex = Assert.Throws<BackupOperationException>(() => service.RestoreBackup(backupName, "1.0.0"));
+        var ex = await Assert.ThrowsAsync<BackupOperationException>(() => service.RestoreBackupAsync(backupName, "1.0.0"));
         Assert.Equal(StatusCodes.Status400BadRequest, ex.StatusCode);
         Assert.Contains("dbSha256", ex.Message, StringComparison.OrdinalIgnoreCase);
     }

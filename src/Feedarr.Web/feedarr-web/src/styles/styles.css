@@ -5323,6 +5323,17 @@ body.modal-open .content{
   align-items: center;
   gap: 4px;
 }
+.preview-cat-summary__chip--requested{
+  border: 1px solid rgba(36,147,181,.28);
+  background: rgba(36,147,181,.12);
+  color: var(--accent);
+  font-weight: 700;
+}
+.preview-cat-summary__chip--returned{
+  border: 1px solid rgba(245,158,11,.18);
+  background: rgba(245,158,11,.10);
+  color: var(--text);
+}
 .preview-cat-summary__count{
   font-weight: 600;
   color: var(--text);

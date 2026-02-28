@@ -6,7 +6,6 @@ namespace Feedarr.Api.Services.Backup;
 
 public sealed class BackupExecutionCoordinator
 {
-    private static readonly TimeSpan AcquireTimeout = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan SyncDrainTimeout = TimeSpan.FromMinutes(2);
 
     private readonly SemaphoreSlim _operationGate = new(1, 1);
@@ -52,10 +51,13 @@ public sealed class BackupExecutionCoordinator
     /// Async version: acquires the gate and drains sync activities without blocking threads.
     /// The action lambda itself may be synchronous (file I/O).
     /// </summary>
-    public async Task<T> RunExclusiveAsync<T>(string operation, string? backupName, Func<T> action)
+    public async Task<T> RunExclusiveAsync<T>(
+        string operation,
+        string? backupName,
+        Func<CancellationToken, Task<T>> action,
+        CancellationToken ct = default)
     {
-        if (!await _operationGate.WaitAsync(AcquireTimeout))
-            throw new BackupOperationException("backup operation already running", StatusCodes.Status409Conflict);
+        await _operationGate.WaitAsync(ct).ConfigureAwait(false);
 
         var startedAt = DateTimeOffset.UtcNow;
 
@@ -72,14 +74,14 @@ public sealed class BackupExecutionCoordinator
                 _state.LastError = null;
             }
 
-            await WaitForSyncDrainAsync();
+            await WaitForSyncDrainAsync(ct).ConfigureAwait(false);
 
             lock (_stateLock)
             {
                 _state.Phase = "running";
             }
 
-            var result = action();
+            var result = await action(ct).ConfigureAwait(false);
 
             lock (_stateLock)
             {
@@ -112,71 +114,7 @@ public sealed class BackupExecutionCoordinator
         }
     }
 
-    /// <summary>
-    /// Synchronous wrapper kept for backward compatibility.
-    /// Prefer <see cref="RunExclusiveAsync{T}"/> in async controller actions.
-    /// </summary>
-    public T RunExclusive<T>(string operation, string? backupName, Func<T> action)
-    {
-        if (!_operationGate.Wait(AcquireTimeout))
-            throw new BackupOperationException("backup operation already running", StatusCodes.Status409Conflict);
-
-        var startedAt = DateTimeOffset.UtcNow;
-
-        try
-        {
-            lock (_stateLock)
-            {
-                _syncBlocked = true;
-                _state.IsBusy = true;
-                _state.Operation = operation;
-                _state.Phase = "waiting-sync";
-                _state.BackupName = backupName;
-                _state.StartedAtTs = startedAt.ToUnixTimeSeconds();
-                _state.LastError = null;
-            }
-
-            WaitForSyncDrain();
-
-            lock (_stateLock)
-            {
-                _state.Phase = "running";
-            }
-
-            var result = action();
-
-            lock (_stateLock)
-            {
-                _state.IsBusy = false;
-                _state.Operation = "idle";
-                _state.Phase = "idle";
-                _state.BackupName = null;
-                _state.StartedAtTs = null;
-                _state.LastCompletedAtTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                _state.LastSuccess = true;
-                _state.LastError = null;
-                _syncBlocked = false;
-            }
-
-            return result;
-        }
-        catch (BackupOperationException ex)
-        {
-            MarkFailed(ex, "backup operation failed");
-            throw;
-        }
-        catch (Exception ex)
-        {
-            MarkFailed(ex, "backup operation failed");
-            throw;
-        }
-        finally
-        {
-            _operationGate.Release();
-        }
-    }
-
-    private async Task WaitForSyncDrainAsync()
+    private async Task WaitForSyncDrainAsync(CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
         while (true)
@@ -195,30 +133,7 @@ public sealed class BackupExecutionCoordinator
                     "sync activities still running, retry in a moment",
                     StatusCodes.Status409Conflict);
 
-            await Task.Delay(100);
-        }
-    }
-
-    private void WaitForSyncDrain()
-    {
-        var sw = Stopwatch.StartNew();
-        while (true)
-        {
-            int active;
-            lock (_stateLock)
-            {
-                active = _activeSyncActivities;
-            }
-
-            if (active <= 0)
-                return;
-
-            if (sw.Elapsed >= SyncDrainTimeout)
-                throw new BackupOperationException(
-                    "sync activities still running, retry in a moment",
-                    StatusCodes.Status409Conflict);
-
-            Thread.Sleep(100);
+            await Task.Delay(100, ct).ConfigureAwait(false);
         }
     }
 

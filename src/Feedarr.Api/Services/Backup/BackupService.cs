@@ -78,10 +78,10 @@ public sealed class BackupService
             .ToList();
     }
 
-    public int PurgeBackups()
+    public Task<int> PurgeBackupsAsync(CancellationToken ct = default)
     {
         EnsureRestartNotRequired();
-        return _coordinator.RunExclusive("purge", null, () =>
+        return _coordinator.RunExclusiveAsync("purge", null, async opCt =>
         {
             Directory.CreateDirectory(BackupDirAbs);
             var files = new DirectoryInfo(BackupDirAbs)
@@ -91,21 +91,23 @@ public sealed class BackupService
             var deleted = 0;
             foreach (var file in files)
             {
+                opCt.ThrowIfCancellationRequested();
                 var path = file.FullName;
                 TryDeleteFile(path);
                 if (!System.IO.File.Exists(path))
                     deleted++;
             }
 
-            return deleted;
-        });
+            return await Task.FromResult(deleted);
+        }, ct);
     }
 
-    public BackupFileDto CreateBackup(string appVersion)
+    public Task<BackupFileDto> CreateBackupAsync(string appVersion, CancellationToken ct = default)
     {
         EnsureRestartNotRequired();
-        return _coordinator.RunExclusive("create", null, () =>
+        return _coordinator.RunExclusiveAsync("create", null, async opCt =>
         {
+            opCt.ThrowIfCancellationRequested();
             if (!System.IO.File.Exists(DbPathAbs))
                 throw new BackupOperationException("database not found", StatusCodes.Status404NotFound);
 
@@ -150,13 +152,13 @@ public sealed class BackupService
             }
 
             var info = new FileInfo(zipPath);
-            return new BackupFileDto
+            return await Task.FromResult(new BackupFileDto
             {
                 Name = info.Name,
                 SizeBytes = info.Length,
                 CreatedAtTs = new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeSeconds()
-            };
-        });
+            });
+        }, ct);
     }
 
     public (string SafeName, string FullPath) GetExistingBackupFile(string name)
@@ -173,17 +175,18 @@ public sealed class BackupService
         return (safeName, path);
     }
 
-    public void DeleteBackup(string name)
+    public async Task DeleteBackupAsync(string name, CancellationToken ct = default)
     {
-        _coordinator.RunExclusive("delete", name, () =>
+        await _coordinator.RunExclusiveAsync("delete", name, opCt =>
         {
+            opCt.ThrowIfCancellationRequested();
             var (_, path) = GetExistingBackupFile(name);
             TryDeleteFile(path);
             if (System.IO.File.Exists(path))
                 throw new BackupOperationException("backup delete failed");
 
-            return true;
-        });
+            return Task.FromResult(true);
+        }, ct);
     }
 
     /// <summary>
@@ -191,7 +194,10 @@ public sealed class BackupService
     /// or cleared, WITHOUT applying any changes to the live database.
     /// Safe to call without <see cref="confirm"/> parameter.
     /// </summary>
-    public BackupRestorePreview PreviewRestoreBackup(string name, string currentAppVersion)
+    public async Task<BackupRestorePreview> PreviewRestoreBackupAsync(
+        string name,
+        string currentAppVersion,
+        CancellationToken ct = default)
     {
         EnsureRestartNotRequired();
 
@@ -205,6 +211,7 @@ public sealed class BackupService
 
         try
         {
+            ct.ThrowIfCancellationRequested();
             using var archive = ZipFile.OpenRead(backupPath);
             if (!_validation.TryValidateArchiveForRestore(
                     archive,
@@ -221,20 +228,22 @@ public sealed class BackupService
             if (dbEntry is null)
                 throw new BackupOperationException("backup database missing", StatusCodes.Status400BadRequest);
 
+            ct.ThrowIfCancellationRequested();
             ExtractEntryControlled(dbEntry, extractedDbPath);
             VerifySqliteIntegrity(extractedDbPath);
 
+            ct.ThrowIfCancellationRequested();
             var (wouldReencrypt, wouldClear) = AnalyzeRestoredCredentials(extractedDbPath);
 
             _logger.LogInformation(
                 "Backup preview for {Name}: wouldReencrypt={Re} wouldClear={Clear}",
                 name, wouldReencrypt, wouldClear);
 
-            return new BackupRestorePreview
+            return await Task.FromResult(new BackupRestorePreview
             {
                 WouldReencrypt = wouldReencrypt,
                 WouldClear = wouldClear
-            };
+            });
         }
         catch (BackupOperationException)
         {
@@ -254,10 +263,13 @@ public sealed class BackupService
         }
     }
 
-    public BackupRestoreResult RestoreBackup(string name, string currentAppVersion)
+    public Task<BackupRestoreResult> RestoreBackupAsync(
+        string name,
+        string currentAppVersion,
+        CancellationToken ct = default)
     {
         EnsureRestartNotRequired();
-        return _coordinator.RunExclusive("restore", name, () =>
+        return _coordinator.RunExclusiveAsync("restore", name, async opCt =>
         {
             var (_, backupPath) = GetExistingBackupFile(name);
             var operationId = Guid.NewGuid().ToString("N");
@@ -269,6 +281,7 @@ public sealed class BackupService
 
             try
             {
+                opCt.ThrowIfCancellationRequested();
                 using var archive = ZipFile.OpenRead(backupPath);
                 if (!_validation.TryValidateArchiveForRestore(
                         archive,
@@ -285,6 +298,7 @@ public sealed class BackupService
                 if (dbEntry is null)
                     throw new BackupOperationException("backup database missing", StatusCodes.Status400BadRequest);
 
+                opCt.ThrowIfCancellationRequested();
                 ExtractEntryControlled(dbEntry, extractedDbPath);
 
                 var extractedHash = ComputeFileSha256(extractedDbPath);
@@ -292,9 +306,11 @@ public sealed class BackupService
                     throw new BackupOperationException("backup database checksum mismatch", StatusCodes.Status400BadRequest);
 
                 VerifySqliteIntegrity(extractedDbPath);
+                opCt.ThrowIfCancellationRequested();
                 credentialReport = NormalizeRestoredCredentials(extractedDbPath);
                 VerifySqliteIntegrity(extractedDbPath);
 
+                opCt.ThrowIfCancellationRequested();
                 CreatePreRestoreBackup(currentAppVersion);
                 ReplaceDatabaseAtomically(extractedDbPath);
                 MarkRestartRequired();
@@ -325,12 +341,12 @@ public sealed class BackupService
                 TryDeleteDirectory(workDir);
             }
 
-            return new BackupRestoreResult
+            return await Task.FromResult(new BackupRestoreResult
             {
                 ReencryptedCredentials = credentialReport.Reencrypted,
                 ClearedUndecryptableCredentials = credentialReport.ClearedUndecryptable
-            };
-        });
+            });
+        }, ct);
     }
 
     public BackupOperationStateDto GetOperationState()

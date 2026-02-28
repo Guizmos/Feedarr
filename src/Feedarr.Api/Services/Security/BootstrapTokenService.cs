@@ -14,6 +14,15 @@ public sealed class BootstrapTokenService
 {
     private static readonly TimeSpan TokenLifetime = TimeSpan.FromMinutes(15);
 
+    public enum TokenStatus
+    {
+        Missing,
+        Unknown,
+        Expired,
+        Used,
+        Valid
+    }
+
     private sealed class TokenEntry
     {
         public DateTime ExpiresAt { get; init; }
@@ -44,13 +53,7 @@ public sealed class BootstrapTokenService
     /// </summary>
     public bool IsValid(string? token)
     {
-        var trimmed = Trim(token);
-        if (trimmed is null) return false;
-
-        lock (_lock)
-        {
-            return TryGetValid_Locked(trimmed, out _);
-        }
+        return GetStatus(token) == TokenStatus.Valid;
     }
 
     /// <summary>
@@ -69,6 +72,27 @@ public sealed class BootstrapTokenService
 
             entry!.Used = true;
             return true;
+        }
+    }
+
+    public TokenStatus GetStatus(string? token)
+    {
+        var trimmed = Trim(token);
+        if (trimmed is null)
+            return TokenStatus.Missing;
+
+        lock (_lock)
+        {
+            if (!_tokens.TryGetValue(HashToken(trimmed), out var entry))
+                return TokenStatus.Unknown;
+
+            if (entry.Used)
+                return TokenStatus.Used;
+
+            if (entry.ExpiresAt <= DateTime.UtcNow)
+                return TokenStatus.Expired;
+
+            return TokenStatus.Valid;
         }
     }
 

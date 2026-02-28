@@ -113,11 +113,13 @@ public sealed class SystemStatsReleasesUnifiedTests
             NullLogger<BackupService>.Instance);
         backup.InitializeForStartup();
 
+        using var appLifetime = new TestHostApplicationLifetime();
         var storageCache = new StorageUsageCacheService(
             new MemoryCache(new MemoryCacheOptions()),
             new TestWebHostEnvironment(workspace.RootDir),
             options,
             db,
+            appLifetime,
             NullLogger<StorageUsageCacheService>.Instance);
 
         return new SystemController(

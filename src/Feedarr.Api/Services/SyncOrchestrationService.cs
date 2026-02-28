@@ -62,7 +62,16 @@ public sealed class SyncOrchestrationService
         _log = log;
     }
 
-    public async Task<SyncOrchestrationResult> ExecuteManualSyncAsync(Source src, bool rssOnly, CancellationToken _)
+    internal static CancellationTokenSource CreateManualSyncCancellationSource(
+        CancellationToken requestAborted,
+        CancellationToken applicationStopping)
+    {
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(requestAborted, applicationStopping);
+        cts.CancelAfter(TimeSpan.FromMinutes(5));
+        return cts;
+    }
+
+    public async Task<SyncOrchestrationResult> ExecuteManualSyncAsync(Source src, bool rssOnly, CancellationToken requestAborted)
     {
         var id = src.Id;
         var url = src.TorznabUrl;
@@ -70,8 +79,7 @@ public sealed class SyncOrchestrationService
         var mode = src.AuthMode;
         var name = src.Name;
 
-        using var syncCts = CancellationTokenSource.CreateLinkedTokenSource(_appLifetime.ApplicationStopping);
-        syncCts.CancelAfter(TimeSpan.FromMinutes(5));
+        using var syncCts = CreateManualSyncCancellationSource(requestAborted, _appLifetime.ApplicationStopping);
         var syncCt = syncCts.Token;
 
         try
@@ -101,8 +109,9 @@ public sealed class SyncOrchestrationService
                 if (uiSettings.HideSeenByDefault)
                     defaultSeen = 1;
             }
-            catch
+            catch (Exception ex)
             {
+                _log.LogWarning(ex, "Failed to read sync settings, using defaults");
             }
 
             var syncCorrelationId = Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N");
@@ -155,7 +164,7 @@ public sealed class SyncOrchestrationService
             string? fallbackMode = null;
             var usedAggregated = false;
 
-            _log.LogInformation("RSS fetch start [{Name}] url={Url} limit={Limit}", name, SanitizeUrl(url), perCatLimit);
+            _log.LogInformation("RSS fetch start [{Name}] url={Url} limit={Limit}", name, SensitiveUrlSanitizer.Sanitize(url), perCatLimit);
             var rssRes = await _torznab.FetchLatestAsync(url, mode, key, perCatLimit, syncCt, allowSearch: false);
             var rssItems = rssRes.items;
             usedMode = rssRes.usedMode;
@@ -454,6 +463,23 @@ public sealed class SyncOrchestrationService
 
             return new SyncOrchestrationResult(true, usedMode, syncMode, items.Count, insertedNew, null);
         }
+        catch (OperationCanceledException) when (requestAborted.IsCancellationRequested || _appLifetime.ApplicationStopping.IsCancellationRequested)
+        {
+            _log.LogInformation(
+                "Manual sync cancelled for sourceId={SourceId} requestCancelled={RequestCancelled} appStopping={AppStopping}",
+                id,
+                requestAborted.IsCancellationRequested,
+                _appLifetime.ApplicationStopping.IsCancellationRequested);
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            const string timeoutMessage = "manual sync timed out";
+            _log.LogWarning("Manual sync timed out for sourceId={SourceId}", id);
+            _sources.UpdateLastSync(id, "error", timeoutMessage);
+            _activity.Add(id, "error", "sync", $"Sync ERROR: {timeoutMessage}");
+            return new SyncOrchestrationResult(false, null, null, 0, 0, timeoutMessage);
+        }
         catch (Exception ex)
         {
             _log.LogError(ex, "Manual sync failed for sourceId={SourceId}", id);
@@ -622,27 +648,4 @@ public sealed class SyncOrchestrationService
         return UnifiedCategoryMappings.ToKey(unified);
     }
 
-    private static string SanitizeUrl(string url)
-    {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            return url;
-
-        var query = uri.Query.TrimStart('?');
-        if (string.IsNullOrWhiteSpace(query))
-            return url;
-
-        var parts = query.Split('&', StringSplitOptions.RemoveEmptyEntries);
-        var kept = new List<string>();
-        foreach (var part in parts)
-        {
-            var kv = part.Split('=', 2);
-            if (kv.Length == 0) continue;
-            if (string.Equals(kv[0], "apikey", StringComparison.OrdinalIgnoreCase))
-                continue;
-            kept.Add(part);
-        }
-
-        var ub = new UriBuilder(uri) { Query = string.Join("&", kept) };
-        return ub.Uri.ToString();
-    }
 }

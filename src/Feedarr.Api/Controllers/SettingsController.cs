@@ -224,12 +224,13 @@ public sealed class SettingsController : ControllerBase
     // body: { tmdbApiKey?, fanartApiKey?, igdbClientId?, igdbClientSecret? }
     // null/"" => ne change pas
     [HttpPut("external")]
-    public IActionResult PutExternal([FromBody] ExternalSettings dto)
+    public async Task<IActionResult> PutExternal([FromBody] ExternalSettings dto, CancellationToken ct)
     {
         if (dto is null) return Problem(title: "body missing", statusCode: StatusCodes.Status400BadRequest);
 
         var saved = _repo.SaveExternalPartial(dto);
-        _externalProviderInstances?.UpsertFromLegacySettings(saved);
+        if (_externalProviderInstances is not null)
+            await _externalProviderInstances.UpsertFromLegacySettingsAsync(saved, ct);
 
         var hasTmdb = !string.IsNullOrWhiteSpace(saved.TmdbApiKey);
         var hasTvmaze = !string.IsNullOrWhiteSpace(saved.TvmazeApiKey);

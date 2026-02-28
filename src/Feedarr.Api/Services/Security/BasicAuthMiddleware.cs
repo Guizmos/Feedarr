@@ -56,6 +56,7 @@ public sealed class BasicAuthMiddleware
         IMemoryCache cache,
         SetupStateService setupState,
         BootstrapTokenService bootstrapTokens,
+        AuthThrottleService authThrottle,
         ILogger<BasicAuthMiddleware> log)
     {
         if (!setupState.IsSetupCompleted() && !IsAllowedDuringSetup(context.Request))
@@ -114,13 +115,34 @@ public sealed class BasicAuthMiddleware
             // A valid issued bootstrap token grants access to security-setup paths only
             // (principle of least privilege). It does NOT open the full API.
             var issuedToken = TryGetBootstrapTokenHeader(context.Request);
-            if (issuedToken is not null && bootstrapTokens.IsValid(issuedToken))
+            if (issuedToken is not null)
             {
                 if (IsAllowedWithBootstrapToken(context.Request))
                 {
-                    context.Items[AuthPassedKey] = true;
-                    context.Items[BootstrapTokenActiveKey] = true;
-                    await _next(context);
+                    if (bootstrapTokens.TryConsume(issuedToken))
+                    {
+                        context.Items[AuthPassedKey] = true;
+                        context.Items[BootstrapTokenActiveKey] = true;
+                        await _next(context);
+                        return;
+                    }
+
+                    if (bootstrapTokens.GetStatus(issuedToken) == BootstrapTokenService.TokenStatus.Used)
+                    {
+                        log.LogWarning(
+                            "Bootstrap token already used for {Method} {Path}",
+                            context.Request.Method,
+                            context.Request.Path.Value ?? "/");
+                    }
+
+                    Challenge(context);
+                    return;
+                }
+
+                var tokenStatus = bootstrapTokens.GetStatus(issuedToken);
+                if (tokenStatus is BootstrapTokenService.TokenStatus.Unknown or BootstrapTokenService.TokenStatus.Expired or BootstrapTokenService.TokenStatus.Missing)
+                {
+                    Challenge(context);
                     return;
                 }
 
@@ -163,12 +185,21 @@ public sealed class BasicAuthMiddleware
             return;
         }
 
+        var remoteIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        if (authThrottle.TryGetRetryAfter(remoteIp, user, out var retryAfter))
+        {
+            await RejectThrottledAsync(context, retryAfter);
+            return;
+        }
+
         if (!Validate(user, pass, security))
         {
+            authThrottle.RegisterFailure(remoteIp, user);
             Challenge(context);
             return;
         }
 
+        authThrottle.RegisterSuccess(remoteIp, user);
         context.Items[AuthPassedKey] = true;
         await _next(context);
     }
@@ -177,6 +208,19 @@ public sealed class BasicAuthMiddleware
     {
         context.Response.Headers.WWWAuthenticate = "Basic realm=\"Feedarr\"";
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+    }
+
+    private static Task RejectThrottledAsync(HttpContext context, TimeSpan retryAfter)
+    {
+        var retryAfterSeconds = Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds));
+        context.Response.Headers["Retry-After"] = retryAfterSeconds.ToString();
+        context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        context.Response.ContentType = "application/json";
+        return context.Response.WriteAsJsonAsync(new
+        {
+            error = "too_many_auth_attempts",
+            retryAfterSeconds
+        });
     }
 
     private static Task HandleSetupLockRejection(HttpContext context)

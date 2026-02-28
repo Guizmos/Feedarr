@@ -22,6 +22,7 @@ export default function CategoryPreviewModal({ sourceId, previewCredentials, cat
   const [error, setError] = useState(null);
   const [items, setItems] = useState([]);
   const [isLive, setIsLive] = useState(false);
+  const requestedCatId = Number(catId);
 
   const fetchData = useCallback(
     (signal) => {
@@ -98,6 +99,18 @@ export default function CategoryPreviewModal({ sourceId, previewCredentials, cat
     }
     return Object.entries(counts).sort((a, b) => b[1].count - a[1].count);
   }, [items]);
+  const returnedCategoryIds = useMemo(
+    () =>
+      catSummary
+        .map(([id]) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0),
+    [catSummary]
+  );
+  const requestedCategoryReturned =
+    Number.isFinite(requestedCatId) &&
+    returnedCategoryIds.includes(requestedCatId);
+  const showReturnedCategoryMismatch =
+    returnedCategoryIds.length > 0 && !requestedCategoryReturned;
 
   const emptyMessage = tr(
     "Aucun résultat retourné par l'indexeur pour cette catégorie.",
@@ -154,10 +167,20 @@ export default function CategoryPreviewModal({ sourceId, previewCredentials, cat
           </div>
         )}
 
-        {!loading && !error && catSummary.length > 0 && (
+        {!loading && !error && (catSummary.length > 0 || Number.isFinite(requestedCatId)) && (
           <div className="preview-cat-summary">
+            {Number.isFinite(requestedCatId) && (
+              <span className="preview-cat-summary__chip preview-cat-summary__chip--requested">
+                {tr("Demandée", "Requested")}: {requestedCatId}{catName ? ` • ${catName}` : ""}
+              </span>
+            )}
             {catSummary.map(([id, { count, name }]) => (
-              <span key={id} className="preview-cat-summary__chip">
+              <span
+                key={id}
+                className={`preview-cat-summary__chip${
+                  showReturnedCategoryMismatch ? " preview-cat-summary__chip--returned" : ""
+                }`}
+              >
                 {id}{name ? ` • ${name}` : ""}
                 <span className="preview-cat-summary__count">×{count}</span>
               </span>
@@ -168,10 +191,15 @@ export default function CategoryPreviewModal({ sourceId, previewCredentials, cat
         {!loading && !error && items.length > 0 && (
           <>
             <div className="category-preview-modal__note">
-              {tr(
-                "Catégorie item: valeur brute remontée par l'indexeur pour chaque release. Aucune catégorie Feedarr n'est réappliquée ici.",
-                "Item category: raw value returned by the indexer for each release. No Feedarr mapping is reapplied here."
-              )}
+              {showReturnedCategoryMismatch
+                ? tr(
+                    `La requête a bien été lancée sur ${requestedCatId}${catName ? ` • ${catName}` : ""}, mais l'indexeur classe les items retournés dans d'autres catégories. La colonne "Catégorie item" affiche toujours la valeur brute remontée par l'indexeur.`,
+                    `The request was sent for ${requestedCatId}${catName ? ` • ${catName}` : ""}, but the indexer classifies returned items in different categories. The "Item category" column always shows the raw value returned by the indexer.`
+                  )
+                : tr(
+                    "Catégorie item: valeur brute remontée par l'indexeur pour chaque release. Aucune catégorie Feedarr n'est réappliquée ici.",
+                    "Item category: raw value returned by the indexer for each release. No Feedarr mapping is reapplied here."
+                  )}
             </div>
             <table className="preview-table">
               <thead>
@@ -180,7 +208,7 @@ export default function CategoryPreviewModal({ sourceId, previewCredentials, cat
                   <th>{tr("Tracker", "Tracker")}</th>
                   <th>{tr("Nom", "Name")}</th>
                   <th>{tr("Taille", "Size")}</th>
-                  <th>{tr("Catégorie", "Category")}</th>
+                  <th>{tr("Catégorie item", "Item category")}</th>
                 </tr>
               </thead>
               <tbody>

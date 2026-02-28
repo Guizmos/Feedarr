@@ -208,9 +208,9 @@ public sealed class ExternalProviderInstanceRepository
         return true;
     }
 
-    public void UpsertFromLegacyDefaults()
+    public async Task UpsertFromLegacyDefaultsAsync(CancellationToken ct = default)
     {
-        _legacyProjectionLock.Wait();
+        await _legacyProjectionLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             var legacy = _settingsRepository.GetExternal(new ExternalSettings
@@ -307,9 +307,9 @@ public sealed class ExternalProviderInstanceRepository
     /// Auto-creates instances for providers that require no API key (or have a known public key).
     /// Idempotent — only inserts if no instance already exists for that provider key.
     /// </summary>
-    public void SeedFreeProviders()
+    public async Task SeedFreeProvidersAsync(CancellationToken ct = default)
     {
-        _seedFreeLock.Wait();
+        await _seedFreeLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             using var conn = _db.Open();
@@ -371,12 +371,12 @@ public sealed class ExternalProviderInstanceRepository
         }
     }
 
-    public void UpsertFromLegacySettings(ExternalSettings legacy)
+    public async Task UpsertFromLegacySettingsAsync(ExternalSettings legacy, CancellationToken ct = default)
     {
         if (legacy is null)
             return;
 
-        _legacyProjectionLock.Wait();
+        await _legacyProjectionLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             using var conn = _db.Open();
@@ -486,6 +486,18 @@ public sealed class ExternalProviderInstanceRepository
         }
     }
 
+    public ExternalProviderInstance? GetActiveByProviderKey(string providerKey)
+    {
+        var row = GetActiveRowByProviderKey(providerKey);
+        return row is null ? null : MapRow(row, includeSecrets: false);
+    }
+
+    public ExternalProviderInstance? GetActiveByProviderKeyWithSecrets(string providerKey)
+    {
+        var row = GetActiveRowByProviderKey(providerKey);
+        return row is null ? null : MapRow(row, includeSecrets: true);
+    }
+
     private void SyncLegacyExternalSettingsFromInstances()
     {
         try
@@ -563,6 +575,33 @@ public sealed class ExternalProviderInstanceRepository
             """,
             new { instanceId = instanceId.Trim() }
         );
+    }
+
+    private ExternalProviderInstanceRow? GetActiveRowByProviderKey(string providerKey)
+    {
+        if (string.IsNullOrWhiteSpace(providerKey))
+            return null;
+
+        using var conn = _db.Open();
+        return conn.QueryFirstOrDefault<ExternalProviderInstanceRow>(
+            """
+            SELECT
+              instance_id AS InstanceId,
+              provider_key AS ProviderKey,
+              display_name AS DisplayName,
+              enabled AS Enabled,
+              base_url AS BaseUrl,
+              auth_json AS AuthJson,
+              options_json AS OptionsJson,
+              created_at_ts AS CreatedAtTs,
+              updated_at_ts AS UpdatedAtTs
+            FROM external_provider_instances
+            WHERE LOWER(provider_key) = LOWER(@providerKey)
+              AND enabled = 1
+            ORDER BY updated_at_ts DESC, created_at_ts DESC
+            LIMIT 1;
+            """,
+            new { providerKey = providerKey.Trim() });
     }
 
     private ExternalProviderInstance MapRow(ExternalProviderInstanceRow row, bool includeSecrets)

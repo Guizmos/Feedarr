@@ -106,6 +106,7 @@ public sealed class Lot2ApiReliabilityTests
             protection,
             registry,
             NullLogger<ExternalProviderInstanceRepository>.Instance);
+        await externalInstances.UpsertFromLegacyDefaultsAsync();
         var resolver = new ActiveExternalProviderConfigResolver(
             externalInstances,
             registry,
@@ -191,13 +192,13 @@ public sealed class Lot2ApiReliabilityTests
     }
 
     [Fact]
-    public void BackupCoordinator_WhenErrorContainsSecret_LastErrorIsSanitized()
+    public async Task BackupCoordinator_WhenErrorContainsSecret_LastErrorIsSanitized()
     {
         const string secretToken = "very-secret-token-value";
         var coordinator = new BackupExecutionCoordinator();
 
-        _ = Assert.Throws<BackupOperationException>(() =>
-            coordinator.RunExclusive<int>("create", "manual", () =>
+        _ = await Assert.ThrowsAsync<BackupOperationException>(() =>
+            coordinator.RunExclusiveAsync<int>("create", "manual", _ =>
             {
                 throw new BackupOperationException(
                     $"upstream failed apikey={secretToken}",

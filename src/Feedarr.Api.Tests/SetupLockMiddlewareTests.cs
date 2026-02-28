@@ -43,6 +43,7 @@ public sealed class SetupLockMiddlewareTests
             cache,
             setupState,
             new BootstrapTokenService(),
+            new AuthThrottleService(new BasicAuthThrottleOptions(), TimeProvider.System),
             NullLogger<BasicAuthMiddleware>.Instance);
 
         Assert.False(nextCalled);
@@ -78,6 +79,7 @@ public sealed class SetupLockMiddlewareTests
             cache,
             setupState,
             new BootstrapTokenService(),
+            new AuthThrottleService(new BasicAuthThrottleOptions(), TimeProvider.System),
             NullLogger<BasicAuthMiddleware>.Instance);
 
         Assert.False(nextCalled);
@@ -124,6 +126,7 @@ public sealed class SetupLockMiddlewareTests
             cache,
             setupState,
             new BootstrapTokenService(),
+            new AuthThrottleService(new BasicAuthThrottleOptions(), TimeProvider.System),
             NullLogger<BasicAuthMiddleware>.Instance);
 
         Assert.True(nextCalled);
@@ -160,6 +163,7 @@ public sealed class SetupLockMiddlewareTests
             cache,
             setupState,
             new BootstrapTokenService(),
+            new AuthThrottleService(new BasicAuthThrottleOptions(), TimeProvider.System),
             NullLogger<BasicAuthMiddleware>.Instance);
 
         Assert.True(nextCalled);

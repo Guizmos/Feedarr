@@ -18,7 +18,7 @@ namespace Feedarr.Api.Tests;
 public sealed class SystemControllerBackupRestartRequiredTests
 {
     [Fact]
-    public void RestoreBackup_ReturnsConflict_WhenRestartIsRequired()
+    public async Task RestoreBackup_ReturnsConflict_WhenRestartIsRequired()
     {
         using var workspace = new TestWorkspace();
         var db = CreateDb(workspace);
@@ -47,11 +47,13 @@ public sealed class SystemControllerBackupRestartRequiredTests
             DataDir = workspace.DataDir,
             DbFileName = "feedarr.db"
         });
+        using var appLifetime = new TestHostApplicationLifetime();
         var storageCache = new StorageUsageCacheService(
             new MemoryCache(new MemoryCacheOptions()),
             new TestWebHostEnvironment(workspace.RootDir),
             appOptions,
             db,
+            appLifetime,
             NullLogger<StorageUsageCacheService>.Instance);
 
         var controller = new SystemController(
@@ -66,7 +68,7 @@ public sealed class SystemControllerBackupRestartRequiredTests
             storageCache,
             NullLogger<SystemController>.Instance);
 
-        var result = controller.RestoreBackup("backup.zip");
+        var result = await controller.RestoreBackup("backup.zip");
         var conflict = Assert.IsType<ConflictObjectResult>(result);
         Assert.Equal(409, conflict.StatusCode);
         Assert.Contains("Redemarrage requis", conflict.Value?.ToString() ?? "", StringComparison.OrdinalIgnoreCase);

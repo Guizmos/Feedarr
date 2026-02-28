@@ -76,14 +76,20 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
     options.ForwardLimit = 1;
 
-    var trustedProxies = builder.Configuration.GetSection("App:ReverseProxy:TrustedProxies").Get<string[]>() ?? Array.Empty<string>();
+    var trustedProxies = GetConfiguredStringArray(
+        builder.Configuration,
+        "Security:KnownProxies",
+        "App:ReverseProxy:TrustedProxies");
     foreach (var raw in trustedProxies)
     {
         if (IPAddress.TryParse(raw?.Trim(), out var ip))
             options.KnownProxies.Add(ip);
     }
 
-    var trustedNetworks = builder.Configuration.GetSection("App:ReverseProxy:TrustedNetworks").Get<string[]>() ?? Array.Empty<string>();
+    var trustedNetworks = GetConfiguredStringArray(
+        builder.Configuration,
+        "Security:KnownNetworks",
+        "App:ReverseProxy:TrustedNetworks");
     foreach (var raw in trustedNetworks)
     {
         if (TryParseIpNetwork(raw, out var network))
@@ -135,8 +141,11 @@ SqlMapper.AddTypeHandler(new SqliteNullableInt32Handler());
 // Options + DB
 builder.Services.Configure<AppOptions>(builder.Configuration.GetSection("App"));
 builder.Services.Configure<UpdatesOptions>(builder.Configuration.GetSection("App:Updates"));
+builder.Services.Configure<BasicAuthTransportSecurityOptions>(builder.Configuration.GetSection("Security"));
+builder.Services.Configure<BasicAuthThrottleOptions>(builder.Configuration.GetSection("Security:AuthThrottle"));
 builder.Services.AddSingleton<Db>();
 builder.Services.AddSingleton<MigrationsRunner>();
+builder.Services.AddSingleton(TimeProvider.System);
 
 // Security - API Key Encryption
 builder.Services.AddSingleton<IApiKeyProtectionService, ApiKeyProtectionService>();
@@ -169,10 +178,13 @@ builder.Services.AddSingleton<UnifiedCategoryService>();
 builder.Services.AddSingleton<UnifiedCategoryResolver>();
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<BootstrapTokenService>();
+builder.Services.AddSingleton<AuthThrottleService>();
 builder.Services.AddSingleton<CategoryRecommendationService>();
 builder.Services.AddSingleton<ExternalProviderRegistry>();
 builder.Services.AddSingleton<ActiveExternalProviderConfigResolver>();
 builder.Services.AddSingleton<ExternalProviderTestService>();
+builder.Services.AddHostedService<BasicAuthTransportSecurityStartupService>();
+builder.Services.AddHostedService<ExternalProvidersBootstrapService>();
 builder.Services.AddHostedService<RssSyncHostedService>();
 builder.Services.AddSingleton<Feedarr.Api.Services.Titles.TitleParser>();
 builder.Services.AddSingleton<VideoMatchingStrategy>();
@@ -404,7 +416,7 @@ builder.Services.AddCors(o =>
     o.AddPolicy("dev", p =>
         p.WithOrigins("http://localhost:5173")
          .WithMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
-         .WithHeaders("Content-Type", "Authorization", "X-Requested-With")
+         .WithHeaders("Content-Type", "Authorization", "X-Requested-With", RequestForgeryProtection.RequestHeaderName)
          .AllowCredentials()
     );
 });
@@ -640,6 +652,10 @@ app.UseRateLimiter();
 // Security (Basic Auth)
 app.UseMiddleware<BasicAuthMiddleware>();
 
+// Browser-origin guard for unsafe requests. Allows same-origin or allowlisted
+// origins/referers, and requires an explicit trusted header for non-browser clients.
+app.UseMiddleware<AntiCsrfOriginMiddleware>();
+
 // Response compression (Brotli preferred, Gzip fallback).
 // Must be placed before UseStaticFiles so static assets are also compressed.
 app.UseResponseCompression();
@@ -663,25 +679,6 @@ var _startupLog = app.Services.GetRequiredService<ILoggerFactory>()
 var _asm = typeof(Feedarr.Api.Controllers.CategoriesController).Assembly;
 var _buildTs = System.IO.File.GetLastWriteTimeUtc(_asm.Location).ToString("yyyy-MM-dd HH:mm:ss UTC");
 _startupLog.LogInformation("[BUILD] Feedarr.Api built={T} — CATS_STANDARDONLY_V2", _buildTs);
-
-// Scope 4 — warn if Basic Auth is active but HTTPS is not enforced.
-// Basic Auth transmits credentials in base64 (effectively plaintext) over HTTP.
-{
-    var startupSecSettings = app.Services
-        .GetRequiredService<Feedarr.Api.Data.Repositories.SettingsRepository>()
-        .GetSecurity(new Feedarr.Api.Models.Settings.SecuritySettings());
-    var startupAuthMode = Feedarr.Api.Services.Security.SmartAuthPolicy.NormalizeAuthMode(startupSecSettings);
-
-    if (startupAuthMode != "open" && !enforceHttps)
-    {
-        _startupLog.LogWarning(
-            "[SECURITY] Basic Auth is active (mode={AuthMode}) but App:Security:EnforceHttps=false. " +
-            "If this instance is reachable over plain HTTP, credentials will be transmitted in base64 (cleartext). " +
-            "Set App:Security:EnforceHttps=true if ASP.NET Core terminates TLS directly, " +
-            "or ensure your reverse proxy enforces HTTPS and strips plain-HTTP access.",
-            startupAuthMode);
-    }
-}
 
 if (allowInvalidCerts)
 {
@@ -864,6 +861,15 @@ static bool TryParseIpNetwork(string? value, out Microsoft.AspNetCore.HttpOverri
 
     network = new Microsoft.AspNetCore.HttpOverrides.IPNetwork(address, prefixLength);
     return true;
+}
+
+static string[] GetConfiguredStringArray(IConfiguration configuration, string primarySection, string fallbackSection)
+{
+    var primary = configuration.GetSection(primarySection).Get<string[]>();
+    if (primary is { Length: > 0 })
+        return primary;
+
+    return configuration.GetSection(fallbackSection).Get<string[]>() ?? Array.Empty<string>();
 }
 
 static void MigrateLegacyDataProtectionKeys(string legacyPath, string targetPath)

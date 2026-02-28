@@ -210,19 +210,19 @@ public sealed class SystemController : ControllerBase
 
     // POST /api/system/backups/purge
     [HttpPost("backups/purge")]
-    public IActionResult PurgeBackups()
+    public async Task<IActionResult> PurgeBackups(CancellationToken ct)
     {
-        var deleted = _backupService.PurgeBackups();
+        var deleted = await _backupService.PurgeBackupsAsync(ct);
         return Ok(new { ok = true, deleted });
     }
 
     // POST /api/system/backups
     [HttpPost("backups")]
-    public IActionResult CreateBackup()
+    public async Task<IActionResult> CreateBackup(CancellationToken ct)
     {
         try
         {
-            var backup = _backupService.CreateBackup(GetAppVersion());
+            var backup = await _backupService.CreateBackupAsync(GetAppVersion(), ct);
             return Ok(backup);
         }
         catch (BackupOperationException ex)
@@ -233,11 +233,11 @@ public sealed class SystemController : ControllerBase
 
     // DELETE /api/system/backups/{name}
     [HttpDelete("backups/{name}")]
-    public IActionResult DeleteBackup([FromRoute] string name)
+    public async Task<IActionResult> DeleteBackup([FromRoute] string name, CancellationToken ct)
     {
         try
         {
-            _backupService.DeleteBackup(name);
+            await _backupService.DeleteBackupAsync(name, ct);
             return Ok(new { ok = true });
         }
         catch (BackupOperationException ex)
@@ -271,14 +271,14 @@ public sealed class SystemController : ControllerBase
     //   confirm=true explicitly, acknowledging that some credentials will be erased.
     //   Response: { ok: true, needsRestart: true, reencryptedCredentials: N, clearedUndecryptableCredentials: N }
     [HttpPost("backups/{name}/restore")]
-    public IActionResult RestoreBackup([FromRoute] string name, [FromQuery] bool confirm = false)
+    public async Task<IActionResult> RestoreBackup([FromRoute] string name, [FromQuery] bool confirm = false, CancellationToken ct = default)
     {
         try
         {
             if (!confirm)
             {
                 // Dry-run: return a preview without modifying anything.
-                var preview = _backupService.PreviewRestoreBackup(name, GetAppVersion());
+                var preview = await _backupService.PreviewRestoreBackupAsync(name, GetAppVersion(), ct);
 
                 var previewWarning = preview.WouldClear > 0
                     ? $"{preview.WouldClear} credential(s) could not be decrypted with the current key ring " +
@@ -295,7 +295,7 @@ public sealed class SystemController : ControllerBase
             }
 
             // Actual restore.
-            var result = _backupService.RestoreBackup(name, GetAppVersion());
+            var result = await _backupService.RestoreBackupAsync(name, GetAppVersion(), ct);
 
             var warning = result.ClearedUndecryptableCredentials > 0
                 ? $"{result.ClearedUndecryptableCredentials} credential(s) could not be decrypted " +
@@ -325,7 +325,7 @@ public sealed class SystemController : ControllerBase
     // GET /api/system/stats/summary - Lightweight data for dashboard tabs
     [EnableRateLimiting("stats-heavy")]
     [HttpGet("stats/summary")]
-    public IActionResult StatsSummary()
+    public async Task<IActionResult> StatsSummary(CancellationToken ct)
     {
         const string cacheKey = "system:stats:summary:v1";
         if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
@@ -342,7 +342,7 @@ public sealed class SystemController : ControllerBase
         var totalCalls = providerStatsByKey.Values.Sum(v => v.Calls);
         var totalFailures = providerStatsByKey.Values.Sum(v => v.Failures);
 
-        var storage = _storageCache.GetSnapshot();
+        var storage = await _storageCache.GetSnapshotAsync(ct);
         var localPosters = storage.PostersTopLevelCount;
 
         var missingPoster = conn.ExecuteScalar<int>(
@@ -373,7 +373,7 @@ public sealed class SystemController : ControllerBase
     // GET /api/system/stats/feedarr - Feedarr overview tab
     [EnableRateLimiting("stats-heavy")]
     [HttpGet("stats/feedarr")]
-    public IActionResult StatsFeedarr([FromQuery] int days = 30)
+    public async Task<IActionResult> StatsFeedarr([FromQuery] int days = 30, CancellationToken ct = default)
     {
         days = days switch { 7 => 7, 90 => 90, _ => 30 };
         var cacheKey = $"system:stats:feedarr:v2:{days}";
@@ -383,7 +383,7 @@ public sealed class SystemController : ControllerBase
         var sw = Stopwatch.StartNew();
         using var conn = _db.Open();
 
-        var storage = _storageCache.GetSnapshot();
+        var storage = await _storageCache.GetSnapshotAsync(ct);
         var dbSizeMb    = Math.Round(storage.DatabaseBytes / 1024d / 1024d, 2);
         var localPosters = storage.PostersTopLevelCount;
 
@@ -764,7 +764,7 @@ public sealed class SystemController : ControllerBase
     // GET /api/system/stats - Extended statistics for dashboard (legacy)
     [EnableRateLimiting("stats-heavy")]
     [HttpGet("stats")]
-    public IActionResult Stats()
+    public async Task<IActionResult> Stats(CancellationToken ct)
     {
         const string cacheKey = "system:stats:legacy:v1";
         if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
@@ -777,7 +777,7 @@ public sealed class SystemController : ControllerBase
         var totalIndexers = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM sources;");
         var releasesCount = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM releases;");
 
-        var storage = _storageCache.GetSnapshot();
+        var storage = await _storageCache.GetSnapshotAsync(ct);
         var dbSizeMb = Math.Round(storage.DatabaseBytes / 1024d / 1024d, 2);
         var localPosters = storage.PostersTopLevelCount;
 
@@ -895,7 +895,7 @@ public sealed class SystemController : ControllerBase
     // GET /api/system/storage
     [HttpGet("storage")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public IActionResult Storage()
+    public async Task<IActionResult> Storage(CancellationToken ct)
     {
         var volumes = new List<DiskVolumeDto>();
         var isLinux = !OperatingSystem.IsWindows();
@@ -971,7 +971,7 @@ public sealed class SystemController : ControllerBase
             }
         }
 
-        var storage = _storageCache.GetSnapshot();
+        var storage = await _storageCache.GetSnapshotAsync(ct);
 
         // Calculate usage
         var usage = new StorageUsageDto();

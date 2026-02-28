@@ -56,11 +56,10 @@ function saveRetroTask(task) {
   window.dispatchEvent(new CustomEvent("storage_change", { detail: { key: STORAGE_KEY } }));
 }
 
-let isPolling = false;
-
 export function useRetroFetchProgress() {
   const [retroTask, setRetroTask] = useState(() => loadRetroTask());
   const pollRef = useRef(null);
+  const isPollingRef = useRef(false);
 
   // Synchroniser la tâche chargée avec taskTracker au montage
   useEffect(() => {
@@ -87,7 +86,7 @@ export function useRetroFetchProgress() {
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
-    isPolling = false;
+    isPollingRef.current = false;
   }, []);
 
   const handleStorageChange = useCallback((event) => {
@@ -113,8 +112,8 @@ export function useRetroFetchProgress() {
       return;
     }
 
-    if (isPolling) return;
-    isPolling = true;
+    if (isPollingRef.current) return;
+    isPollingRef.current = true;
 
     async function tick() {
       try {

@@ -160,11 +160,13 @@ public sealed class CriticalFlowsAndPerfTests
             DataDir = workspace.DataDir,
             DbFileName = "feedarr.db"
         });
+        using var appLifetime = new TestHostApplicationLifetime();
         var storageCache = new StorageUsageCacheService(
             new MemoryCache(new MemoryCacheOptions()),
             new TestWebHostEnvironment(workspace.RootDir),
             appOptions,
             db,
+            appLifetime,
             NullLogger<StorageUsageCacheService>.Instance);
 
         var system = new SystemController(
