@@ -7,25 +7,31 @@ const DEFAULT_VALIDATION = {};
 
 export default function Step2Providers({ validation, onValidationChange, onAllProvidersAddedChange }) {
   const controller = useExternalProviderInstances();
+  const {
+    loadExternalProviders,
+    loadProviderStats,
+    externalValidationByProvider,
+    allProvidersAdded,
+  } = controller;
 
   useEffect(() => {
-    controller.loadExternalProviders();
-    controller.loadProviderStats();
-  }, [controller.loadExternalProviders, controller.loadProviderStats]);
+    loadExternalProviders();
+    loadProviderStats();
+  }, [loadExternalProviders, loadProviderStats]);
 
   useEffect(() => {
     if (!onValidationChange) return;
     onValidationChange((prev) => ({
       ...(prev || DEFAULT_VALIDATION),
-      ...controller.externalValidationByProvider,
+      ...externalValidationByProvider,
     }));
-  }, [controller.externalValidationByProvider, onValidationChange]);
+  }, [externalValidationByProvider, onValidationChange]);
 
   useEffect(() => {
-    onAllProvidersAddedChange?.(controller.allProvidersAdded);
-  }, [controller.allProvidersAdded, onAllProvidersAddedChange]);
+    onAllProvidersAddedChange?.(allProvidersAdded);
+  }, [allProvidersAdded, onAllProvidersAddedChange]);
 
-  const hasConfiguredProvider = Object.values(validation || controller.externalValidationByProvider || {})
+  const hasConfiguredProvider = Object.values(validation || externalValidationByProvider || {})
     .some((value) => value === "ok");
 
   return (

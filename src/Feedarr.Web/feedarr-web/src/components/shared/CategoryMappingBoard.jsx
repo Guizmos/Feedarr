@@ -65,7 +65,10 @@ export default function CategoryMappingBoard({
   const rootRef = useRef(null);
   const assignButtonRefs = useRef(new Map());
 
-  const map = mappings instanceof Map ? mappings : new Map();
+  const map = useMemo(
+    () => (mappings instanceof Map ? mappings : new Map()),
+    [mappings]
+  );
   const normalizedCategories = useMemo(() => normalizeCategories(categories), [categories]);
   const groupLabels = Object.fromEntries(
     CATEGORY_GROUPS.map((group) => [

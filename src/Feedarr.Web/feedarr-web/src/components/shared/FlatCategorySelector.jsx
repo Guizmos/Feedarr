@@ -10,7 +10,10 @@ function isSelectable(category) {
 }
 
 export default function FlatCategorySelector({ categories, selectedIds, onToggleId, onSetIds }) {
-  const list = Array.isArray(categories) ? categories : [];
+  const list = useMemo(
+    () => (Array.isArray(categories) ? categories : []),
+    [categories]
+  );
 
   const standardCategories = useMemo(
     () => list.filter((cat) => cat?.isStandard === true && isSelectable(cat)),

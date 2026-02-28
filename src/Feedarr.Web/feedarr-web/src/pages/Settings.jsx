@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useSubbarSetter } from "../layout/useSubbar.js";
 import SubAction from "../ui/SubAction.jsx";
@@ -16,7 +16,7 @@ import SettingsUsers from "./settings/SettingsUsers.jsx";
 import { getSecurityText } from "./settings/securityI18n.js";
 
 export default function Settings() {
-  const tSecurity = getSecurityText();
+  const tSecurity = useMemo(() => getSecurityText(), []);
   const setContent = useSubbarSetter();
   const location = useLocation();
   const section = location.pathname.split("/")[2] || "general";
@@ -190,6 +190,7 @@ export default function Settings() {
     canAddExternalProvider,
     backupActionsLocked,
     backupLockedTitle,
+    tSecurity,
     showUsers,
   ]);
 

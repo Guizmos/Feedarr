@@ -3,23 +3,6 @@ import { apiGet, apiPut } from "../../api/client.js";
 import { tr } from "../../app/uiText.js";
 import InlineNotice from "../../pages/settings/InlineNotice.jsx";
 
-function isLocalHost(host) {
-  if (!host) return false;
-  const normalized = String(host).trim().replace(/^\[(.*)\]$/, "$1").toLowerCase();
-  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
-}
-
-function isExposedPublicBaseUrl(publicBaseUrl) {
-  const raw = String(publicBaseUrl || "").trim();
-  if (!raw) return false;
-  try {
-    const parsed = new URL(raw);
-    return !isLocalHost(parsed.hostname);
-  } catch {
-    return false;
-  }
-}
-
 export default function Step2Security({ required = false, onStatusChange, saveRef }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
