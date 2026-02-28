@@ -823,28 +823,42 @@ public sealed class SourcesController : ControllerBase
                 effectiveLimit,
                 timeoutCts.Token);
 
+            // No post-filter: the indexer already filtered by cat={catId}.
+            // Trusting the indexer's result is equivalent to Jackett dashboard behaviour.
             var results = rawItems
-                .Where(x => x.CategoryId == catId.Value)
                 .OrderByDescending(x => x.PublishedAtTs ?? 0)
                 .Take(effectiveLimit)
-                .Select(x => new CategoryPreviewItemDto
+                .Select(x =>
                 {
-                    PublishedAtTs = x.PublishedAtTs ?? 0,
-                    SourceName = src.Name,
-                    Title = x.Title,
-                    SizeBytes = x.SizeBytes ?? 0,
-                    CategoryId = catId.Value,
-                    ResultCategoryName = catNameMap.TryGetValue(catId.Value, out var n) ? n : null,
-                    UnifiedCategory = null,
-                    TmdbId = null,
-                    TvdbId = null,
-                    Seeders = x.Seeders
+                    var itemCatId = x.CategoryId ?? catId.Value;
+                    return new CategoryPreviewItemDto
+                    {
+                        PublishedAtTs = x.PublishedAtTs ?? 0,
+                        SourceName = src.Name,
+                        Title = x.Title,
+                        SizeBytes = x.SizeBytes ?? 0,
+                        CategoryId = itemCatId,
+                        ResultCategoryName = catNameMap.TryGetValue(itemCatId, out var n) ? n : null,
+                        UnifiedCategory = null,
+                        TmdbId = null,
+                        TvdbId = null,
+                        Seeders = x.Seeders
+                    };
                 })
                 .ToList();
 
+            var distinctCatIds = rawItems
+                .Select(x => x.CategoryId)
+                .Where(c => c.HasValue)
+                .Select(c => c!.Value)
+                .Distinct()
+                .OrderBy(c => c)
+                .ToList();
+
             _log.LogInformation(
-                "CategoryPreviewLive: sourceId={SourceId} catId={CatId} limit={Limit} count={Count}",
-                id, catId.Value, effectiveLimit, results.Count);
+                "CategoryPreviewLive: sourceId={SourceId} requestedCatId={CatId} limit={Limit} rawCount={RawCount} resultCount={ResultCount} distinctCatIds=[{DistinctCatIds}]",
+                id, catId.Value, effectiveLimit, rawItems.Count, results.Count,
+                string.Join(",", distinctCatIds));
 
             return Ok(results);
         }

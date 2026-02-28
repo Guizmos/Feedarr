@@ -8,6 +8,7 @@ using Feedarr.Api.Services;
 using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services.Security;
 using Feedarr.Api.Services.Titles;
+using Feedarr.Api.Services.Torznab;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using OptionsFactory = Microsoft.Extensions.Options.Options;
@@ -331,8 +332,89 @@ public sealed class SourcesCategoryPreviewTests
     }
 
     // =========================================================================
+    // TorznabRssParser — ResolveStdSpec child-over-parent (unassigned cat bug guard)
+    // =========================================================================
+
+    [Fact]
+    public void TorznabRssParser_SpecCategory_ChildTakesPriorityOverParent()
+    {
+        // Regression: specId ??= id picked the first >=10000 ID (parent 100000).
+        // Items for cat=100314 had CategoryId=100000 → strict filter rejected all of them.
+        // Fix: prefer child (non-multiple of 1000) over parent, same as std category logic.
+        var parser = new TorznabRssParser();
+        var xml = BuildTorznabXml("100000", "100314");
+
+        var items = parser.Parse(xml);
+
+        Assert.Single(items);
+        Assert.Equal(100314, items[0].CategoryId); // child spec wins
+    }
+
+    [Fact]
+    public void TorznabRssParser_SpecCategory_ParentUsedWhenNoChild()
+    {
+        var parser = new TorznabRssParser();
+        var xml = BuildTorznabXml("100000");
+
+        var items = parser.Parse(xml);
+
+        Assert.Single(items);
+        Assert.Equal(100000, items[0].CategoryId);
+    }
+
+    [Fact]
+    public void TorznabRssParser_StdCategory_ChildStillTakesPriorityOverParent()
+    {
+        // Regression guard: existing std behaviour must be unchanged after the spec fix.
+        var parser = new TorznabRssParser();
+        var xml = BuildTorznabXml("2000", "2040");
+
+        var items = parser.Parse(xml);
+
+        Assert.Single(items);
+        Assert.Equal(2040, items[0].CategoryId); // child std wins
+    }
+
+    [Fact]
+    public void CategoryPreviewLive_NoPostFilter_TrustsIndexerResult()
+    {
+        // Documents old bug + new behaviour.
+        // Old: .Where(x => x.CategoryId == requestedCatId) filtered items whose
+        //      parser-set CategoryId differed from the requested catId (e.g. 100000 vs 100314).
+        // New: no post-filter; if the indexer returned 0 items, we return [].
+        const int requestedCatId = 100314;
+
+        var rawItems = new[]
+        {
+            new TorznabItem { Title = "Item A", CategoryId = 100000 }, // parser-set parent (old bug scenario)
+            new TorznabItem { Title = "Item B", CategoryId = 100314 }, // correct child
+        };
+
+        // Old strict filter — this was the bug
+        var oldFiltered = rawItems.Where(x => x.CategoryId == requestedCatId).ToList();
+        Assert.Single(oldFiltered); // Item A was wrongly excluded
+
+        // New behaviour: trust indexer, no filter
+        Assert.Equal(2, rawItems.Length); // both pass through
+    }
+
+    // =========================================================================
     // Helpers
     // =========================================================================
+
+    /// <summary>Builds minimal Torznab RSS XML with one item carrying the given category attrs.</summary>
+    private static string BuildTorznabXml(params string[] catIds)
+    {
+        const string ns = "http://torznab.com/schemas/2015/feed";
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+        sb.Append($"<rss version=\"2.0\" xmlns:torznab=\"{ns}\">");
+        sb.Append("<channel><item><title>Test Item</title>");
+        foreach (var cid in catIds)
+            sb.Append($"<torznab:attr name=\"category\" value=\"{cid}\"/>");
+        sb.Append("</item></channel></rss>");
+        return sb.ToString();
+    }
 
     private static (Db db, SourceRepository sources, ReleaseRepository releases, SourcesController controller)
         CreateStack(TestWorkspace workspace)

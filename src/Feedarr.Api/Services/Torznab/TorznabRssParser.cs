@@ -130,25 +130,31 @@ public sealed class TorznabRssParser
     {
         int? parentStdId = null;
         int? childStdId = null;
-        int? specId = null;
+        int? parentSpecId = null;
+        int? childSpecId = null;
 
         foreach (var id in ids)
         {
             if (id >= 10000)
             {
-                specId ??= id;
+                // Mirror std logic: prefer child (non-multiple of 1000) over parent.
+                // e.g. [100000, 100314] → pick 100314, not 100000.
+                if (id % 1000 == 0)
+                    parentSpecId ??= id;
+                else
+                    childSpecId ??= id;
             }
             else if (id >= 1000 && id <= 8999)
             {
                 if (id % 1000 == 0)
                     parentStdId ??= id;
                 else
-                    childStdId ??= id; // enfant plus spécifique
+                    childStdId ??= id;
             }
         }
 
-        // L'enfant (ex: 5070) prend priorité sur le parent (ex: 5000)
-        return (childStdId ?? parentStdId, specId);
+        // Child takes priority over parent (both std and spec)
+        return (childStdId ?? parentStdId, childSpecId ?? parentSpecId);
     }
 
     private static Dictionary<string, string> ParseAttrs(XElement item)
