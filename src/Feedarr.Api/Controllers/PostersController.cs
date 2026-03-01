@@ -282,9 +282,11 @@ public sealed class PostersController : ControllerBase
 
             if (info is not null)
             {
-                try { entityId = info.EntityId is null ? null : Convert.ToInt64(info.EntityId); } catch { }
-                try { posterFile = info.PosterFile as string; } catch { }
-                try { posterUpdatedAtTs = info.PosterUpdatedAtTs is null ? null : Convert.ToInt64(info.PosterUpdatedAtTs); } catch { }
+                try { entityId = info.EntityId is null ? null : Convert.ToInt64(info.EntityId); }
+                catch (Exception ex) { _log.LogWarning(ex, "Failed to parse EntityId for release {Id}", id); }
+                posterFile = info.PosterFile as string;
+                try { posterUpdatedAtTs = info.PosterUpdatedAtTs is null ? null : Convert.ToInt64(info.PosterUpdatedAtTs); }
+                catch (Exception ex) { _log.LogWarning(ex, "Failed to parse PosterUpdatedAtTs for release {Id}", id); }
             }
 
             var resolvedUrl = !string.IsNullOrWhiteSpace(posterFile)

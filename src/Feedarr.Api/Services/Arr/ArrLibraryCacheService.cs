@@ -1,213 +1,241 @@
 using System.Collections.Concurrent;
-using System.Linq;
-using Feedarr.Api.Data.Repositories;
-using Feedarr.Api.Services.Matching;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Feedarr.Api.Data.Repositories;
+using Feedarr.Api.Options;
+using Feedarr.Api.Services.Matching;
 
 namespace Feedarr.Api.Services.Arr;
 
-public sealed class ArrLibraryCacheService
+/// <summary>
+/// Snapshot of title-cache hit/miss/eviction counters.
+/// </summary>
+public sealed record ArrLibraryCacheMetrics(
+    long SonarrTitleHits,
+    long SonarrTitleMisses,
+    long RadarrTitleHits,
+    long RadarrTitleMisses,
+    long Evictions);
+
+public sealed class ArrLibraryCacheService : IDisposable
 {
     private readonly ArrApplicationRepository _repo;
     private readonly SonarrClient _sonarr;
     private readonly RadarrClient _radarr;
     private readonly ILogger<ArrLibraryCacheService> _log;
+    private readonly ArrLibraryCacheOptions _opts;
 
-    // Cache: tvdbId -> (seriesId, titleSlug, baseUrl, expiresAt)
+    // ID caches — manual 10-min TTL, ConcurrentDictionary (fast O(1) lookup by int key)
     private readonly ConcurrentDictionary<int, (int seriesId, string titleSlug, string baseUrl, DateTimeOffset expiresAt)> _sonarrCache = new();
-
-    // Cache: tmdbId -> (movieId, baseUrl, expiresAt)
     private readonly ConcurrentDictionary<int, (int movieId, string baseUrl, DateTimeOffset expiresAt)> _radarrCache = new();
 
-    // Title-based caches for fallback matching (normalized title -> entry)
-    private readonly ConcurrentDictionary<string, (int? tvdbId, int seriesId, string titleSlug, string baseUrl, DateTimeOffset expiresAt)> _sonarrTitleCache = new();
-    private readonly ConcurrentDictionary<string, (int? tmdbId, int movieId, string baseUrl, DateTimeOffset expiresAt)> _radarrTitleCache = new();
+    // Title caches — bounded MemoryCache with sliding+absolute TTL and size limit
+    private readonly MemoryCache _sonarrTitleCache;
+    private readonly MemoryCache _radarrTitleCache;
+
+    // Anti-stampede: only one refresh per app type runs at a time
+    private readonly SemaphoreSlim _sonarrRefreshLock = new(1, 1);
+    private readonly SemaphoreSlim _radarrRefreshLock = new(1, 1);
+
+    // Metrics — updated with Interlocked for thread-safety
+    private long _sonarrTitleHits;
+    private long _sonarrTitleMisses;
+    private long _radarrTitleHits;
+    private long _radarrTitleMisses;
+    private long _evictions;
 
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
-    private const int MaxTitleCacheEntries = 50_000;
 
-    private static string NormalizeTitle(string? title)
-    {
-#if false
-        if (string.IsNullOrWhiteSpace(title)) return "";
-        // Lowercase, remove accents, remove non-alphanumeric except spaces
-        var normalized = title.ToLowerInvariant().Trim();
-        // Simple accent removal
-        normalized = normalized
-            .Replace("é", "e").Replace("è", "e").Replace("ê", "e").Replace("ë", "e")
-            .Replace("à", "a").Replace("â", "a").Replace("ä", "a")
-            .Replace("ù", "u").Replace("û", "u").Replace("ü", "u")
-            .Replace("ô", "o").Replace("ö", "o")
-            .Replace("î", "i").Replace("ï", "i")
-            .Replace("ç", "c");
-        // Remove non-alphanumeric (keep spaces for now)
-        var sb = new System.Text.StringBuilder();
-        foreach (var c in normalized)
-        {
-            if (char.IsLetterOrDigit(c) || c == ' ')
-                sb.Append(c);
-        }
-        // Collapse multiple spaces and trim
-        return System.Text.RegularExpressions.Regex.Replace(sb.ToString(), @"\s+", " ").Trim();
-#endif
-        return TitleNormalizer.NormalizeTitleStrict(title);
-    }
+    private static string NormalizeTitle(string? title) =>
+        TitleNormalizer.NormalizeTitleStrict(title);
 
     public ArrLibraryCacheService(
         ArrApplicationRepository repo,
         SonarrClient sonarr,
         RadarrClient radarr,
-        ILogger<ArrLibraryCacheService> log)
+        ILogger<ArrLibraryCacheService> log,
+        IOptions<ArrLibraryCacheOptions>? opts = null)
     {
         _repo = repo;
         _sonarr = sonarr;
         _radarr = radarr;
         _log = log;
+        _opts = opts?.Value ?? new ArrLibraryCacheOptions();
+
+        _sonarrTitleCache = new MemoryCache(new MemoryCacheOptions
+        {
+            SizeLimit = _opts.MaxTitleEntries,
+        });
+        _radarrTitleCache = new MemoryCache(new MemoryCacheOptions
+        {
+            SizeLimit = _opts.MaxTitleEntries,
+        });
     }
 
-    private void AddSonarrTitleKeys(string? title, (int? tvdbId, int seriesId, string titleSlug, string baseUrl, DateTimeOffset expiresAt) entry)
+    private MemoryCacheEntryOptions BuildTitleEntryOptions() =>
+        new MemoryCacheEntryOptions()
+            .SetSize(1)
+            .SetSlidingExpiration(TimeSpan.FromMinutes(_opts.SlidingExpirationMinutes))
+            .SetAbsoluteExpiration(TimeSpan.FromHours(_opts.AbsoluteExpirationHours))
+            .RegisterPostEvictionCallback(OnTitleEntryEvicted);
+
+    private void OnTitleEntryEvicted(object key, object? value, EvictionReason reason, object? state)
+    {
+        // Don't count replacements (e.g. during cache refresh) as evictions
+        if (reason != EvictionReason.Replaced)
+            Interlocked.Increment(ref _evictions);
+    }
+
+    private void AddSonarrTitleKeys(string? title, SonarrTitleEntry entry, MemoryCacheEntryOptions options)
     {
         var variants = TitleNormalizer.BuildTitleVariants(title);
-        if (variants.Length == 0) return;
         foreach (var key in variants)
         {
             if (string.IsNullOrWhiteSpace(key)) continue;
-            _sonarrTitleCache.AddOrUpdate(key, entry, (_, existing) =>
-            {
-                if (existing.expiresAt <= DateTimeOffset.UtcNow) return entry;
-                if (!existing.tvdbId.HasValue && entry.tvdbId.HasValue) return entry;
-                return existing;
-            });
+            _sonarrTitleCache.Set(key, entry, options);
         }
     }
 
-    private void AddRadarrTitleKeys(string? title, (int? tmdbId, int movieId, string baseUrl, DateTimeOffset expiresAt) entry)
+    private void AddRadarrTitleKeys(string? title, RadarrTitleEntry entry, MemoryCacheEntryOptions options)
     {
         var variants = TitleNormalizer.BuildTitleVariants(title);
-        if (variants.Length == 0) return;
         foreach (var key in variants)
         {
             if (string.IsNullOrWhiteSpace(key)) continue;
-            _radarrTitleCache.AddOrUpdate(key, entry, (_, existing) =>
-            {
-                if (existing.expiresAt <= DateTimeOffset.UtcNow) return entry;
-                if (!existing.tmdbId.HasValue && entry.tmdbId.HasValue) return entry;
-                return existing;
-            });
+            _radarrTitleCache.Set(key, entry, options);
         }
     }
 
     private bool IsSonarrCacheStale()
     {
         var now = DateTimeOffset.UtcNow;
-        var hasFreshId = _sonarrCache.Values.Any(e => e.expiresAt > now);
-        var hasFreshTitle = _sonarrTitleCache.Values.Any(e => e.expiresAt > now);
-        return !hasFreshId && !hasFreshTitle;
+        return !_sonarrCache.Values.Any(e => e.expiresAt > now);
     }
 
     private bool IsRadarrCacheStale()
     {
         var now = DateTimeOffset.UtcNow;
-        var hasFreshId = _radarrCache.Values.Any(e => e.expiresAt > now);
-        var hasFreshTitle = _radarrTitleCache.Values.Any(e => e.expiresAt > now);
-        return !hasFreshId && !hasFreshTitle;
+        return !_radarrCache.Values.Any(e => e.expiresAt > now);
     }
 
     public async Task RefreshSonarrCacheAsync(CancellationToken ct)
     {
-        // Evict expired entries before refresh to bound memory
-        EvictExpired();
+        // Fast path: if already fresh, skip acquiring the lock
+        if (!IsSonarrCacheStale()) return;
 
-        var app = _repo.GetDefault("sonarr");
-        if (app is null || string.IsNullOrWhiteSpace(app.ApiKeyEncrypted)) return;
-
+        await _sonarrRefreshLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var series = await _sonarr.GetAllSeriesAsync(app.BaseUrl, app.ApiKeyEncrypted, ct);
-            var expiresAt = DateTimeOffset.UtcNow.Add(CacheTtl);
+            // Double-check inside lock: another thread may have refreshed while we waited
+            if (!IsSonarrCacheStale()) return;
 
-            // Clear title cache before refresh
-            _sonarrTitleCache.Clear();
+            EvictExpiredIdCaches();
 
-            foreach (var s in series)
+            var app = _repo.GetDefault("sonarr");
+            if (app is null || string.IsNullOrWhiteSpace(app.ApiKeyEncrypted)) return;
+
+            try
             {
-                if (s.TvdbId > 0)
+                var series = await _sonarr.GetAllSeriesAsync(app.BaseUrl, app.ApiKeyEncrypted, ct);
+                var expiresAt = DateTimeOffset.UtcNow.Add(CacheTtl);
+
+                // Evict all title entries before repopulating to avoid stale keys
+                _sonarrTitleCache.Compact(1.0);
+
+                // Build entry options once per batch (same TTL for all entries)
+                var entryOptions = BuildTitleEntryOptions();
+
+                foreach (var s in series)
                 {
-                    _sonarrCache[s.TvdbId] = (s.Id, s.TitleSlug, app.BaseUrl, expiresAt);
-                }
+                    if (s.TvdbId > 0)
+                        _sonarrCache[s.TvdbId] = (s.Id, s.TitleSlug, app.BaseUrl, expiresAt);
 
-                if (_sonarrTitleCache.Count >= MaxTitleCacheEntries) break;
+                    var entry = new SonarrTitleEntry(
+                        s.TvdbId > 0 ? s.TvdbId : null,
+                        s.Id,
+                        s.TitleSlug,
+                        app.BaseUrl);
 
-                var entry = (s.TvdbId > 0 ? (int?)s.TvdbId : null, s.Id, s.TitleSlug, app.BaseUrl, expiresAt);
+                    AddSonarrTitleKeys(s.Title, entry, entryOptions);
 
-                // Add main title to cache
-                AddSonarrTitleKeys(s.Title, entry);
-
-                // Add all alternate titles to cache
-                if (s.AlternateTitles is { Count: > 0 })
-                {
-                    foreach (var alt in s.AlternateTitles)
+                    if (s.AlternateTitles is { Count: > 0 })
                     {
-                        AddSonarrTitleKeys(alt.Title, entry);
+                        foreach (var alt in s.AlternateTitles)
+                            AddSonarrTitleKeys(alt.Title, entry, entryOptions);
                     }
                 }
+
+                _log.LogDebug("Sonarr cache refreshed: {Count} series", series.Count);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex, "Failed to refresh Sonarr cache");
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        finally
         {
-            _log.LogWarning(ex, "Failed to refresh Sonarr cache");
+            _sonarrRefreshLock.Release();
         }
     }
 
     public async Task RefreshRadarrCacheAsync(CancellationToken ct)
     {
-        // Evict expired entries before refresh to bound memory
-        EvictExpired();
+        // Fast path: if already fresh, skip acquiring the lock
+        if (!IsRadarrCacheStale()) return;
 
-        var app = _repo.GetDefault("radarr");
-        if (app is null || string.IsNullOrWhiteSpace(app.ApiKeyEncrypted)) return;
-
+        await _radarrRefreshLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var movies = await _radarr.GetAllMoviesAsync(app.BaseUrl, app.ApiKeyEncrypted, ct);
-            var expiresAt = DateTimeOffset.UtcNow.Add(CacheTtl);
+            // Double-check inside lock
+            if (!IsRadarrCacheStale()) return;
 
-            // Clear title cache before refresh
-            _radarrTitleCache.Clear();
+            EvictExpiredIdCaches();
 
-            foreach (var m in movies)
+            var app = _repo.GetDefault("radarr");
+            if (app is null || string.IsNullOrWhiteSpace(app.ApiKeyEncrypted)) return;
+
+            try
             {
-                if (m.TmdbId > 0)
+                var movies = await _radarr.GetAllMoviesAsync(app.BaseUrl, app.ApiKeyEncrypted, ct);
+                var expiresAt = DateTimeOffset.UtcNow.Add(CacheTtl);
+
+                _radarrTitleCache.Compact(1.0);
+
+                var entryOptions = BuildTitleEntryOptions();
+
+                foreach (var m in movies)
                 {
-                    _radarrCache[m.TmdbId] = (m.Id, app.BaseUrl, expiresAt);
-                }
+                    if (m.TmdbId > 0)
+                        _radarrCache[m.TmdbId] = (m.Id, app.BaseUrl, expiresAt);
 
-                if (_radarrTitleCache.Count >= MaxTitleCacheEntries) break;
+                    var entry = new RadarrTitleEntry(
+                        m.TmdbId > 0 ? m.TmdbId : null,
+                        m.Id,
+                        app.BaseUrl);
 
-                var entry = (m.TmdbId > 0 ? (int?)m.TmdbId : null, m.Id, app.BaseUrl, expiresAt);
+                    AddRadarrTitleKeys(m.Title, entry, entryOptions);
 
-                // Add main title to cache
-                AddRadarrTitleKeys(m.Title, entry);
+                    if (!string.IsNullOrWhiteSpace(m.OriginalTitle) && m.OriginalTitle != m.Title)
+                        AddRadarrTitleKeys(m.OriginalTitle, entry, entryOptions);
 
-                // Add original title if different
-                if (!string.IsNullOrWhiteSpace(m.OriginalTitle) && m.OriginalTitle != m.Title)
-                {
-                    AddRadarrTitleKeys(m.OriginalTitle, entry);
-                }
-
-                // Add all alternate titles to cache
-                if (m.AlternateTitles is { Count: > 0 })
-                {
-                    foreach (var alt in m.AlternateTitles)
+                    if (m.AlternateTitles is { Count: > 0 })
                     {
-                        AddRadarrTitleKeys(alt.Title, entry);
+                        foreach (var alt in m.AlternateTitles)
+                            AddRadarrTitleKeys(alt.Title, entry, entryOptions);
                     }
                 }
+
+                _log.LogDebug("Radarr cache refreshed: {Count} movies", movies.Count);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex, "Failed to refresh Radarr cache");
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        finally
         {
-            _log.LogWarning(ex, "Failed to refresh Radarr cache");
+            _radarrRefreshLock.Release();
         }
     }
 
@@ -231,7 +259,6 @@ public sealed class ArrLibraryCacheService
         {
             if (entry.expiresAt > DateTimeOffset.UtcNow)
             {
-                // Use tmdbId for URL, not internal movieId
                 var openUrl = _radarr.BuildOpenUrl(entry.baseUrl, tmdbId);
                 return (true, entry.movieId, openUrl);
             }
@@ -241,7 +268,7 @@ public sealed class ArrLibraryCacheService
     }
 
     /// <summary>
-    /// Fallback: check Sonarr by title when tvdbId is not available
+    /// Fallback: check Sonarr by title when tvdbId is not available.
     /// </summary>
     public (bool exists, int? seriesId, string? openUrl, int? foundTvdbId) CheckSonarrExistsByTitle(string? title)
     {
@@ -249,26 +276,24 @@ public sealed class ArrLibraryCacheService
         if (variants.Length == 0)
             return (false, null, null, null);
 
-        var now = DateTimeOffset.UtcNow;
         foreach (var key in variants)
         {
-            if (!_sonarrTitleCache.TryGetValue(key, out var entry)) continue;
-            if (entry.expiresAt <= now)
+            if (_sonarrTitleCache.TryGetValue<SonarrTitleEntry>(key, out var entry) && entry is not null)
             {
-                _sonarrTitleCache.TryRemove(key, out _);
-                continue;
+                Interlocked.Increment(ref _sonarrTitleHits);
+                var openUrl = string.IsNullOrWhiteSpace(entry.TitleSlug)
+                    ? null
+                    : _sonarr.BuildOpenUrl(entry.BaseUrl, entry.TitleSlug);
+                return (true, entry.SeriesId, openUrl, entry.TvdbId);
             }
-
-            var openUrl = string.IsNullOrWhiteSpace(entry.titleSlug)
-                ? null
-                : _sonarr.BuildOpenUrl(entry.baseUrl, entry.titleSlug);
-            return (true, entry.seriesId, openUrl, entry.tvdbId);
         }
+
+        Interlocked.Increment(ref _sonarrTitleMisses);
         return (false, null, null, null);
     }
 
     /// <summary>
-    /// Fallback: check Radarr by title when tmdbId is not available
+    /// Fallback: check Radarr by title when tmdbId is not available.
     /// </summary>
     public (bool exists, int? movieId, string? openUrl, int? foundTmdbId) CheckRadarrExistsByTitle(string? title)
     {
@@ -276,21 +301,19 @@ public sealed class ArrLibraryCacheService
         if (variants.Length == 0)
             return (false, null, null, null);
 
-        var now = DateTimeOffset.UtcNow;
         foreach (var key in variants)
         {
-            if (!_radarrTitleCache.TryGetValue(key, out var entry)) continue;
-            if (entry.expiresAt <= now)
+            if (_radarrTitleCache.TryGetValue<RadarrTitleEntry>(key, out var entry) && entry is not null)
             {
-                _radarrTitleCache.TryRemove(key, out _);
-                continue;
+                Interlocked.Increment(ref _radarrTitleHits);
+                var openUrl = entry.TmdbId.HasValue
+                    ? _radarr.BuildOpenUrl(entry.BaseUrl, entry.TmdbId.Value)
+                    : null;
+                return (true, entry.MovieId, openUrl, entry.TmdbId);
             }
-
-            var openUrl = entry.tmdbId.HasValue
-                ? _radarr.BuildOpenUrl(entry.baseUrl, entry.tmdbId.Value)
-                : null;
-            return (true, entry.movieId, openUrl, entry.tmdbId);
         }
+
+        Interlocked.Increment(ref _radarrTitleMisses);
         return (false, null, null, null);
     }
 
@@ -300,7 +323,6 @@ public sealed class ArrLibraryCacheService
         var cached = CheckSonarrExists(tvdbId);
         if (cached.exists) return cached;
 
-        // Check if cache is stale (no entries or all expired)
         if (IsSonarrCacheStale())
         {
             await RefreshSonarrCacheAsync(ct);
@@ -316,7 +338,6 @@ public sealed class ArrLibraryCacheService
         var cached = CheckRadarrExists(tmdbId);
         if (cached.exists) return cached;
 
-        // Check if cache is stale
         if (IsRadarrCacheStale())
         {
             await RefreshRadarrCacheAsync(ct);
@@ -329,17 +350,13 @@ public sealed class ArrLibraryCacheService
     public async Task EnsureSonarrCacheFreshAsync(CancellationToken ct)
     {
         if (IsSonarrCacheStale())
-        {
             await RefreshSonarrCacheAsync(ct);
-        }
     }
 
     public async Task EnsureRadarrCacheFreshAsync(CancellationToken ct)
     {
         if (IsRadarrCacheStale())
-        {
             await RefreshRadarrCacheAsync(ct);
-        }
     }
 
     public void AddToSonarrCache(int tvdbId, int seriesId, string titleSlug, string baseUrl)
@@ -356,15 +373,41 @@ public sealed class ArrLibraryCacheService
     {
         _sonarrCache.Clear();
         _radarrCache.Clear();
-        _sonarrTitleCache.Clear();
-        _radarrTitleCache.Clear();
+        _sonarrTitleCache.Compact(1.0);
+        _radarrTitleCache.Compact(1.0);
     }
 
     /// <summary>
-    /// Removes all entries whose TTL has expired.
-    /// Call periodically to prevent unbounded memory growth.
+    /// Removes expired entries from the ID caches and triggers MemoryCache cleanup
+    /// for title caches. Returns the count of ID-cache entries evicted.
     /// </summary>
     public int EvictExpired()
+    {
+        var evicted = EvictExpiredIdCaches();
+        // Compact(0) triggers MemoryCache's internal expired-entry scan without
+        // removing any non-expired entries beyond what is already due.
+        _sonarrTitleCache.Compact(0);
+        _radarrTitleCache.Compact(0);
+        return evicted;
+    }
+
+    /// <summary>Returns a snapshot of title-cache hit/miss/eviction metrics.</summary>
+    public ArrLibraryCacheMetrics GetMetrics() => new(
+        Interlocked.Read(ref _sonarrTitleHits),
+        Interlocked.Read(ref _sonarrTitleMisses),
+        Interlocked.Read(ref _radarrTitleHits),
+        Interlocked.Read(ref _radarrTitleMisses),
+        Interlocked.Read(ref _evictions));
+
+    public void Dispose()
+    {
+        _sonarrTitleCache.Dispose();
+        _radarrTitleCache.Dispose();
+        _sonarrRefreshLock.Dispose();
+        _radarrRefreshLock.Dispose();
+    }
+
+    private int EvictExpiredIdCaches()
     {
         var now = DateTimeOffset.UtcNow;
         var evicted = 0;
@@ -381,18 +424,9 @@ public sealed class ArrLibraryCacheService
                 evicted++;
         }
 
-        foreach (var kvp in _sonarrTitleCache)
-        {
-            if (kvp.Value.expiresAt <= now && _sonarrTitleCache.TryRemove(kvp.Key, out _))
-                evicted++;
-        }
-
-        foreach (var kvp in _radarrTitleCache)
-        {
-            if (kvp.Value.expiresAt <= now && _radarrTitleCache.TryRemove(kvp.Key, out _))
-                evicted++;
-        }
-
         return evicted;
     }
+
+    private sealed record SonarrTitleEntry(int? TvdbId, int SeriesId, string TitleSlug, string BaseUrl);
+    private sealed record RadarrTitleEntry(int? TmdbId, int MovieId, string BaseUrl);
 }

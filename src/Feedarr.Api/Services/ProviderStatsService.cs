@@ -1,5 +1,7 @@
 using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Services.ExternalProviders;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Feedarr.Api.Services;
 
@@ -37,6 +39,7 @@ public sealed class ProviderStatsService
     };
 
     private readonly StatsRepository _repo;
+    private readonly ILogger<ProviderStatsService> _logger;
     private readonly object _lock = new();
 
     // In-memory cache for performance (flushed periodically)
@@ -60,23 +63,28 @@ public sealed class ProviderStatsService
     private long _lastLoadFailureTicks;
     private const int LoadRetryDebounceMs = 30_000;
 
-    public ProviderStatsService(StatsRepository repo)
+    public ProviderStatsService(StatsRepository repo, ILogger<ProviderStatsService>? logger = null)
     {
         _repo = repo;
+        _logger = logger ?? NullLogger<ProviderStatsService>.Instance;
     }
 
     private void EnsureLoaded()
     {
+        // Volatile fast-path: once loaded this is a single read with no lock.
         if (_loaded) return;
-
-        // If a previous load failed, wait before retrying
-        if (_lastLoadFailureTicks > 0
-            && Environment.TickCount64 - _lastLoadFailureTicks < LoadRetryDebounceMs)
-            return;
 
         lock (_lock)
         {
+            // Re-check after acquiring the lock (correct double-checked locking with volatile).
             if (_loaded) return;
+
+            // Debounce check is inside the lock so _lastLoadFailureTicks is never
+            // read or written concurrently — eliminates the TOCTOU on that field.
+            if (_lastLoadFailureTicks > 0
+                && Environment.TickCount64 - _lastLoadFailureTicks < LoadRetryDebounceMs)
+                return;
+
             try
             {
                 var all = _repo.GetAll();
@@ -99,10 +107,11 @@ public sealed class ProviderStatsService
                 _loaded = true;
                 _lastLoadFailureTicks = 0;
             }
-            catch
+            catch (Exception ex)
             {
-                // DB not ready yet — keep _loaded false so we retry after debounce
+                // DB not ready yet — keep _loaded false so we retry after debounce.
                 _lastLoadFailureTicks = Environment.TickCount64;
+                _logger.LogWarning(ex, "ProviderStatsService failed to load stats from DB; will retry after {DebounceMs}ms", LoadRetryDebounceMs);
             }
         }
     }

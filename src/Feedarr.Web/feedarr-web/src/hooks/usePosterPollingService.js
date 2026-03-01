@@ -59,6 +59,10 @@ export function usePosterPollingService({
     s.intervalMs = intervalMs;
     s.maxDurationMs = maxDurationMs;
 
+    // `mounted` guards all async continuations so that no timer or state mutation
+    // can happen after the cleanup function has run (remount or enabled=false).
+    let mounted = true;
+
     function clearTimer() {
       if (s.timer) {
         clearTimeout(s.timer);
@@ -131,11 +135,13 @@ export function usePosterPollingService({
     }
 
     async function runTick(reason = "tick") {
-      if (!s.cycleRunning || s.inFlight) return;
+      // Guard: don't start a new tick if already in-flight or cycle stopped.
+      if (!mounted || !s.cycleRunning || s.inFlight) return;
       s.inFlight = true;
       const stats = await fetchStats();
       s.inFlight = false;
-      if (!s.cycleRunning) return;
+      // Guard: effect may have been cleaned up while fetchStats was awaited.
+      if (!mounted || !s.cycleRunning) return;
       if (processStats(stats, reason)) {
         clearTimer();
         s.timer = setTimeout(() => runTick("interval"), s.intervalMs);
@@ -161,6 +167,8 @@ export function usePosterPollingService({
       }
 
       const stats = await fetchStats();
+      // Guard: effect may have been cleaned up while fetchStats was awaited.
+      if (!mounted) return;
       if (!stats) {
         log("skip trigger (stats unavailable)");
         return;
@@ -186,6 +194,7 @@ export function usePosterPollingService({
 
     window.addEventListener(TRIGGER_EVENT, onTrigger);
     return () => {
+      mounted = false;
       window.removeEventListener(TRIGGER_EVENT, onTrigger);
       clearTimer();
       s.cycleRunning = false;

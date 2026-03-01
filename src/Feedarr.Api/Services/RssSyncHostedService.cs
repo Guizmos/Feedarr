@@ -70,15 +70,16 @@ public sealed class RssSyncHostedService : BackgroundService
                     var providerStats = scope.ServiceProvider.GetRequiredService<ProviderStatsService>();
                     providerStats.RecordSyncJob(false);
                 }
-                catch
+                catch (Exception statsEx)
                 {
+                    _log.LogWarning(statsEx, "Failed to record sync-job failure stats");
                 }
 
                 _log.LogError(ex, "RssSyncHostedService loop error");
             }
 
             // ✅ interval dynamique via DB (fallback appsettings)
-            var intervalMin = GetIntervalMinutesFromDbOrOpts();
+            var intervalMin = GetIntervalMinutesFromDbOrOpts(stoppingToken);
             if (!IsAutoSyncEnabled())
                 intervalMin = Math.Max(intervalMin, 60);
 
@@ -90,12 +91,14 @@ public sealed class RssSyncHostedService : BackgroundService
         }
     }
 
-    private int GetIntervalMinutesFromDbOrOpts()
+    private int GetIntervalMinutesFromDbOrOpts(CancellationToken ct)
     {
         var fallback = Math.Clamp(_opts.SyncIntervalMinutes, 1, 1440);
 
         try
         {
+            ct.ThrowIfCancellationRequested();
+
             using var scope = _scopeFactory.CreateScope();
             var settingsRepo = scope.ServiceProvider.GetRequiredService<SettingsRepository>();
 
@@ -106,6 +109,10 @@ public sealed class RssSyncHostedService : BackgroundService
             });
 
             return Math.Clamp(general.SyncIntervalMinutes, 1, 1440);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

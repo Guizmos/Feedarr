@@ -21,11 +21,15 @@ function safeSetStorage(key, value) {
  */
 export default function useLibraryFilters(sources, enabledSources) {
   const [searchParams] = useSearchParams();
-  const [sourceId, setSourceId] = useState("");
+  const [sourceId, setSourceId] = useState(() => (searchParams.get("sourceId") || "").trim());
   const [q, setQ] = useState("");
-  const [categoryId, setCategoryId] = useState(() => safeGetStorage("feedarr.library.filter.categoryId") || "");
+  const [categoryId, setCategoryId] = useState(
+    () => (searchParams.get("categoryId") || safeGetStorage("feedarr.library.filter.categoryId") || "").trim()
+  );
   const [sortBy, setSortBy] = useState("date");
   const [maxAgeDays, setMaxAgeDays] = useState(() => {
+    const fromQuery = (searchParams.get("maxAgeDays") || "").trim();
+    if (MAX_AGE_VALUES.has(fromQuery)) return fromQuery;
     const stored = safeGetStorage("feedarr.library.filter.maxAgeDays");
     return MAX_AGE_VALUES.has(stored ?? "") ? (stored ?? "") : "";
   });
@@ -81,10 +85,12 @@ export default function useLibraryFilters(sources, enabledSources) {
     const storedRaw = safeGetStorage("feedarr.library.sourceId");
     const stored = storedRaw ?? "";
     const defaultSourceId = String(uiSettings?.defaultFilterSourceId ?? "").trim();
+    const querySourceId = String(searchParams.get("sourceId") || "").trim();
     const isValid = (id) =>
       enabledSources.some((s) => String(s.id ?? s.sourceId) === String(id));
 
     setSourceId((prev) => {
+      if (querySourceId && isValid(querySourceId)) return querySourceId;
       if (prev && isValid(prev)) return prev;
       if (stored && isValid(stored)) return stored;
       if (storedRaw == null && defaultSourceId && isValid(defaultSourceId)) return defaultSourceId;
@@ -93,7 +99,7 @@ export default function useLibraryFilters(sources, enabledSources) {
       return first != null ? String(first) : "";
     });
     setSourceReady(true);
-  }, [sources, enabledSources, uiSettings]);
+  }, [sources, enabledSources, uiSettings, searchParams]);
 
   // Persister sourceId
   useEffect(() => {
@@ -216,6 +222,19 @@ export default function useLibraryFilters(sources, enabledSources) {
   useEffect(() => {
     const next = (searchParams.get("q") || "").trim();
     setQ((prev) => (prev === next ? prev : next));
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!searchParams.has("categoryId")) return;
+    const next = (searchParams.get("categoryId") || "").trim();
+    setCategoryId((prev) => (prev === next ? prev : next));
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!searchParams.has("maxAgeDays")) return;
+    const next = (searchParams.get("maxAgeDays") || "").trim();
+    if (!MAX_AGE_VALUES.has(next)) return;
+    setMaxAgeDays((prev) => (prev === next ? prev : next));
   }, [searchParams]);
 
   // Synchroniser listSort avec sortBy

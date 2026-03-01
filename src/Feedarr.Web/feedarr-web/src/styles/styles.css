@@ -1758,6 +1758,29 @@ html.display-mode-standalone body {
   width: 100%;
 }
 
+.top24-sectionHead{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.top24-sectionLink{
+  flex-shrink: 0;
+  text-decoration: none;
+}
+
+.top24-empty{
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px 20px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--muted);
+}
+
 .indexers-subbar-content,
 .settings-subbar-content{
   display: flex;
