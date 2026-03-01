@@ -1,5 +1,34 @@
 # Changelog
 
+## [2.1.0](https://github.com/Guizmos/Feedarr/compare/v2.0.0...v2.1.0) (2026-03-01)
+
+
+### Features
+
+* dynamic Top 24h + cursor pagination + perf indexes lot5 + http resilience (step 1-3 complete) ([ce7b373](https://github.com/Guizmos/Feedarr/commit/ce7b373c4ed7a1145a67f634f712ff2a0549571b))
+* finalize security settings save and validation UX ([b920027](https://github.com/Guizmos/Feedarr/commit/b920027188c959ecbbcec3ee19a0a5e7be9eee7a))
+* **security:** smart auth mode + bootstrap token + wizard security step ([182dc64](https://github.com/Guizmos/Feedarr/commit/182dc641482fed280601138f635562dd4197fdfe))
+
+
+### Bug Fixes
+
+* ci error ([f458da1](https://github.com/Guizmos/Feedarr/commit/f458da1677bc33ca87aa506989422c13367deabf))
+* fix search result for cats ([3d66e20](https://github.com/Guizmos/Feedarr/commit/3d66e2015e4ace19585f86612cd98903ae1b5069))
+* fix search result for cats bug ([efad954](https://github.com/Guizmos/Feedarr/commit/efad9542b9c59955ae1d88de78e27e7b8e5643b1))
+* fix search result for cats bug + other ajustments UX ([559dd20](https://github.com/Guizmos/Feedarr/commit/559dd206c5b42bd45b2eaaa067977a3d458f20d8))
+* optimisation + securisation ([1cd34df](https://github.com/Guizmos/Feedarr/commit/1cd34df873e4ba959f7e8d35bd19439a76ac20f1))
+* **security:** choose protection levil in /settings ([26eaca9](https://github.com/Guizmos/Feedarr/commit/26eaca945b254fce18922b2212e4765a5f8fc3a7))
+* **security:** harden poster paths + retention consistency ([469a1c0](https://github.com/Guizmos/Feedarr/commit/469a1c044cb1039e08f5ce8bc657711ade0b0956))
+* **security:** prevent relock behind reverse proxy (forwarded exposed validation) ([eafebad](https://github.com/Guizmos/Feedarr/commit/eafebade9a21a8c3c0d377e07859df47768451fd))
+* **security:** prevent smart auth relock + allow bootstrap token when setup required ([dfc86f9](https://github.com/Guizmos/Feedarr/commit/dfc86f9ce09952b1ae82d2cdc7f8c951b8ebd39d))
+
+
+### Performance Improvements
+
+* buffer provider stats in memory with periodic batch flush ([2f47bd0](https://github.com/Guizmos/Feedarr/commit/2f47bd02e2b5297e9d8d18a290693ca58880c64a))
+* bulk sync ARR library via temp staging and short swap transaction ([f4ab14b](https://github.com/Guizmos/Feedarr/commit/f4ab14bbaa4459af428fdff96c7687d1c701fbc8))
+* normalize ARR alternate titles into indexed table and use SQL lookup fallbacks ([fce8a5b](https://github.com/Guizmos/Feedarr/commit/fce8a5bb3c64f884dc765297d287da6089cdd1eb))
+
 ## [1.7.2](https://github.com/Guizmos/Feedarr/compare/v1.7.1...v1.7.2) (2026-02-24)
 
 
