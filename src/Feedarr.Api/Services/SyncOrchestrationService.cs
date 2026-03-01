@@ -30,6 +30,7 @@ public sealed class SyncOrchestrationService
     private readonly PosterFetchJobFactory _posterJobs;
     private readonly UnifiedCategoryResolver _resolver;
     private readonly RetentionService _retention;
+    private readonly ProviderStatsService _providerStats;
     private readonly AppOptions _opts;
     private readonly IHostApplicationLifetime _appLifetime;
     private readonly ILogger<SyncOrchestrationService> _log;
@@ -44,6 +45,7 @@ public sealed class SyncOrchestrationService
         PosterFetchJobFactory posterJobs,
         UnifiedCategoryResolver resolver,
         RetentionService retention,
+        ProviderStatsService providerStats,
         IOptions<AppOptions> opts,
         IHostApplicationLifetime appLifetime,
         ILogger<SyncOrchestrationService> log)
@@ -57,6 +59,7 @@ public sealed class SyncOrchestrationService
         _posterJobs = posterJobs;
         _resolver = resolver;
         _retention = retention;
+        _providerStats = providerStats;
         _opts = opts.Value;
         _appLifetime = appLifetime;
         _log = log;
@@ -84,6 +87,7 @@ public sealed class SyncOrchestrationService
 
         try
         {
+            syncCt.ThrowIfCancellationRequested();
             var categoryMap = _sources.GetCategoryMappingMap(id);
             var perCatLimit = _opts.RssLimitPerCategory > 0 ? _opts.RssLimitPerCategory : _opts.RssLimit;
             if (perCatLimit <= 0) perCatLimit = 50;
@@ -431,7 +435,7 @@ public sealed class SyncOrchestrationService
 
             var nowTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             var insertedNew = _releases.UpsertMany(id, name, items, nowTs, defaultSeen, categoryMap);
-            var (retentionResult, postersPurged) = _retention.ApplyRetention(id, perCatLimit, globalLimit);
+            var (retentionResult, postersPurged, failedDeletes) = _retention.ApplyRetention(id, perCatLimit, globalLimit);
 
             var lastSyncAt = src.LastSyncAt ?? 0;
             var newIds = _releases.GetNewIdsWithoutPoster(id, lastSyncAt);
@@ -459,8 +463,9 @@ public sealed class SyncOrchestrationService
                 name, insertedNew, items.Count);
 
             _activity.Add(id, "info", "sync", $"Sync OK ({items.Count} items, mode={syncMode})",
-                dataJson: $"{{\"itemsCount\":{items.Count},\"usedMode\":\"{usedMode}\",\"syncMode\":\"{syncMode}\",\"insertedNew\":{insertedNew},\"totalBeforeRetention\":{retentionResult.TotalBefore},\"purgedByPerCat\":{retentionResult.PurgedByPerCategory},\"purgedByGlobal\":{retentionResult.PurgedByGlobal},\"postersPurged\":{postersPurged},\"elapsedMs\":{elapsedMs}}}");
+                dataJson: $"{{\"itemsCount\":{items.Count},\"usedMode\":\"{usedMode}\",\"syncMode\":\"{syncMode}\",\"insertedNew\":{insertedNew},\"totalBeforeRetention\":{retentionResult.TotalBefore},\"purgedByPerCat\":{retentionResult.PurgedByPerCategory},\"purgedByGlobal\":{retentionResult.PurgedByGlobal},\"postersPurged\":{postersPurged},\"failedPosterDeletes\":{failedDeletes},\"elapsedMs\":{elapsedMs}}}");
 
+            _providerStats.RecordSyncJob(true);
             return new SyncOrchestrationResult(true, usedMode, syncMode, items.Count, insertedNew, null);
         }
         catch (OperationCanceledException) when (requestAborted.IsCancellationRequested || _appLifetime.ApplicationStopping.IsCancellationRequested)
@@ -478,6 +483,7 @@ public sealed class SyncOrchestrationService
             _log.LogWarning("Manual sync timed out for sourceId={SourceId}", id);
             _sources.UpdateLastSync(id, "error", timeoutMessage);
             _activity.Add(id, "error", "sync", $"Sync ERROR: {timeoutMessage}");
+            _providerStats.RecordSyncJob(false);
             return new SyncOrchestrationResult(false, null, null, 0, 0, timeoutMessage);
         }
         catch (Exception ex)
@@ -486,6 +492,7 @@ public sealed class SyncOrchestrationService
             var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "sync failed");
             _sources.UpdateLastSync(id, "error", safeError);
             _activity.Add(id, "error", "sync", $"Sync ERROR: {safeError}");
+            _providerStats.RecordSyncJob(false);
             return new SyncOrchestrationResult(false, null, null, 0, 0, safeError);
         }
     }

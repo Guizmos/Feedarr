@@ -87,13 +87,11 @@ public sealed class PostersController : ControllerBase
         var file = (string?)r.PosterFile;
         if (string.IsNullOrWhiteSpace(file)) return NotFound();
 
-        var postersDir = _posterFetch.PostersDirPath;
-        var path = Path.Combine(postersDir, file);
-
-        // sécurité anti path traversal
-        var full = Path.GetFullPath(path);
-        if (!full.StartsWith(postersDir, StringComparison.OrdinalIgnoreCase))
-            return BadRequest(new { error = "invalid poster path" });
+        if (!TryResolveStoredPosterPath(file, out var full))
+        {
+            _releases.ClearPosterFileReferences(file);
+            return NotFound();
+        }
 
         if (!System.IO.File.Exists(full))
         {
@@ -123,12 +121,11 @@ public sealed class PostersController : ControllerBase
         var file = entity.PosterFile;
         if (string.IsNullOrWhiteSpace(file)) return NotFound();
 
-        var postersDir = _posterFetch.PostersDirPath;
-        var path = Path.Combine(postersDir, file);
-
-        var full = Path.GetFullPath(path);
-        if (!full.StartsWith(postersDir, StringComparison.OrdinalIgnoreCase))
-            return BadRequest(new { error = "invalid poster path" });
+        if (!TryResolveStoredPosterPath(file, out var full))
+        {
+            _releases.ClearPosterFileReferences(file);
+            return NotFound();
+        }
 
         if (!System.IO.File.Exists(full))
         {
@@ -156,8 +153,10 @@ public sealed class PostersController : ControllerBase
         if (r is null) return NotFound();
 
         var postersDir = _posterFetch.PostersDirPath;
+        var pathResolver = CreatePosterPathResolver();
         var file = $"banner-{id}.jpg";
-        var full = Path.Combine(postersDir, file);
+        if (!pathResolver.TryResolvePosterFile(file, out var full))
+            return NotFound();
 
         if (System.IO.File.Exists(full))
             return PhysicalFile(full, "image/jpeg");
@@ -202,9 +201,16 @@ public sealed class PostersController : ControllerBase
             var posterFile = (string?)r.PosterFile;
             if (!string.IsNullOrWhiteSpace(posterFile))
             {
-                var posterFull = Path.Combine(postersDir, posterFile);
+                if (!pathResolver.TryResolvePosterFile(posterFile, out var posterFull))
+                {
+                    _releases.ClearPosterFileReferences(posterFile);
+                    return NotFound();
+                }
+
                 if (System.IO.File.Exists(posterFull))
                     return PhysicalFile(posterFull, "image/jpeg");
+
+                _releases.ClearPosterFileReferences(posterFile);
             }
             return NotFound();
         }
@@ -568,8 +574,11 @@ public sealed class PostersController : ControllerBase
         }
         else
         {
-            var movies = await _tmdb.SearchMovieListAsync(query, null, ct);
-            var tv = await _tmdb.SearchTvListAsync(query, null, ct);
+            var moviesTask = _tmdb.SearchMovieListAsync(query, null, ct);
+            var tvTask = _tmdb.SearchTvListAsync(query, null, ct);
+            await Task.WhenAll(moviesTask, tvTask);
+            var movies = moviesTask.Result;
+            var tv = tvTask.Result;
             results.AddRange(movies.Select(r => new PosterSearchResult
             {
                 Provider = "tmdb",
@@ -926,4 +935,19 @@ public sealed class PostersController : ControllerBase
     /// </summary>
     private static string SanitizeForLog(string value)
         => value.Replace('\r', ' ').Replace('\n', ' ').Replace('\t', ' ');
+
+    private PosterPathResolver CreatePosterPathResolver()
+        => new(_posterFetch.PostersDirPath);
+
+    private bool TryResolveStoredPosterPath(string file, out string fullPath)
+    {
+        var resolver = CreatePosterPathResolver();
+        var resolved = resolver.TryResolvePosterFile(file, out fullPath);
+        if (!resolved)
+        {
+            _log.LogWarning("Rejected unsafe poster file path from storage: {File}", SanitizeForLog(file));
+        }
+
+        return resolved;
+    }
 }

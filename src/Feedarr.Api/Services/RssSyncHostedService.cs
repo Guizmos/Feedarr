@@ -51,7 +51,10 @@ public sealed class RssSyncHostedService : BackgroundService
                     }
                     else
                     {
-                        await RunOnce(stoppingToken);
+                        var hadFailure = await RunOnce(stoppingToken);
+                        using var scope = _scopeFactory.CreateScope();
+                        var providerStats = scope.ServiceProvider.GetRequiredService<ProviderStatsService>();
+                        providerStats.RecordSyncJob(!hadFailure);
                     }
                 }
             }
@@ -61,6 +64,16 @@ public sealed class RssSyncHostedService : BackgroundService
             }
             catch (Exception ex)
             {
+                try
+                {
+                    using var scope = _scopeFactory.CreateScope();
+                    var providerStats = scope.ServiceProvider.GetRequiredService<ProviderStatsService>();
+                    providerStats.RecordSyncJob(false);
+                }
+                catch
+                {
+                }
+
                 _log.LogError(ex, "RssSyncHostedService loop error");
             }
 
@@ -122,7 +135,7 @@ public sealed class RssSyncHostedService : BackgroundService
         }
     }
 
-    private async Task RunOnce(CancellationToken ct)
+    private async Task<bool> RunOnce(CancellationToken ct)
     {
         using var scope = _scopeFactory.CreateScope();
 
@@ -136,8 +149,7 @@ public sealed class RssSyncHostedService : BackgroundService
         var retention = scope.ServiceProvider.GetRequiredService<RetentionService>();
         var providerStats = scope.ServiceProvider.GetRequiredService<ProviderStatsService>();
 
-        // Record sync job start
-        providerStats.RecordSyncJob(true);
+        var hadFailure = false;
 
         // ✅ settings dynamiques (DB) pour les limites RSS
         var perCatLimit = _opts.RssLimitPerCategory > 0 ? _opts.RssLimitPerCategory : _opts.RssLimit;
@@ -177,7 +189,7 @@ public sealed class RssSyncHostedService : BackgroundService
         if (list.Count == 0)
         {
             _log.LogInformation("AutoSync: no sources");
-            return;
+            return false;
         }
 
         foreach (var src in list)
@@ -476,7 +488,7 @@ public sealed class RssSyncHostedService : BackgroundService
 
                 var nowTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 var insertedNew = releases.UpsertMany(id, name, items, nowTs, defaultSeen, categoryMap);
-                var (retentionResult, postersPurged) = retention.ApplyRetention(id, perCatLimit, globalLimit);
+                var (retentionResult, postersPurged, failedDeletes) = retention.ApplyRetention(id, perCatLimit, globalLimit);
 
                 var lastSyncAt = src.LastSyncAt ?? 0;
                 var seeds = releases.GetNewPosterJobSeeds(id, lastSyncAt);
@@ -504,10 +516,15 @@ public sealed class RssSyncHostedService : BackgroundService
 
                 activity.Add(id, "info", "sync",
                     $"AutoSync OK [{name}] ({items.Count} items, mode={syncMode})",
-                    dataJson: $"{{\"itemsCount\":{items.Count},\"usedMode\":\"{usedMode}\",\"syncMode\":\"{syncMode}\",\"insertedNew\":{insertedNew},\"totalBeforeRetention\":{retentionResult.TotalBefore},\"purgedByPerCat\":{retentionResult.PurgedByPerCategory},\"purgedByGlobal\":{retentionResult.PurgedByGlobal},\"postersPurged\":{postersPurged},\"elapsedMs\":{elapsedMs}}}");
+                    dataJson: $"{{\"itemsCount\":{items.Count},\"usedMode\":\"{usedMode}\",\"syncMode\":\"{syncMode}\",\"insertedNew\":{insertedNew},\"totalBeforeRetention\":{retentionResult.TotalBefore},\"purgedByPerCat\":{retentionResult.PurgedByPerCategory},\"purgedByGlobal\":{retentionResult.PurgedByGlobal},\"postersPurged\":{postersPurged},\"failedPosterDeletes\":{failedDeletes},\"elapsedMs\":{elapsedMs}}}");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
+                hadFailure = true;
                 // Record failed indexer query
                 providerStats.RecordIndexerQuery(false);
                 var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "auto sync failed");
@@ -515,6 +532,8 @@ public sealed class RssSyncHostedService : BackgroundService
                 activity.Add(id, "error", "sync", $"AutoSync ERROR [{name}]: {safeError}");
             }
         }
+
+        return hadFailure;
     }
 
     private static List<int> GetRawCategoryIds(TorznabItem it)

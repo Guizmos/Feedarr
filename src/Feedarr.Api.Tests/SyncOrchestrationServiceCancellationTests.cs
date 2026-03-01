@@ -9,6 +9,7 @@ using Feedarr.Api.Services.Posters;
 using Feedarr.Api.Services.Security;
 using Feedarr.Api.Services.Titles;
 using Feedarr.Api.Services.Torznab;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using OptionsFactory = Microsoft.Extensions.Options.Options;
@@ -35,6 +36,8 @@ public sealed class SyncOrchestrationServiceCancellationTests
         var sources = new SourceRepository(db, protection);
         var releases = new ReleaseRepository(db, new TitleParser(), new UnifiedCategoryResolver());
         var activity = new ActivityRepository(db, new BadgeSignal());
+        var providerStats = new ProviderStatsService(new StatsRepository(db, new MemoryCache(new MemoryCacheOptions())));
+        var retention = new RetentionService(releases, null!, NullLogger<RetentionService>.Instance);
         var sourceId = sources.Create("Test Source", "http://localhost:9117/api", "secret", "query");
         var source = sources.Get(sourceId)!;
 
@@ -54,7 +57,8 @@ public sealed class SyncOrchestrationServiceCancellationTests
             new NoOpPosterFetchQueue(),
             new PosterFetchJobFactory(releases),
             new UnifiedCategoryResolver(),
-            null!,
+            retention,
+            providerStats,
             options,
             appLifetime,
             NullLogger<SyncOrchestrationService>.Instance);
@@ -66,6 +70,10 @@ public sealed class SyncOrchestrationServiceCancellationTests
         requestCts.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await syncTask);
+
+        var snapshot = providerStats.IndexerSnapshot();
+        Assert.Equal(0, snapshot.SyncJobs);
+        Assert.Equal(0, snapshot.SyncFailures);
     }
 
     // -------------------------------------------------------------------------
@@ -99,16 +107,18 @@ public sealed class SyncOrchestrationServiceCancellationTests
         var sources = new SourceRepository(db, protection);
         var releases = new ReleaseRepository(db, new TitleParser(), new UnifiedCategoryResolver());
         var activity = new ActivityRepository(db, new BadgeSignal());
+        var providerStats = new ProviderStatsService(new StatsRepository(db, new MemoryCache(new MemoryCacheOptions())));
+        var retention = new RetentionService(releases, null!, NullLogger<RetentionService>.Instance);
 
         var sourceId = sources.Create("WarningTest", "http://localhost:9117/api", "key", "query");
         var source = sources.Get(sourceId)!;
 
         var logger = new CapturingLogger<SyncOrchestrationService>();
 
-        // Torznab returns HTTP 500 so sync fails fast (retention is never called)
+        // Torznab returns an empty feed so the warning assertion is isolated from sync failures.
         var service = new SyncOrchestrationService(
             new TorznabClient(
-                new HttpClient(new ErrorTorznabHandler()),
+                new HttpClient(new EmptyTorznabHandler()),
                 new TorznabRssParser(),
                 NullLogger<TorznabClient>.Instance),
             sources,
@@ -118,7 +128,8 @@ public sealed class SyncOrchestrationServiceCancellationTests
             new NoOpPosterFetchQueue(),
             new PosterFetchJobFactory(releases),
             new UnifiedCategoryResolver(),
-            null!,
+            retention,
+            providerStats,
             mainOptions,
             new TestHostApplicationLifetime(),
             logger);
@@ -126,21 +137,163 @@ public sealed class SyncOrchestrationServiceCancellationTests
         // Should not throw — outer catch handles the Torznab error gracefully
         var result = await service.ExecuteManualSyncAsync(source, rssOnly: false, CancellationToken.None);
 
-        Assert.False(result.Ok);
+        Assert.True(result.Ok);
         Assert.True(
             logger.HasWarning("Failed to read sync settings"),
             "Expected a Warning log about failed settings read");
     }
 
-    /// <summary>Returns HTTP 500 immediately so sync fails fast.</summary>
-    private sealed class ErrorTorznabHandler : HttpMessageHandler
+    [Fact]
+    public async Task ExecuteManualSyncAsync_WhenSyncFails_TracksFailureMetrics()
+    {
+        using var workspace = new TestWorkspace();
+        var options = OptionsFactory.Create(new AppOptions
+        {
+            DataDir = workspace.DataDir,
+            DbFileName = "feedarr.db"
+        });
+
+        var db = new Db(options);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var protection = new PassthroughProtectionService();
+        var settings = new SettingsRepository(db, protection, NullLogger<SettingsRepository>.Instance);
+        var sources = new SourceRepository(db, protection);
+        var releases = new ReleaseRepository(db, new TitleParser(), new UnifiedCategoryResolver());
+        var activity = new ActivityRepository(db, new BadgeSignal());
+        var providerStats = new ProviderStatsService(new StatsRepository(db, new MemoryCache(new MemoryCacheOptions())));
+        var retention = new RetentionService(releases, null!, NullLogger<RetentionService>.Instance);
+        var sourceId = sources.Create("FailureTest", "http://localhost:9117/api", "key", "query");
+        sources.ReplaceSelectedCategoryIds(sourceId, new[] { 2000 });
+        var source = sources.Get(sourceId)!;
+
+        using var appLifetime = new TestHostApplicationLifetime();
+        var service = new SyncOrchestrationService(
+            new TorznabClient(
+                new HttpClient(new FallbackFailureTorznabHandler()),
+                new TorznabRssParser(),
+                NullLogger<TorznabClient>.Instance),
+            sources,
+            releases,
+            activity,
+            settings,
+            new NoOpPosterFetchQueue(),
+            new PosterFetchJobFactory(releases),
+            new UnifiedCategoryResolver(),
+            retention,
+            providerStats,
+            options,
+            appLifetime,
+            NullLogger<SyncOrchestrationService>.Instance);
+
+        var result = await service.ExecuteManualSyncAsync(source, rssOnly: false, CancellationToken.None);
+
+        Assert.False(result.Ok);
+
+        var snapshot = providerStats.IndexerSnapshot();
+        Assert.Equal(1, snapshot.SyncJobs);
+        Assert.Equal(1, snapshot.SyncFailures);
+    }
+
+    // -------------------------------------------------------------------------
+    // Fix 1: syncCt.ThrowIfCancellationRequested() — already-cancelled token
+    // must abort before any HTTP / DB call is made.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task ExecuteManualSyncAsync_WhenCancellationTokenAlreadyCancelled_ThrowsBeforeHttpCall()
+    {
+        using var workspace = new TestWorkspace();
+        var options = OptionsFactory.Create(new AppOptions
+        {
+            DataDir = workspace.DataDir,
+            DbFileName = "feedarr.db"
+        });
+
+        var db = new Db(options);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var protection = new PassthroughProtectionService();
+        var settings = new SettingsRepository(db, protection, NullLogger<SettingsRepository>.Instance);
+        var sources = new SourceRepository(db, protection);
+        var releases = new ReleaseRepository(db, new TitleParser(), new UnifiedCategoryResolver());
+        var activity = new ActivityRepository(db, new BadgeSignal());
+        var providerStats = new ProviderStatsService(new StatsRepository(db, new MemoryCache(new MemoryCacheOptions())));
+        var retention = new RetentionService(releases, null!, NullLogger<RetentionService>.Instance);
+        var sourceId = sources.Create("PreCancelledTest", "http://localhost:9117/api", "secret", "query");
+        var source = sources.Get(sourceId)!;
+
+        using var appLifetime = new TestHostApplicationLifetime();
+        var httpWasCalled = false;
+        var service = new SyncOrchestrationService(
+            new TorznabClient(
+                new HttpClient(new TrackingHandler(() => httpWasCalled = true)),
+                new TorznabRssParser(),
+                NullLogger<TorznabClient>.Instance),
+            sources, releases, activity, settings,
+            new NoOpPosterFetchQueue(),
+            new PosterFetchJobFactory(releases),
+            new UnifiedCategoryResolver(),
+            retention,
+            providerStats,
+            options,
+            appLifetime,
+            NullLogger<SyncOrchestrationService>.Instance);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel(); // Already cancelled before the call
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => service.ExecuteManualSyncAsync(source, rssOnly: false, cts.Token));
+
+        Assert.False(httpWasCalled, "HTTP must not be called when CT is already cancelled");
+        var snapshot = providerStats.IndexerSnapshot();
+        Assert.Equal(0, snapshot.SyncJobs);
+        Assert.Equal(0, snapshot.SyncFailures);
+    }
+
+    /// <summary>Records that SendAsync was called, then returns HTTP 200.</summary>
+    private sealed class TrackingHandler : HttpMessageHandler
+    {
+        private readonly Action _onCalled;
+        public TrackingHandler(Action onCalled) => _onCalled = onCalled;
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            _onCalled();
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("<rss/>", Encoding.UTF8, "application/xml")
+            });
+        }
+    }
+
+    private sealed class EmptyTorznabHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError)
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent("error", Encoding.UTF8, "text/plain")
+                Content = new StringContent("<rss version=\"2.0\"><channel /></rss>", Encoding.UTF8, "application/xml")
             });
+    }
+
+    private sealed class FallbackFailureTorznabHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var query = request.RequestUri?.Query ?? "";
+            if (query.Contains("t=search", StringComparison.OrdinalIgnoreCase)
+                && query.Contains("cat=2000", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new HttpRequestException("category fallback failed");
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("<rss version=\"2.0\"><channel /></rss>", Encoding.UTF8, "application/xml")
+            });
+        }
     }
 
     /// <summary>Captures log entries for assertion.</summary>

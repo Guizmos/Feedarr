@@ -596,6 +596,12 @@ public sealed class MaintenanceController : ControllerBase
     [HttpPost("reparse-titles")]
     public IActionResult ReparseTitles()
     {
+        if (!_maintenanceLock.TryEnter())
+        {
+            _log.LogWarning("ReparseTitles rejected – a maintenance operation is already running");
+            return Conflict(new { error = "a maintenance operation is already running" });
+        }
+
         try
         {
             using var conn = _db.Open();
@@ -614,6 +620,10 @@ public sealed class MaintenanceController : ControllerBase
         {
             _log.LogError(ex, "Reparse titles maintenance task failed");
             return StatusCode(500, new { error = "internal server error" });
+        }
+        finally
+        {
+            _maintenanceLock.Release();
         }
     }
 

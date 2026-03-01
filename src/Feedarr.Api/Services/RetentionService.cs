@@ -19,55 +19,65 @@ public sealed class RetentionService
         _log = log;
     }
 
-    public (ReleaseRepository.RetentionResult result, int postersPurged) ApplyRetention(
+    public (ReleaseRepository.RetentionResult result, int postersPurged, int failedDeletes) ApplyRetention(
         long sourceId,
         int perCatLimit,
         int globalLimit)
     {
         var result = _releases.ApplyRetention(sourceId, perCatLimit, globalLimit);
-        var postersPurged = CleanupOrphanPosters(result.PosterFiles);
-        return (result, postersPurged);
+        var (postersPurged, failedDeletes) = CleanupOrphanPosters(result.PosterFiles);
+        return (result, postersPurged, failedDeletes);
     }
 
-    private int CleanupOrphanPosters(IEnumerable<string> posterFiles)
+    private (int purged, int failedDeletes) CleanupOrphanPosters(IEnumerable<string> posterFiles)
     {
-        if (posterFiles is null) return 0;
+        if (posterFiles is null) return (0, 0);
         var unique = posterFiles
             .Where(f => !string.IsNullOrWhiteSpace(f))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        if (unique.Count == 0) return 0;
+        if (unique.Count == 0) return (0, 0);
 
-        var postersDir = _posters.PostersDirPath;
+        var pathResolver = new PosterPathResolver(_posters.PostersDirPath);
         var purged = 0;
+        var failedDeletes = 0;
         var referencedPosters = _releases.GetReferencedPosterFiles(unique);
 
         foreach (var file in unique)
         {
             if (referencedPosters.Contains(file)) continue;
 
+            if (!pathResolver.TryResolvePosterFile(file, out var full))
+            {
+                failedDeletes++;
+                _log.LogWarning("Poster delete skipped for unsafe file={File}", file);
+                continue;
+            }
+
             try
             {
-                var full = Path.GetFullPath(Path.Combine(postersDir, file));
-                var root = Path.GetFullPath(postersDir);
-                if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
                 if (File.Exists(full))
                 {
                     File.Delete(full);
+                    if (File.Exists(full))
+                    {
+                        failedDeletes++;
+                        _log.LogWarning("Poster delete failed file={File}", file);
+                        continue;
+                    }
                 }
+
+                _releases.ClearPosterFileReferences(file);
+                purged++;
             }
             catch (Exception ex)
             {
+                failedDeletes++;
                 _log.LogWarning(ex, "Poster delete failed file={File}", file);
             }
-
-            _releases.ClearPosterFileReferences(file);
-            purged++;
         }
 
-        return purged;
+        return (purged, failedDeletes);
     }
 }
