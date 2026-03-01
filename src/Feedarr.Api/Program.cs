@@ -194,6 +194,7 @@ builder.Services.AddSingleton<AudioMatchingStrategy>();
 builder.Services.AddSingleton<GenericMatchingStrategy>();
 builder.Services.AddSingleton<PosterMatchingOrchestrator>();
 builder.Services.AddSingleton<PosterFetchService>();
+builder.Services.AddSingleton<IPosterFileStore, PosterFileStore>();
 builder.Services.AddSingleton<PosterMatchCacheService>();
 builder.Services.AddSingleton<PosterFetchJobFactory>();
 builder.Services.AddSingleton<SyncOrchestrationService>();

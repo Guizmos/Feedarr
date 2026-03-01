@@ -440,6 +440,40 @@ public sealed class SmartAuthMiddlewareTests
         Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
     }
 
+    // -------------------------------------------------------------------------
+    // Fix 2: Fixed 512-byte buffer — very long username must never throw or match
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task BasicAuth_VeryLongUsername_Returns401WithoutException()
+    {
+        // A username encoded to > 512 UTF-8 bytes must still return 401 cleanly.
+        using var fixture = new MiddlewareFixture();
+        fixture.SetupState.MarkSetupCompleted();
+        var (hash, salt) = HashPassword("P@ssw0rd!");
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        {
+            AuthMode = "strict",
+            Username = "admin",
+            PasswordHash = hash,
+            PasswordSalt = salt
+        });
+
+        var veryLongUsername = new string('x', 600); // 600 ASCII bytes > 512 fixed buffer
+
+        var (nextCalled, context) = await fixture.InvokeAsync(
+            path: "/api/sources",
+            host: "feedarr.example.com",
+            remoteIp: System.Net.IPAddress.Parse("203.0.113.97"),
+            headers: new Dictionary<string, string>
+            {
+                ["Authorization"] = ToBasicAuth(veryLongUsername, "P@ssw0rd!")
+            });
+
+        Assert.False(nextCalled);
+        Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
+    }
+
     private static (string hash, string salt) HashPassword(string password)
     {
         var salt = RandomNumberGenerator.GetBytes(16);

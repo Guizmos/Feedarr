@@ -54,12 +54,10 @@ public sealed class RetentionServiceTests
     [Fact]
     public void ApplyRetention_WhenDeleteThrows_KeepsFileAndCountsFailedDelete()
     {
-        using var context = new RetentionTestContext();
+        using var context = new RetentionTestContext(new ThrowingPosterFileStore());
         context.CreateRelease("newer-guid", 200, "newer.jpg");
         var purgedId = context.CreateRelease("older-guid", 100, "locked.jpg");
         var lockedPath = context.CreatePosterFile("locked.jpg");
-
-        using var handle = new FileStream(lockedPath, FileMode.Open, FileAccess.Read, FileShare.None);
 
         var (result, postersPurged, failedDeletes) = context.Service.ApplyRetention(context.SourceId, perCatLimit: 1, globalLimit: 0);
 
@@ -90,7 +88,7 @@ public sealed class RetentionServiceTests
         private readonly TestWebHostEnvironment _environment;
         private readonly Microsoft.Extensions.Options.IOptions<AppOptions> _options;
 
-        public RetentionTestContext()
+        public RetentionTestContext(IPosterFileStore? fileStore = null)
         {
             _workspace = new TestWorkspace();
             _environment = new TestWebHostEnvironment(_workspace.RootDir);
@@ -146,7 +144,7 @@ public sealed class RetentionServiceTests
                 resolver,
                 NullLogger<PosterFetchService>.Instance);
 
-            Service = new RetentionService(Releases, Posters, NullLogger<RetentionService>.Instance);
+            Service = new RetentionService(Releases, Posters, fileStore ?? new PosterFileStore(), NullLogger<RetentionService>.Instance);
 
             using var conn = Db.Open();
             var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -263,6 +261,13 @@ public sealed class RetentionServiceTests
         }
 
         public bool IsProtected(string value) => false;
+    }
+
+    private sealed class ThrowingPosterFileStore : IPosterFileStore
+    {
+        public bool Exists(string fullPath) => File.Exists(fullPath);
+
+        public void Delete(string fullPath) => throw new IOException("simulated delete failure");
     }
 
     private sealed class TestWebHostEnvironment : IWebHostEnvironment

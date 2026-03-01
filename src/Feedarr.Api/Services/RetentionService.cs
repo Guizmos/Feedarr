@@ -7,15 +7,18 @@ public sealed class RetentionService
 {
     private readonly ReleaseRepository _releases;
     private readonly PosterFetchService _posters;
+    private readonly IPosterFileStore _fileStore;
     private readonly ILogger<RetentionService> _log;
 
     public RetentionService(
         ReleaseRepository releases,
         PosterFetchService posters,
+        IPosterFileStore fileStore,
         ILogger<RetentionService> log)
     {
         _releases = releases;
         _posters = posters;
+        _fileStore = fileStore;
         _log = log;
     }
 
@@ -57,10 +60,10 @@ public sealed class RetentionService
 
             try
             {
-                if (File.Exists(full))
+                if (_fileStore.Exists(full))
                 {
-                    File.Delete(full);
-                    if (File.Exists(full))
+                    _fileStore.Delete(full);
+                    if (_fileStore.Exists(full))
                     {
                         failedDeletes++;
                         _log.LogWarning("Poster delete failed file={File}", file);

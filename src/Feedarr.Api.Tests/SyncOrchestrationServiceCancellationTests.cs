@@ -37,7 +37,7 @@ public sealed class SyncOrchestrationServiceCancellationTests
         var releases = new ReleaseRepository(db, new TitleParser(), new UnifiedCategoryResolver());
         var activity = new ActivityRepository(db, new BadgeSignal());
         var providerStats = new ProviderStatsService(new StatsRepository(db, new MemoryCache(new MemoryCacheOptions())));
-        var retention = new RetentionService(releases, null!, NullLogger<RetentionService>.Instance);
+        var retention = new RetentionService(releases, null!, new PosterFileStore(), NullLogger<RetentionService>.Instance);
         var sourceId = sources.Create("Test Source", "http://localhost:9117/api", "secret", "query");
         var source = sources.Get(sourceId)!;
 
@@ -108,7 +108,7 @@ public sealed class SyncOrchestrationServiceCancellationTests
         var releases = new ReleaseRepository(db, new TitleParser(), new UnifiedCategoryResolver());
         var activity = new ActivityRepository(db, new BadgeSignal());
         var providerStats = new ProviderStatsService(new StatsRepository(db, new MemoryCache(new MemoryCacheOptions())));
-        var retention = new RetentionService(releases, null!, NullLogger<RetentionService>.Instance);
+        var retention = new RetentionService(releases, null!, new PosterFileStore(), NullLogger<RetentionService>.Instance);
 
         var sourceId = sources.Create("WarningTest", "http://localhost:9117/api", "key", "query");
         var source = sources.Get(sourceId)!;
@@ -162,7 +162,7 @@ public sealed class SyncOrchestrationServiceCancellationTests
         var releases = new ReleaseRepository(db, new TitleParser(), new UnifiedCategoryResolver());
         var activity = new ActivityRepository(db, new BadgeSignal());
         var providerStats = new ProviderStatsService(new StatsRepository(db, new MemoryCache(new MemoryCacheOptions())));
-        var retention = new RetentionService(releases, null!, NullLogger<RetentionService>.Instance);
+        var retention = new RetentionService(releases, null!, new PosterFileStore(), NullLogger<RetentionService>.Instance);
         var sourceId = sources.Create("FailureTest", "http://localhost:9117/api", "key", "query");
         sources.ReplaceSelectedCategoryIds(sourceId, new[] { 2000 });
         var source = sources.Get(sourceId)!;
@@ -219,7 +219,7 @@ public sealed class SyncOrchestrationServiceCancellationTests
         var releases = new ReleaseRepository(db, new TitleParser(), new UnifiedCategoryResolver());
         var activity = new ActivityRepository(db, new BadgeSignal());
         var providerStats = new ProviderStatsService(new StatsRepository(db, new MemoryCache(new MemoryCacheOptions())));
-        var retention = new RetentionService(releases, null!, NullLogger<RetentionService>.Instance);
+        var retention = new RetentionService(releases, null!, new PosterFileStore(), NullLogger<RetentionService>.Instance);
         var sourceId = sources.Create("PreCancelledTest", "http://localhost:9117/api", "secret", "query");
         var source = sources.Get(sourceId)!;
 

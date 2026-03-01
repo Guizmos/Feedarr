@@ -307,15 +307,16 @@ public sealed class BasicAuthMiddleware
     {
         if (string.IsNullOrWhiteSpace(settings.Username)) return false;
 
-        // Constant-time username comparison — prevents username enumeration via response timing.
-        var userBytes = Encoding.UTF8.GetBytes(user);
-        var expectedBytes = Encoding.UTF8.GetBytes(settings.Username);
-        var maxLen = Math.Max(userBytes.Length, expectedBytes.Length);
-        var paddedUser = new byte[maxLen];
-        var paddedExpected = new byte[maxLen];
-        userBytes.CopyTo(paddedUser, 0);
-        expectedBytes.CopyTo(paddedExpected, 0);
-        var usernameMatch = CryptographicOperations.FixedTimeEquals(paddedUser, paddedExpected);
+        // Constant-time username comparison with a fixed 512-byte buffer — prevents both
+        // username enumeration and length-based timing leaks (no Math.Max branch on lengths).
+        const int UsernameFixedBytes = 512;
+        Span<byte> userBuf = stackalloc byte[UsernameFixedBytes];     // zero-initialised
+        Span<byte> expectedBuf = stackalloc byte[UsernameFixedBytes]; // zero-initialised
+        var userEncoded = Encoding.UTF8.GetBytes(user);
+        var expectedEncoded = Encoding.UTF8.GetBytes(settings.Username);
+        userEncoded.AsSpan(0, Math.Min(userEncoded.Length, UsernameFixedBytes)).CopyTo(userBuf);
+        expectedEncoded.AsSpan(0, Math.Min(expectedEncoded.Length, UsernameFixedBytes)).CopyTo(expectedBuf);
+        var usernameMatch = CryptographicOperations.FixedTimeEquals(userBuf, expectedBuf);
 
         if (string.IsNullOrWhiteSpace(settings.PasswordHash) || string.IsNullOrWhiteSpace(settings.PasswordSalt))
             return false;

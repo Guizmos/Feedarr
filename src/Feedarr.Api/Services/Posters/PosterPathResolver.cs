@@ -29,6 +29,9 @@ internal sealed class PosterPathResolver
         if (Path.IsPathRooted(candidate))
             return false;
 
+        if (candidate.Contains('/') || candidate.Contains('\\') || candidate.Contains(':'))
+            return false;
+
         if (!string.Equals(Path.GetFileName(candidate), candidate, StringComparison.Ordinal))
             return false;
 
