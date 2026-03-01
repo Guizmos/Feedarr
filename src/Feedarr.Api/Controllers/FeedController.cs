@@ -369,7 +369,7 @@ public sealed class FeedController : ControllerBase
         FROM releases
         LEFT JOIN media_entities me
           ON me.id = releases.entity_id
-        INNER JOIN source_categories sc
+        LEFT JOIN source_categories sc
           ON sc.source_id = releases.source_id AND sc.cat_id = releases.category_id
         LEFT JOIN release_arr_status ras
           ON ras.release_id = releases.id

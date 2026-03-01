@@ -98,6 +98,38 @@ public sealed class PostersControllerSecurityAndSearchTests
     }
 
     [Fact]
+    public void GetPoster_MissingFile_ReturnsNotFound_WithoutMutatingDatabase()
+    {
+        using var context = new PosterControllerContext();
+        var releaseId = context.CreateRelease(posterFile: "missing.jpg");
+        context.CreatePosterMatch("missing.jpg");
+        var controller = context.CreateController();
+
+        var result = controller.GetPoster(releaseId);
+
+        Assert.IsType<NotFoundResult>(result);
+        Assert.Equal("missing.jpg", context.GetReleasePosterFile(releaseId));
+        Assert.Equal(1, context.GetPosterMatchCount("missing.jpg"));
+    }
+
+    [Fact]
+    public void GetPoster_UnreadablePath_Returns503_WithoutMutatingDatabase()
+    {
+        using var context = new PosterControllerContext();
+        var releaseId = context.CreateRelease(posterFile: "locked.jpg");
+        context.CreatePosterMatch("locked.jpg");
+        context.CreatePosterDirectory("locked.jpg");
+        var controller = context.CreateController();
+
+        var result = controller.GetPoster(releaseId);
+
+        var unavailable = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, unavailable.StatusCode);
+        Assert.Equal("locked.jpg", context.GetReleasePosterFile(releaseId));
+        Assert.Equal(1, context.GetPosterMatchCount("locked.jpg"));
+    }
+
+    [Fact]
     public async Task Search_WithoutMediaType_StartsMovieAndTvQueriesInParallel()
     {
         var handler = new ParallelTmdbHandler();
@@ -325,6 +357,66 @@ public sealed class PostersControllerSecurityAndSearchTests
         {
             Directory.CreateDirectory(PostersDir);
             File.WriteAllBytes(Path.Combine(PostersDir, fileName), Encoding.UTF8.GetBytes("poster"));
+        }
+
+        public void CreatePosterDirectory(string fileName)
+        {
+            Directory.CreateDirectory(Path.Combine(PostersDir, fileName));
+        }
+
+        public void CreatePosterMatch(string posterFile)
+        {
+            using var conn = Db.Open();
+            var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            conn.Execute(
+                """
+                INSERT INTO poster_matches(
+                  fingerprint,
+                  media_type,
+                  normalized_title,
+                  year,
+                  ids_json,
+                  confidence,
+                  match_source,
+                  poster_file,
+                  created_ts,
+                  last_seen_ts
+                )
+                VALUES(
+                  @fingerprint,
+                  'movie',
+                  'the matrix',
+                  1999,
+                  '{}',
+                  0.99,
+                  'test',
+                  @posterFile,
+                  @ts,
+                  @ts
+                );
+                """,
+                new
+                {
+                    fingerprint = Guid.NewGuid().ToString("N"),
+                    posterFile,
+                    ts
+                });
+        }
+
+        public string? GetReleasePosterFile(long releaseId)
+        {
+            using var conn = Db.Open();
+            return conn.QuerySingleOrDefault<string>(
+                "SELECT poster_file FROM releases WHERE id = @id;",
+                new { id = releaseId });
+        }
+
+        public int GetPosterMatchCount(string posterFile)
+        {
+            using var conn = Db.Open();
+            return conn.ExecuteScalar<int>(
+                "SELECT COUNT(1) FROM poster_matches WHERE poster_file = @posterFile;",
+                new { posterFile });
         }
 
         public void Dispose()

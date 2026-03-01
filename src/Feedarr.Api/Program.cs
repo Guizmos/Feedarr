@@ -140,6 +140,7 @@ SqlMapper.AddTypeHandler(new SqliteNullableInt32Handler());
 
 // Options + DB
 builder.Services.Configure<AppOptions>(builder.Configuration.GetSection("App"));
+builder.Services.Configure<ProviderStatsFlushOptions>(builder.Configuration.GetSection("App:ProviderStatsFlush"));
 builder.Services.Configure<UpdatesOptions>(builder.Configuration.GetSection("App:Updates"));
 builder.Services.Configure<BasicAuthTransportSecurityOptions>(builder.Configuration.GetSection("Security"));
 builder.Services.Configure<BasicAuthThrottleOptions>(builder.Configuration.GetSection("Security:AuthThrottle"));
@@ -159,6 +160,7 @@ builder.Services.AddSingleton<ActivityRepository>();
 builder.Services.AddSingleton<SettingsRepository>();
 builder.Services.AddSingleton<ExternalProviderInstanceRepository>();
 builder.Services.AddSingleton<StatsRepository>();
+builder.Services.AddSingleton<IProviderStatsStore>(sp => sp.GetRequiredService<StatsRepository>());
 builder.Services.AddSingleton<ArrApplicationRepository>();
 builder.Services.AddSingleton<ArrLibraryRepository>();
 builder.Services.AddSingleton<MediaEntityRepository>();
@@ -186,6 +188,7 @@ builder.Services.AddSingleton<ExternalProviderTestService>();
 builder.Services.AddHostedService<BasicAuthTransportSecurityStartupService>();
 builder.Services.AddHostedService<ExternalProvidersBootstrapService>();
 builder.Services.AddHostedService<RssSyncHostedService>();
+builder.Services.AddHostedService<ProviderStatsFlushHostedService>();
 builder.Services.AddSingleton<Feedarr.Api.Services.Titles.TitleParser>();
 builder.Services.AddSingleton<VideoMatchingStrategy>();
 builder.Services.AddSingleton<GameMatchingStrategy>();

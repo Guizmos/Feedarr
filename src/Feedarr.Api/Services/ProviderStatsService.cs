@@ -1,7 +1,10 @@
 using Feedarr.Api.Data.Repositories;
+using Feedarr.Api.Options;
 using Feedarr.Api.Services.ExternalProviders;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using System.Collections.Concurrent;
 
 namespace Feedarr.Api.Services;
 
@@ -38,255 +41,87 @@ public sealed class ProviderStatsService
         ExternalProviderKeys.Rawg
     };
 
-    private readonly StatsRepository _repo;
+    private readonly IProviderStatsStore _store;
     private readonly ILogger<ProviderStatsService> _logger;
-    private readonly object _lock = new();
+    private readonly ProviderStatsFlushOptions _flushOptions;
+    private readonly object _loadLock = new();
+    private readonly ConcurrentDictionary<string, CounterState> _counters = new(StringComparer.OrdinalIgnoreCase);
 
-    // In-memory cache for performance (flushed periodically)
-    private long _tmdbCalls;
-    private long _tmdbFailures;
-    private long _tvmazeCalls;
-    private long _tvmazeFailures;
-    private long _fanartCalls;
-    private long _fanartFailures;
-    private long _igdbCalls;
-    private long _igdbFailures;
-    private long _tmdbTotalMs;
-    private long _tvmazeTotalMs;
-    private long _fanartTotalMs;
-    private long _igdbTotalMs;
-    private long _indexerQueries;
-    private long _indexerFailures;
-    private long _syncJobs;
-    private long _syncFailures;
     private volatile bool _loaded;
     private long _lastLoadFailureTicks;
+    private int _flushInProgress;
+
     private const int LoadRetryDebounceMs = 30_000;
 
-    public ProviderStatsService(StatsRepository repo, ILogger<ProviderStatsService>? logger = null)
+    public ProviderStatsService(
+        IProviderStatsStore store,
+        ILogger<ProviderStatsService>? logger = null,
+        IOptions<ProviderStatsFlushOptions>? flushOptions = null)
     {
-        _repo = repo;
+        _store = store;
         _logger = logger ?? NullLogger<ProviderStatsService>.Instance;
-    }
-
-    private void EnsureLoaded()
-    {
-        // Volatile fast-path: once loaded this is a single read with no lock.
-        if (_loaded) return;
-
-        lock (_lock)
-        {
-            // Re-check after acquiring the lock (correct double-checked locking with volatile).
-            if (_loaded) return;
-
-            // Debounce check is inside the lock so _lastLoadFailureTicks is never
-            // read or written concurrently — eliminates the TOCTOU on that field.
-            if (_lastLoadFailureTicks > 0
-                && Environment.TickCount64 - _lastLoadFailureTicks < LoadRetryDebounceMs)
-                return;
-
-            try
-            {
-                var all = _repo.GetAll();
-                _tmdbCalls = all.GetValueOrDefault("tmdb_calls", 0);
-                _tmdbFailures = all.GetValueOrDefault("tmdb_failures", 0);
-                _tvmazeCalls = all.GetValueOrDefault("tvmaze_calls", 0);
-                _tvmazeFailures = all.GetValueOrDefault("tvmaze_failures", 0);
-                _fanartCalls = all.GetValueOrDefault("fanart_calls", 0);
-                _fanartFailures = all.GetValueOrDefault("fanart_failures", 0);
-                _igdbCalls = all.GetValueOrDefault("igdb_calls", 0);
-                _igdbFailures = all.GetValueOrDefault("igdb_failures", 0);
-                _tmdbTotalMs = all.GetValueOrDefault("tmdb_total_ms", 0);
-                _tvmazeTotalMs = all.GetValueOrDefault("tvmaze_total_ms", 0);
-                _fanartTotalMs = all.GetValueOrDefault("fanart_total_ms", 0);
-                _igdbTotalMs = all.GetValueOrDefault("igdb_total_ms", 0);
-                _indexerQueries = all.GetValueOrDefault("indexer_queries", 0);
-                _indexerFailures = all.GetValueOrDefault("indexer_failures", 0);
-                _syncJobs = all.GetValueOrDefault("sync_jobs", 0);
-                _syncFailures = all.GetValueOrDefault("sync_failures", 0);
-                _loaded = true;
-                _lastLoadFailureTicks = 0;
-            }
-            catch (Exception ex)
-            {
-                // DB not ready yet — keep _loaded false so we retry after debounce.
-                _lastLoadFailureTicks = Environment.TickCount64;
-                _logger.LogWarning(ex, "ProviderStatsService failed to load stats from DB; will retry after {DebounceMs}ms", LoadRetryDebounceMs);
-            }
-        }
+        _flushOptions = flushOptions?.Value ?? new ProviderStatsFlushOptions();
     }
 
     public void RecordTmdb(bool ok)
-    {
-        RecordTmdb(ok, 0);
-    }
+        => RecordTmdb(ok, 0);
 
     public void RecordTmdb(bool ok, long elapsedMs)
-    {
-        EnsureLoaded();
-        var safeMs = Math.Max(0, elapsedMs);
-        Interlocked.Increment(ref _tmdbCalls);
-        _repo.Increment("tmdb_calls");
-        if (safeMs > 0)
-        {
-            Interlocked.Add(ref _tmdbTotalMs, safeMs);
-            _repo.Increment("tmdb_total_ms", safeMs);
-        }
-        if (!ok)
-        {
-            Interlocked.Increment(ref _tmdbFailures);
-            _repo.Increment("tmdb_failures");
-        }
-    }
+        => RecordProviderCall(ExternalProviderKeys.Tmdb, ok, elapsedMs);
 
     public void RecordFanart(bool ok)
-    {
-        RecordFanart(ok, 0);
-    }
+        => RecordFanart(ok, 0);
 
     public void RecordFanart(bool ok, long elapsedMs)
-    {
-        EnsureLoaded();
-        var safeMs = Math.Max(0, elapsedMs);
-        Interlocked.Increment(ref _fanartCalls);
-        _repo.Increment("fanart_calls");
-        if (safeMs > 0)
-        {
-            Interlocked.Add(ref _fanartTotalMs, safeMs);
-            _repo.Increment("fanart_total_ms", safeMs);
-        }
-        if (!ok)
-        {
-            Interlocked.Increment(ref _fanartFailures);
-            _repo.Increment("fanart_failures");
-        }
-    }
+        => RecordProviderCall(ExternalProviderKeys.Fanart, ok, elapsedMs);
 
     public void RecordIgdb(bool ok)
-    {
-        RecordIgdb(ok, 0);
-    }
+        => RecordIgdb(ok, 0);
 
     public void RecordIgdb(bool ok, long elapsedMs)
-    {
-        EnsureLoaded();
-        var safeMs = Math.Max(0, elapsedMs);
-        Interlocked.Increment(ref _igdbCalls);
-        _repo.Increment("igdb_calls");
-        if (safeMs > 0)
-        {
-            Interlocked.Add(ref _igdbTotalMs, safeMs);
-            _repo.Increment("igdb_total_ms", safeMs);
-        }
-        if (!ok)
-        {
-            Interlocked.Increment(ref _igdbFailures);
-            _repo.Increment("igdb_failures");
-        }
-    }
+        => RecordProviderCall(ExternalProviderKeys.Igdb, ok, elapsedMs);
+
+    public void RecordTvmaze(bool ok)
+        => RecordTvmaze(ok, 0);
+
+    public void RecordTvmaze(bool ok, long elapsedMs)
+        => RecordProviderCall(ExternalProviderKeys.Tvmaze, ok, elapsedMs);
+
+    public void RecordExternal(string providerKey, bool ok, long elapsedMs = 0)
+        => RecordProviderCall(providerKey, ok, elapsedMs);
 
     public void RecordIndexerQuery(bool ok)
     {
         EnsureLoaded();
-        Interlocked.Increment(ref _indexerQueries);
-        _repo.Increment("indexer_queries");
+        AddDelta("indexer_queries", 1);
         if (!ok)
-        {
-            Interlocked.Increment(ref _indexerFailures);
-            _repo.Increment("indexer_failures");
-        }
+            AddDelta("indexer_failures", 1);
     }
 
     public void RecordSyncJob(bool ok)
     {
         EnsureLoaded();
-        Interlocked.Increment(ref _syncJobs);
-        _repo.Increment("sync_jobs");
+        AddDelta("sync_jobs", 1);
         if (!ok)
-        {
-            Interlocked.Increment(ref _syncFailures);
-            _repo.Increment("sync_failures");
-        }
+            AddDelta("sync_failures", 1);
     }
 
     public ProviderStatsSnapshot Snapshot()
     {
         EnsureLoaded();
-        var tmdbCalls = Interlocked.Read(ref _tmdbCalls);
-        var tmdbFailures = Interlocked.Read(ref _tmdbFailures);
-        var tmdbTotalMs = Interlocked.Read(ref _tmdbTotalMs);
-        var tvmazeCalls = Interlocked.Read(ref _tvmazeCalls);
-        var tvmazeFailures = Interlocked.Read(ref _tvmazeFailures);
-        var tvmazeTotalMs = Interlocked.Read(ref _tvmazeTotalMs);
-        var fanartCalls = Interlocked.Read(ref _fanartCalls);
-        var fanartFailures = Interlocked.Read(ref _fanartFailures);
-        var fanartTotalMs = Interlocked.Read(ref _fanartTotalMs);
-        var igdbCalls = Interlocked.Read(ref _igdbCalls);
-        var igdbFailures = Interlocked.Read(ref _igdbFailures);
-        var igdbTotalMs = Interlocked.Read(ref _igdbTotalMs);
-
-        var tmdbAvgMs = tmdbCalls > 0 ? (long)((double)tmdbTotalMs / tmdbCalls) : 0;
-        var tvmazeAvgMs = tvmazeCalls > 0 ? (long)((double)tvmazeTotalMs / tvmazeCalls) : 0;
-        var fanartAvgMs = fanartCalls > 0 ? (long)((double)fanartTotalMs / fanartCalls) : 0;
-        var igdbAvgMs = igdbCalls > 0 ? (long)((double)igdbTotalMs / igdbCalls) : 0;
-
-        var tmdb = new ProviderStats(tmdbCalls, tmdbFailures, tmdbAvgMs);
-        var tvmaze = new ProviderStats(tvmazeCalls, tvmazeFailures, tvmazeAvgMs);
-        var fanart = new ProviderStats(fanartCalls, fanartFailures, fanartAvgMs);
-        var igdb = new ProviderStats(igdbCalls, igdbFailures, igdbAvgMs);
-
-        return new ProviderStatsSnapshot(tmdb, tvmaze, fanart, igdb);
-    }
-
-    public void RecordExternal(string providerKey, bool ok, long elapsedMs = 0)
-    {
-        EnsureLoaded();
-        var key = NormalizeProviderKey(providerKey);
-        if (string.IsNullOrWhiteSpace(key))
-            return;
-
-        var safeMs = Math.Max(0, elapsedMs);
-
-        _repo.Increment($"{key}_calls");
-        if (safeMs > 0)
-            _repo.Increment($"{key}_total_ms", safeMs);
-        if (!ok)
-            _repo.Increment($"{key}_failures");
-
-        // Keep legacy in-memory counters consistent when generic recording is used
-        // with existing providers.
-        switch (key)
-        {
-            case "tmdb":
-                Interlocked.Increment(ref _tmdbCalls);
-                if (safeMs > 0) Interlocked.Add(ref _tmdbTotalMs, safeMs);
-                if (!ok) Interlocked.Increment(ref _tmdbFailures);
-                break;
-            case "tvmaze":
-                Interlocked.Increment(ref _tvmazeCalls);
-                if (safeMs > 0) Interlocked.Add(ref _tvmazeTotalMs, safeMs);
-                if (!ok) Interlocked.Increment(ref _tvmazeFailures);
-                break;
-            case "fanart":
-                Interlocked.Increment(ref _fanartCalls);
-                if (safeMs > 0) Interlocked.Add(ref _fanartTotalMs, safeMs);
-                if (!ok) Interlocked.Increment(ref _fanartFailures);
-                break;
-            case "igdb":
-                Interlocked.Increment(ref _igdbCalls);
-                if (safeMs > 0) Interlocked.Add(ref _igdbTotalMs, safeMs);
-                if (!ok) Interlocked.Increment(ref _igdbFailures);
-                break;
-        }
+        return new ProviderStatsSnapshot(
+            BuildProviderStats("tmdb"),
+            BuildProviderStats("tvmaze"),
+            BuildProviderStats("fanart"),
+            BuildProviderStats("igdb"));
     }
 
     public IReadOnlyDictionary<string, ProviderStats> SnapshotByProvider()
     {
         EnsureLoaded();
-        var all = _repo.GetAll();
         var providers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var key in all.Keys)
+        foreach (var key in _counters.Keys)
         {
             if (key.EndsWith("_calls", StringComparison.OrdinalIgnoreCase))
                 providers.Add(key[..^"_calls".Length]);
@@ -301,54 +136,196 @@ public sealed class ProviderStatsService
             .Where(p => KnownMetadataProviders.Contains(p))
             .OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
         {
-            var calls = all.GetValueOrDefault($"{provider}_calls", 0);
-            var failures = all.GetValueOrDefault($"{provider}_failures", 0);
-            var totalMs = all.GetValueOrDefault($"{provider}_total_ms", 0);
-            var avgMs = calls > 0 ? (long)((double)totalMs / calls) : 0;
-            result[provider] = new ProviderStats(calls, failures, avgMs);
+            result[provider] = BuildProviderStats(provider);
         }
 
         return result;
-    }
-
-    public void RecordTvmaze(bool ok)
-    {
-        RecordTvmaze(ok, 0);
-    }
-
-    public void RecordTvmaze(bool ok, long elapsedMs)
-    {
-        EnsureLoaded();
-        var safeMs = Math.Max(0, elapsedMs);
-        Interlocked.Increment(ref _tvmazeCalls);
-        _repo.Increment("tvmaze_calls");
-        if (safeMs > 0)
-        {
-            Interlocked.Add(ref _tvmazeTotalMs, safeMs);
-            _repo.Increment("tvmaze_total_ms", safeMs);
-        }
-        if (!ok)
-        {
-            Interlocked.Increment(ref _tvmazeFailures);
-            _repo.Increment("tvmaze_failures");
-        }
     }
 
     public IndexerStatsSnapshot IndexerSnapshot()
     {
         EnsureLoaded();
         return new IndexerStatsSnapshot(
-            Interlocked.Read(ref _indexerQueries),
-            Interlocked.Read(ref _indexerFailures),
-            Interlocked.Read(ref _syncJobs),
-            Interlocked.Read(ref _syncFailures)
-        );
+            ReadCounter("indexer_queries"),
+            ReadCounter("indexer_failures"),
+            ReadCounter("sync_jobs"),
+            ReadCounter("sync_failures"));
     }
+
+    public async Task<int> FlushAsync(CancellationToken ct = default)
+    {
+        EnsureLoaded();
+        if (!_loaded)
+            return 0;
+
+        if (Interlocked.CompareExchange(ref _flushInProgress, 1, 0) != 0)
+            return 0;
+
+        try
+        {
+            var maxBatchSize = Math.Clamp(_flushOptions.MaxBatchSize, 1, 10_000);
+            var batch = new List<ProviderStatDelta>(maxBatchSize);
+
+            foreach (var pair in _counters.OrderBy(kvp => kvp.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                ct.ThrowIfCancellationRequested();
+
+                if (pair.Value.TryCaptureDelta(pair.Key, out var delta))
+                    batch.Add(delta);
+
+                if (batch.Count >= maxBatchSize)
+                    break;
+            }
+
+            if (batch.Count == 0)
+                return 0;
+
+            await _store.IncrementProviderStatsBatchAsync(batch, ct);
+
+            foreach (var row in batch)
+            {
+                if (_counters.TryGetValue(row.Key, out var state))
+                    state.MarkFlushed(row.TotalAfterIncrement);
+            }
+
+            return batch.Count;
+        }
+        finally
+        {
+            Volatile.Write(ref _flushInProgress, 0);
+        }
+    }
+
+    private void RecordProviderCall(string providerKey, bool ok, long elapsedMs)
+    {
+        EnsureLoaded();
+
+        var key = NormalizeProviderKey(providerKey);
+        if (string.IsNullOrWhiteSpace(key))
+            return;
+
+        AddDelta($"{key}_calls", 1);
+
+        var safeMs = Math.Max(0, elapsedMs);
+        if (safeMs > 0)
+            AddDelta($"{key}_total_ms", safeMs);
+
+        if (!ok)
+            AddDelta($"{key}_failures", 1);
+    }
+
+    private void EnsureLoaded()
+    {
+        if (_loaded)
+            return;
+
+        lock (_loadLock)
+        {
+            if (_loaded)
+                return;
+
+            if (_lastLoadFailureTicks > 0 &&
+                Environment.TickCount64 - _lastLoadFailureTicks < LoadRetryDebounceMs)
+            {
+                return;
+            }
+
+            try
+            {
+                var all = _store.GetAll();
+                foreach (var pair in all)
+                {
+                    GetCounter(pair.Key).InitializeBaseline(pair.Value);
+                }
+
+                _loaded = true;
+                _lastLoadFailureTicks = 0;
+            }
+            catch (Exception ex)
+            {
+                _lastLoadFailureTicks = Environment.TickCount64;
+                _logger.LogWarning(
+                    ex,
+                    "ProviderStatsService failed to load stats from DB; will retry after {DebounceMs}ms",
+                    LoadRetryDebounceMs);
+            }
+        }
+    }
+
+    private ProviderStats BuildProviderStats(string providerKey)
+    {
+        var calls = ReadCounter($"{providerKey}_calls");
+        var failures = ReadCounter($"{providerKey}_failures");
+        var totalMs = ReadCounter($"{providerKey}_total_ms");
+        var avgMs = calls > 0 ? (long)((double)totalMs / calls) : 0;
+        return new ProviderStats(calls, failures, avgMs);
+    }
+
+    private void AddDelta(string key, long delta)
+    {
+        if (delta <= 0)
+            return;
+
+        GetCounter(key).Add(delta);
+    }
+
+    private long ReadCounter(string key)
+    {
+        return _counters.TryGetValue(key, out var state)
+            ? state.ReadTotal()
+            : 0;
+    }
+
+    private CounterState GetCounter(string key)
+        => _counters.GetOrAdd(key, static _ => new CounterState());
 
     private static string NormalizeProviderKey(string? providerKey)
     {
         return string.IsNullOrWhiteSpace(providerKey)
             ? ""
             : providerKey.Trim().ToLowerInvariant();
+    }
+
+    private sealed class CounterState
+    {
+        private long _total;
+        private long _lastFlushed;
+        private int _initialized;
+
+        public void Add(long delta)
+            => Interlocked.Add(ref _total, delta);
+
+        public void InitializeBaseline(long baseline)
+        {
+            if (Interlocked.CompareExchange(ref _initialized, 1, 0) != 0)
+                return;
+
+            if (baseline != 0)
+                Interlocked.Add(ref _total, baseline);
+
+            Volatile.Write(ref _lastFlushed, baseline);
+        }
+
+        public long ReadTotal()
+            => Volatile.Read(ref _total);
+
+        public bool TryCaptureDelta(string key, out ProviderStatDelta delta)
+        {
+            var total = Volatile.Read(ref _total);
+            var lastFlushed = Volatile.Read(ref _lastFlushed);
+            var pending = total - lastFlushed;
+
+            if (pending <= 0)
+            {
+                delta = default!;
+                return false;
+            }
+
+            delta = new ProviderStatDelta(key, pending, total);
+            return true;
+        }
+
+        public void MarkFlushed(long totalAfterIncrement)
+            => Volatile.Write(ref _lastFlushed, totalAfterIncrement);
     }
 }

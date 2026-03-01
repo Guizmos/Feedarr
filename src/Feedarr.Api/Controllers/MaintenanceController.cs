@@ -552,6 +552,92 @@ public sealed class MaintenanceController : ControllerBase
         }
     }
 
+    [HttpPost("posters/repair-missing")]
+    public IActionResult RepairMissingPosters(
+        [FromQuery] bool dryRun = true,
+        [FromQuery] int? olderThanDays = null,
+        [FromQuery] int limit = 200,
+        [FromQuery] int offset = 0)
+    {
+        if (!_maintenanceLock.TryEnter())
+        {
+            _log.LogWarning("RepairMissingPosters rejected – a maintenance operation is already running");
+            return Conflict(new { error = "a maintenance operation is already running" });
+        }
+
+        try
+        {
+            var safeLimit = Math.Clamp(limit <= 0 ? 200 : limit, 1, 500);
+            var safeOffset = Math.Max(0, offset);
+            int? safeOlderThanDays = olderThanDays is > 0
+                ? Math.Clamp(olderThanDays.Value, 1, 3650)
+                : null;
+            long? olderThanTs = safeOlderThanDays.HasValue
+                ? DateTimeOffset.UtcNow.AddDays(-safeOlderThanDays.Value).ToUnixTimeSeconds()
+                : null;
+
+            var candidates = _releases.GetPosterRepairCandidates(olderThanTs, safeLimit, safeOffset);
+            var resolver = new PosterPathResolver(_posterFetch.PostersDirPath);
+
+            var checkedCount = 0;
+            var missing = 0;
+            var invalidated = 0;
+            var errors = 0;
+
+            foreach (var candidate in candidates)
+            {
+                checkedCount++;
+
+                try
+                {
+                    if (!resolver.TryResolvePosterFile(candidate.PosterFile, out var fullPath) ||
+                        !System.IO.File.Exists(fullPath))
+                    {
+                        missing++;
+                        if (!dryRun)
+                        {
+                            _releases.ClearPosterFileReferences(candidate.PosterFile);
+                            invalidated++;
+                        }
+                    }
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    errors++;
+                    _log.LogWarning(ex, "Poster repair could not access {PosterFile}", candidate.PosterFile);
+                }
+                catch (IOException ex)
+                {
+                    errors++;
+                    _log.LogWarning(ex, "Poster repair failed to inspect {PosterFile}", candidate.PosterFile);
+                }
+            }
+
+            if (!dryRun && invalidated > 0)
+            {
+                _activity.Add(null, "info", "maintenance", "Missing posters repaired",
+                    dataJson: $"{{\"checked\":{checkedCount},\"missing\":{missing},\"invalidated\":{invalidated},\"errors\":{errors},\"limit\":{safeLimit},\"offset\":{safeOffset},\"olderThanDays\":{safeOlderThanDays ?? 0}}}");
+            }
+
+            return Ok(new
+            {
+                ok = true,
+                dryRun,
+                @checked = checkedCount,
+                missing,
+                invalidated,
+                errors,
+                limit = safeLimit,
+                offset = safeOffset,
+                olderThanDays = safeOlderThanDays
+            });
+        }
+        finally
+        {
+            _maintenanceLock.Release();
+        }
+    }
+
     // POST /api/maintenance/test-providers
     [HttpPost("test-providers")]
     public async Task<IActionResult> TestProviders(CancellationToken ct)

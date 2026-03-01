@@ -1734,6 +1734,56 @@ LEFT JOIN media_entities me
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
+    public sealed class PosterRepairCandidate
+    {
+        public string PosterFile { get; set; } = "";
+        public long PosterUpdatedAtTs { get; set; }
+        public int ReferenceCount { get; set; }
+    }
+
+    public List<PosterRepairCandidate> GetPosterRepairCandidates(long? olderThanTs, int limit, int offset)
+    {
+        using var conn = _db.Open();
+        var safeLimit = Math.Clamp(limit <= 0 ? 200 : limit, 1, 500);
+        var safeOffset = Math.Max(0, offset);
+
+        var rows = conn.Query<PosterRepairCandidate>(
+            """
+            WITH refs AS (
+                SELECT r.poster_file AS PosterFile,
+                       COALESCE(r.poster_updated_at_ts, 0) AS PosterUpdatedAtTs
+                FROM releases r
+                WHERE r.poster_file IS NOT NULL
+                  AND r.poster_file <> ''
+
+                UNION ALL
+
+                SELECT me.poster_file AS PosterFile,
+                       COALESCE(me.poster_updated_at_ts, 0) AS PosterUpdatedAtTs
+                FROM media_entities me
+                WHERE me.poster_file IS NOT NULL
+                  AND me.poster_file <> ''
+            )
+            SELECT
+                PosterFile,
+                MAX(PosterUpdatedAtTs) AS PosterUpdatedAtTs,
+                COUNT(1) AS ReferenceCount
+            FROM refs
+            GROUP BY PosterFile
+            HAVING @olderThanTs IS NULL OR MAX(PosterUpdatedAtTs) <= @olderThanTs
+            ORDER BY MAX(PosterUpdatedAtTs) ASC, PosterFile ASC
+            LIMIT @limit OFFSET @offset;
+            """,
+            new
+            {
+                olderThanTs,
+                limit = safeLimit,
+                offset = safeOffset
+            });
+
+        return rows.AsList();
+    }
+
     public void ClearPosterFileReferences(string posterFile)
     {
         if (string.IsNullOrWhiteSpace(posterFile))

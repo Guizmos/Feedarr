@@ -205,6 +205,75 @@ public sealed class FeedTopByCategoryTests
         Assert.Equal("emissions", first.GetProperty("UnifiedCategoryKey").GetString());
     }
 
+    [Fact]
+    public void Latest_KeepsReleaseVisible_WhenSourceCategoryRowIsMissing()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var sourceId = InsertSource(db, "source-missing-category-row");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        InsertRelease(
+            db,
+            sourceId,
+            guid: "guid-no-category-row",
+            categoryId: 2000,
+            unifiedCategory: "Film",
+            seeders: 50,
+            categoryIds: "2000",
+            title: "Visible Without Category Row",
+            publishedAt: now - 60,
+            createdAt: now - 60);
+
+        var controller = CreateController(db);
+        var action = controller.Latest(sourceId, limit: 10, q: null, categoryId: null, minSeeders: null, seen: null);
+        var ok = Assert.IsType<OkObjectResult>(action);
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var rows = doc.RootElement.EnumerateArray().ToList();
+        Assert.Single(rows);
+        Assert.Equal("Visible Without Category Row", rows[0].GetProperty("Title").GetString());
+        Assert.Equal("films", rows[0].GetProperty("UnifiedCategoryKey").GetString());
+        Assert.Equal("Films", rows[0].GetProperty("UnifiedCategoryLabel").GetString());
+    }
+
+    [Fact]
+    public void Latest_PreservesSourceCategoryMetadata_WhenSourceCategoryRowExists()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var sourceId = InsertSource(db, "source-category-row-present");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        InsertSourceCategory(db, sourceId, 5000, "TV", unifiedKey: "series", unifiedLabel: "Serie TV");
+        InsertRelease(
+            db,
+            sourceId,
+            guid: "guid-with-category-row",
+            categoryId: 5000,
+            unifiedCategory: "Serie",
+            seeders: 70,
+            categoryIds: "5000",
+            title: "Visible With Category Row",
+            publishedAt: now - 60,
+            createdAt: now - 60);
+
+        var controller = CreateController(db);
+        var action = controller.Latest(sourceId, limit: 10, q: null, categoryId: null, minSeeders: null, seen: null);
+        var ok = Assert.IsType<OkObjectResult>(action);
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var row = Assert.Single(doc.RootElement.EnumerateArray());
+        Assert.Equal("Visible With Category Row", row.GetProperty("Title").GetString());
+        Assert.Equal("TV", row.GetProperty("CategoryName").GetString());
+        Assert.Equal("series", row.GetProperty("UnifiedCategoryKey").GetString());
+        Assert.Equal("Série TV", row.GetProperty("UnifiedCategoryLabel").GetString());
+    }
+
     private static FeedController CreateController(Db db)
     {
         return new FeedController(

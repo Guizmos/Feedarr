@@ -86,29 +86,7 @@ public sealed class PostersController : ControllerBase
 
         var file = (string?)r.PosterFile;
         if (string.IsNullOrWhiteSpace(file)) return NotFound();
-
-        if (!TryResolveStoredPosterPath(file, out var full))
-        {
-            _releases.ClearPosterFileReferences(file);
-            return NotFound();
-        }
-
-        if (!System.IO.File.Exists(full))
-        {
-            _releases.ClearPosterFileReferences(file);
-            return NotFound();
-        }
-
-        var ext = Path.GetExtension(full).ToLowerInvariant();
-        var ct = ext switch
-        {
-            ".jpg" or ".jpeg" => "image/jpeg",
-            ".png" => "image/png",
-            ".webp" => "image/webp",
-            _ => "application/octet-stream"
-        };
-
-        return PhysicalFile(full, ct);
+        return BuildPosterFileResult(file, $"release:{id}");
     }
 
     // GET /api/posters/entity/{entityId}
@@ -120,29 +98,7 @@ public sealed class PostersController : ControllerBase
 
         var file = entity.PosterFile;
         if (string.IsNullOrWhiteSpace(file)) return NotFound();
-
-        if (!TryResolveStoredPosterPath(file, out var full))
-        {
-            _releases.ClearPosterFileReferences(file);
-            return NotFound();
-        }
-
-        if (!System.IO.File.Exists(full))
-        {
-            _releases.ClearPosterFileReferences(file);
-            return NotFound();
-        }
-
-        var ext = Path.GetExtension(full).ToLowerInvariant();
-        var ct = ext switch
-        {
-            ".jpg" or ".jpeg" => "image/jpeg",
-            ".png" => "image/png",
-            ".webp" => "image/webp",
-            _ => "application/octet-stream"
-        };
-
-        return PhysicalFile(full, ct);
+        return BuildPosterFileResult(file, $"entity:{entityId}");
     }
 
     // GET /api/posters/banner/{id}
@@ -159,9 +115,22 @@ public sealed class PostersController : ControllerBase
             return NotFound();
 
         if (System.IO.File.Exists(full))
-            return PhysicalFile(full, "image/jpeg");
+            return BuildPosterFileResult(file, $"banner-cache:{id}");
 
-        Directory.CreateDirectory(postersDir);
+        try
+        {
+            Directory.CreateDirectory(postersDir);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _log.LogWarning(ex, "Banner cache directory access denied for release {ReleaseId} at {Path}", id, postersDir);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "poster file unavailable" });
+        }
+        catch (IOException ex)
+        {
+            _log.LogWarning(ex, "Banner cache directory creation failed for release {ReleaseId} at {Path}", id, postersDir);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "poster file unavailable" });
+        }
 
         var tmdbId = (int?)r.TmdbId ?? 0;
         var tvdbId = (int?)r.TvdbId ?? 0;
@@ -201,21 +170,28 @@ public sealed class PostersController : ControllerBase
             var posterFile = (string?)r.PosterFile;
             if (!string.IsNullOrWhiteSpace(posterFile))
             {
-                if (!pathResolver.TryResolvePosterFile(posterFile, out var posterFull))
-                {
-                    _releases.ClearPosterFileReferences(posterFile);
-                    return NotFound();
-                }
-
-                if (System.IO.File.Exists(posterFull))
-                    return PhysicalFile(posterFull, "image/jpeg");
-
-                _releases.ClearPosterFileReferences(posterFile);
+                var fallbackResult = BuildPosterFileResult(posterFile, $"banner-fallback:{id}");
+                if (fallbackResult is PhysicalFileResult or ObjectResult)
+                    return fallbackResult;
             }
             return NotFound();
         }
 
-        await System.IO.File.WriteAllBytesAsync(full, bytes, ct);
+        try
+        {
+            await System.IO.File.WriteAllBytesAsync(full, bytes, ct);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _log.LogWarning(ex, "Banner cache write denied for release {ReleaseId} at {Path}", id, full);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "poster file unavailable" });
+        }
+        catch (IOException ex)
+        {
+            _log.LogWarning(ex, "Banner cache write failed for release {ReleaseId} at {Path}", id, full);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "poster file unavailable" });
+        }
+
         return PhysicalFile(full, "image/jpeg");
     }
 
@@ -951,5 +927,54 @@ public sealed class PostersController : ControllerBase
         }
 
         return resolved;
+    }
+
+    private IActionResult BuildPosterFileResult(string storedFile, string logContext)
+    {
+        if (!TryResolveStoredPosterPath(storedFile, out var fullPath))
+            return NotFound();
+
+        try
+        {
+            using var stream = new FileStream(
+                fullPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+
+            return PhysicalFile(fullPath, GetContentTypeForPoster(fullPath));
+        }
+        catch (FileNotFoundException)
+        {
+            _log.LogInformation("Poster file missing for {Context}: {File}", logContext, SanitizeForLog(storedFile));
+            return NotFound();
+        }
+        catch (DirectoryNotFoundException)
+        {
+            _log.LogInformation("Poster directory missing for {Context}: {File}", logContext, SanitizeForLog(storedFile));
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _log.LogWarning(ex, "Poster file access denied for {Context}: {File}", logContext, SanitizeForLog(storedFile));
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "poster file unavailable" });
+        }
+        catch (IOException ex)
+        {
+            _log.LogWarning(ex, "Poster file read failed for {Context}: {File}", logContext, SanitizeForLog(storedFile));
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "poster file unavailable" });
+        }
+    }
+
+    private static string GetContentTypeForPoster(string fullPath)
+    {
+        var ext = Path.GetExtension(fullPath).ToLowerInvariant();
+        return ext switch
+        {
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".png" => "image/png",
+            ".webp" => "image/webp",
+            _ => "application/octet-stream"
+        };
     }
 }
