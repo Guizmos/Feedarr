@@ -86,6 +86,78 @@ public sealed class FeedController : ControllerBase
         "ELSE lower(trim(sc.unified_key)) END";
     private const string EffectiveTopCategoryKeySql =
         "COALESCE(" + UnifiedCategoryToKeySql + ", " + MappingKeyToCanonicalSql + ", " + LegacySourceCategoryKeyToCanonicalSql + ")";
+    private const string TopFallbackCategoryKeySql =
+        "CASE " +
+        "WHEN lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%spectacle%' " +
+        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%concert%' " +
+        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%opera%' " +
+        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%theatre%' " +
+        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%ballet%' " +
+        "THEN 'spectacle' " +
+        "WHEN lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%emission%' " +
+        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%enquete%' " +
+        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%magazine%' " +
+        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%talk%' " +
+        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%show%' " +
+        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%reportage%' " +
+        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%documentaire%' " +
+        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%docu%' " +
+        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%quotidien%' " +
+        "THEN 'emissions' " +
+        "WHEN lower(COALESCE(sc.name, '')) LIKE '%pc/games%' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE '%pc games%' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE '%game%' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE '%jeu%' " +
+        "THEN 'games' " +
+        "WHEN lower(COALESCE(sc.name, '')) LIKE '%anime%' THEN 'anime' " +
+        "WHEN lower(COALESCE(sc.name, '')) LIKE '%audio%' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE '%music%' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE '%musique%' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE '%podcast%' " +
+        "THEN 'audio' " +
+        "WHEN lower(COALESCE(sc.name, '')) LIKE '%book%' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE '%livre%' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE '%ebook%' " +
+        "THEN 'books' " +
+        "WHEN lower(COALESCE(sc.name, '')) LIKE '%comic%' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE '%manga%' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE '%scan%' " +
+        "THEN 'comics' " +
+        "WHEN lower(COALESCE(sc.name, '')) LIKE '%spectacle%' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE '%concert%' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE '%opera%' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE '%theatre%' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE '%ballet%' " +
+        "THEN 'spectacle' " +
+        "WHEN lower(COALESCE(sc.name, '')) LIKE '%documentary%' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE '%documentaire%' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE '%doc%' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE '%emission%' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE '%show%' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE '%magazine%' " +
+        "THEN 'emissions' " +
+        "WHEN lower(COALESCE(sc.name, '')) = 'movies' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE 'movie%' " +
+        "THEN 'films' " +
+        "WHEN lower(COALESCE(sc.name, '')) = 'tv' " +
+        "  OR lower(COALESCE(sc.name, '')) LIKE 'tv/%' " +
+        "THEN 'series' " +
+        "ELSE NULL END";
+    private const string ResolvedTopCategoryKeySql =
+        "COALESCE(" + EffectiveTopCategoryKeySql + ", " + TopFallbackCategoryKeySql + ")";
+    private const string ResolvedTopCategoryLabelSql =
+        "CASE " + ResolvedTopCategoryKeySql + " " +
+        "WHEN 'films' THEN 'Films' " +
+        "WHEN 'series' THEN 'Série TV' " +
+        "WHEN 'emissions' THEN 'Emissions' " +
+        "WHEN 'spectacle' THEN 'Spectacle' " +
+        "WHEN 'games' THEN 'Jeux PC' " +
+        "WHEN 'animation' THEN 'Animation' " +
+        "WHEN 'anime' THEN 'Anime' " +
+        "WHEN 'audio' THEN 'Audio' " +
+        "WHEN 'books' THEN 'Livres' " +
+        "WHEN 'comics' THEN 'Comics' " +
+        "ELSE COALESCE(scm.group_label, sc.unified_label, " + ResolvedTopCategoryKeySql + ") END";
 
     public FeedController(Db db, UnifiedCategoryService unified, IMemoryCache cache)
     {
@@ -94,7 +166,7 @@ public sealed class FeedController : ControllerBase
         _cache = cache;
     }
 
-    private sealed class FeedRow
+    private class FeedRow
     {
         public long Id { get; set; }
         public long SourceId { get; set; }
@@ -155,12 +227,9 @@ public sealed class FeedController : ControllerBase
         public long? ArrCheckedAtTs { get; set; }
     }
 
-    private sealed class TopCategoryAccumulator
+    private sealed class TopCategoryRow : FeedRow
     {
-        public required string Key { get; init; }
-        public required string Label { get; set; }
-        public int Count { get; set; }
-        public List<FeedRow> Top { get; } = new();
+        public int CatCount { get; set; }
     }
 
     private static string? CanonicalizeUnifiedCategoryKey(string? key)
@@ -484,6 +553,10 @@ public sealed class FeedController : ControllerBase
         var sourceFilterSql = effectiveSourceId.HasValue
             ? "releases.source_id = @sid AND "
             : string.Empty;
+        var rankedSourceFilterSql = effectiveSourceId.HasValue
+            ? "r.source_id = @sid AND "
+            : string.Empty;
+        var rankedCategoryKeySql = ResolvedTopCategoryKeySql.Replace("releases.", "r.");
 
         var globalSql = $"""
         SELECT
@@ -510,8 +583,8 @@ public sealed class FeedController : ControllerBase
           spec_category_id as specCategoryId,
           category_ids as categoryIds,
           releases.unified_category as unifiedCategory,
-          ({EffectiveTopCategoryKeySql}) as unifiedCategoryKey,
-          COALESCE(scm.group_label, sc.unified_label) as unifiedCategoryLabel,
+          ({ResolvedTopCategoryKeySql}) as unifiedCategoryKey,
+          ({ResolvedTopCategoryLabelSql}) as unifiedCategoryLabel,
           seen,
           ('/api/releases/' || releases.id || '/download') as downloadPath,
           releases.entity_id as entityId,
@@ -563,6 +636,33 @@ public sealed class FeedController : ControllerBase
         }
 
         var categoriesSql = $"""
+        WITH ranked AS (
+          SELECT
+            r.id,
+            ({rankedCategoryKeySql}) as unifiedCategoryKey,
+            COALESCE(scm.group_label, sc.unified_label) as unifiedCategoryLabel,
+            COUNT(1) OVER (
+              PARTITION BY ({rankedCategoryKeySql})
+            ) as catCount,
+            ROW_NUMBER() OVER (
+              PARTITION BY ({rankedCategoryKeySql})
+              ORDER BY r.published_at_ts DESC, r.id DESC
+            ) as rn
+          FROM releases r
+          LEFT JOIN source_categories sc
+            ON sc.source_id = r.source_id AND sc.cat_id = r.category_id
+          LEFT JOIN source_category_mappings scm
+            ON scm.source_id = r.source_id AND scm.cat_id = r.category_id
+          WHERE {rankedSourceFilterSql}r.{TopWindowField} >= @sinceTs
+            AND ({rankedCategoryKeySql}) IS NOT NULL
+        ),
+        retained AS (
+          SELECT
+            ranked.id,
+            ranked.catCount
+          FROM ranked
+          WHERE ranked.rn <= @take
+        )
         SELECT
           releases.id as id,
           releases.source_id as sourceId,
@@ -613,8 +713,11 @@ public sealed class FeedController : ControllerBase
           ras.sonarr_url as sonarrUrl,
           ras.radarr_url as radarrUrl,
           COALESCE(ras.sonarr_url, ras.radarr_url) as openUrl,
-          ras.checked_at_ts as arrCheckedAtTs
-        FROM releases
+          ras.checked_at_ts as arrCheckedAtTs,
+          retained.catCount as catCount
+        FROM retained
+        JOIN releases
+          ON releases.id = retained.id
         LEFT JOIN media_entities me
           ON me.id = releases.entity_id
         LEFT JOIN source_categories sc
@@ -623,16 +726,25 @@ public sealed class FeedController : ControllerBase
           ON scm.source_id = releases.source_id AND scm.cat_id = releases.category_id
         LEFT JOIN release_arr_status ras
           ON ras.release_id = releases.id
-        WHERE {sourceFilterSql}releases.{TopWindowField} >= @sinceTs
-        ORDER BY {TopOrderSql};
+        ORDER BY retained.catCount DESC,
+                 ({ResolvedTopCategoryLabelSql}) ASC,
+                 ({ResolvedTopCategoryKeySql}) ASC,
+                 releases.published_at_ts DESC,
+                 releases.id DESC;
         """;
 
         var categoryArgs = new DynamicParameters();
         categoryArgs.Add("sinceTs", sinceTs);
+        categoryArgs.Add("take", effectiveTake);
         if (effectiveSourceId.HasValue) categoryArgs.Add("sid", effectiveSourceId.Value);
 
-        var categoriesByKey = new Dictionary<string, TopCategoryAccumulator>(StringComparer.OrdinalIgnoreCase);
-        foreach (var row in conn.Query<FeedRow>(categoriesSql, categoryArgs))
+        var categoryResults = new List<object>();
+        string? currentKey = null;
+        string? currentLabel = null;
+        var currentCount = 0;
+        List<FeedRow>? currentTop = null;
+
+        foreach (var row in conn.Query<TopCategoryRow>(categoriesSql, categoryArgs))
         {
             PopulateUnifiedCategoryMetadata(row);
             if (string.IsNullOrWhiteSpace(row.UnifiedCategoryKey))
@@ -643,19 +755,37 @@ public sealed class FeedController : ControllerBase
                 ? key
                 : row.UnifiedCategoryLabel;
 
-            if (!categoriesByKey.TryGetValue(key, out var bucket))
+            if (!string.Equals(currentKey, key, StringComparison.OrdinalIgnoreCase))
             {
-                bucket = new TopCategoryAccumulator
+                if (currentTop is not null && currentKey is not null && currentLabel is not null)
                 {
-                    Key = key,
-                    Label = label
-                };
-                categoriesByKey[key] = bucket;
+                    categoryResults.Add(new
+                    {
+                        key = currentKey,
+                        label = currentLabel,
+                        count = currentCount,
+                        top = currentTop
+                    });
+                }
+
+                currentKey = key;
+                currentLabel = label;
+                currentCount = row.CatCount;
+                currentTop = new List<FeedRow>(effectiveTake);
             }
 
-            bucket.Count++;
-            if (bucket.Top.Count < effectiveTake)
-                bucket.Top.Add(row);
+            currentTop!.Add(row);
+        }
+
+        if (currentTop is not null && currentKey is not null && currentLabel is not null)
+        {
+            categoryResults.Add(new
+            {
+                key = currentKey,
+                label = currentLabel,
+                count = currentCount,
+                top = currentTop
+            });
         }
 
         var result = new
@@ -667,18 +797,7 @@ public sealed class FeedController : ControllerBase
                 field = TopWindowField
             },
             globalTop = globalRows,
-            categories = categoriesByKey.Values
-                .OrderByDescending(bucket => bucket.Count)
-                .ThenBy(bucket => bucket.Label, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(bucket => bucket.Key, StringComparer.OrdinalIgnoreCase)
-                .Select(bucket => new
-                {
-                    key = bucket.Key,
-                    label = bucket.Label,
-                    count = bucket.Count,
-                    top = bucket.Top
-                })
-                .ToList()
+            categories = categoryResults
         };
 
         _cache.Set(cacheKey, result, TopCacheDuration);

@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Text;
 using Dapper;
 using Feedarr.Api.Services.Matching;
 
@@ -9,6 +10,9 @@ namespace Feedarr.Api.Data.Repositories;
 
 public sealed class ArrLibraryRepository
 {
+    private const string StageTableName = "arr_library_stage";
+    private const int StageInsertBatchSize = 90;
+
     private readonly Db _db;
 
     public ArrLibraryRepository(Db db)
@@ -50,46 +54,40 @@ public sealed class ArrLibraryRepository
     public void SyncAppLibrary(long appId, string type, List<LibraryItemDto> items)
     {
         using var conn = _db.Open();
-        using var tx = conn.BeginTransaction();
-
         try
         {
-            // Delete existing items for this app and type
+            PrepareStageTable(conn);
+            BulkInsertStageRows(conn, items ?? new List<LibraryItemDto>());
+            var stagedCount = conn.ExecuteScalar<int>($"SELECT COUNT(1) FROM {StageTableName};");
+
+            using var tx = conn.BeginTransaction();
+
             conn.Execute(
                 "DELETE FROM arr_library_items WHERE app_id = @appId AND type = @type",
                 new { appId, type },
                 tx);
 
-            // Insert new items
-            foreach (var item in items)
-            {
-                var titleNormalized = TitleNormalizer.NormalizeTitleStrict(item.Title);
-                var alternateTitlesJson = item.AlternateTitles?.Count > 0
-                    ? JsonSerializer.Serialize(item.AlternateTitles)
-                    : null;
+            conn.Execute($"""
+                INSERT INTO arr_library_items
+                (app_id, type, tmdb_id, tvdb_id, internal_id, title, original_title, title_slug, alternate_titles, title_normalized, synced_at)
+                SELECT
+                    @appId,
+                    @type,
+                    tmdb_id,
+                    tvdb_id,
+                    internal_id,
+                    title,
+                    original_title,
+                    title_slug,
+                    alternate_titles,
+                    title_normalized,
+                    synced_at
+                FROM {StageTableName}
+                ORDER BY row_order;
+                """,
+                new { appId, type },
+                tx);
 
-                conn.Execute(@"
-                    INSERT INTO arr_library_items
-                    (app_id, type, tmdb_id, tvdb_id, internal_id, title, original_title, title_slug, alternate_titles, title_normalized, synced_at)
-                    VALUES
-                    (@appId, @type, @tmdbId, @tvdbId, @internalId, @title, @originalTitle, @titleSlug, @alternateTitles, @titleNormalized, datetime('now'))",
-                    new
-                    {
-                        appId,
-                        type,
-                        tmdbId = item.TmdbId,
-                        tvdbId = item.TvdbId,
-                        internalId = item.InternalId,
-                        title = item.Title,
-                        originalTitle = item.OriginalTitle,
-                        titleSlug = item.TitleSlug,
-                        alternateTitles = alternateTitlesJson,
-                        titleNormalized
-                    },
-                    tx);
-            }
-
-            // Update sync status
             conn.Execute(@"
                 INSERT INTO arr_sync_status (app_id, last_sync_at, last_sync_count, last_error)
                 VALUES (@appId, datetime('now'), @count, NULL)
@@ -97,15 +95,99 @@ public sealed class ArrLibraryRepository
                     last_sync_at = datetime('now'),
                     last_sync_count = @count,
                     last_error = NULL",
-                new { appId, count = items.Count },
+                new { appId, count = stagedCount },
                 tx);
 
             tx.Commit();
         }
         catch
         {
-            tx.Rollback();
             throw;
+        }
+        finally
+        {
+            conn.Execute($"DROP TABLE IF EXISTS {StageTableName};");
+        }
+    }
+
+    private static void PrepareStageTable(System.Data.IDbConnection conn)
+    {
+        conn.Execute($"DROP TABLE IF EXISTS {StageTableName};");
+        conn.Execute($"""
+            CREATE TEMP TABLE {StageTableName} (
+                internal_id INTEGER NOT NULL PRIMARY KEY,
+                row_order INTEGER NOT NULL,
+                tmdb_id INTEGER,
+                tvdb_id INTEGER,
+                title TEXT NOT NULL,
+                original_title TEXT,
+                title_slug TEXT,
+                alternate_titles TEXT,
+                title_normalized TEXT,
+                synced_at TEXT NOT NULL
+            );
+            """);
+    }
+
+    private static void BulkInsertStageRows(System.Data.IDbConnection conn, IReadOnlyList<LibraryItemDto> items)
+    {
+        if (items.Count == 0)
+            return;
+
+        var syncedAt = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+        for (var offset = 0; offset < items.Count; offset += StageInsertBatchSize)
+        {
+            var batchCount = Math.Min(StageInsertBatchSize, items.Count - offset);
+            var sql = new StringBuilder($"""
+                INSERT INTO {StageTableName}
+                (internal_id, row_order, tmdb_id, tvdb_id, title, original_title, title_slug, alternate_titles, title_normalized, synced_at)
+                VALUES
+                """);
+            var args = new DynamicParameters();
+
+            for (var i = 0; i < batchCount; i++)
+            {
+                var item = items[offset + i];
+                var parameterIndex = offset + i;
+                var titleNormalized = TitleNormalizer.NormalizeTitleStrict(item.Title);
+                var alternateTitlesJson = item.AlternateTitles?.Count > 0
+                    ? JsonSerializer.Serialize(item.AlternateTitles)
+                    : null;
+
+                if (i > 0)
+                    sql.Append(',');
+
+                sql.Append($"""
+                    (@internalId{parameterIndex}, @rowOrder{parameterIndex}, @tmdbId{parameterIndex}, @tvdbId{parameterIndex}, @title{parameterIndex}, @originalTitle{parameterIndex}, @titleSlug{parameterIndex}, @alternateTitles{parameterIndex}, @titleNormalized{parameterIndex}, @syncedAt{parameterIndex})
+                    """);
+
+                args.Add($"internalId{parameterIndex}", item.InternalId);
+                args.Add($"rowOrder{parameterIndex}", parameterIndex);
+                args.Add($"tmdbId{parameterIndex}", item.TmdbId);
+                args.Add($"tvdbId{parameterIndex}", item.TvdbId);
+                args.Add($"title{parameterIndex}", item.Title);
+                args.Add($"originalTitle{parameterIndex}", item.OriginalTitle);
+                args.Add($"titleSlug{parameterIndex}", item.TitleSlug);
+                args.Add($"alternateTitles{parameterIndex}", alternateTitlesJson);
+                args.Add($"titleNormalized{parameterIndex}", titleNormalized);
+                args.Add($"syncedAt{parameterIndex}", syncedAt);
+            }
+
+            sql.Append("""
+                
+                ON CONFLICT(internal_id) DO UPDATE SET
+                    row_order = excluded.row_order,
+                    tmdb_id = excluded.tmdb_id,
+                    tvdb_id = excluded.tvdb_id,
+                    title = excluded.title,
+                    original_title = excluded.original_title,
+                    title_slug = excluded.title_slug,
+                    alternate_titles = excluded.alternate_titles,
+                    title_normalized = excluded.title_normalized,
+                    synced_at = excluded.synced_at;
+                """);
+
+            conn.Execute(sql.ToString(), args);
         }
     }
 

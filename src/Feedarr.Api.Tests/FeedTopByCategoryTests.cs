@@ -206,6 +206,78 @@ public sealed class FeedTopByCategoryTests
     }
 
     [Fact]
+    public void Top_OrdersSectionsByVolumeDesc_ThenLabelAsc()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var sourceId = InsertSource(db, "source-ordering");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        InsertSourceCategory(db, sourceId, 2000, "Movies", unifiedKey: "films", unifiedLabel: "Zulu");
+        InsertSourceCategory(db, sourceId, 5000, "TV", unifiedKey: "series", unifiedLabel: "Alpha");
+        InsertSourceCategory(db, sourceId, 5070, "Anime", unifiedKey: "anime", unifiedLabel: "Mike");
+
+        InsertRelease(
+            db,
+            sourceId,
+            guid: "guid-order-film-1",
+            categoryId: 2000,
+            unifiedCategory: "Film",
+            seeders: 50,
+            categoryIds: "2000",
+            title: "Film One",
+            publishedAt: now - 300,
+            createdAt: now - 30);
+        InsertRelease(
+            db,
+            sourceId,
+            guid: "guid-order-film-2",
+            categoryId: 2000,
+            unifiedCategory: "Film",
+            seeders: 40,
+            categoryIds: "2000",
+            title: "Film Two",
+            publishedAt: now - 240,
+            createdAt: now - 20);
+        InsertRelease(
+            db,
+            sourceId,
+            guid: "guid-order-series-1",
+            categoryId: 5000,
+            unifiedCategory: "Serie",
+            seeders: 60,
+            categoryIds: "5000",
+            title: "Series One",
+            publishedAt: now - 180,
+            createdAt: now - 10);
+        InsertRelease(
+            db,
+            sourceId,
+            guid: "guid-order-anime-1",
+            categoryId: 5070,
+            unifiedCategory: "Anime",
+            seeders: 70,
+            categoryIds: "5070",
+            title: "Anime One",
+            publishedAt: now - 120,
+            createdAt: now - 5);
+
+        var controller = CreateController(db);
+        var action = controller.Top(hours: 24, take: 2, limit: null, sourceId: null, indexerId: null);
+        var ok = Assert.IsType<OkObjectResult>(action);
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var categories = doc.RootElement.GetProperty("categories").EnumerateArray().ToList();
+        Assert.Equal(3, categories.Count);
+        Assert.Equal("films", categories[0].GetProperty("key").GetString());
+        Assert.Equal(2, categories[0].GetProperty("count").GetInt32());
+        Assert.Equal("Anime", categories[1].GetProperty("label").GetString());
+        Assert.Equal("Série TV", categories[2].GetProperty("label").GetString());
+    }
+
+    [Fact]
     public void Latest_KeepsReleaseVisible_WhenSourceCategoryRowIsMissing()
     {
         using var workspace = new TestWorkspace();
