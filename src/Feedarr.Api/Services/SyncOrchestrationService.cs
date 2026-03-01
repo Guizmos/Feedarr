@@ -91,9 +91,9 @@ public sealed class SyncOrchestrationService
             var categoryMap = _sources.GetCategoryMappingMap(id);
             var perCatLimit = _opts.RssLimitPerCategory > 0 ? _opts.RssLimitPerCategory : _opts.RssLimit;
             if (perCatLimit <= 0) perCatLimit = 50;
-            perCatLimit = Math.Clamp(perCatLimit, 1, 200);
+            perCatLimit = Math.Clamp(perCatLimit, 10, 500);
             var globalLimit = _opts.RssLimitGlobalPerSource > 0 ? _opts.RssLimitGlobalPerSource : 250;
-            globalLimit = Math.Clamp(globalLimit, 1, 2000);
+            globalLimit = Math.Clamp(globalLimit, 50, 2000);
 
             var defaultSeen = 0;
             try
@@ -106,8 +106,8 @@ public sealed class SyncOrchestrationService
                     RssLimit = perCatLimit,
                     AutoSyncEnabled = true
                 });
-                perCatLimit = Math.Clamp(general.RssLimitPerCategory, 1, 200);
-                globalLimit = Math.Clamp(general.RssLimitGlobalPerSource, 1, 2000);
+                perCatLimit = Math.Clamp(general.RssLimitPerCategory, 10, 500);
+                globalLimit = Math.Clamp(general.RssLimitGlobalPerSource, 50, 2000);
 
                 var uiSettings = _settings.GetUi(new UiSettings());
                 if (uiSettings.HideSeenByDefault)

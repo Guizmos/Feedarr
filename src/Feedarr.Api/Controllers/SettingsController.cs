@@ -81,16 +81,32 @@ public sealed class SettingsController : ControllerBase
     [HttpPut("general")]
     public IActionResult PutGeneral([FromBody] GeneralSettings dto)
     {
+        const int PerCatMin = 10, PerCatMax = 500;
+        const int GlobalMin = 50, GlobalMax = 2000;
+
         var interval = Math.Clamp(dto.SyncIntervalMinutes, 1, 1440);
         var perCatRaw = dto.RssLimitPerCategory > 0
             ? dto.RssLimitPerCategory
             : (dto.RssLimit > 0 ? dto.RssLimit : _app.RssLimitPerCategory);
         if (perCatRaw <= 0) perCatRaw = _app.RssLimit > 0 ? _app.RssLimit : 50;
-        var perCatLimit = Math.Clamp(perCatRaw, 1, 200);
+        var perCatLimit = Math.Clamp(perCatRaw, PerCatMin, PerCatMax);
+        if (perCatLimit != perCatRaw)
+            _log.LogWarning("RssLimitPerCategory clamped from {Raw} to {Clamped}", perCatRaw, perCatLimit);
 
         var globalRaw = dto.RssLimitGlobalPerSource > 0 ? dto.RssLimitGlobalPerSource : _app.RssLimitGlobalPerSource;
         if (globalRaw <= 0) globalRaw = 250;
-        var globalLimit = Math.Clamp(globalRaw, 1, 2000);
+        var globalLimit = Math.Clamp(globalRaw, GlobalMin, GlobalMax);
+        if (globalLimit != globalRaw)
+            _log.LogWarning("RssLimitGlobalPerSource clamped from {Raw} to {Clamped}", globalRaw, globalLimit);
+
+        if (globalLimit < perCatLimit)
+        {
+            _log.LogWarning(
+                "RssLimitGlobalPerSource ({Global}) < RssLimitPerCategory ({PerCat}); forcing global = perCat",
+                globalLimit, perCatLimit);
+            globalLimit = perCatLimit;
+        }
+
         var arrInterval = Math.Clamp(dto.ArrSyncIntervalMinutes, 1, 1440);
         var requestMode = (dto.RequestIntegrationMode ?? "arr").Trim().ToLowerInvariant();
         if (requestMode is not ("arr" or "overseerr" or "jellyseerr" or "seer"))
