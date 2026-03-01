@@ -1553,10 +1553,12 @@ LEFT JOIN media_entities me
         var deletedIds = new List<long>();
         var posterFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        var purgedPerCat = 0;
-        if (perCatLimit > 0)
-        {
-            var perCatIds = conn.Query<long>(
+        // Phase 1: collect both candidate sets BEFORE any deletion so that poster
+        // files can be retrieved in a single query (avoids calling GetPosterFilesForReleaseIds
+        // once per deletion pass).  GlobalIds are queried on the full table; IDs that
+        // overlap with perCatIds are excluded at delete time.
+        var perCatIds = perCatLimit > 0
+            ? conn.Query<long>(
                 """
                 WITH ranked AS (
                   SELECT id,
@@ -1573,25 +1575,11 @@ LEFT JOIN media_entities me
                 """,
                 new { sid = sourceId, cats = RetentionUnifiedCategories, limit = perCatLimit },
                 tx
-            ).AsList();
+            ).AsList()
+            : new List<long>();
 
-            if (perCatIds.Count > 0)
-            {
-                foreach (var file in GetPosterFilesForReleaseIds(conn, tx, perCatIds))
-                    posterFiles.Add(file);
-
-                DeleteReleaseArrStatus(conn, tx, perCatIds);
-                DeleteReleases(conn, tx, perCatIds);
-
-                deletedIds.AddRange(perCatIds);
-                purgedPerCat = perCatIds.Count;
-            }
-        }
-
-        var purgedGlobal = 0;
-        if (globalLimit > 0)
-        {
-            var globalIds = conn.Query<long>(
+        var globalIds = globalLimit > 0
+            ? conn.Query<long>(
                 """
                 WITH ranked AS (
                   SELECT id,
@@ -1605,19 +1593,40 @@ LEFT JOIN media_entities me
                 """,
                 new { sid = sourceId, limit = globalLimit },
                 tx
-            ).AsList();
+            ).AsList()
+            : new List<long>();
 
-            if (globalIds.Count > 0)
-            {
-                foreach (var file in GetPosterFilesForReleaseIds(conn, tx, globalIds))
-                    posterFiles.Add(file);
+        // Phase 2: ONE poster-files query for all IDs that will be deleted.
+        var allCandidates = new HashSet<long>(perCatIds);
+        allCandidates.UnionWith(globalIds);
+        if (allCandidates.Count > 0)
+        {
+            foreach (var file in GetPosterFilesForReleaseIds(conn, tx, allCandidates))
+                posterFiles.Add(file);
+        }
 
-                DeleteReleaseArrStatus(conn, tx, globalIds);
-                DeleteReleases(conn, tx, globalIds);
+        // Phase 3: delete per-cat candidates.
+        var purgedPerCat = 0;
+        if (perCatIds.Count > 0)
+        {
+            DeleteReleaseArrStatus(conn, tx, perCatIds);
+            DeleteReleases(conn, tx, perCatIds);
+            deletedIds.AddRange(perCatIds);
+            purgedPerCat = perCatIds.Count;
+        }
 
-                deletedIds.AddRange(globalIds);
-                purgedGlobal = globalIds.Count;
-            }
+        // Phase 4: delete global candidates not already removed by per-cat pass.
+        var purgedGlobal = 0;
+        var perCatSet = perCatIds.Count > 0 ? new HashSet<long>(perCatIds) : null;
+        var globalOnlyIds = perCatSet is not null
+            ? globalIds.Where(id => !perCatSet.Contains(id)).ToList()
+            : globalIds;
+        if (globalOnlyIds.Count > 0)
+        {
+            DeleteReleaseArrStatus(conn, tx, globalOnlyIds);
+            DeleteReleases(conn, tx, globalOnlyIds);
+            deletedIds.AddRange(globalOnlyIds);
+            purgedGlobal = globalOnlyIds.Count;
         }
 
         var perKeyAfter = GetPerKeyCounts(conn, tx, sourceId);

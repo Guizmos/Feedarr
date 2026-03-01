@@ -18,6 +18,39 @@ namespace Feedarr.Api.Tests;
 
 public sealed class RetentionServiceTests
 {
+    // -------------------------------------------------------------------------
+    // Fix 3: single GetPosterFilesForReleaseIds call for both deletion passes
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void ApplyRetention_WithBothPerCatAndGlobalLimits_CollectsAllPosterFiles()
+    {
+        using var context = new RetentionTestContext();
+
+        // 4 Film releases (ts 400–700) — perCat applies to Film
+        context.CreateRelease("f-400", 400, "poster-f400.jpg");
+        context.CreateRelease("f-500", 500, "poster-f500.jpg");
+        context.CreateRelease("f-600", 600, "poster-f600.jpg");
+        context.CreateRelease("f-700", 700, "poster-f700.jpg");
+
+        // 3 "Other" releases (ts 100–300) — NOT in RetentionUnifiedCategories
+        context.CreateReleaseWithCategory("o-100", 100, "poster-o100.jpg", "Other");
+        context.CreateReleaseWithCategory("o-200", 200, "poster-o200.jpg", "Other");
+        context.CreateReleaseWithCategory("o-300", 300, "poster-o300.jpg", "Other");
+
+        // perCatLimit=2: keep Film 600,700; delete Film 400,500 → purgedPerCat=2
+        // globalLimit=4: keep top-4 (700,600,500,400); delete Other 100,200,300 → purgedGlobal=3
+        // allCandidates collected BEFORE any deletion → poster files = 5 (all deleted releases)
+        var (result, _, failedDeletes) = context.Service.ApplyRetention(
+            context.SourceId, perCatLimit: 2, globalLimit: 4);
+
+        Assert.Equal(2, result.PurgedByPerCategory);
+        Assert.Equal(3, result.PurgedByGlobal);
+        Assert.Equal(2, result.TotalAfter);
+        Assert.Equal(5, result.PosterFiles.Count);
+        Assert.Equal(0, failedDeletes);
+    }
+
     [Fact]
     public void ApplyRetention_WhenDeleteThrows_KeepsFileAndCountsFailedDelete()
     {
@@ -167,6 +200,42 @@ public sealed class RetentionServiceTests
                 SELECT last_insert_rowid();
                 """,
                 new { sourceId = SourceId, guid, publishedAtTs, posterFile });
+        }
+
+        public long CreateReleaseWithCategory(string guid, long publishedAtTs, string posterFile, string unifiedCategory)
+        {
+            using var conn = Db.Open();
+            return conn.ExecuteScalar<long>(
+                """
+                INSERT INTO releases(
+                  source_id,
+                  guid,
+                  title,
+                  created_at_ts,
+                  published_at_ts,
+                  title_clean,
+                  year,
+                  unified_category,
+                  media_type,
+                  poster_file,
+                  poster_updated_at_ts
+                )
+                VALUES(
+                  @sourceId,
+                  @guid,
+                  @guid,
+                  @publishedAtTs,
+                  @publishedAtTs,
+                  @guid,
+                  2024,
+                  @unifiedCategory,
+                  'movie',
+                  @posterFile,
+                  @publishedAtTs
+                );
+                SELECT last_insert_rowid();
+                """,
+                new { sourceId = SourceId, guid, publishedAtTs, posterFile, unifiedCategory });
         }
 
         public string CreatePosterFile(string fileName)

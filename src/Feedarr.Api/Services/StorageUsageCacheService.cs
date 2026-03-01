@@ -121,7 +121,7 @@ public sealed class StorageUsageCacheService
             await _sem.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                _lastSnapshot = snapshot;
+                Interlocked.Exchange(ref _lastSnapshot, snapshot);
                 _everSucceeded = true;
                 _cache.Set(CacheKey, snapshot, _cacheDuration);
             }

@@ -112,6 +112,57 @@ public sealed class StorageUsageCacheServiceTests
         Assert.Equal(1 + 2 + 3, snapshot.PostersBytes);  // 6 bytes total
     }
 
+    // -------------------------------------------------------------------------
+    // Fix 5: Interlocked.Exchange ensures _lastSnapshot is visible to the
+    // stale-while-revalidate path when the cache entry has expired.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task GetSnapshotAsync_AfterCacheEvicted_ReturnsStaleSnapshotWhileRefreshInFlight()
+    {
+        using var workspace = new TestWorkspace();
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        using var lifetime = new TestHostApplicationLifetime();
+
+        var tcs = new TaskCompletionSource<StorageUsageSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scanCount = 0;
+
+        var service = CreateService(
+            workspace,
+            cache,
+            lifetime,
+            async ct =>
+            {
+                var n = Interlocked.Increment(ref scanCount);
+                if (n == 1)
+                    return new StorageUsageSnapshot(42, 0, 0, 0, 0, 0);
+
+                // Second scan blocks until released so that we can observe
+                // the stale-while-revalidate behaviour.
+                return await tcs.Task.WaitAsync(ct);
+            });
+
+        // First scan: awaited, populates cache and sets _lastSnapshot via Interlocked.Exchange.
+        var first = await service.GetSnapshotAsync();
+        Assert.Equal(42, first.DatabaseBytes);
+        Assert.Equal(1, scanCount);
+
+        // Evict the cache entry to force a re-scan on the next call.
+        // The key is the internal constant "system:storage-usage:v1".
+        cache.Remove("system:storage-usage:v1");
+
+        // Second call: cache miss → new scan started (scanCount becomes 2),
+        // but _everSucceeded is true so the stale snapshot is returned immediately
+        // without waiting for the in-flight scan.
+        var stale = await service.GetSnapshotAsync();
+
+        Assert.Equal(42, stale.DatabaseBytes);  // stale value, not the new scan result
+        Assert.Equal(2, scanCount);              // scan was triggered in the background
+
+        // Clean up: release the blocked scan to avoid lingering background tasks.
+        tcs.SetResult(new StorageUsageSnapshot(99, 0, 0, 0, 0, 0));
+    }
+
     private static StorageUsageCacheService CreateService(
         TestWorkspace workspace,
         IMemoryCache cache,
