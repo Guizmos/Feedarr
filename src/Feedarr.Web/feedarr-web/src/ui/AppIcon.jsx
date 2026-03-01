@@ -26,6 +26,7 @@ import {
   ListFilter,
   ListOrdered,
   Loader2,
+  Lock,
   Menu,
   Pencil,
   RefreshCcw,
@@ -35,6 +36,7 @@ import {
   Search,
   Server,
   Settings,
+  ShieldCheck,
   Square,
   SquareCheckBig,
   Tags,
@@ -42,6 +44,7 @@ import {
   TriangleAlert,
   Trophy,
   Undo2,
+  Info,
   X,
 } from "lucide-react";
 
@@ -72,6 +75,7 @@ const ICON_MAP = {
   image_search: ScanSearch,
   last_page: ChevronsRight,
   loading: Loader2,
+  lock: Lock,
   menu: Menu,
   military_tech: Trophy,
   priority_high: TriangleAlert,
@@ -84,6 +88,7 @@ const ICON_MAP = {
   search: Search,
   select_all: CheckCheck,
   settings: Settings,
+  shield: ShieldCheck,
   sort: ArrowUpDown,
   storage: Database,
   success: CheckCircle,
@@ -93,6 +98,7 @@ const ICON_MAP = {
   visibility: Eye,
   visibility_off: EyeOff,
   warning: TriangleAlert,
+  info: Info,
 };
 
 export default function AppIcon({

@@ -22,6 +22,7 @@ using Microsoft.AspNetCore.Mvc.Abstractions;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -121,10 +122,14 @@ public sealed class CriticalFlowsAndPerfTests
         var settings = new SettingsRepository(db);
         var providers = new ProviderRepository(db, protection);
 
+        using var setupCache = new MemoryCache(new MemoryCacheOptions());
         var setup = new SetupController(
             db,
             settings,
             providers,
+            BuildConfiguration(),
+            new BootstrapTokenService(),
+            new SetupStateService(settings, setupCache),
             NullLogger<SetupController>.Instance);
 
         var upsert = setup.UpsertIndexerProvider("jackett", new SetupController.SetupIndexerProviderUpsertDto
@@ -155,11 +160,13 @@ public sealed class CriticalFlowsAndPerfTests
             DataDir = workspace.DataDir,
             DbFileName = "feedarr.db"
         });
+        using var appLifetime = new TestHostApplicationLifetime();
         var storageCache = new StorageUsageCacheService(
             new MemoryCache(new MemoryCacheOptions()),
             new TestWebHostEnvironment(workspace.RootDir),
             appOptions,
             db,
+            appLifetime,
             NullLogger<StorageUsageCacheService>.Instance);
 
         var system = new SystemController(
@@ -275,6 +282,13 @@ public sealed class CriticalFlowsAndPerfTests
             DbFileName = "feedarr.db"
         });
         return new Db(options);
+    }
+
+    private static IConfiguration BuildConfiguration()
+    {
+        return new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>())
+            .Build();
     }
 
     private sealed class SonarrSeriesHandler : HttpMessageHandler

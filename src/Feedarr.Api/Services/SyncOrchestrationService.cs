@@ -30,6 +30,7 @@ public sealed class SyncOrchestrationService
     private readonly PosterFetchJobFactory _posterJobs;
     private readonly UnifiedCategoryResolver _resolver;
     private readonly RetentionService _retention;
+    private readonly ProviderStatsService _providerStats;
     private readonly AppOptions _opts;
     private readonly IHostApplicationLifetime _appLifetime;
     private readonly ILogger<SyncOrchestrationService> _log;
@@ -44,6 +45,7 @@ public sealed class SyncOrchestrationService
         PosterFetchJobFactory posterJobs,
         UnifiedCategoryResolver resolver,
         RetentionService retention,
+        ProviderStatsService providerStats,
         IOptions<AppOptions> opts,
         IHostApplicationLifetime appLifetime,
         ILogger<SyncOrchestrationService> log)
@@ -57,12 +59,22 @@ public sealed class SyncOrchestrationService
         _posterJobs = posterJobs;
         _resolver = resolver;
         _retention = retention;
+        _providerStats = providerStats;
         _opts = opts.Value;
         _appLifetime = appLifetime;
         _log = log;
     }
 
-    public async Task<SyncOrchestrationResult> ExecuteManualSyncAsync(Source src, bool rssOnly, CancellationToken _)
+    internal static CancellationTokenSource CreateManualSyncCancellationSource(
+        CancellationToken requestAborted,
+        CancellationToken applicationStopping)
+    {
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(requestAborted, applicationStopping);
+        cts.CancelAfter(TimeSpan.FromMinutes(5));
+        return cts;
+    }
+
+    public async Task<SyncOrchestrationResult> ExecuteManualSyncAsync(Source src, bool rssOnly, CancellationToken requestAborted)
     {
         var id = src.Id;
         var url = src.TorznabUrl;
@@ -70,12 +82,12 @@ public sealed class SyncOrchestrationService
         var mode = src.AuthMode;
         var name = src.Name;
 
-        using var syncCts = CancellationTokenSource.CreateLinkedTokenSource(_appLifetime.ApplicationStopping);
-        syncCts.CancelAfter(TimeSpan.FromMinutes(5));
+        using var syncCts = CreateManualSyncCancellationSource(requestAborted, _appLifetime.ApplicationStopping);
         var syncCt = syncCts.Token;
 
         try
         {
+            syncCt.ThrowIfCancellationRequested();
             var categoryMap = _sources.GetCategoryMappingMap(id);
             var perCatLimit = _opts.RssLimitPerCategory > 0 ? _opts.RssLimitPerCategory : _opts.RssLimit;
             if (perCatLimit <= 0) perCatLimit = 50;
@@ -101,11 +113,50 @@ public sealed class SyncOrchestrationService
                 if (uiSettings.HideSeenByDefault)
                     defaultSeen = 1;
             }
-            catch
+            catch (Exception ex)
             {
+                _log.LogWarning(ex, "Failed to read sync settings, using defaults");
             }
 
-            var selectedCategoryIds = CategorySelection.NormalizeSelectedCategoryIds(_sources.GetActiveCategoryIds(id));
+            var syncCorrelationId = Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N");
+            var persistedCategoryIds = _sources.GetActiveCategoryIds(id)
+                .Where(categoryId => categoryId > 0)
+                .Distinct()
+                .OrderBy(categoryId => categoryId)
+                .ToList();
+            var selectedCategoryIds = CategorySelection.NormalizeSelectedCategoryIds(persistedCategoryIds);
+            var mappedCategoryIds = categoryMap.Keys
+                .Where(categoryId => categoryId > 0)
+                .Distinct()
+                .OrderBy(categoryId => categoryId)
+                .ToList();
+            var unmappedCategoryIds = persistedCategoryIds
+                .Where(categoryId => !categoryMap.ContainsKey(categoryId))
+                .Distinct()
+                .OrderBy(categoryId => categoryId)
+                .ToList();
+            var selectionReason = CategorySelectionAudit.InferReason(
+                persistedWasNull: false,
+                persistedCount: persistedCategoryIds.Count,
+                parseErrorCount: 0,
+                mappedCount: persistedCategoryIds.Count);
+            _log.LogInformation(
+                "ManualSync CATEGORY SELECTION LOAD [{Name}] correlationId={CorrelationId} sourceId={SourceId} source=source_category_mappings.cat_id persistedRaw={PersistedRaw} persistedCount={PersistedCount} mappedCount={MappedCount} unmappedCount={UnmappedCount} reason={Reason}",
+                name,
+                syncCorrelationId,
+                id,
+                CategorySelectionAudit.SummarizeIds(persistedCategoryIds, max: 60),
+                persistedCategoryIds.Count,
+                mappedCategoryIds.Count,
+                unmappedCategoryIds.Count,
+                selectionReason);
+            _log.LogInformation(
+                "ManualSync CATEGORY SELECTION EFFECTIVE [{Name}] correlationId={CorrelationId} sourceId={SourceId} normalizedSelection={NormalizedSelection} normalizedCount={NormalizedCount}",
+                name,
+                syncCorrelationId,
+                id,
+                CategorySelectionAudit.SummarizeIds(selectedCategoryIds, max: 60),
+                selectedCategoryIds.Count);
 
             var selectedUnifiedKeys = new HashSet<string>(
                 categoryMap.Values.Select(v => v.key).Where(k => !string.IsNullOrWhiteSpace(k)),
@@ -117,7 +168,7 @@ public sealed class SyncOrchestrationService
             string? fallbackMode = null;
             var usedAggregated = false;
 
-            _log.LogInformation("RSS fetch start [{Name}] url={Url} limit={Limit}", name, SanitizeUrl(url), perCatLimit);
+            _log.LogInformation("RSS fetch start [{Name}] url={Url} limit={Limit}", name, SensitiveUrlSanitizer.Sanitize(url), perCatLimit);
             var rssRes = await _torznab.FetchLatestAsync(url, mode, key, perCatLimit, syncCt, allowSearch: false);
             var rssItems = rssRes.items;
             usedMode = rssRes.usedMode;
@@ -191,6 +242,7 @@ public sealed class SyncOrchestrationService
                 "ManualSync RAW [{Name}] raw={RawCount} perCatLimit={PerCatLimit} globalLimit={GlobalLimit} mode={Mode} syncMode={SyncMode} fallbackMode={FallbackMode} aggregated={Aggregated}",
                 name, rawCount, perCatLimit, globalLimit, usedMode, syncMode, fallbackMode ?? "-", usedAggregated);
 
+            var selectionFallbackUsed = CategorySelectionAudit.ShouldUseFallback(selectedCategoryIds);
             if (selectedCategoryIds.Count > 0)
             {
                 var selectedSet = selectedCategoryIds;
@@ -254,6 +306,8 @@ public sealed class SyncOrchestrationService
             }
 
             var countBeforeCategoryMapFilter = items.Count;
+            var noMapMatchCount = 0;
+            var fallbackSelectedCategoryCount = 0;
             if (categoryMap.Count > 0)
             {
                 var seenCats = new Dictionary<int, int>();
@@ -291,8 +345,6 @@ public sealed class SyncOrchestrationService
 
                 var filtered = new List<TorznabItem>();
                 var missingCategory = 0;
-                var noMapMatchCount = 0;
-                var fallbackSelectedCategoryCount = 0;
                 var fallbackSamples = new List<string>();
                 var noMapSamples = new List<string>();
                 foreach (var item in items)
@@ -371,9 +423,19 @@ public sealed class SyncOrchestrationService
                 }
             }
 
+            _log.LogInformation(
+                "ManualSync CATEGORY SELECTION FALLBACK [{Name}] correlationId={CorrelationId} sourceId={SourceId} usedFallback={UsedFallback} fallbackSelectedCategoryCount={FallbackSelectedCategoryCount} noMapMatchCount={NoMapMatchCount} reason={Reason}",
+                name,
+                syncCorrelationId,
+                id,
+                selectionFallbackUsed,
+                fallbackSelectedCategoryCount,
+                noMapMatchCount,
+                selectionReason);
+
             var nowTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             var insertedNew = _releases.UpsertMany(id, name, items, nowTs, defaultSeen, categoryMap);
-            var (retentionResult, postersPurged) = _retention.ApplyRetention(id, perCatLimit, globalLimit);
+            var (retentionResult, postersPurged, failedDeletes) = _retention.ApplyRetention(id, perCatLimit, globalLimit);
 
             var lastSyncAt = src.LastSyncAt ?? 0;
             var newIds = _releases.GetNewIdsWithoutPoster(id, lastSyncAt);
@@ -401,9 +463,28 @@ public sealed class SyncOrchestrationService
                 name, insertedNew, items.Count);
 
             _activity.Add(id, "info", "sync", $"Sync OK ({items.Count} items, mode={syncMode})",
-                dataJson: $"{{\"itemsCount\":{items.Count},\"usedMode\":\"{usedMode}\",\"syncMode\":\"{syncMode}\",\"insertedNew\":{insertedNew},\"totalBeforeRetention\":{retentionResult.TotalBefore},\"purgedByPerCat\":{retentionResult.PurgedByPerCategory},\"purgedByGlobal\":{retentionResult.PurgedByGlobal},\"postersPurged\":{postersPurged},\"elapsedMs\":{elapsedMs}}}");
+                dataJson: $"{{\"itemsCount\":{items.Count},\"usedMode\":\"{usedMode}\",\"syncMode\":\"{syncMode}\",\"insertedNew\":{insertedNew},\"totalBeforeRetention\":{retentionResult.TotalBefore},\"purgedByPerCat\":{retentionResult.PurgedByPerCategory},\"purgedByGlobal\":{retentionResult.PurgedByGlobal},\"postersPurged\":{postersPurged},\"failedPosterDeletes\":{failedDeletes},\"elapsedMs\":{elapsedMs}}}");
 
+            _providerStats.RecordSyncJob(true);
             return new SyncOrchestrationResult(true, usedMode, syncMode, items.Count, insertedNew, null);
+        }
+        catch (OperationCanceledException) when (requestAborted.IsCancellationRequested || _appLifetime.ApplicationStopping.IsCancellationRequested)
+        {
+            _log.LogInformation(
+                "Manual sync cancelled for sourceId={SourceId} requestCancelled={RequestCancelled} appStopping={AppStopping}",
+                id,
+                requestAborted.IsCancellationRequested,
+                _appLifetime.ApplicationStopping.IsCancellationRequested);
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            const string timeoutMessage = "manual sync timed out";
+            _log.LogWarning("Manual sync timed out for sourceId={SourceId}", id);
+            _sources.UpdateLastSync(id, "error", timeoutMessage);
+            _activity.Add(id, "error", "sync", $"Sync ERROR: {timeoutMessage}");
+            _providerStats.RecordSyncJob(false);
+            return new SyncOrchestrationResult(false, null, null, 0, 0, timeoutMessage);
         }
         catch (Exception ex)
         {
@@ -411,6 +492,7 @@ public sealed class SyncOrchestrationService
             var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "sync failed");
             _sources.UpdateLastSync(id, "error", safeError);
             _activity.Add(id, "error", "sync", $"Sync ERROR: {safeError}");
+            _providerStats.RecordSyncJob(false);
             return new SyncOrchestrationResult(false, null, null, 0, 0, safeError);
         }
     }
@@ -573,27 +655,4 @@ public sealed class SyncOrchestrationService
         return UnifiedCategoryMappings.ToKey(unified);
     }
 
-    private static string SanitizeUrl(string url)
-    {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            return url;
-
-        var query = uri.Query.TrimStart('?');
-        if (string.IsNullOrWhiteSpace(query))
-            return url;
-
-        var parts = query.Split('&', StringSplitOptions.RemoveEmptyEntries);
-        var kept = new List<string>();
-        foreach (var part in parts)
-        {
-            var kv = part.Split('=', 2);
-            if (kv.Length == 0) continue;
-            if (string.Equals(kv[0], "apikey", StringComparison.OrdinalIgnoreCase))
-                continue;
-            kept.Add(part);
-        }
-
-        var ub = new UriBuilder(uri) { Query = string.Join("&", kept) };
-        return ub.Uri.ToString();
-    }
 }

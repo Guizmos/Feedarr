@@ -53,6 +53,15 @@ public sealed class CategorySelectionTests
     }
 
     [Fact]
+    public void MatchesSelectedCategoryIds_NoIntersection_DropsItem()
+    {
+        var matches = CategorySelection.MatchesSelectedCategoryIds(
+            itemCategoryIds: new[] { 7000, 107000 },
+            selectedCategoryIds: new[] { 2000, 102000 });
+        Assert.False(matches);
+    }
+
+    [Fact]
     public void PickBestCategoryId_ParentMapMatchesLeafViaStandardGroup()
     {
         var map = new Dictionary<int, (string key, string label)>
@@ -77,6 +86,13 @@ public sealed class CategorySelectionTests
         var picked = CategorySelection.PickBestCategoryId(new[] { 5070 }, map);
 
         Assert.Equal(5070, picked);
+    }
+
+    [Fact]
+    public void ShouldUseFallback_OnlyWhenSelectionIsEmpty()
+    {
+        Assert.True(CategorySelectionAudit.ShouldUseFallback(Array.Empty<int>()));
+        Assert.False(CategorySelectionAudit.ShouldUseFallback(new[] { 2000, 102000 }));
     }
 }
 

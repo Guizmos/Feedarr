@@ -19,6 +19,20 @@ function getResolutionClass(resolution) {
   return "banner-pill";
 }
 
+function TopReleasesSectionHeader({ title, isGlobalTop = false, headerAction = null }) {
+  return (
+    <div className="top24-sectionHead" style={{ marginBottom: 16 }}>
+      <h2
+        className={isGlobalTop ? "top5-global-title" : ""}
+        style={{ marginBottom: 0, fontSize: 18 }}
+      >
+        {title}
+      </h2>
+      {headerAction}
+    </div>
+  );
+}
+
 export function TopReleasesGridSection({
   items,
   sectionTitle,
@@ -32,6 +46,7 @@ export function TopReleasesGridSection({
   sourceNameById,
   onDownload,
   onOpen,
+  headerAction = null,
 }) {
   if (items.length === 0) return null;
   return (
@@ -40,12 +55,11 @@ export function TopReleasesGridSection({
       className={isGlobalTop ? "top5-global-section" : ""}
       style={{ marginBottom: 40 }}
     >
-      <h2
-        className={isGlobalTop ? "top5-global-title" : ""}
-        style={{ marginBottom: 16, fontSize: 18 }}
-      >
-        {sectionTitle}
-      </h2>
+      <TopReleasesSectionHeader
+        title={sectionTitle}
+        isGlobalTop={isGlobalTop}
+        headerAction={headerAction}
+      />
       <div
         className={`grid${compact ? " grid--compact" : ""}${isGlobalTop ? " grid--spotlight" : ""}`}
       >
@@ -101,11 +115,12 @@ export function TopReleasesBannerSection({
   sourceNameById,
   onOpen,
   formatRating,
+  headerAction = null,
 }) {
   if (items.length === 0) return null;
   return (
     <section key={sectionTitle} style={{ marginBottom: 40 }}>
-      <h2 style={{ marginBottom: 16, fontSize: 18 }}>{sectionTitle}</h2>
+      <TopReleasesSectionHeader title={sectionTitle} headerAction={headerAction} />
       <div className="library-banner">
         {items.map((item, idx) => {
           const seasonEpisode = formatSeasonEpisode(item);
@@ -204,11 +219,12 @@ export function TopReleasesListSection({
   onRename,
   formatRating,
   isSeriesItem,
+  headerAction = null,
 }) {
   if (items.length === 0) return null;
   return (
     <section key={sectionTitle} style={{ marginBottom: 40 }}>
-      <h2 style={{ marginBottom: 16, fontSize: 18 }}>{sectionTitle}</h2>
+      <TopReleasesSectionHeader title={sectionTitle} headerAction={headerAction} />
       <div className="library-table">
         <div className="library-thead">
           <div className="library-cell" style={{ width: 60 }}>Rank</div>
@@ -336,6 +352,7 @@ export function TopReleasesPosterSection({
   isGlobalTop = false,
   top5AnimKey = 0,
   onOpen,
+  headerAction = null,
 }) {
   if (items.length === 0) return null;
   return (
@@ -344,12 +361,11 @@ export function TopReleasesPosterSection({
       className={isGlobalTop ? "top5-global-section" : ""}
       style={{ marginBottom: 40 }}
     >
-      <h2
-        className={isGlobalTop ? "top5-global-title" : ""}
-        style={{ marginBottom: 16, fontSize: 18 }}
-      >
-        {sectionTitle}
-      </h2>
+      <TopReleasesSectionHeader
+        title={sectionTitle}
+        isGlobalTop={isGlobalTop}
+        headerAction={headerAction}
+      />
       <div className={`grid grid--poster${isGlobalTop ? " grid--spotlight" : ""}`}>
         {items.map((item, idx) => (
           <div

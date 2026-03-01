@@ -14,22 +14,6 @@ namespace Feedarr.Api.Services;
 
 public sealed class RssSyncHostedService : BackgroundService
 {
-    private static readonly HashSet<string> SensitiveQueryKeys = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "apikey",
-        "api_key",
-        "token",
-        "access_token",
-        "refresh_token",
-        "key",
-        "password",
-        "pass",
-        "secret",
-        "client_secret",
-        "authorization",
-        "x-api-key"
-    };
-
     private readonly ILogger<RssSyncHostedService> _log;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly AppOptions _opts;
@@ -67,7 +51,10 @@ public sealed class RssSyncHostedService : BackgroundService
                     }
                     else
                     {
-                        await RunOnce(stoppingToken);
+                        var hadFailure = await RunOnce(stoppingToken);
+                        using var scope = _scopeFactory.CreateScope();
+                        var providerStats = scope.ServiceProvider.GetRequiredService<ProviderStatsService>();
+                        providerStats.RecordSyncJob(!hadFailure);
                     }
                 }
             }
@@ -77,11 +64,22 @@ public sealed class RssSyncHostedService : BackgroundService
             }
             catch (Exception ex)
             {
+                try
+                {
+                    using var scope = _scopeFactory.CreateScope();
+                    var providerStats = scope.ServiceProvider.GetRequiredService<ProviderStatsService>();
+                    providerStats.RecordSyncJob(false);
+                }
+                catch (Exception statsEx)
+                {
+                    _log.LogWarning(statsEx, "Failed to record sync-job failure stats");
+                }
+
                 _log.LogError(ex, "RssSyncHostedService loop error");
             }
 
             // ✅ interval dynamique via DB (fallback appsettings)
-            var intervalMin = GetIntervalMinutesFromDbOrOpts();
+            var intervalMin = GetIntervalMinutesFromDbOrOpts(stoppingToken);
             if (!IsAutoSyncEnabled())
                 intervalMin = Math.Max(intervalMin, 60);
 
@@ -93,12 +91,14 @@ public sealed class RssSyncHostedService : BackgroundService
         }
     }
 
-    private int GetIntervalMinutesFromDbOrOpts()
+    private int GetIntervalMinutesFromDbOrOpts(CancellationToken ct)
     {
         var fallback = Math.Clamp(_opts.SyncIntervalMinutes, 1, 1440);
 
         try
         {
+            ct.ThrowIfCancellationRequested();
+
             using var scope = _scopeFactory.CreateScope();
             var settingsRepo = scope.ServiceProvider.GetRequiredService<SettingsRepository>();
 
@@ -109,6 +109,10 @@ public sealed class RssSyncHostedService : BackgroundService
             });
 
             return Math.Clamp(general.SyncIntervalMinutes, 1, 1440);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -138,7 +142,7 @@ public sealed class RssSyncHostedService : BackgroundService
         }
     }
 
-    private async Task RunOnce(CancellationToken ct)
+    private async Task<bool> RunOnce(CancellationToken ct)
     {
         using var scope = _scopeFactory.CreateScope();
 
@@ -152,8 +156,7 @@ public sealed class RssSyncHostedService : BackgroundService
         var retention = scope.ServiceProvider.GetRequiredService<RetentionService>();
         var providerStats = scope.ServiceProvider.GetRequiredService<ProviderStatsService>();
 
-        // Record sync job start
-        providerStats.RecordSyncJob(true);
+        var hadFailure = false;
 
         // ✅ settings dynamiques (DB) pour les limites RSS
         var perCatLimit = _opts.RssLimitPerCategory > 0 ? _opts.RssLimitPerCategory : _opts.RssLimit;
@@ -193,7 +196,7 @@ public sealed class RssSyncHostedService : BackgroundService
         if (list.Count == 0)
         {
             _log.LogInformation("AutoSync: no sources");
-            return;
+            return false;
         }
 
         foreach (var src in list)
@@ -210,7 +213,45 @@ public sealed class RssSyncHostedService : BackgroundService
             try
             {
                 var categoryMap = sources.GetCategoryMappingMap(id);
-                var selectedCategoryIds = CategorySelection.NormalizeSelectedCategoryIds(sources.GetActiveCategoryIds(id));
+                var syncCorrelationId = Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N");
+                var persistedCategoryIds = sources.GetActiveCategoryIds(id)
+                    .Where(categoryId => categoryId > 0)
+                    .Distinct()
+                    .OrderBy(categoryId => categoryId)
+                    .ToList();
+                var selectedCategoryIds = CategorySelection.NormalizeSelectedCategoryIds(persistedCategoryIds);
+                var mappedCategoryIds = categoryMap.Keys
+                    .Where(categoryId => categoryId > 0)
+                    .Distinct()
+                    .OrderBy(categoryId => categoryId)
+                    .ToList();
+                var unmappedCategoryIds = persistedCategoryIds
+                    .Where(categoryId => !categoryMap.ContainsKey(categoryId))
+                    .Distinct()
+                    .OrderBy(categoryId => categoryId)
+                    .ToList();
+                var selectionReason = CategorySelectionAudit.InferReason(
+                    persistedWasNull: false,
+                    persistedCount: persistedCategoryIds.Count,
+                    parseErrorCount: 0,
+                    mappedCount: persistedCategoryIds.Count);
+                _log.LogInformation(
+                    "AutoSync CATEGORY SELECTION LOAD [{Name}] correlationId={CorrelationId} sourceId={SourceId} source=source_category_mappings.cat_id persistedRaw={PersistedRaw} persistedCount={PersistedCount} mappedCount={MappedCount} unmappedCount={UnmappedCount} reason={Reason}",
+                    name,
+                    syncCorrelationId,
+                    id,
+                    CategorySelectionAudit.SummarizeIds(persistedCategoryIds, max: 60),
+                    persistedCategoryIds.Count,
+                    mappedCategoryIds.Count,
+                    unmappedCategoryIds.Count,
+                    selectionReason);
+                _log.LogInformation(
+                    "AutoSync CATEGORY SELECTION EFFECTIVE [{Name}] correlationId={CorrelationId} sourceId={SourceId} normalizedSelection={NormalizedSelection} normalizedCount={NormalizedCount}",
+                    name,
+                    syncCorrelationId,
+                    id,
+                    CategorySelectionAudit.SummarizeIds(selectedCategoryIds, max: 60),
+                    selectedCategoryIds.Count);
                 var selectedUnifiedKeys = new HashSet<string>(
                     categoryMap.Values.Select(v => v.key).Where(k => !string.IsNullOrWhiteSpace(k)),
                     StringComparer.OrdinalIgnoreCase);
@@ -220,7 +261,7 @@ public sealed class RssSyncHostedService : BackgroundService
                 string? fallbackMode = null;
                 bool usedAggregated = false;
                 var rssOnly = _opts.RssOnlySync;
-                _log.LogInformation("RSS fetch start [{Name}] url={Url} limit={Limit}", name, SanitizeUrl(url), perCatLimit);
+                _log.LogInformation("RSS fetch start [{Name}] url={Url} limit={Limit}", name, SensitiveUrlSanitizer.Sanitize(url), perCatLimit);
                 var rssRes = await torznab.FetchLatestAsync(url, mode, apiKey, perCatLimit, ct, allowSearch: false);
                 var rssItems = rssRes.items;
                 usedMode = rssRes.usedMode;
@@ -296,6 +337,7 @@ public sealed class RssSyncHostedService : BackgroundService
                     "AutoSync RAW [{Name}] raw={RawCount} perCatLimit={PerCatLimit} globalLimit={GlobalLimit} mode={Mode} syncMode={SyncMode} fallbackMode={FallbackMode} aggregated={Aggregated}",
                     name, rawCount, perCatLimit, globalLimit, usedMode, syncMode, fallbackMode ?? "-", usedAggregated);
 
+                var selectionFallbackUsed = CategorySelectionAudit.ShouldUseFallback(selectedCategoryIds);
                 if (selectedCategoryIds.Count > 0)
                 {
                     var selectedSet = selectedCategoryIds;
@@ -358,12 +400,12 @@ public sealed class RssSyncHostedService : BackgroundService
                 }
 
                 var countBeforeCategoryMapFilter = items.Count;
+                var noMapMatchCount = 0;
+                var fallbackSelectedCategoryCount = 0;
                 if (categoryMap.Count > 0)
                 {
                     var filtered = new List<TorznabItem>();
                     var missingCategory = 0;
-                    var noMapMatchCount = 0;
-                    var fallbackSelectedCategoryCount = 0;
                     var fallbackSamples = new List<string>();
                     var noMapSamples = new List<string>();
                     foreach (var it in items)
@@ -441,9 +483,19 @@ public sealed class RssSyncHostedService : BackgroundService
                     }
                 }
 
+                _log.LogInformation(
+                    "AutoSync CATEGORY SELECTION FALLBACK [{Name}] correlationId={CorrelationId} sourceId={SourceId} usedFallback={UsedFallback} fallbackSelectedCategoryCount={FallbackSelectedCategoryCount} noMapMatchCount={NoMapMatchCount} reason={Reason}",
+                    name,
+                    syncCorrelationId,
+                    id,
+                    selectionFallbackUsed,
+                    fallbackSelectedCategoryCount,
+                    noMapMatchCount,
+                    selectionReason);
+
                 var nowTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 var insertedNew = releases.UpsertMany(id, name, items, nowTs, defaultSeen, categoryMap);
-                var (retentionResult, postersPurged) = retention.ApplyRetention(id, perCatLimit, globalLimit);
+                var (retentionResult, postersPurged, failedDeletes) = retention.ApplyRetention(id, perCatLimit, globalLimit);
 
                 var lastSyncAt = src.LastSyncAt ?? 0;
                 var seeds = releases.GetNewPosterJobSeeds(id, lastSyncAt);
@@ -471,10 +523,15 @@ public sealed class RssSyncHostedService : BackgroundService
 
                 activity.Add(id, "info", "sync",
                     $"AutoSync OK [{name}] ({items.Count} items, mode={syncMode})",
-                    dataJson: $"{{\"itemsCount\":{items.Count},\"usedMode\":\"{usedMode}\",\"syncMode\":\"{syncMode}\",\"insertedNew\":{insertedNew},\"totalBeforeRetention\":{retentionResult.TotalBefore},\"purgedByPerCat\":{retentionResult.PurgedByPerCategory},\"purgedByGlobal\":{retentionResult.PurgedByGlobal},\"postersPurged\":{postersPurged},\"elapsedMs\":{elapsedMs}}}");
+                    dataJson: $"{{\"itemsCount\":{items.Count},\"usedMode\":\"{usedMode}\",\"syncMode\":\"{syncMode}\",\"insertedNew\":{insertedNew},\"totalBeforeRetention\":{retentionResult.TotalBefore},\"purgedByPerCat\":{retentionResult.PurgedByPerCategory},\"purgedByGlobal\":{retentionResult.PurgedByGlobal},\"postersPurged\":{postersPurged},\"failedPosterDeletes\":{failedDeletes},\"elapsedMs\":{elapsedMs}}}");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
+                hadFailure = true;
                 // Record failed indexer query
                 providerStats.RecordIndexerQuery(false);
                 var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "auto sync failed");
@@ -482,6 +539,8 @@ public sealed class RssSyncHostedService : BackgroundService
                 activity.Add(id, "error", "sync", $"AutoSync ERROR [{name}]: {safeError}");
             }
         }
+
+        return hadFailure;
     }
 
     private static List<int> GetRawCategoryIds(TorznabItem it)
@@ -664,48 +723,4 @@ public sealed class RssSyncHostedService : BackgroundService
         return UnifiedCategoryMappings.ToKey(unified);
     }
 
-    private static string SanitizeUrl(string url)
-    {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            return url;
-
-        var query = uri.Query.TrimStart('?');
-        if (string.IsNullOrWhiteSpace(query))
-            return url;
-
-        var parts = query.Split('&', StringSplitOptions.RemoveEmptyEntries);
-        var kept = new List<string>();
-        foreach (var part in parts)
-        {
-            var kv = part.Split('=', 2);
-            if (kv.Length == 0) continue;
-            var key = Uri.UnescapeDataString(kv[0] ?? string.Empty);
-            if (IsSensitiveQueryKey(key))
-                continue;
-            kept.Add(part);
-        }
-
-        var ub = new UriBuilder(uri) { Query = string.Join("&", kept) };
-        return ub.Uri.ToString();
-    }
-
-    private static bool IsSensitiveQueryKey(string key)
-    {
-        if (string.IsNullOrWhiteSpace(key))
-            return false;
-
-        if (SensitiveQueryKeys.Contains(key))
-            return true;
-
-        var compact = key
-            .Replace("-", string.Empty, StringComparison.Ordinal)
-            .Replace("_", string.Empty, StringComparison.Ordinal)
-            .ToLowerInvariant();
-
-        return compact.Contains("token", StringComparison.Ordinal) ||
-               compact.Contains("secret", StringComparison.Ordinal) ||
-               compact.Contains("password", StringComparison.Ordinal) ||
-               compact.Contains("auth", StringComparison.Ordinal) ||
-               compact.EndsWith("key", StringComparison.Ordinal);
-    }
 }

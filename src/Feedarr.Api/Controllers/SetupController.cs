@@ -6,6 +6,8 @@ using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Models.Settings;
 using Feedarr.Api.Services.Security;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Configuration;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http;
 
@@ -18,17 +20,26 @@ public sealed class SetupController : ControllerBase
     private readonly Db _db;
     private readonly SettingsRepository _settings;
     private readonly ProviderRepository _providers;
+    private readonly IConfiguration _config;
+    private readonly BootstrapTokenService _bootstrapTokens;
+    private readonly SetupStateService _setupState;
     private readonly ILogger<SetupController> _log;
 
     public SetupController(
         Db db,
         SettingsRepository settings,
         ProviderRepository providers,
+        IConfiguration config,
+        BootstrapTokenService bootstrapTokens,
+        SetupStateService setupState,
         ILogger<SetupController> log)
     {
         _db = db;
         _settings = settings;
         _providers = providers;
+        _config = config;
+        _bootstrapTokens = bootstrapTokens;
+        _setupState = setupState;
         _log = log;
     }
 
@@ -51,13 +62,21 @@ public sealed class SetupController : ControllerBase
              url.Contains("prowlarr", StringComparison.OrdinalIgnoreCase)));
 
         var ui = _settings.GetUi(new UiSettings());
+        var security = _settings.GetSecurity(new SecuritySettings());
+        var bootstrapSecret = SmartAuthPolicy.GetBootstrapSecret(_config);
+        var authConfigured = SmartAuthPolicy.IsAuthConfigured(security, bootstrapSecret);
+        var authRequired = SmartAuthPolicy.IsAuthRequired(HttpContext, security);
+        var authMode = SmartAuthPolicy.NormalizeAuthMode(security);
 
         return Ok(new
         {
             onboardingDone = ui.OnboardingDone,
             hasSources,
             hasJackettSource,
-            hasProwlarrSource
+            hasProwlarrSource,
+            authMode,
+            authConfigured,
+            authRequired
         });
     }
 
@@ -109,6 +128,57 @@ public sealed class SetupController : ControllerBase
         var normalized = (value ?? "").Trim().ToLowerInvariant();
         if (normalized == "jackett" || normalized == "prowlarr") return normalized;
         return null;
+    }
+
+    // POST /api/setup/bootstrap-token
+    [HttpPost("bootstrap-token")]
+    [EnableRateLimiting("bootstrap-token")]
+    public IActionResult IssueBootstrapToken()
+    {
+        // Bootstrap tokens are only valid during the initial setup phase.
+        // Once security is configured (onboarding done), issuing new tokens is not necessary
+        // and could be a sign of a misconfigured or attacked instance.
+        if (_setupState.IsSetupCompleted())
+        {
+            _log.LogWarning(
+                "Bootstrap token request rejected: setup is already completed (remoteIp={RemoteIp})",
+                HttpContext.Connection.RemoteIpAddress?.ToString() ?? "");
+            return Conflict(new
+            {
+                error = "setup_already_completed",
+                message = "Bootstrap tokens can only be issued during initial setup. Setup has already been completed."
+            });
+        }
+
+        var bootstrapSecret = SmartAuthPolicy.GetBootstrapSecret(_config);
+        var allowed =
+            SmartAuthPolicy.IsLoopbackRequest(HttpContext) ||
+            SmartAuthPolicy.HasValidBootstrapSecretHeader(HttpContext, bootstrapSecret);
+
+        if (!allowed)
+        {
+            var hasBootstrapHeader =
+                HttpContext.Request.Headers.ContainsKey(SmartAuthPolicy.BootstrapSecretHeader) ||
+                HttpContext.Request.Headers.ContainsKey(SmartAuthPolicy.LegacyBootstrapSecretHeader);
+            _log.LogWarning(
+                "Bootstrap token request rejected at controller for {Method} {Path} (remoteIp={RemoteIp}, hasBootstrapHeader={HasBootstrapHeader})",
+                HttpContext.Request.Method,
+                HttpContext.Request.Path.Value ?? "/",
+                HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                hasBootstrapHeader);
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                error = "bootstrap_secret_required",
+                message = "Bootstrap token requires loopback access or a valid X-Bootstrap-Secret header"
+            });
+        }
+
+        var token = _bootstrapTokens.IssueToken();
+        return Ok(new
+        {
+            token,
+            expiresInSeconds = _bootstrapTokens.ExpiresInSeconds
+        });
     }
 
 }

@@ -44,6 +44,7 @@ public sealed class YgegeCapsMergeTests
             capsById,
             supportedIds,
             new Dictionary<int, (string key, string label)>(),
+            new HashSet<int>(),
             true,
             true
         });

@@ -647,14 +647,33 @@ function FeedarrPanel({ refreshKey }) {
 function IndexersPanel({ refreshKey }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
+  // cursorState is a new object on every navigation/refresh → triggers fetch effect
+  const [cursorState, setCursorState] = useState({ cursor: null, direction: "next" });
+  const [paginationInfo, setPaginationInfo] = useState(null);
 
+  // Reset to page 1 when user requests a full refresh
   useEffect(() => {
+    setCursorState({ cursor: null, direction: "next" });
+    setPaginationInfo(null);
+  }, [refreshKey]);
+
+  // Fetch whenever cursorState changes (includes initial mount and cursor navigation)
+  useEffect(() => {
+    let cancelled = false;
     (async () => {
       setError("");
-      try { setData(await apiGet('/api/system/stats/indexers')); }
-      catch (e) { setError(e?.message || "Erreur"); }
+      const { cursor, direction } = cursorState;
+      const url = cursor
+        ? `/api/system/stats/indexers?limit=50&cursor=${encodeURIComponent(cursor)}&direction=${direction}`
+        : '/api/system/stats/indexers?limit=50';
+      try {
+        const result = await apiGet(url);
+        if (!cancelled) { setData(result); setPaginationInfo(result?.pagination ?? null); }
+      }
+      catch (e) { if (!cancelled) setError(e?.message || "Erreur"); }
     })();
-  }, [refreshKey]);
+    return () => { cancelled = true; };
+  }, [cursorState]);
 
   const stackedByIndexer = useMemo(() => {
     if (!data?.releasesByCategoryByIndexer) return [];
@@ -682,6 +701,33 @@ function IndexersPanel({ refreshKey }) {
 
   const indexerChartData = (data.indexerStatsBySource || []).map(src => ({ name: src.name, releases: src.releaseCount, failed: src.lastStatus === "error" ? 1 : 0 }));
   const responseChartData = (data.indexerResponseMsBySource || []).map(src => ({ name: src.name, avgMs: Number(src.avgMs || 0) }));
+
+  // Pagination controls
+  const isCursorMode = paginationInfo?.mode === "cursor";
+  const hasPrev = isCursorMode && paginationInfo?.prevCursor != null;
+  const hasNext = isCursorMode
+    ? paginationInfo?.hasMore === true
+    : (data?.releasesByCategoryByIndexer?.length ?? 0) >= 50;
+  const showPagination = hasPrev || hasNext;
+
+  // Build a base64url cursor token from the last offset-mode row to transition to cursor mode
+  const buildNextCursorFromLastRow = () => {
+    const rows = data?.releasesByCategoryByIndexer;
+    if (!rows?.length) return null;
+    const last = rows[rows.length - 1];
+    try {
+      const json = JSON.stringify({ sourceName: last.sourceName, count: last.count, sourceId: last.sourceId, unifiedCategory: last.unifiedCategory });
+      const bytes = new TextEncoder().encode(json);
+      const binary = Array.from(bytes, b => String.fromCharCode(b)).join('');
+      return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    } catch { return null; }
+  };
+
+  const goNext = () => {
+    if (isCursorMode) setCursorState({ cursor: paginationInfo.nextCursor, direction: "next" });
+    else { const tok = buildNextCursorFromLastRow(); if (tok) setCursorState({ cursor: tok, direction: "next" }); }
+  };
+  const goPrev = () => { if (hasPrev) setCursorState({ cursor: paginationInfo.prevCursor, direction: "prev" }); };
 
   return (
     <>
@@ -722,9 +768,17 @@ function IndexersPanel({ refreshKey }) {
         </div>
       )}
       {stackedByIndexer.length > 0 && (
-        <div className="card" style={{ padding: "12px 12px 12px 8px", marginBottom: 20 }}>
+        <div className="card" style={{ padding: "12px 12px 12px 8px", marginBottom: showPagination ? 0 : 20 }}>
           <div className="card-title" style={{ marginBottom: 8 }}>Catégories par indexeur</div>
           <StackedHorizontalBarChart data={stackedByIndexer} height={260} barGap={8} />
+        </div>
+      )}
+      {showPagination && (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 20, paddingTop: 8 }}>
+          <div className="period-selector">
+            <button className="period-btn" disabled={!hasPrev} style={{ opacity: hasPrev ? 1 : 0.35 }} onClick={goPrev}>← Préc.</button>
+            <button className="period-btn" disabled={!hasNext} style={{ opacity: hasNext ? 1 : 0.35 }} onClick={goNext}>Suiv. →</button>
+          </div>
         </div>
       )}
 
@@ -824,9 +878,10 @@ function ProvidersPanel({ refreshKey }) {
     failures: Number(data?.[p]?.failures || 0),
     avgMs: Number(data?.[p]?.avgMs || 0),
   }));
-  const matchingByProvider = (data?._matchingByProvider && typeof data._matchingByProvider === "object")
-    ? data._matchingByProvider
-    : {};
+  // In cursor mode _matchingByProvider is a list [{providerKey, matchedCount}]; in offset mode it's a dict {key: count}
+  const matchingByProvider = Array.isArray(data?._matchingByProvider)
+    ? Object.fromEntries(data._matchingByProvider.map(x => [x.providerKey, x.matchedCount]))
+    : (data?._matchingByProvider ?? {});
   const matchingData = providerKeys.map((key) => ({
     provider: labels[key] || key.toUpperCase(),
     matched: Number(matchingByProvider[key] || 0),

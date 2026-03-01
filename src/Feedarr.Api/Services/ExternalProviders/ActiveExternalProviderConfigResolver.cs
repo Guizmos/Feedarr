@@ -15,8 +15,6 @@ public sealed class ActiveExternalProviderConfigResolver
     private readonly ExternalProviderInstanceRepository _instances;
     private readonly ExternalProviderRegistry _registry;
     private readonly ILogger<ActiveExternalProviderConfigResolver> _logger;
-    private readonly object _legacyProjectionLock = new();
-    private volatile bool _legacyProjectionDone;
 
     public ActiveExternalProviderConfigResolver(
         ExternalProviderInstanceRepository instances,
@@ -44,29 +42,17 @@ public sealed class ActiveExternalProviderConfigResolver
 
         try
         {
-            EnsureLegacyProjection();
-
-            var active = SelectInstanceUsingActiveRule(normalizedProviderKey);
+            var active = _instances.GetActiveByProviderKeyWithSecrets(normalizedProviderKey);
 
             if (active is not null)
             {
-                var withSecrets = _instances.GetWithSecrets(active.InstanceId) ?? active;
-
-                if (!withSecrets.Enabled)
-                {
-                    _logger.LogDebug(
-                        "Selected instance for provider '{ProviderKey}' is disabled (instanceId={InstanceId}).",
-                        normalizedProviderKey,
-                        withSecrets.InstanceId);
-                }
-
-                LogMissingRequiredCredentials(normalizedProviderKey, definition, withSecrets.Auth, withSecrets.Enabled);
+                LogMissingRequiredCredentials(normalizedProviderKey, definition, active.Auth, active.Enabled);
 
                 return new ActiveExternalProviderConfig(
                     ProviderKey: normalizedProviderKey,
-                    Enabled: withSecrets.Enabled,
-                    BaseUrl: withSecrets.BaseUrl,
-                    Auth: CloneAuth(withSecrets.Auth),
+                    Enabled: active.Enabled,
+                    BaseUrl: active.BaseUrl,
+                    Auth: CloneAuth(active.Auth),
                     Source: "instances");
             }
         }
@@ -83,32 +69,6 @@ public sealed class ActiveExternalProviderConfigResolver
 
     public IReadOnlyDictionary<string, string?> GetActiveAuth(string providerKey)
         => Resolve(providerKey).Auth;
-
-    private void EnsureLegacyProjection()
-    {
-        if (_legacyProjectionDone)
-            return;
-
-        lock (_legacyProjectionLock)
-        {
-            if (_legacyProjectionDone)
-                return;
-
-            _instances.UpsertFromLegacyDefaults();
-            _legacyProjectionDone = true;
-        }
-    }
-
-    private ExternalProviderInstance? SelectInstanceUsingActiveRule(string providerKey)
-    {
-        return _instances
-            .List()
-            .Where(instance => string.Equals(instance.ProviderKey, providerKey, StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(instance => instance.Enabled)
-            .ThenByDescending(instance => instance.UpdatedAtTs)
-            .ThenByDescending(instance => instance.CreatedAtTs)
-            .FirstOrDefault();
-    }
 
     private void LogMissingRequiredCredentials(
         string providerKey,

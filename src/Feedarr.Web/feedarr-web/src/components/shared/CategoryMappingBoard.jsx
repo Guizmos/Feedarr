@@ -5,6 +5,8 @@ import {
   normalizeCategoryGroupKey,
 } from "../../domain/categories/index.js";
 import { tr } from "../../app/uiText.js";
+import AppIcon from "../../ui/AppIcon.jsx";
+import CategoryPreviewModal from "./CategoryPreviewModal.jsx";
 
 const CATEGORY_GROUP_LABELS_EN = {
   films: "Movies",
@@ -46,21 +48,40 @@ function categoryMatchesFilter(category, search, mode, mappings) {
   return haystack.includes(search.toLowerCase());
 }
 
-export default function CategoryMappingBoard({ categories, mappings, onChangeMapping, variant = "default" }) {
+export default function CategoryMappingBoard({
+  categories,
+  mappings,
+  onChangeMapping,
+  variant = "default",
+  sourceId,
+  previewCredentials,
+  infoNote = null,
+}) {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState("all");
   const [openMenuId, setOpenMenuId] = useState(null);
   const [menuPosition, setMenuPosition] = useState(null);
+  const [previewCat, setPreviewCat] = useState(null); // { id, name }
   const rootRef = useRef(null);
   const assignButtonRefs = useRef(new Map());
 
-  const map = mappings instanceof Map ? mappings : new Map();
+  const map = useMemo(
+    () => (mappings instanceof Map ? mappings : new Map()),
+    [mappings]
+  );
   const normalizedCategories = useMemo(() => normalizeCategories(categories), [categories]);
   const groupLabels = Object.fromEntries(
     CATEGORY_GROUPS.map((group) => [
       group.key,
       tr(group.label, CATEGORY_GROUP_LABELS_EN[group.key] || group.label),
     ])
+  );
+  const categoryNameMap = useMemo(
+    () =>
+      Object.fromEntries(
+        normalizedCategories.map((category) => [category.id, category.name])
+      ),
+    [normalizedCategories]
   );
   const groupsByLabel = [...CATEGORY_GROUPS]
     .map((group) => ({ ...group, label: groupLabels[group.key] || group.label }))
@@ -226,6 +247,8 @@ export default function CategoryMappingBoard({ categories, mappings, onChangeMap
         ))}
       </div>
 
+      {infoNote}
+
       <div className="category-mapping-board__columns">
         <MappingColumn
           title={tr("Standard", "Standard")}
@@ -235,6 +258,7 @@ export default function CategoryMappingBoard({ categories, mappings, onChangeMap
           openMenuId={openMenuId}
           onToggleMenu={toggleMenu}
           registerAssignButton={registerAssignButton}
+          onPreview={sourceId || previewCredentials ? setPreviewCat : null}
         />
         <MappingColumn
           title={tr("Spécifiques", "Specific")}
@@ -244,6 +268,7 @@ export default function CategoryMappingBoard({ categories, mappings, onChangeMap
           openMenuId={openMenuId}
           onToggleMenu={toggleMenu}
           registerAssignButton={registerAssignButton}
+          onPreview={sourceId || previewCredentials ? setPreviewCat : null}
         />
       </div>
       {openMenuId && menuPosition && (
@@ -261,11 +286,21 @@ export default function CategoryMappingBoard({ categories, mappings, onChangeMap
           }}
         />
       )}
+      {previewCat && (sourceId || previewCredentials) && (
+        <CategoryPreviewModal
+          sourceId={sourceId ?? null}
+          previewCredentials={!sourceId ? previewCredentials : null}
+          catId={previewCat.id}
+          catName={previewCat.name}
+          categoryNameMap={categoryNameMap}
+          onClose={() => setPreviewCat(null)}
+        />
+      )}
     </div>
   );
 }
 
-function MappingColumn({ title, categories, mappings, groupLabels, openMenuId, onToggleMenu, registerAssignButton }) {
+function MappingColumn({ title, categories, mappings, groupLabels, openMenuId, onToggleMenu, registerAssignButton, onPreview }) {
   return (
     <div className="category-mapping-board__column">
       <div className="category-mapping-board__column-title">{title}</div>
@@ -280,21 +315,34 @@ function MappingColumn({ title, categories, mappings, groupLabels, openMenuId, o
               className={`mapping-chip${assignedKey ? ` mapping-chip--assigned mapping-chip--${assignedKey}` : ""}`}
               key={category.id}
             >
-              <div className="mapping-chip__line">
-                <span className="mapping-chip__id">{category.id}</span>
-                <span className="mapping-chip__name">{category.name}</span>
-              </div>
-              <div className="mapping-chip__line">
-                <button
-                  type="button"
-                  className="mapping-chip__assign"
-                  ref={(node) => registerAssignButton(category.id, node)}
-                  onClick={() => onToggleMenu(category.id)}
-                  aria-haspopup="menu"
-                  aria-expanded={menuOpen ? "true" : "false"}
-                >
-                  {assignedLabel}
-                </button>
+              <div className="mapping-chip__header">
+                <div className="mapping-chip__identity">
+                  <span className="mapping-chip__id">{category.id}</span>
+                  <span className="mapping-chip__name">{category.name}</span>
+                </div>
+                <div className="mapping-chip__actions">
+                  <button
+                    type="button"
+                    className="mapping-chip__assign"
+                    ref={(node) => registerAssignButton(category.id, node)}
+                    onClick={() => onToggleMenu(category.id)}
+                    aria-haspopup="menu"
+                    aria-expanded={menuOpen ? "true" : "false"}
+                  >
+                    {assignedLabel}
+                  </button>
+                  {onPreview && (
+                    <button
+                      type="button"
+                      className="iconbtn mapping-chip__preview"
+                      title={tr("Aperçu des 20 derniers résultats", "Preview last 20 results")}
+                      aria-label={tr("Aperçu des 20 derniers résultats", "Preview last 20 results")}
+                      onClick={() => onPreview({ id: category.id, name: category.name })}
+                    >
+                      <AppIcon name="search" />
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           );

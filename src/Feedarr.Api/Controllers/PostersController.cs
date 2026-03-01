@@ -86,31 +86,7 @@ public sealed class PostersController : ControllerBase
 
         var file = (string?)r.PosterFile;
         if (string.IsNullOrWhiteSpace(file)) return NotFound();
-
-        var postersDir = _posterFetch.PostersDirPath;
-        var path = Path.Combine(postersDir, file);
-
-        // sécurité anti path traversal
-        var full = Path.GetFullPath(path);
-        if (!full.StartsWith(postersDir, StringComparison.OrdinalIgnoreCase))
-            return BadRequest(new { error = "invalid poster path" });
-
-        if (!System.IO.File.Exists(full))
-        {
-            _releases.ClearPosterFileReferences(file);
-            return NotFound();
-        }
-
-        var ext = Path.GetExtension(full).ToLowerInvariant();
-        var ct = ext switch
-        {
-            ".jpg" or ".jpeg" => "image/jpeg",
-            ".png" => "image/png",
-            ".webp" => "image/webp",
-            _ => "application/octet-stream"
-        };
-
-        return PhysicalFile(full, ct);
+        return BuildPosterFileResult(file, $"release:{id}");
     }
 
     // GET /api/posters/entity/{entityId}
@@ -122,30 +98,7 @@ public sealed class PostersController : ControllerBase
 
         var file = entity.PosterFile;
         if (string.IsNullOrWhiteSpace(file)) return NotFound();
-
-        var postersDir = _posterFetch.PostersDirPath;
-        var path = Path.Combine(postersDir, file);
-
-        var full = Path.GetFullPath(path);
-        if (!full.StartsWith(postersDir, StringComparison.OrdinalIgnoreCase))
-            return BadRequest(new { error = "invalid poster path" });
-
-        if (!System.IO.File.Exists(full))
-        {
-            _releases.ClearPosterFileReferences(file);
-            return NotFound();
-        }
-
-        var ext = Path.GetExtension(full).ToLowerInvariant();
-        var ct = ext switch
-        {
-            ".jpg" or ".jpeg" => "image/jpeg",
-            ".png" => "image/png",
-            ".webp" => "image/webp",
-            _ => "application/octet-stream"
-        };
-
-        return PhysicalFile(full, ct);
+        return BuildPosterFileResult(file, $"entity:{entityId}");
     }
 
     // GET /api/posters/banner/{id}
@@ -156,13 +109,28 @@ public sealed class PostersController : ControllerBase
         if (r is null) return NotFound();
 
         var postersDir = _posterFetch.PostersDirPath;
+        var pathResolver = CreatePosterPathResolver();
         var file = $"banner-{id}.jpg";
-        var full = Path.Combine(postersDir, file);
+        if (!pathResolver.TryResolvePosterFile(file, out var full))
+            return NotFound();
 
         if (System.IO.File.Exists(full))
-            return PhysicalFile(full, "image/jpeg");
+            return BuildPosterFileResult(file, $"banner-cache:{id}");
 
-        Directory.CreateDirectory(postersDir);
+        try
+        {
+            Directory.CreateDirectory(postersDir);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _log.LogWarning(ex, "Banner cache directory access denied for release {ReleaseId} at {Path}", id, postersDir);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "poster file unavailable" });
+        }
+        catch (IOException ex)
+        {
+            _log.LogWarning(ex, "Banner cache directory creation failed for release {ReleaseId} at {Path}", id, postersDir);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "poster file unavailable" });
+        }
 
         var tmdbId = (int?)r.TmdbId ?? 0;
         var tvdbId = (int?)r.TvdbId ?? 0;
@@ -202,14 +170,28 @@ public sealed class PostersController : ControllerBase
             var posterFile = (string?)r.PosterFile;
             if (!string.IsNullOrWhiteSpace(posterFile))
             {
-                var posterFull = Path.Combine(postersDir, posterFile);
-                if (System.IO.File.Exists(posterFull))
-                    return PhysicalFile(posterFull, "image/jpeg");
+                var fallbackResult = BuildPosterFileResult(posterFile, $"banner-fallback:{id}");
+                if (fallbackResult is PhysicalFileResult or ObjectResult)
+                    return fallbackResult;
             }
             return NotFound();
         }
 
-        await System.IO.File.WriteAllBytesAsync(full, bytes, ct);
+        try
+        {
+            await System.IO.File.WriteAllBytesAsync(full, bytes, ct);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _log.LogWarning(ex, "Banner cache write denied for release {ReleaseId} at {Path}", id, full);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "poster file unavailable" });
+        }
+        catch (IOException ex)
+        {
+            _log.LogWarning(ex, "Banner cache write failed for release {ReleaseId} at {Path}", id, full);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "poster file unavailable" });
+        }
+
         return PhysicalFile(full, "image/jpeg");
     }
 
@@ -276,9 +258,11 @@ public sealed class PostersController : ControllerBase
 
             if (info is not null)
             {
-                try { entityId = info.EntityId is null ? null : Convert.ToInt64(info.EntityId); } catch { }
-                try { posterFile = info.PosterFile as string; } catch { }
-                try { posterUpdatedAtTs = info.PosterUpdatedAtTs is null ? null : Convert.ToInt64(info.PosterUpdatedAtTs); } catch { }
+                try { entityId = info.EntityId is null ? null : Convert.ToInt64(info.EntityId); }
+                catch (Exception ex) { _log.LogWarning(ex, "Failed to parse EntityId for release {Id}", id); }
+                posterFile = info.PosterFile as string;
+                try { posterUpdatedAtTs = info.PosterUpdatedAtTs is null ? null : Convert.ToInt64(info.PosterUpdatedAtTs); }
+                catch (Exception ex) { _log.LogWarning(ex, "Failed to parse PosterUpdatedAtTs for release {Id}", id); }
             }
 
             var resolvedUrl = !string.IsNullOrWhiteSpace(posterFile)
@@ -568,8 +552,11 @@ public sealed class PostersController : ControllerBase
         }
         else
         {
-            var movies = await _tmdb.SearchMovieListAsync(query, null, ct);
-            var tv = await _tmdb.SearchTvListAsync(query, null, ct);
+            var moviesTask = _tmdb.SearchMovieListAsync(query, null, ct);
+            var tvTask = _tmdb.SearchTvListAsync(query, null, ct);
+            await Task.WhenAll(moviesTask, tvTask);
+            var movies = moviesTask.Result;
+            var tv = tvTask.Result;
             results.AddRange(movies.Select(r => new PosterSearchResult
             {
                 Provider = "tmdb",
@@ -926,4 +913,68 @@ public sealed class PostersController : ControllerBase
     /// </summary>
     private static string SanitizeForLog(string value)
         => value.Replace('\r', ' ').Replace('\n', ' ').Replace('\t', ' ');
+
+    private PosterPathResolver CreatePosterPathResolver()
+        => new(_posterFetch.PostersDirPath);
+
+    private bool TryResolveStoredPosterPath(string file, out string fullPath)
+    {
+        var resolver = CreatePosterPathResolver();
+        var resolved = resolver.TryResolvePosterFile(file, out fullPath);
+        if (!resolved)
+        {
+            _log.LogWarning("Rejected unsafe poster file path from storage: {File}", SanitizeForLog(file));
+        }
+
+        return resolved;
+    }
+
+    private IActionResult BuildPosterFileResult(string storedFile, string logContext)
+    {
+        if (!TryResolveStoredPosterPath(storedFile, out var fullPath))
+            return NotFound();
+
+        try
+        {
+            using var stream = new FileStream(
+                fullPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+
+            return PhysicalFile(fullPath, GetContentTypeForPoster(fullPath));
+        }
+        catch (FileNotFoundException)
+        {
+            _log.LogInformation("Poster file missing for {Context}: {File}", logContext, SanitizeForLog(storedFile));
+            return NotFound();
+        }
+        catch (DirectoryNotFoundException)
+        {
+            _log.LogInformation("Poster directory missing for {Context}: {File}", logContext, SanitizeForLog(storedFile));
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _log.LogWarning(ex, "Poster file access denied for {Context}: {File}", logContext, SanitizeForLog(storedFile));
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "poster file unavailable" });
+        }
+        catch (IOException ex)
+        {
+            _log.LogWarning(ex, "Poster file read failed for {Context}: {File}", logContext, SanitizeForLog(storedFile));
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "poster file unavailable" });
+        }
+    }
+
+    private static string GetContentTypeForPoster(string fullPath)
+    {
+        var ext = Path.GetExtension(fullPath).ToLowerInvariant();
+        return ext switch
+        {
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".png" => "image/png",
+            ".webp" => "image/webp",
+            _ => "application/octet-stream"
+        };
+    }
 }

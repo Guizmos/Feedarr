@@ -101,6 +101,9 @@ public sealed class CategoryRecommendationService
         var assignedById = sourceId.HasValue && sourceId.Value > 0
             ? _sources.GetCategoryMappingMap(sourceId.Value)
             : new Dictionary<int, (string key, string label)>();
+        var selectedIds = sourceId.HasValue && sourceId.Value > 0
+            ? _sources.GetSelectedCategoryIds(sourceId.Value)
+            : new List<int>();
 
         return new CapsCategoriesResponseDto
         {
@@ -108,6 +111,7 @@ public sealed class CategoryRecommendationService
                 capsById,
                 supportedIds,
                 assignedById,
+                selectedIds,
                 includeStandardCatalog: req.IncludeStandardCatalog,
                 includeSpecific: req.IncludeSpecific),
             Warnings = warnings
@@ -155,10 +159,14 @@ public sealed class CategoryRecommendationService
         IReadOnlyDictionary<int, string> capsById,
         IReadOnlyCollection<int> supportedIds,
         IReadOnlyDictionary<int, (string key, string label)> assignedById,
+        IReadOnlyCollection<int> selectedIds,
         bool includeStandardCatalog,
         bool includeSpecific)
     {
         var supportedSet = supportedIds
+            .Where(id => id > 0)
+            .ToHashSet();
+        var selectedSet = selectedIds
             .Where(id => id > 0)
             .ToHashSet();
 
@@ -176,7 +184,7 @@ public sealed class CategoryRecommendationService
                     IsSupported = supportedSet.Contains(cat.Id),
                     AssignedGroupKey = assignedById.TryGetValue(cat.Id, out var assigned) ? assigned.key : null,
                     AssignedGroupLabel = assignedById.TryGetValue(cat.Id, out var assignedLabel) ? assignedLabel.label : null,
-                    IsAssigned = assignedById.ContainsKey(cat.Id)
+                    IsAssigned = selectedSet.Contains(cat.Id)
                 });
             }
         }
@@ -202,7 +210,7 @@ public sealed class CategoryRecommendationService
                     IsSupported = supportedSet.Contains(id),
                     AssignedGroupKey = assignedById.TryGetValue(id, out var assigned) ? assigned.key : null,
                     AssignedGroupLabel = assignedById.TryGetValue(id, out var assignedLabel) ? assignedLabel.label : null,
-                    IsAssigned = assignedById.ContainsKey(id)
+                    IsAssigned = selectedSet.Contains(id)
                 });
             }
         }
@@ -225,7 +233,7 @@ public sealed class CategoryRecommendationService
                     IsSupported = true,
                     AssignedGroupKey = assignedById.TryGetValue(id, out var assigned) ? assigned.key : null,
                     AssignedGroupLabel = assignedById.TryGetValue(id, out var assignedLabel) ? assignedLabel.label : null,
-                    IsAssigned = assignedById.ContainsKey(id)
+                    IsAssigned = selectedSet.Contains(id)
                 });
             }
         }

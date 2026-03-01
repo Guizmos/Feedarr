@@ -5,6 +5,7 @@ using System.Reflection;
 using Feedarr.Api.Data;
 using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Dtos.System;
+using Feedarr.Api.Helpers;
 using Feedarr.Api.Services;
 using Feedarr.Api.Services.Backup;
 using Feedarr.Api.Services.Categories;
@@ -32,6 +33,11 @@ public sealed class SystemController : ControllerBase
         public int LastItemCount { get; set; }
         public int ReleaseCount { get; set; }
     }
+
+    // Cursor tokens for keyset pagination (base64url-encoded JSON, opaque to clients)
+    private sealed record ProviderCursor(long MatchedCount, string ProviderKey);
+    private sealed record IndexerCategoryCursor(
+        string SourceName, int Count, long SourceId, string UnifiedCategory);
 
     // Captures the real start-up instant once, on first type load — readonly, no mutation.
     private static readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
@@ -210,19 +216,19 @@ public sealed class SystemController : ControllerBase
 
     // POST /api/system/backups/purge
     [HttpPost("backups/purge")]
-    public IActionResult PurgeBackups()
+    public async Task<IActionResult> PurgeBackups(CancellationToken ct)
     {
-        var deleted = _backupService.PurgeBackups();
+        var deleted = await _backupService.PurgeBackupsAsync(ct);
         return Ok(new { ok = true, deleted });
     }
 
     // POST /api/system/backups
     [HttpPost("backups")]
-    public IActionResult CreateBackup()
+    public async Task<IActionResult> CreateBackup(CancellationToken ct)
     {
         try
         {
-            var backup = _backupService.CreateBackup(GetAppVersion());
+            var backup = await _backupService.CreateBackupAsync(GetAppVersion(), ct);
             return Ok(backup);
         }
         catch (BackupOperationException ex)
@@ -233,11 +239,11 @@ public sealed class SystemController : ControllerBase
 
     // DELETE /api/system/backups/{name}
     [HttpDelete("backups/{name}")]
-    public IActionResult DeleteBackup([FromRoute] string name)
+    public async Task<IActionResult> DeleteBackup([FromRoute] string name, CancellationToken ct)
     {
         try
         {
-            _backupService.DeleteBackup(name);
+            await _backupService.DeleteBackupAsync(name, ct);
             return Ok(new { ok = true });
         }
         catch (BackupOperationException ex)
@@ -271,14 +277,14 @@ public sealed class SystemController : ControllerBase
     //   confirm=true explicitly, acknowledging that some credentials will be erased.
     //   Response: { ok: true, needsRestart: true, reencryptedCredentials: N, clearedUndecryptableCredentials: N }
     [HttpPost("backups/{name}/restore")]
-    public IActionResult RestoreBackup([FromRoute] string name, [FromQuery] bool confirm = false)
+    public async Task<IActionResult> RestoreBackup([FromRoute] string name, [FromQuery] bool confirm = false, CancellationToken ct = default)
     {
         try
         {
             if (!confirm)
             {
                 // Dry-run: return a preview without modifying anything.
-                var preview = _backupService.PreviewRestoreBackup(name, GetAppVersion());
+                var preview = await _backupService.PreviewRestoreBackupAsync(name, GetAppVersion(), ct);
 
                 var previewWarning = preview.WouldClear > 0
                     ? $"{preview.WouldClear} credential(s) could not be decrypted with the current key ring " +
@@ -295,7 +301,7 @@ public sealed class SystemController : ControllerBase
             }
 
             // Actual restore.
-            var result = _backupService.RestoreBackup(name, GetAppVersion());
+            var result = await _backupService.RestoreBackupAsync(name, GetAppVersion(), ct);
 
             var warning = result.ClearedUndecryptableCredentials > 0
                 ? $"{result.ClearedUndecryptableCredentials} credential(s) could not be decrypted " +
@@ -325,7 +331,7 @@ public sealed class SystemController : ControllerBase
     // GET /api/system/stats/summary - Lightweight data for dashboard tabs
     [EnableRateLimiting("stats-heavy")]
     [HttpGet("stats/summary")]
-    public IActionResult StatsSummary()
+    public async Task<IActionResult> StatsSummary(CancellationToken ct)
     {
         const string cacheKey = "system:stats:summary:v1";
         if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
@@ -342,7 +348,7 @@ public sealed class SystemController : ControllerBase
         var totalCalls = providerStatsByKey.Values.Sum(v => v.Calls);
         var totalFailures = providerStatsByKey.Values.Sum(v => v.Failures);
 
-        var storage = _storageCache.GetSnapshot();
+        var storage = await _storageCache.GetSnapshotAsync(ct);
         var localPosters = storage.PostersTopLevelCount;
 
         var missingPoster = conn.ExecuteScalar<int>(
@@ -373,7 +379,7 @@ public sealed class SystemController : ControllerBase
     // GET /api/system/stats/feedarr - Feedarr overview tab
     [EnableRateLimiting("stats-heavy")]
     [HttpGet("stats/feedarr")]
-    public IActionResult StatsFeedarr([FromQuery] int days = 30)
+    public async Task<IActionResult> StatsFeedarr([FromQuery] int days = 30, CancellationToken ct = default)
     {
         days = days switch { 7 => 7, 90 => 90, _ => 30 };
         var cacheKey = $"system:stats:feedarr:v2:{days}";
@@ -383,7 +389,7 @@ public sealed class SystemController : ControllerBase
         var sw = Stopwatch.StartNew();
         using var conn = _db.Open();
 
-        var storage = _storageCache.GetSnapshot();
+        var storage = await _storageCache.GetSnapshotAsync(ct);
         var dbSizeMb    = Math.Round(storage.DatabaseBytes / 1024d / 1024d, 2);
         var localPosters = storage.PostersTopLevelCount;
 
@@ -506,31 +512,45 @@ public sealed class SystemController : ControllerBase
     }
 
     // GET /api/system/stats/indexers - Indexers tab
+    // Cursor mode:  ?limit=N&cursor=<token>&direction=next|prev  (keyset, O(log n))
+    // Offset mode:  ?limit=N&offset=M  (legacy, kept for compat)
     [EnableRateLimiting("stats-heavy")]
     [HttpGet("stats/indexers")]
-    public IActionResult StatsIndexers()
+    public IActionResult StatsIndexers(
+        [FromQuery] int limit = 100,
+        [FromQuery] string? cursor = null,
+        [FromQuery] string direction = "next",
+        [FromQuery] int offset = 0)
     {
-        const string cacheKey = "system:stats:indexers:v3";
+        limit = Math.Clamp(limit, 1, 500);
+
+        // ── Validate cursor early ─────────────────────────────────────────────
+        IndexerCategoryCursor? decoded = null;
+        var cursorMode = !string.IsNullOrWhiteSpace(cursor);
+        if (cursorMode)
+        {
+            if (!CursorHelper.TryDecode<IndexerCategoryCursor>(cursor, out decoded) || decoded is null)
+                return BadRequest(new { error = "Cursor invalide : impossible de décoder le jeton." });
+        }
+
+        var isPrev   = string.Equals(direction, "prev", StringComparison.OrdinalIgnoreCase);
+        var cacheKey = cursorMode
+            ? $"system:stats:indexers:v4:mode=cursor:l{limit}:c{cursor}:d{direction}"
+            : $"system:stats:indexers:v4:mode=offset:l{limit}:o{Math.Max(0, offset)}";
+
         if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
             return Ok(cached);
 
         using var conn = _db.Open();
 
         var activeIndexers = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM sources WHERE enabled = 1;");
-        var totalIndexers = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM sources;");
-        var indexerStats = _providerStats.IndexerSnapshot();
-
-        var sourceRows = GetSourceStatsRows(conn);
+        var totalIndexers  = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM sources;");
+        var indexerStats   = _providerStats.IndexerSnapshot();
+        var sourceRows     = GetSourceStatsRows(conn);
 
         var indexerStatsBySource = sourceRows
             .Where(r => r.Enabled == 1)
-            .Select(r => new
-            {
-                id = r.Id,
-                name = r.Name,
-                releaseCount = r.ReleaseCount,
-                lastStatus = r.LastStatus
-            })
+            .Select(r => new { id = r.Id, name = r.Name, releaseCount = r.ReleaseCount, lastStatus = r.LastStatus })
             .OrderByDescending(r => r.releaseCount)
             .ToList();
 
@@ -554,55 +574,141 @@ public sealed class SystemController : ControllerBase
             .Where(r => r.Enabled == 1)
             .Select(r => new
             {
-                id = r.Id,
-                name = r.Name,
+                id = r.Id, name = r.Name,
                 avgMs = (int)Math.Round(avgResponseMsBySourceId.TryGetValue(r.Id, out var ms) ? ms : 0d)
             })
             .OrderByDescending(r => r.avgMs)
             .ThenBy(r => r.name)
             .ToList();
 
-        var releasesByCategoryByIndexer = conn.Query<(long sourceId, string sourceName, string unifiedCategory, int categoryId, int count)>(
-            @"SELECT s.id as sourceId,
-                     s.name as sourceName,
-                     COALESCE(NULLIF(TRIM(r.unified_category), ''), 'Autre') as unifiedCategory,
-                     MAX(r.category_id) as categoryId,
-                     COUNT(*) as count
-              FROM releases r
-              JOIN sources s ON r.source_id = s.id
-              WHERE s.enabled = 1
-              GROUP BY s.id, s.name, COALESCE(NULLIF(TRIM(r.unified_category), ''), 'Autre')
-              ORDER BY s.name, count DESC"
-        ).Select(r => new
-        {
-            sourceId = r.sourceId,
-            sourceName = r.sourceName,
-            unifiedCategory = r.unifiedCategory,
-            categoryId = r.categoryId,
-            count = r.count
-        }).ToList();
-
         var indexerDetails = sourceRows
             .Select(r => new
             {
-                id = r.Id,
-                name = r.Name,
-                enabled = r.Enabled == 1,
-                releaseCount = r.ReleaseCount,
-                lastSyncAtTs = r.LastSyncAtTs,
-                lastStatus = r.LastStatus,
-                lastError = r.LastError,
-                lastItemCount = r.LastItemCount
+                id = r.Id, name = r.Name, enabled = r.Enabled == 1,
+                releaseCount = r.ReleaseCount, lastSyncAtTs = r.LastSyncAtTs,
+                lastStatus = r.LastStatus, lastError = r.LastError, lastItemCount = r.LastItemCount
             })
             .OrderByDescending(r => r.releaseCount)
             .ToList();
+
+        // ── releasesByCategoryByIndexer (cursor or offset) ────────────────────
+        List<(long sourceId, string sourceName, string unifiedCategory, int categoryId, int count)> catRows;
+
+        if (cursorMode && decoded is not null)
+        {
+            // Stable sort: s.name ASC, count DESC, s.id ASC, unifiedCategory ASC
+            var havingClause = isPrev
+                ? """
+                  HAVING (
+                      s.name < @sourceName
+                      OR (s.name = @sourceName AND COUNT(*) > @count)
+                      OR (s.name = @sourceName AND COUNT(*) = @count AND s.id < @sourceId)
+                      OR (s.name = @sourceName AND COUNT(*) = @count AND s.id = @sourceId
+                          AND COALESCE(NULLIF(TRIM(r.unified_category),''),'Autre') < @unifiedCategory)
+                  )
+                  """
+                : """
+                  HAVING (
+                      s.name > @sourceName
+                      OR (s.name = @sourceName AND COUNT(*) < @count)
+                      OR (s.name = @sourceName AND COUNT(*) = @count AND s.id > @sourceId)
+                      OR (s.name = @sourceName AND COUNT(*) = @count AND s.id = @sourceId
+                          AND COALESCE(NULLIF(TRIM(r.unified_category),''),'Autre') > @unifiedCategory)
+                  )
+                  """;
+            var orderClause = isPrev
+                ? "ORDER BY s.name DESC, COUNT(*) ASC, s.id DESC, COALESCE(NULLIF(TRIM(r.unified_category),''),'Autre') DESC"
+                : "ORDER BY s.name ASC, COUNT(*) DESC, s.id ASC, COALESCE(NULLIF(TRIM(r.unified_category),''),'Autre') ASC";
+
+            catRows = conn.Query<(long, string, string, int, int)>(
+                $"""
+                SELECT s.id as sourceId,
+                       s.name as sourceName,
+                       COALESCE(NULLIF(TRIM(r.unified_category),''),'Autre') as unifiedCategory,
+                       MAX(r.category_id) as categoryId,
+                       COUNT(*) as count
+                FROM releases r
+                JOIN sources s ON r.source_id = s.id
+                WHERE s.enabled = 1
+                GROUP BY s.id, s.name, COALESCE(NULLIF(TRIM(r.unified_category),''),'Autre')
+                {havingClause}
+                {orderClause}
+                LIMIT @fetchLimit
+                """,
+                new
+                {
+                    sourceName      = decoded.SourceName,
+                    count           = decoded.Count,
+                    sourceId        = decoded.SourceId,
+                    unifiedCategory = decoded.UnifiedCategory,
+                    fetchLimit      = limit + 1,
+                }
+            ).ToList();
+        }
+        else
+        {
+            offset = Math.Max(0, offset);
+            catRows = conn.Query<(long, string, string, int, int)>(
+                """
+                SELECT s.id as sourceId,
+                       s.name as sourceName,
+                       COALESCE(NULLIF(TRIM(r.unified_category),''),'Autre') as unifiedCategory,
+                       MAX(r.category_id) as categoryId,
+                       COUNT(*) as count
+                FROM releases r
+                JOIN sources s ON r.source_id = s.id
+                WHERE s.enabled = 1
+                GROUP BY s.id, s.name, COALESCE(NULLIF(TRIM(r.unified_category),''),'Autre')
+                ORDER BY s.name ASC, count DESC, s.id ASC,
+                         COALESCE(NULLIF(TRIM(r.unified_category),''),'Autre') ASC
+                LIMIT @limit OFFSET @offset
+                """,
+                new { limit, offset }
+            ).ToList();
+        }
+
+        var hasMore = cursorMode && catRows.Count > limit;
+        if (hasMore) catRows.RemoveAt(catRows.Count - 1);
+        if (cursorMode && isPrev) catRows.Reverse();
+
+        var releasesByCategoryByIndexer = catRows.Select(r => new
+        {
+            sourceId = r.sourceId, sourceName = r.sourceName,
+            unifiedCategory = r.unifiedCategory, categoryId = r.categoryId, count = r.count
+        }).ToList();
+
+        // ── Build pagination metadata ──────────────────────────────────────────
+        object paginationMeta;
+        if (cursorMode)
+        {
+            string? nextCursor = null, prevCursor = null;
+            if (catRows.Count > 0)
+            {
+                var first = catRows[0];
+                var last  = catRows[^1];
+                nextCursor = CursorHelper.Encode(new IndexerCategoryCursor(last.sourceName,  last.count,  last.sourceId,  last.unifiedCategory));
+                prevCursor = CursorHelper.Encode(new IndexerCategoryCursor(first.sourceName, first.count, first.sourceId, first.unifiedCategory));
+            }
+            paginationMeta = new
+            {
+                mode = "cursor", limit,
+                nextCursor = isPrev ? nextCursor : (hasMore ? nextCursor : null),
+                prevCursor = isPrev ? (hasMore ? prevCursor : null) : prevCursor,
+                hasMore,
+            };
+        }
+        else
+        {
+            paginationMeta = new { mode = "offset", limit, offset };
+        }
 
         var payload = new
         {
             activeIndexers, totalIndexers,
             queries = indexerStats.Queries, failures = indexerStats.Failures,
             syncJobs = indexerStats.SyncJobs, syncFailures = indexerStats.SyncFailures,
-            indexerStatsBySource, indexerResponseMsBySource, releasesByCategoryByIndexer, indexerDetails
+            indexerStatsBySource, indexerResponseMsBySource, releasesByCategoryByIndexer, indexerDetails,
+            pagination = paginationMeta,
         };
 
         _cache.Set(cacheKey, payload, StatsCacheDuration);
@@ -610,15 +716,108 @@ public sealed class SystemController : ControllerBase
     }
 
     // GET /api/system/stats/providers - Providers tab
+    // Cursor mode:  ?limit=N&cursor=<token>&direction=next|prev  (keyset, O(log n))
+    // Offset mode:  ?limit=N&offset=M  (legacy, kept for compat)
     [EnableRateLimiting("stats-heavy")]
     [HttpGet("stats/providers")]
-    public IActionResult StatsProviders()
+    public IActionResult StatsProviders(
+        [FromQuery] int limit = 100,
+        [FromQuery] string? cursor = null,
+        [FromQuery] string direction = "next",
+        [FromQuery] int offset = 0)
     {
-        using var conn = _db.Open();
-        var stats = _providerStats.SnapshotByProvider();
-        var payload = ToProviderStatsPayload(stats);
+        limit = Math.Clamp(limit, 1, 500);
 
-        var matchingByProvider = conn.Query<(string ProviderKey, long MatchedCount)>(
+        // ── Cursor mode ───────────────────────────────────────────────────────
+        if (!string.IsNullOrWhiteSpace(cursor))
+        {
+            if (!CursorHelper.TryDecode<ProviderCursor>(cursor, out var decoded) || decoded is null)
+                return BadRequest(new { error = "Cursor invalide : impossible de décoder le jeton." });
+
+            var isPrev = string.Equals(direction, "prev", StringComparison.OrdinalIgnoreCase);
+            var cacheKey = $"system:stats:providers:v4:mode=cursor:l{limit}:c{cursor}:d{direction}";
+
+            if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
+                return Ok(cached);
+
+            using var conn = _db.Open();
+            var stats = _providerStats.SnapshotByProvider();
+            var basePayload = ToProviderStatsPayload(stats);
+
+            // Keyset WHERE condition and ORDER BY depend on direction
+            var havingClause = isPrev
+                ? "HAVING COUNT(1) > @matchedCount OR (COUNT(1) = @matchedCount AND providerKey < @providerKey)"
+                : "HAVING COUNT(1) < @matchedCount OR (COUNT(1) = @matchedCount AND providerKey > @providerKey)";
+            var orderClause = isPrev
+                ? "ORDER BY COUNT(1) ASC, providerKey DESC"
+                : "ORDER BY COUNT(1) DESC, providerKey ASC";
+
+            var rows = conn.Query<(string ProviderKey, long MatchedCount)>(
+                $"""
+                SELECT providerKey, COUNT(1) as matchedCount
+                FROM (
+                    SELECT LOWER(TRIM(COALESCE(
+                        NULLIF(me.ext_provider, ''),
+                        NULLIF(r.ext_provider, ''),
+                        NULLIF(r.poster_provider, '')
+                    ))) as providerKey
+                    FROM releases r
+                    LEFT JOIN media_entities me ON me.id = r.entity_id
+                ) x
+                WHERE providerKey IS NOT NULL AND providerKey <> ''
+                GROUP BY providerKey
+                {havingClause}
+                {orderClause}
+                LIMIT @fetchLimit
+                """,
+                new { matchedCount = decoded.MatchedCount, providerKey = decoded.ProviderKey, fetchLimit = limit + 1 }
+            ).ToList();
+
+            var hasMore = rows.Count > limit;
+            if (hasMore) rows.RemoveAt(rows.Count - 1);
+
+            if (isPrev)
+            {
+                rows.Reverse();   // restore original DESC order
+                // After reversing: items[0] was last fetched → prevCursor; items[^1] was first fetched → nextCursor
+            }
+
+            string? nextCursor = null, prevCursor = null;
+            if (rows.Count > 0)
+            {
+                var first = rows[0];
+                var last  = rows[^1];
+                nextCursor = CursorHelper.Encode(new ProviderCursor(last.MatchedCount,  last.ProviderKey));
+                prevCursor = CursorHelper.Encode(new ProviderCursor(first.MatchedCount, first.ProviderKey));
+            }
+
+            // In cursor mode, return list (preserves server-side order) instead of dict
+            var matchingList = rows.Select(r => new { providerKey = r.ProviderKey, matchedCount = r.MatchedCount }).ToList();
+            basePayload["_matchingByProvider"] = matchingList;
+            basePayload["_pagination"] = new
+            {
+                mode = "cursor",
+                limit,
+                nextCursor = isPrev ? nextCursor : (hasMore ? nextCursor : null),
+                prevCursor = isPrev ? (hasMore ? prevCursor : null) : prevCursor,
+                hasMore,
+            };
+
+            _cache.Set(cacheKey, (object)basePayload, StatsCacheDuration);
+            return Ok(basePayload);
+        }
+
+        // ── Offset mode (legacy fallback) ─────────────────────────────────────
+        offset = Math.Max(0, offset);
+        var offsetCacheKey = $"system:stats:providers:v4:mode=offset:l{limit}:o{offset}";
+        if (_cache.TryGetValue<object>(offsetCacheKey, out var cachedOffset) && cachedOffset is not null)
+            return Ok(cachedOffset);
+
+        using var connOffset = _db.Open();
+        var statsOffset = _providerStats.SnapshotByProvider();
+        var offsetPayload = ToProviderStatsPayload(statsOffset);
+
+        var matchingByProvider = connOffset.Query<(string ProviderKey, long MatchedCount)>(
             """
             SELECT providerKey, COUNT(1) as matchedCount
             FROM (
@@ -632,14 +831,19 @@ public sealed class SystemController : ControllerBase
             ) x
             WHERE providerKey IS NOT NULL AND providerKey <> ''
             GROUP BY providerKey
-            """
+            ORDER BY matchedCount DESC, providerKey ASC
+            LIMIT @limit OFFSET @offset
+            """,
+            new { limit, offset }
         ).ToDictionary(
             x => x.ProviderKey,
             x => x.MatchedCount,
             StringComparer.OrdinalIgnoreCase);
 
-        payload["_matchingByProvider"] = matchingByProvider;
-        return Ok(payload);
+        offsetPayload["_matchingByProvider"] = matchingByProvider;
+        offsetPayload["_pagination"] = new { mode = "offset", limit, offset };
+        _cache.Set(offsetCacheKey, (object)offsetPayload, StatsCacheDuration);
+        return Ok(offsetPayload);
     }
 
     // GET /api/system/stats/releases - Releases tab
@@ -764,7 +968,7 @@ public sealed class SystemController : ControllerBase
     // GET /api/system/stats - Extended statistics for dashboard (legacy)
     [EnableRateLimiting("stats-heavy")]
     [HttpGet("stats")]
-    public IActionResult Stats()
+    public async Task<IActionResult> Stats(CancellationToken ct)
     {
         const string cacheKey = "system:stats:legacy:v1";
         if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
@@ -777,7 +981,7 @@ public sealed class SystemController : ControllerBase
         var totalIndexers = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM sources;");
         var releasesCount = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM releases;");
 
-        var storage = _storageCache.GetSnapshot();
+        var storage = await _storageCache.GetSnapshotAsync(ct);
         var dbSizeMb = Math.Round(storage.DatabaseBytes / 1024d / 1024d, 2);
         var localPosters = storage.PostersTopLevelCount;
 
@@ -895,7 +1099,7 @@ public sealed class SystemController : ControllerBase
     // GET /api/system/storage
     [HttpGet("storage")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public IActionResult Storage()
+    public async Task<IActionResult> Storage(CancellationToken ct)
     {
         var volumes = new List<DiskVolumeDto>();
         var isLinux = !OperatingSystem.IsWindows();
@@ -971,7 +1175,7 @@ public sealed class SystemController : ControllerBase
             }
         }
 
-        var storage = _storageCache.GetSnapshot();
+        var storage = await _storageCache.GetSnapshotAsync(ct);
 
         // Calculate usage
         var usage = new StorageUsageDto();

@@ -164,10 +164,28 @@ public sealed class SettingsRepository
             var loaded = JsonSerializer.Deserialize<SecuritySettings>(json, JsonOpts);
             if (loaded is null) return defaults;
 
+            if (json.Contains("authMode", StringComparison.OrdinalIgnoreCase))
+            {
+                defaults.AuthMode = loaded.AuthMode ?? defaults.AuthMode;
+            }
+            else
+            {
+                var legacyAuth = (loaded.Authentication ?? defaults.Authentication).Trim().ToLowerInvariant();
+                var legacyRequired = (loaded.AuthenticationRequired ?? defaults.AuthenticationRequired).Trim().ToLowerInvariant();
+                defaults.AuthMode = legacyAuth switch
+                {
+                    "none" => "open",
+                    "basic" when legacyRequired == "all" => "strict",
+                    "basic" => "smart",
+                    _ => defaults.AuthMode
+                };
+            }
             if (!string.IsNullOrWhiteSpace(loaded.Authentication))
                 defaults.Authentication = loaded.Authentication;
             if (!string.IsNullOrWhiteSpace(loaded.AuthenticationRequired))
                 defaults.AuthenticationRequired = loaded.AuthenticationRequired;
+            if (json.Contains("publicBaseUrl", StringComparison.OrdinalIgnoreCase))
+                defaults.PublicBaseUrl = loaded.PublicBaseUrl ?? defaults.PublicBaseUrl;
             if (json.Contains("username", StringComparison.OrdinalIgnoreCase))
                 defaults.Username = loaded.Username ?? defaults.Username;
             if (json.Contains("passwordHash", StringComparison.OrdinalIgnoreCase))

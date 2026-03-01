@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildCategoryMappingsPatchDto,
   CATEGORY_GROUP_KEYS,
   CATEGORY_GROUP_LABELS,
   CATEGORY_GROUPS,
@@ -77,5 +78,27 @@ test("mapFromCapsAssignments canonicalizes assignedGroupKey values", () => {
   assert.equal(map.get(4), undefined);
   assert.equal(map.get(5), "emissions");
   assert.equal(map.get(6), undefined);
+});
+
+test("buildCategoryMappingsPatchDto always emits selectedCategoryIds array", () => {
+  assert.deepEqual(
+    buildCategoryMappingsPatchDto({ mappings: [], selectedCategoryIds: undefined }),
+    { mappings: [], selectedCategoryIds: [] }
+  );
+
+  assert.deepEqual(
+    buildCategoryMappingsPatchDto({ mappings: [], selectedCategoryIds: [] }),
+    { mappings: [], selectedCategoryIds: [] }
+  );
+
+  assert.deepEqual(
+    buildCategoryMappingsPatchDto({ mappings: [], selectedCategoryIds: [5000, 2000] }),
+    { mappings: [], selectedCategoryIds: [2000, 5000] }
+  );
+
+  assert.deepEqual(
+    buildCategoryMappingsPatchDto({ mappings: [], selectedCategoryIds: [0, -1, "a", 2000, 2000] }),
+    { mappings: [], selectedCategoryIds: [2000] }
+  );
 });
 

@@ -1,3 +1,5 @@
+using Feedarr.Api.Services.Security;
+
 namespace Feedarr.Api.Services.Resilience;
 
 /// <summary>
@@ -40,6 +42,12 @@ internal sealed class ProtocolDowngradeRedirectHandler : DelegatingHandler
                 : new Uri(currentRequest.RequestUri!, location);
 
             if (HasHostChanged(currentRequest.RequestUri, redirectUri))
+                return response;
+
+            // Validate the redirect destination: block redirects to private/internal IPs.
+            // Cross-host redirects are already blocked above, but we also guard against
+            // same-host redirects where the hostname resolves to an internal IP.
+            if (OutboundUrlGuard.IsBlockedHost(redirectUri.Host))
                 return response;
 
             if (IsHttpsToHttpDowngrade(currentRequest.RequestUri, redirectUri) &&

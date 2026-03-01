@@ -1,4 +1,5 @@
 const API_BASE = ((import.meta.env?.VITE_API_BASE) || "").replace(/\/+$/, "");
+const TRUSTED_REQUEST_HEADER = "X-Feedarr-Request";
 
 export function resolveApiUrl(path) {
   if (!path) return path;
@@ -9,15 +10,39 @@ export function resolveApiUrl(path) {
   return API_BASE + "/" + path;
 }
 
+function extractExtensions(payload) {
+  if (!payload || typeof payload !== "object") return {};
+  const reserved = new Set(["type", "title", "status", "detail", "instance", "message", "error"]);
+  const extensions = {};
+  for (const [key, value] of Object.entries(payload)) {
+    if (!reserved.has(key)) extensions[key] = value;
+  }
+  return extensions;
+}
+
 async function parseError(res) {
   let msg = `HTTP ${res.status}`;
   const ct = res.headers.get("content-type") || "";
   if (ct.includes("application/json")) {
     try {
       const data = await res.json();
-      msg = data?.message || data?.error || data?.title || data?.detail || msg;
+      const detail = typeof data?.detail === "string" ? data.detail : "";
+      const title = typeof data?.title === "string" ? data.title : "";
+      const error = typeof data?.error === "string" ? data.error : "";
+      // Prefer problem title for user-facing message, keep detail on the error object.
+      msg = data?.message || title || error || detail || msg;
+      return {
+        message: msg,
+        status: res.status,
+        title,
+        detail,
+        error,
+        requirements: data?.requirements,
+        extensions: extractExtensions(data),
+        payload: data,
+      };
     } catch {}
-    return msg;
+    return { message: msg, status: res.status };
   }
   try {
     const text = await res.text();
@@ -27,7 +52,21 @@ async function parseError(res) {
       msg = `${msg} - ${snippet}`;
     }
   } catch {}
-  return msg;
+  return { message: msg, status: res.status };
+}
+
+function createApiError(parsed) {
+  const error = new Error(parsed.message || "HTTP error");
+  error.status = parsed.status;
+  if (parsed.title) error.title = parsed.title;
+  if (parsed.detail) error.detail = parsed.detail;
+  if (parsed.error) error.error = parsed.error;
+  if (parsed.requirements) error.requirements = parsed.requirements;
+  if (parsed.extensions && Object.keys(parsed.extensions).length > 0) {
+    error.extensions = parsed.extensions;
+  }
+  if (parsed.payload) error.payload = parsed.payload;
+  return error;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -53,6 +92,7 @@ async function apiSend(method, path, body, { signal, timeoutMs } = {}) {
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
+        [TRUSTED_REQUEST_HEADER]: "1",
       },
       credentials: "include",
       body: body ? JSON.stringify(body) : null,
@@ -60,7 +100,7 @@ async function apiSend(method, path, body, { signal, timeoutMs } = {}) {
     });
 
     if (res.status === 204) return null;
-    if (!res.ok) throw new Error(await parseError(res));
+    if (!res.ok) throw createApiError(await parseError(res));
 
     const ct = res.headers.get("content-type") || "";
     if (!ct.includes("application/json")) return null;
@@ -79,7 +119,7 @@ export async function apiGet(path, { signal, timeoutMs } = {}) {
       signal: merged,
     });
 
-    if (!res.ok) throw new Error(await parseError(res));
+    if (!res.ok) throw createApiError(await parseError(res));
     const ct = res.headers.get("content-type") || "";
     if (!ct.includes("application/json")) return null;
     return res.json();

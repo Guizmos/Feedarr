@@ -1,5 +1,6 @@
 using Dapper;
 using Feedarr.Api.Data;
+using Feedarr.Api.Dtos.Sources;
 using Feedarr.Api.Models;
 using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services.Torznab;
@@ -1552,10 +1553,12 @@ LEFT JOIN media_entities me
         var deletedIds = new List<long>();
         var posterFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        var purgedPerCat = 0;
-        if (perCatLimit > 0)
-        {
-            var perCatIds = conn.Query<long>(
+        // Phase 1: collect both candidate sets BEFORE any deletion so that poster
+        // files can be retrieved in a single query (avoids calling GetPosterFilesForReleaseIds
+        // once per deletion pass).  GlobalIds are queried on the full table; IDs that
+        // overlap with perCatIds are excluded at delete time.
+        var perCatIds = perCatLimit > 0
+            ? conn.Query<long>(
                 """
                 WITH ranked AS (
                   SELECT id,
@@ -1572,25 +1575,11 @@ LEFT JOIN media_entities me
                 """,
                 new { sid = sourceId, cats = RetentionUnifiedCategories, limit = perCatLimit },
                 tx
-            ).AsList();
+            ).AsList()
+            : new List<long>();
 
-            if (perCatIds.Count > 0)
-            {
-                foreach (var file in GetPosterFilesForReleaseIds(conn, tx, perCatIds))
-                    posterFiles.Add(file);
-
-                DeleteReleaseArrStatus(conn, tx, perCatIds);
-                DeleteReleases(conn, tx, perCatIds);
-
-                deletedIds.AddRange(perCatIds);
-                purgedPerCat = perCatIds.Count;
-            }
-        }
-
-        var purgedGlobal = 0;
-        if (globalLimit > 0)
-        {
-            var globalIds = conn.Query<long>(
+        var globalIds = globalLimit > 0
+            ? conn.Query<long>(
                 """
                 WITH ranked AS (
                   SELECT id,
@@ -1604,19 +1593,40 @@ LEFT JOIN media_entities me
                 """,
                 new { sid = sourceId, limit = globalLimit },
                 tx
-            ).AsList();
+            ).AsList()
+            : new List<long>();
 
-            if (globalIds.Count > 0)
-            {
-                foreach (var file in GetPosterFilesForReleaseIds(conn, tx, globalIds))
-                    posterFiles.Add(file);
+        // Phase 2: ONE poster-files query for all IDs that will be deleted.
+        var allCandidates = new HashSet<long>(perCatIds);
+        allCandidates.UnionWith(globalIds);
+        if (allCandidates.Count > 0)
+        {
+            foreach (var file in GetPosterFilesForReleaseIds(conn, tx, allCandidates))
+                posterFiles.Add(file);
+        }
 
-                DeleteReleaseArrStatus(conn, tx, globalIds);
-                DeleteReleases(conn, tx, globalIds);
+        // Phase 3: delete per-cat candidates.
+        var purgedPerCat = 0;
+        if (perCatIds.Count > 0)
+        {
+            DeleteReleaseArrStatus(conn, tx, perCatIds);
+            DeleteReleases(conn, tx, perCatIds);
+            deletedIds.AddRange(perCatIds);
+            purgedPerCat = perCatIds.Count;
+        }
 
-                deletedIds.AddRange(globalIds);
-                purgedGlobal = globalIds.Count;
-            }
+        // Phase 4: delete global candidates not already removed by per-cat pass.
+        var purgedGlobal = 0;
+        var perCatSet = perCatIds.Count > 0 ? new HashSet<long>(perCatIds) : null;
+        var globalOnlyIds = perCatSet is not null
+            ? globalIds.Where(id => !perCatSet.Contains(id)).ToList()
+            : globalIds;
+        if (globalOnlyIds.Count > 0)
+        {
+            DeleteReleaseArrStatus(conn, tx, globalOnlyIds);
+            DeleteReleases(conn, tx, globalOnlyIds);
+            deletedIds.AddRange(globalOnlyIds);
+            purgedGlobal = globalOnlyIds.Count;
         }
 
         var perKeyAfter = GetPerKeyCounts(conn, tx, sourceId);
@@ -1722,6 +1732,56 @@ LEFT JOIN media_entities me
         return rows
             .Where(file => !string.IsNullOrWhiteSpace(file))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    public sealed class PosterRepairCandidate
+    {
+        public string PosterFile { get; set; } = "";
+        public long PosterUpdatedAtTs { get; set; }
+        public int ReferenceCount { get; set; }
+    }
+
+    public List<PosterRepairCandidate> GetPosterRepairCandidates(long? olderThanTs, int limit, int offset)
+    {
+        using var conn = _db.Open();
+        var safeLimit = Math.Clamp(limit <= 0 ? 200 : limit, 1, 500);
+        var safeOffset = Math.Max(0, offset);
+
+        var rows = conn.Query<PosterRepairCandidate>(
+            """
+            WITH refs AS (
+                SELECT r.poster_file AS PosterFile,
+                       COALESCE(r.poster_updated_at_ts, 0) AS PosterUpdatedAtTs
+                FROM releases r
+                WHERE r.poster_file IS NOT NULL
+                  AND r.poster_file <> ''
+
+                UNION ALL
+
+                SELECT me.poster_file AS PosterFile,
+                       COALESCE(me.poster_updated_at_ts, 0) AS PosterUpdatedAtTs
+                FROM media_entities me
+                WHERE me.poster_file IS NOT NULL
+                  AND me.poster_file <> ''
+            )
+            SELECT
+                PosterFile,
+                MAX(PosterUpdatedAtTs) AS PosterUpdatedAtTs,
+                COUNT(1) AS ReferenceCount
+            FROM refs
+            GROUP BY PosterFile
+            HAVING @olderThanTs IS NULL OR MAX(PosterUpdatedAtTs) <= @olderThanTs
+            ORDER BY MAX(PosterUpdatedAtTs) ASC, PosterFile ASC
+            LIMIT @limit OFFSET @offset;
+            """,
+            new
+            {
+                olderThanTs,
+                limit = safeLimit,
+                offset = safeOffset
+            });
+
+        return rows.AsList();
     }
 
     public void ClearPosterFileReferences(string posterFile)
@@ -2211,6 +2271,46 @@ LEFT JOIN media_entities me
         }
 
         return (processed, rebound);
+    }
+
+    public async Task<IReadOnlyList<CategoryPreviewItemDto>> GetPreviewByCategoryAsync(
+        long sourceId,
+        int catId,
+        int limit,
+        CancellationToken ct)
+    {
+        var safeLimit = Math.Clamp(limit, 1, 50);
+
+        const string sql = """
+            SELECT
+                r.published_at_ts  AS PublishedAtTs,
+                s.name             AS SourceName,
+                r.title            AS Title,
+                r.size_bytes       AS SizeBytes,
+                r.category_id      AS CategoryId,
+                sc.name            AS ResultCategoryName,
+                r.unified_category AS UnifiedCategory,
+                r.tmdb_id          AS TmdbId,
+                r.tvdb_id          AS TvdbId,
+                r.seeders          AS Seeders
+            FROM releases r
+            JOIN sources s ON s.id = r.source_id
+            LEFT JOIN source_categories sc
+              ON sc.source_id = r.source_id AND sc.cat_id = r.category_id
+            WHERE r.source_id = @sourceId
+              AND (
+                    r.category_id = @catId
+                 OR (',' || COALESCE(r.category_ids, '') || ',') LIKE '%,' || @catId || ',%'
+              )
+            ORDER BY r.published_at_ts DESC
+            LIMIT @limit;
+            """;
+
+        using var conn = _db.Open();
+        var rows = await conn.QueryAsync<CategoryPreviewItemDto>(
+            new CommandDefinition(sql, new { sourceId, catId, limit = safeLimit }, cancellationToken: ct));
+
+        return rows.ToList();
     }
 
 }

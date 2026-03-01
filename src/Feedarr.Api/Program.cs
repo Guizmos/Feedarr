@@ -76,14 +76,20 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
     options.ForwardLimit = 1;
 
-    var trustedProxies = builder.Configuration.GetSection("App:ReverseProxy:TrustedProxies").Get<string[]>() ?? Array.Empty<string>();
+    var trustedProxies = GetConfiguredStringArray(
+        builder.Configuration,
+        "Security:KnownProxies",
+        "App:ReverseProxy:TrustedProxies");
     foreach (var raw in trustedProxies)
     {
         if (IPAddress.TryParse(raw?.Trim(), out var ip))
             options.KnownProxies.Add(ip);
     }
 
-    var trustedNetworks = builder.Configuration.GetSection("App:ReverseProxy:TrustedNetworks").Get<string[]>() ?? Array.Empty<string>();
+    var trustedNetworks = GetConfiguredStringArray(
+        builder.Configuration,
+        "Security:KnownNetworks",
+        "App:ReverseProxy:TrustedNetworks");
     foreach (var raw in trustedNetworks)
     {
         if (TryParseIpNetwork(raw, out var network))
@@ -134,9 +140,13 @@ SqlMapper.AddTypeHandler(new SqliteNullableInt32Handler());
 
 // Options + DB
 builder.Services.Configure<AppOptions>(builder.Configuration.GetSection("App"));
+builder.Services.Configure<ProviderStatsFlushOptions>(builder.Configuration.GetSection("App:ProviderStatsFlush"));
 builder.Services.Configure<UpdatesOptions>(builder.Configuration.GetSection("App:Updates"));
+builder.Services.Configure<BasicAuthTransportSecurityOptions>(builder.Configuration.GetSection("Security"));
+builder.Services.Configure<BasicAuthThrottleOptions>(builder.Configuration.GetSection("Security:AuthThrottle"));
 builder.Services.AddSingleton<Db>();
 builder.Services.AddSingleton<MigrationsRunner>();
+builder.Services.AddSingleton(TimeProvider.System);
 
 // Security - API Key Encryption
 builder.Services.AddSingleton<IApiKeyProtectionService, ApiKeyProtectionService>();
@@ -150,6 +160,7 @@ builder.Services.AddSingleton<ActivityRepository>();
 builder.Services.AddSingleton<SettingsRepository>();
 builder.Services.AddSingleton<ExternalProviderInstanceRepository>();
 builder.Services.AddSingleton<StatsRepository>();
+builder.Services.AddSingleton<IProviderStatsStore>(sp => sp.GetRequiredService<StatsRepository>());
 builder.Services.AddSingleton<ArrApplicationRepository>();
 builder.Services.AddSingleton<ArrLibraryRepository>();
 builder.Services.AddSingleton<MediaEntityRepository>();
@@ -168,11 +179,16 @@ builder.Services.AddSingleton<BackupService>();
 builder.Services.AddSingleton<UnifiedCategoryService>();
 builder.Services.AddSingleton<UnifiedCategoryResolver>();
 builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<BootstrapTokenService>();
+builder.Services.AddSingleton<AuthThrottleService>();
 builder.Services.AddSingleton<CategoryRecommendationService>();
 builder.Services.AddSingleton<ExternalProviderRegistry>();
 builder.Services.AddSingleton<ActiveExternalProviderConfigResolver>();
 builder.Services.AddSingleton<ExternalProviderTestService>();
+builder.Services.AddHostedService<BasicAuthTransportSecurityStartupService>();
+builder.Services.AddHostedService<ExternalProvidersBootstrapService>();
 builder.Services.AddHostedService<RssSyncHostedService>();
+builder.Services.AddHostedService<ProviderStatsFlushHostedService>();
 builder.Services.AddSingleton<Feedarr.Api.Services.Titles.TitleParser>();
 builder.Services.AddSingleton<VideoMatchingStrategy>();
 builder.Services.AddSingleton<GameMatchingStrategy>();
@@ -181,6 +197,7 @@ builder.Services.AddSingleton<AudioMatchingStrategy>();
 builder.Services.AddSingleton<GenericMatchingStrategy>();
 builder.Services.AddSingleton<PosterMatchingOrchestrator>();
 builder.Services.AddSingleton<PosterFetchService>();
+builder.Services.AddSingleton<IPosterFileStore, PosterFileStore>();
 builder.Services.AddSingleton<PosterMatchCacheService>();
 builder.Services.AddSingleton<PosterFetchJobFactory>();
 builder.Services.AddSingleton<SyncOrchestrationService>();
@@ -205,6 +222,17 @@ builder.Services.AddHttpClient("github-updates", c =>
 // Resilience: transient retry handler for external HTTP clients
 builder.Services.AddTransient<TransientHttpRetryHandler>();
 builder.Services.AddTransient<ProtocolDowngradeRedirectHandler>();
+// SSRF guard: DNS re-validates the destination before each call on user-configurable clients
+builder.Services.AddTransient<SsrfGuardHandler>();
+
+// Circuit breaker — singleton state per family, transient handler
+builder.Services.Configure<HttpResilienceOptions>(builder.Configuration.GetSection("App:Http"));
+builder.Services.AddSingleton<ArrCircuitBreakerState>();
+builder.Services.AddSingleton<ProviderCircuitBreakerState>();
+builder.Services.AddSingleton<IndexerCircuitBreakerState>();
+builder.Services.AddTransient<ArrCircuitBreakerHandler>();
+builder.Services.AddTransient<ProviderCircuitBreakerHandler>();
+builder.Services.AddTransient<IndexerCircuitBreakerHandler>();
 
 // Torznab (already has its own retry logic in TorznabClient)
 builder.Services.AddSingleton<TorznabRssParser>();
@@ -214,12 +242,15 @@ builder.Services.AddHttpClient<TorznabClient>(c =>
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
 {
-    AllowAutoRedirect = true,
-    MaxAutomaticRedirections = 5,
+    // AllowAutoRedirect=false: redirects are followed manually by ProtocolDowngradeRedirectHandler
+    // so we can validate the destination IP before following (SSRF guard).
+    AllowAutoRedirect = false,
     ServerCertificateCustomValidationCallback = allowInvalidCerts
         ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
         : null
-});
+}).AddHttpMessageHandler<IndexerCircuitBreakerHandler>()
+  .AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
+  .AddHttpMessageHandler<SsrfGuardHandler>();
 
 // TMDB
 builder.Services.AddHttpClient<TmdbClient>(c =>
@@ -227,7 +258,8 @@ builder.Services.AddHttpClient<TmdbClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(30);
     c.BaseAddress = new Uri("https://api.themoviedb.org/3/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+  .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Fanart
 builder.Services.AddHttpClient<FanartClient>(c =>
@@ -235,14 +267,16 @@ builder.Services.AddHttpClient<FanartClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(25);
     c.BaseAddress = new Uri("https://webservice.fanart.tv/v3/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+  .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // IGDB
 builder.Services.AddHttpClient<IgdbClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(25);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+  .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // TVmaze
 builder.Services.AddHttpClient<TvMazeClient>(c =>
@@ -250,7 +284,8 @@ builder.Services.AddHttpClient<TvMazeClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(20);
     c.BaseAddress = new Uri("https://api.tvmaze.com/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+  .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Jikan
 builder.Services.AddHttpClient<JikanClient>(c =>
@@ -258,7 +293,8 @@ builder.Services.AddHttpClient<JikanClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(20);
     c.BaseAddress = new Uri("https://api.jikan.moe/v4/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+  .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Google Books
 builder.Services.AddHttpClient<GoogleBooksClient>(c =>
@@ -266,7 +302,8 @@ builder.Services.AddHttpClient<GoogleBooksClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(20);
     c.BaseAddress = new Uri("https://www.googleapis.com/books/v1/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+  .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // TheAudioDB
 builder.Services.AddHttpClient<TheAudioDbClient>(c =>
@@ -274,7 +311,8 @@ builder.Services.AddHttpClient<TheAudioDbClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(20);
     c.BaseAddress = new Uri("https://www.theaudiodb.com/api/v1/json/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+  .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Comic Vine
 builder.Services.AddHttpClient<ComicVineClient>(c =>
@@ -282,7 +320,8 @@ builder.Services.AddHttpClient<ComicVineClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(20);
     c.BaseAddress = new Uri("https://comicvine.gamespot.com/api/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+  .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Open Library — free, no API key required
 builder.Services.AddHttpClient<OpenLibraryClient>(c =>
@@ -291,7 +330,8 @@ builder.Services.AddHttpClient<OpenLibraryClient>(c =>
     c.BaseAddress = new Uri("https://openlibrary.org/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0 ( https://github.com/Guizmos/feedarr )");
     c.DefaultRequestHeaders.Accept.ParseAdd("application/json");
-}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+  .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // MusicBrainz — no API key required, User-Agent mandatory
 builder.Services.AddHttpClient<MusicBrainzClient>(c =>
@@ -299,7 +339,8 @@ builder.Services.AddHttpClient<MusicBrainzClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(25);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0 ( https://github.com/Guizmos/feedarr )");
     c.DefaultRequestHeaders.Accept.ParseAdd("application/json");
-}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+  .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // RAWG — free tier API key required (rawg.io/apidocs)
 builder.Services.AddHttpClient<RawgClient>(c =>
@@ -307,7 +348,8 @@ builder.Services.AddHttpClient<RawgClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(20);
     c.BaseAddress = new Uri("https://api.rawg.io/api/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+  .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Sonarr
 builder.Services.AddHttpClient<SonarrClient>(c =>
@@ -316,12 +358,14 @@ builder.Services.AddHttpClient<SonarrClient>(c =>
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
 {
-    AllowAutoRedirect = true,
-    MaxAutomaticRedirections = 5,
+    AllowAutoRedirect = false,
     ServerCertificateCustomValidationCallback = allowInvalidCerts
         ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
         : null
-}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+}).AddHttpMessageHandler<ArrCircuitBreakerHandler>()
+  .AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
+  .AddHttpMessageHandler<SsrfGuardHandler>()
+  .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Radarr
 builder.Services.AddHttpClient<RadarrClient>(c =>
@@ -330,12 +374,14 @@ builder.Services.AddHttpClient<RadarrClient>(c =>
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
 {
-    AllowAutoRedirect = true,
-    MaxAutomaticRedirections = 5,
+    AllowAutoRedirect = false,
     ServerCertificateCustomValidationCallback = allowInvalidCerts
         ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
         : null
-}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+}).AddHttpMessageHandler<ArrCircuitBreakerHandler>()
+  .AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
+  .AddHttpMessageHandler<SsrfGuardHandler>()
+  .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Overseerr/Jellyseerr/Seer
 builder.Services.AddHttpClient<EerrRequestClient>(c =>
@@ -344,15 +390,17 @@ builder.Services.AddHttpClient<EerrRequestClient>(c =>
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
 {
-    AllowAutoRedirect = true,
-    MaxAutomaticRedirections = 5,
+    AllowAutoRedirect = false,
     ServerCertificateCustomValidationCallback = allowInvalidCerts
         ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
         : null
-}).AddHttpMessageHandler<TransientHttpRetryHandler>();
+}).AddHttpMessageHandler<ArrCircuitBreakerHandler>()
+  .AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
+  .AddHttpMessageHandler<SsrfGuardHandler>()
+  .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
-// Jackett — AllowAutoRedirect=false + ProtocolDowngradeRedirectHandler
-// pour suivre les redirections HTTPS → HTTP (reverse proxy)
+// Jackett — AllowAutoRedirect=false + ProtocolDowngradeRedirectHandler (HTTPS→HTTP)
+//         + SsrfGuardHandler (DNS re-check before each call)
 builder.Services.AddHttpClient<JackettClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(30);
@@ -363,7 +411,9 @@ builder.Services.AddHttpClient<JackettClient>(c =>
     ServerCertificateCustomValidationCallback = allowInvalidCerts
         ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
         : null
-}).AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
+}).AddHttpMessageHandler<ArrCircuitBreakerHandler>()
+  .AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
+  .AddHttpMessageHandler<SsrfGuardHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Prowlarr — même traitement
@@ -377,10 +427,13 @@ builder.Services.AddHttpClient<ProwlarrClient>(c =>
     ServerCertificateCustomValidationCallback = allowInvalidCerts
         ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
         : null
-}).AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
+}).AddHttpMessageHandler<ArrCircuitBreakerHandler>()
+  .AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
+  .AddHttpMessageHandler<SsrfGuardHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Arr Library Cache (in-memory, will be deprecated)
+builder.Services.Configure<ArrLibraryCacheOptions>(builder.Configuration.GetSection("App:ArrLibraryCache"));
 builder.Services.AddSingleton<ArrLibraryCacheService>();
 
 // Arr Library Sync (background service for persistent storage)
@@ -394,7 +447,7 @@ builder.Services.AddCors(o =>
     o.AddPolicy("dev", p =>
         p.WithOrigins("http://localhost:5173")
          .WithMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
-         .WithHeaders("Content-Type", "Authorization", "X-Requested-With")
+         .WithHeaders("Content-Type", "Authorization", "X-Requested-With", RequestForgeryProtection.RequestHeaderName)
          .AllowCredentials()
     );
 });
@@ -430,6 +483,24 @@ builder.Services.AddRateLimiter(options =>
                 cancellationToken: token);
         }
     };
+
+    // Strict rate limit on bootstrap-token issuance: 5 per minute per IP.
+    // Prevents brute-forcing the X-Bootstrap-Secret header.
+    var bootstrapTokenRateLimit = Math.Max(1, builder.Configuration.GetValue("App:RateLimit:BootstrapToken:PermitLimit", 5));
+    var bootstrapTokenWindowSeconds = Math.Clamp(builder.Configuration.GetValue("App:RateLimit:BootstrapToken:WindowSeconds", 60), 10, 3600);
+    options.AddPolicy("bootstrap-token", httpContext =>
+    {
+        var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            $"bootstrap:{ip}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = bootstrapTokenRateLimit,
+                Window = TimeSpan.FromSeconds(bootstrapTokenWindowSeconds),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            });
+    });
 
     options.AddPolicy("stats-heavy", httpContext =>
     {
@@ -611,6 +682,10 @@ app.UseRateLimiter();
 
 // Security (Basic Auth)
 app.UseMiddleware<BasicAuthMiddleware>();
+
+// Browser-origin guard for unsafe requests. Allows same-origin or allowlisted
+// origins/referers, and requires an explicit trusted header for non-browser clients.
+app.UseMiddleware<AntiCsrfOriginMiddleware>();
 
 // Response compression (Brotli preferred, Gzip fallback).
 // Must be placed before UseStaticFiles so static assets are also compressed.
@@ -817,6 +892,15 @@ static bool TryParseIpNetwork(string? value, out Microsoft.AspNetCore.HttpOverri
 
     network = new Microsoft.AspNetCore.HttpOverrides.IPNetwork(address, prefixLength);
     return true;
+}
+
+static string[] GetConfiguredStringArray(IConfiguration configuration, string primarySection, string fallbackSection)
+{
+    var primary = configuration.GetSection(primarySection).Get<string[]>();
+    if (primary is { Length: > 0 })
+        return primary;
+
+    return configuration.GetSection(fallbackSection).Get<string[]>() ?? Array.Empty<string>();
 }
 
 static void MigrateLegacyDataProtectionKeys(string legacyPath, string targetPath)

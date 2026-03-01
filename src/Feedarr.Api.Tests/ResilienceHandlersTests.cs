@@ -107,6 +107,63 @@ public sealed class ResilienceHandlersTests
         Assert.True(redirected.Headers.ContainsKey("User-Agent"));
     }
 
+    // -------------------------------------------------------------------------
+    // SsrfGuardHandler — blocks private / loopback IPs
+    // -------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("http://192.168.1.100/api")]
+    [InlineData("http://10.0.0.1/api")]
+    [InlineData("http://127.0.0.1/api")]
+    [InlineData("http://169.254.169.254/latest/meta-data")]
+    public async Task SsrfGuard_BlocksPrivateAndLoopbackIps_ReturnsForbidden(string url)
+    {
+        var inner = new NeverCallHandler();
+        using var handler = new SsrfGuardHandler { InnerHandler = inner };
+        using var http = new HttpClient(handler);
+
+        var response = await http.GetAsync(url);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.False(inner.Called, "Inner handler must not be reached for blocked IPs");
+    }
+
+    [Fact]
+    public async Task SsrfGuard_AllowsPublicIp_ForwardsToInnerHandler()
+    {
+        // 8.8.8.8 is a public Google DNS IP — not in any blocked range.
+        // The handler will forward the request; inner returns 200 OK.
+        var inner = new StaticResponseHandler2(HttpStatusCode.OK);
+        using var handler = new SsrfGuardHandler { InnerHandler = inner };
+        using var http = new HttpClient(handler);
+
+        var response = await http.GetAsync("http://8.8.8.8/dummy");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    private sealed class NeverCallHandler : HttpMessageHandler
+    {
+        public bool Called { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Called = true;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }
+    }
+
+    private sealed class StaticResponseHandler2 : HttpMessageHandler
+    {
+        private readonly HttpStatusCode _code;
+        public StaticResponseHandler2(HttpStatusCode code) => _code = code;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(_code));
+    }
+
     private static HttpResponseMessage Redirect(string location)
     {
         var response = new HttpResponseMessage(HttpStatusCode.Found);

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { apiGet, apiPost } from "../api/client.js";
 import Loader from "../ui/Loader.jsx";
 import { useSubbarSetter } from "../layout/useSubbar.js";
@@ -20,18 +21,8 @@ import {
   TopReleasesPosterSection,
 } from "./topReleases/components/TopReleasesSections.jsx";
 
-const CATEGORY_LABELS = {
-  films: "Films",
-  series: "Series TV",
-  animation: "Animation",
-  anime: "Anime",
-  games: "Jeux PC",
-  emissions: "Emissions",
-  spectacle: "Spectacle",
-  audio: "Audio",
-  books: "Livres",
-  comics: "Comics",
-};
+const TOP_HOURS = 24;
+const TOP_TAKE = 5;
 
 const viewOptions = [
   { value: "grid", label: "Cartes" },
@@ -40,21 +31,12 @@ const viewOptions = [
   { value: "list", label: "Liste" },
 ];
 
-const sortOptions = [
-  { value: "seeders", label: "Seeders" },
-  { value: "rating", label: "Note" },
-  { value: "downloads", label: "Téléchargé" },
-  { value: "recent", label: "Récent" },
-];
-
 function TopReleasesSubbar({
   subbarClassName,
   sources,
   sourceId,
   setSourceId,
   enabledSources,
-  sortBy,
-  setSortBy,
   viewMode,
   setViewMode,
 }) {
@@ -82,21 +64,6 @@ function TopReleasesSubbar({
           })}
         </TopReleasesSubSelectIcon>
       ) : null}
-
-      <TopReleasesSubSelectIcon
-        icon="sort"
-        label="Tri"
-        value={sortBy}
-        active={sortBy !== "seeders"}
-        onChange={(e) => setSortBy(e.target.value)}
-        title="Tri"
-      >
-        {sortOptions.map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label}
-          </option>
-        ))}
-      </TopReleasesSubSelectIcon>
 
       <TopReleasesSubSelectIcon
         icon="view_module"
@@ -137,33 +104,6 @@ function formatRating(it) {
   return `${v.toFixed(1)}/10${suffix}`;
 }
 
-function getSortLabel(sortBy) {
-  const found = sortOptions.find((opt) => opt.value === sortBy);
-  return found?.label || "Seeders";
-}
-
-function getSortSummaryLabelFr(sortBy) {
-  if (sortBy === "rating") return "les mieux notés";
-  if (sortBy === "downloads") return "les plus téléchargés";
-  if (sortBy === "recent") return "les plus récents";
-  return "les plus seedés";
-}
-
-function getSortSummaryLabelNonFr(sortBy) {
-  if (sortBy === "rating") return "top rated";
-  if (sortBy === "downloads") return "most downloaded";
-  if (sortBy === "recent") return "most recent";
-  return "most seeded";
-}
-
-function buildTopSummary(sortBy, totalCount, uiLanguage) {
-  const lang = String(uiLanguage || "fr-FR").toLowerCase();
-  if (lang.startsWith("fr")) {
-    return `Top 5 des ${getSortSummaryLabelFr(sortBy)} - Résultats: ${totalCount}`;
-  }
-  return `Top 5 ${getSortSummaryLabelNonFr(sortBy)} - Results: ${totalCount}`;
-}
-
 function isSeriesItem(it) {
   const canonical = normalizeCategoryGroupKey(it?.mediaType || it?.unifiedCategoryKey);
   return canonical === "series" || canonical === "anime" || canonical === "emissions";
@@ -187,16 +127,56 @@ function hasDetailsPayload(it) {
   );
 }
 
+function mapTopItems(items) {
+  return (Array.isArray(items) ? items : []).map((it) => ({
+    ...it,
+    size: fmtBytes(it.sizeBytes),
+    date: fmtDateFromTs(it.publishedAt),
+  }));
+}
+
+function updateTopSections(prevSections, updater) {
+  return (Array.isArray(prevSections) ? prevSections : []).map((section) => ({
+    ...section,
+    top: (section.top || []).map((row) => updater(row)),
+  }));
+}
+
+function buildLibraryLink(categoryKey, sourceId) {
+  const params = new URLSearchParams();
+  params.set("maxAgeDays", "1");
+  if (categoryKey) params.set("categoryId", categoryKey);
+  if (sourceId) params.set("sourceId", sourceId);
+  return `/library?${params.toString()}`;
+}
+
+function TopGlobalEmptyState({ title, hours, field, to }) {
+  return (
+    <section style={{ marginBottom: 40 }}>
+      <div className="top24-sectionHead">
+        <h2 style={{ marginBottom: 0, fontSize: 18 }}>{title}</h2>
+        <Link className="btn-soft btn-soft--small top24-sectionLink" to={to}>
+          Voir dans Library
+        </Link>
+      </div>
+      <div className="top24-empty">
+        <strong>Aucun item sur les dernieres {hours}h.</strong>
+        <span>Fenetre identique a Library, basee sur {field}.</span>
+      </div>
+    </section>
+  );
+}
+
 export default function TopReleases() {
   const setContent = useSubbarSetter();
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [windowInfo, setWindowInfo] = useState(null);
   const [globalTop, setGlobalTop] = useState([]);
-  const [topByCategory, setTopByCategory] = useState({});
+  const [categorySections, setCategorySections] = useState([]);
   const [sourceId, setSourceId] = useState("");
   const [sources, setSources] = useState([]);
   const [viewMode, setViewMode] = useState("grid");
-  const [sortBy, setSortBy] = useState("seeders");
   const [selectedItem, setSelectedItem] = useState(null);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -229,7 +209,6 @@ export default function TopReleases() {
     return map;
   }, [sources]);
 
-  // Arr apps integration
   const {
     hasSonarr,
     hasRadarr,
@@ -249,25 +228,21 @@ export default function TopReleases() {
     setLoading(true);
     await executeAsync(async () => {
       const q = new URLSearchParams();
+      q.set("hours", String(TOP_HOURS));
+      q.set("take", String(TOP_TAKE));
       if (sourceId) q.set("sourceId", sourceId);
-      if (sortBy) q.set("sortBy", sortBy);
-      const params = q.toString();
-      const data = await apiGet(`/api/feed/top${params ? `?${params}` : ""}`);
-      // Map items to include formatted size and date
-      const mapItems = (items) =>
-        (items || []).map((it) => ({
-          ...it,
-          size: fmtBytes(it.sizeBytes),
-          date: fmtDateFromTs(it.publishedAt),
-        }));
-      setGlobalTop(mapItems(data?.global || []));
-      const byCategory = {};
-      Object.entries(data?.byCategory || {}).forEach(([key, items]) => {
-        const normalizedKey = normalizeCategoryGroupKey(key) || String(key || "").toLowerCase();
-        if (!byCategory[normalizedKey]) byCategory[normalizedKey] = [];
-        byCategory[normalizedKey].push(...mapItems(items));
-      });
-      setTopByCategory(byCategory);
+
+      const data = await apiGet(`/api/feed/top?${q.toString()}`);
+      setWindowInfo(data?.window ?? null);
+      setGlobalTop(mapTopItems(data?.globalTop));
+      setCategorySections(
+        (Array.isArray(data?.categories) ? data.categories : []).map((section) => ({
+          key: String(section?.key || ""),
+          label: String(section?.label || section?.key || ""),
+          count: Number(section?.count || 0),
+          top: mapTopItems(section?.top),
+        }))
+      );
     }, {
       context: "Failed to load TopReleases feed",
       clearError: () => setErr(""),
@@ -275,7 +250,7 @@ export default function TopReleases() {
       fallbackMessage: "Erreur lors du chargement des tops",
       onFinally: () => setLoading(false),
     });
-  }, [sourceId, sortBy]);
+  }, [sourceId]);
 
   useEffect(() => {
     load();
@@ -319,31 +294,19 @@ export default function TopReleases() {
       const details = res?.details;
       if (!details) return;
 
-      setGlobalTop((prev) =>
-        prev.map((row) =>
-          row.id === it.id
-            ? { ...row, ...details }
-            : row
-        )
+      const mergeDetails = (row) => (
+        row.id === it.id
+          ? { ...row, ...details }
+          : row
       );
 
-      setTopByCategory((prev) => {
-        const next = { ...prev };
-        Object.keys(next).forEach((key) => {
-          next[key] = next[key].map((row) =>
-            row.id === it.id
-              ? { ...row, ...details }
-              : row
-          );
-        });
-        return next;
-      });
-
-      setSelectedItem((prev) =>
+      setGlobalTop((prev) => prev.map(mergeDetails));
+      setCategorySections((prev) => updateTopSections(prev, mergeDetails));
+      setSelectedItem((prev) => (
         prev?.id === it.id
           ? { ...prev, ...details }
           : prev
-      );
+      ));
     }, {
       context: "Failed to fetch IGDB details in TopReleases",
       onFinally: () => {
@@ -381,69 +344,35 @@ export default function TopReleases() {
       const posterUrl = res?.posterUrl ?? null;
       const posterUpdatedAtTs = res?.posterUpdatedAtTs ?? null;
 
-      // Update globalTop
-      setGlobalTop((prev) =>
-        prev.map((row) =>
-          row.id === renameTarget.id || (newEntityId && row.entityId === newEntityId)
-            ? {
-                ...row,
-                ...(row.id === renameTarget.id
-                  ? {
-                      title: res?.title ?? trimmed,
-                      titleClean: res?.titleClean ?? row.titleClean,
-                      year: res?.year ?? row.year,
-                      season: res?.season ?? row.season,
-                      episode: res?.episode ?? row.episode,
-                      resolution: res?.resolution ?? row.resolution,
-                      source: res?.source ?? row.source,
-                      codec: res?.codec ?? row.codec,
-                      releaseGroup: res?.releaseGroup ?? row.releaseGroup,
-                      mediaType: res?.mediaType ?? row.mediaType,
-                      unifiedCategory: res?.unifiedCategory ?? row.unifiedCategory,
-                      entityId: newEntityId ?? row.entityId,
-                    }
-                  : {}),
-                posterUrl,
-                posterUpdatedAtTs: posterUpdatedAtTs ?? row.posterUpdatedAtTs,
-              }
-            : row
-        )
+      const mergeRename = (row) => (
+        row.id === renameTarget.id || (newEntityId && row.entityId === newEntityId)
+          ? {
+              ...row,
+              ...(row.id === renameTarget.id
+                ? {
+                    title: res?.title ?? trimmed,
+                    titleClean: res?.titleClean ?? row.titleClean,
+                    year: res?.year ?? row.year,
+                    season: res?.season ?? row.season,
+                    episode: res?.episode ?? row.episode,
+                    resolution: res?.resolution ?? row.resolution,
+                    source: res?.source ?? row.source,
+                    codec: res?.codec ?? row.codec,
+                    releaseGroup: res?.releaseGroup ?? row.releaseGroup,
+                    mediaType: res?.mediaType ?? row.mediaType,
+                    unifiedCategory: res?.unifiedCategory ?? row.unifiedCategory,
+                    entityId: newEntityId ?? row.entityId,
+                  }
+                : {}),
+              posterUrl,
+              posterUpdatedAtTs: posterUpdatedAtTs ?? row.posterUpdatedAtTs,
+            }
+          : row
       );
 
-      // Update topByCategory
-      setTopByCategory((prev) => {
-        const next = { ...prev };
-        Object.keys(next).forEach((key) => {
-          next[key] = next[key].map((row) =>
-            row.id === renameTarget.id || (newEntityId && row.entityId === newEntityId)
-              ? {
-                  ...row,
-                  ...(row.id === renameTarget.id
-                    ? {
-                        title: res?.title ?? trimmed,
-                        titleClean: res?.titleClean ?? row.titleClean,
-                        year: res?.year ?? row.year,
-                        season: res?.season ?? row.season,
-                        episode: res?.episode ?? row.episode,
-                        resolution: res?.resolution ?? row.resolution,
-                        source: res?.source ?? row.source,
-                        codec: res?.codec ?? row.codec,
-                        releaseGroup: res?.releaseGroup ?? row.releaseGroup,
-                        mediaType: res?.mediaType ?? row.mediaType,
-                        unifiedCategory: res?.unifiedCategory ?? row.unifiedCategory,
-                        entityId: newEntityId ?? row.entityId,
-                      }
-                    : {}),
-                  posterUrl,
-                  posterUpdatedAtTs: posterUpdatedAtTs ?? row.posterUpdatedAtTs,
-                }
-              : row
-          );
-        });
-        return next;
-      });
-
-      setSelectedItem((prev) =>
+      setGlobalTop((prev) => prev.map(mergeRename));
+      setCategorySections((prev) => updateTopSections(prev, mergeRename));
+      setSelectedItem((prev) => (
         prev?.id === renameTarget.id || (newEntityId && prev?.entityId === newEntityId)
           ? {
               ...prev,
@@ -467,15 +396,14 @@ export default function TopReleases() {
               posterUpdatedAtTs: posterUpdatedAtTs ?? prev?.posterUpdatedAtTs,
             }
           : prev
-      );
+      ));
 
       closeRename();
-    } catch (e) {
-      setErr(e?.message || "Erreur renommage");
+    } catch (error) {
+      setErr(error?.message || "Erreur renommage");
     }
   }
 
-  // Charger la liste des sources
   useEffect(() => {
     async function loadSources() {
       const data = await executeAsync(
@@ -491,7 +419,6 @@ export default function TopReleases() {
     loadSources();
   }, []);
 
-  // Appliquer la vue par defaut configuree dans l'UI (meme comportement que Library)
   useEffect(() => {
     let cancelled = false;
     apiGet("/api/settings/ui")
@@ -511,7 +438,6 @@ export default function TopReleases() {
     };
   }, []);
 
-  // Subbar avec Source, Tri et Vue
   useEffect(() => {
     setContent(
       <TopReleasesSubbar
@@ -520,167 +446,221 @@ export default function TopReleases() {
         sourceId={sourceId}
         setSourceId={setSourceId}
         enabledSources={enabledSources}
-        sortBy={sortBy}
-        setSortBy={setSortBy}
         viewMode={viewMode}
         setViewMode={setViewMode}
       />
     );
 
     return () => setContent(null);
-  }, [setContent, sources, sourceId, enabledSources, sortBy, viewMode]);
+  }, [setContent, sources, sourceId, enabledSources, viewMode]);
 
   const selectedSourceName = useMemo(() => {
     if (!sourceId) return "";
     const selected = sources.find((s) => String(s.id) === sourceId || String(s.sourceId) === sourceId);
     return selected?.name || selected?.title || "";
   }, [sourceId, sources]);
-  const sourceLabelSuffix = selectedSourceName ? ` (${selectedSourceName})` : " (Tous indexeurs)";
-  const sortLabel = getSortLabel(sortBy);
+
   const uiLanguage = getActiveUiLanguage();
-  const totalResults = globalTop.length + Object.values(topByCategory).flat().length;
-  const topSummary = useMemo(
-    () => buildTopSummary(sortBy, totalResults, uiLanguage),
-    [sortBy, totalResults, uiLanguage]
+  const totalItems = useMemo(
+    () => categorySections.reduce((sum, section) => sum + Number(section.count || 0), 0),
+    [categorySections]
   );
+  const sinceLabel = useMemo(() => {
+    if (!windowInfo?.sinceUtc) return "";
+    const date = new Date(windowInfo.sinceUtc);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleString(uiLanguage, { dateStyle: "short", timeStyle: "short" });
+  }, [windowInfo?.sinceUtc, uiLanguage]);
+  const topSummary = useMemo(() => {
+    const hours = Number(windowInfo?.hours || TOP_HOURS);
+    const field = String(windowInfo?.field || "published_at_ts");
+    const sourceSummary = selectedSourceName ? ` • Source: ${selectedSourceName}` : " • Tous indexeurs";
+    const sinceSummary = sinceLabel ? ` • Depuis ${sinceLabel}` : "";
+    return `Base sur ${field} depuis ${hours}h${sinceSummary} • ${totalItems} items • ${categorySections.length} categories${sourceSummary}`;
+  }, [windowInfo?.hours, windowInfo?.field, selectedSourceName, sinceLabel, totalItems, categorySections.length]);
 
   if (loading) return <Loader />;
   if (err) return <div className="error">{err}</div>;
+
+  const globalTitle = `🏆 Top ${TOP_TAKE} Global${selectedSourceName ? ` • ${selectedSourceName}` : ""}`;
+  const globalLibraryLink = buildLibraryLink("", sourceId);
 
   return (
     <div className="page page--top24h">
       <div className="pagehead">
         <div>
           <h1>Top 24h</h1>
-          <div className="muted">
-            {topSummary}
-          </div>
+          <div className="muted">{topSummary}</div>
         </div>
       </div>
 
       {viewMode === "grid" && (
         <>
-          <TopReleasesGridSection
-            items={globalTop}
-            sectionTitle={`🏆 Top 5 Global (${sortLabel})`}
-            showRank={true}
-            rankColor="#ffd700"
-            showIndexerPill={true}
-            compact={false}
-            isGlobalTop={true}
-            top5AnimKey={top5AnimKey}
-            sortBy={sortBy}
-            sourceNameById={sourceNameById}
-            onDownload={download}
-            onOpen={openDetails}
-          />
-          {Object.entries(CATEGORY_LABELS).map(([key, label]) => {
-            const items = topByCategory[key] || [];
-            return (
-              <TopReleasesGridSection
-                key={key}
-                items={items}
-                sectionTitle={`📊 Top 5 - ${label}${sourceLabelSuffix} (${sortLabel})`}
-                showRank={true}
-                rankColor="#fff"
-                showIndexerPill={!sourceId}
-                compact={true}
-                isGlobalTop={false}
-                top5AnimKey={top5AnimKey}
-                sortBy={sortBy}
-                sourceNameById={sourceNameById}
-                onDownload={download}
-                onOpen={openDetails}
-              />
-            );
-          })}
+          {globalTop.length > 0 ? (
+            <TopReleasesGridSection
+              items={globalTop}
+              sectionTitle={globalTitle}
+              showRank={true}
+              rankColor="#ffd700"
+              showIndexerPill={true}
+              compact={false}
+              isGlobalTop={true}
+              top5AnimKey={top5AnimKey}
+              sortBy="recent"
+              sourceNameById={sourceNameById}
+              onDownload={download}
+              onOpen={openDetails}
+              headerAction={(
+                <Link className="btn-soft btn-soft--small top24-sectionLink" to={globalLibraryLink}>
+                  Voir dans Library
+                </Link>
+              )}
+            />
+          ) : (
+            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} to={globalLibraryLink} />
+          )}
+          {categorySections.map((section) => (
+            <TopReleasesGridSection
+              key={section.key}
+              items={section.top}
+              sectionTitle={`📊 Top ${TOP_TAKE} - ${section.label} (${section.count})`}
+              showRank={true}
+              rankColor="#fff"
+              showIndexerPill={!sourceId}
+              compact={true}
+              isGlobalTop={false}
+              top5AnimKey={top5AnimKey}
+              sortBy="recent"
+              sourceNameById={sourceNameById}
+              onDownload={download}
+              onOpen={openDetails}
+              headerAction={(
+                <Link className="btn-soft btn-soft--small top24-sectionLink" to={buildLibraryLink(section.key, sourceId)}>
+                  Voir dans Library
+                </Link>
+              )}
+            />
+          ))}
         </>
       )}
 
       {viewMode === "poster" && (
         <>
-          <TopReleasesPosterSection
-            items={globalTop}
-            sectionTitle={`🏆 Top 5 Global (${sortLabel})`}
-            showRank={true}
-            rankColor="#ffd700"
-            isGlobalTop={true}
-            top5AnimKey={top5AnimKey}
-            onOpen={openDetails}
-          />
-          {Object.entries(CATEGORY_LABELS).map(([key, label]) => {
-            const items = topByCategory[key] || [];
-            return (
-              <TopReleasesPosterSection
-                key={key}
-                items={items}
-                sectionTitle={`📊 Top 5 - ${label}${sourceLabelSuffix} (${sortLabel})`}
-                showRank={true}
-                rankColor="#fff"
-                isGlobalTop={false}
-                top5AnimKey={top5AnimKey}
-                onOpen={openDetails}
-              />
-            );
-          })}
+          {globalTop.length > 0 ? (
+            <TopReleasesPosterSection
+              items={globalTop}
+              sectionTitle={globalTitle}
+              showRank={true}
+              rankColor="#ffd700"
+              isGlobalTop={true}
+              top5AnimKey={top5AnimKey}
+              onOpen={openDetails}
+              headerAction={(
+                <Link className="btn-soft btn-soft--small top24-sectionLink" to={globalLibraryLink}>
+                  Voir dans Library
+                </Link>
+              )}
+            />
+          ) : (
+            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} to={globalLibraryLink} />
+          )}
+          {categorySections.map((section) => (
+            <TopReleasesPosterSection
+              key={section.key}
+              items={section.top}
+              sectionTitle={`📊 Top ${TOP_TAKE} - ${section.label} (${section.count})`}
+              showRank={true}
+              rankColor="#fff"
+              isGlobalTop={false}
+              top5AnimKey={top5AnimKey}
+              onOpen={openDetails}
+              headerAction={(
+                <Link className="btn-soft btn-soft--small top24-sectionLink" to={buildLibraryLink(section.key, sourceId)}>
+                  Voir dans Library
+                </Link>
+              )}
+            />
+          ))}
         </>
       )}
 
       {viewMode === "banner" && (
         <>
-          <TopReleasesBannerSection
-            items={globalTop}
-            sectionTitle={`🏆 Top 5 Global (${sortLabel})`}
-            showRank={true}
-            rankColor="#ffd700"
-            sourceNameById={sourceNameById}
-            onOpen={openDetails}
-            formatRating={formatRating}
-          />
-          {Object.entries(CATEGORY_LABELS).map(([key, label]) => {
-            const items = topByCategory[key] || [];
-            return (
-              <TopReleasesBannerSection
-                key={key}
-                items={items}
-                sectionTitle={`📊 Top 5 - ${label}${sourceLabelSuffix} (${sortLabel})`}
-                showRank={true}
-                rankColor="#fff"
-                sourceNameById={sourceNameById}
-                onOpen={openDetails}
-                formatRating={formatRating}
-              />
-            );
-          })}
+          {globalTop.length > 0 ? (
+            <TopReleasesBannerSection
+              items={globalTop}
+              sectionTitle={globalTitle}
+              showRank={true}
+              rankColor="#ffd700"
+              sourceNameById={sourceNameById}
+              onOpen={openDetails}
+              formatRating={formatRating}
+              headerAction={(
+                <Link className="btn-soft btn-soft--small top24-sectionLink" to={globalLibraryLink}>
+                  Voir dans Library
+                </Link>
+              )}
+            />
+          ) : (
+            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} to={globalLibraryLink} />
+          )}
+          {categorySections.map((section) => (
+            <TopReleasesBannerSection
+              key={section.key}
+              items={section.top}
+              sectionTitle={`📊 Top ${TOP_TAKE} - ${section.label} (${section.count})`}
+              showRank={true}
+              rankColor="#fff"
+              sourceNameById={sourceNameById}
+              onOpen={openDetails}
+              formatRating={formatRating}
+              headerAction={(
+                <Link className="btn-soft btn-soft--small top24-sectionLink" to={buildLibraryLink(section.key, sourceId)}>
+                  Voir dans Library
+                </Link>
+              )}
+            />
+          ))}
         </>
       )}
 
       {viewMode === "list" && (
         <>
-          <TopReleasesListSection
-            items={globalTop}
-            sectionTitle={`🏆 Top 5 Global (${sortLabel})`}
-            sourceNameById={sourceNameById}
-            onOpen={openDetails}
-            onRename={renameRelease}
-            formatRating={formatRating}
-            isSeriesItem={isSeriesItem}
-          />
-          {Object.entries(CATEGORY_LABELS).map(([key, label]) => {
-            const items = topByCategory[key] || [];
-            return (
-              <TopReleasesListSection
-                key={key}
-                items={items}
-                sectionTitle={`📊 Top 5 - ${label}${sourceLabelSuffix} (${sortLabel})`}
-                sourceNameById={sourceNameById}
-                onOpen={openDetails}
-                onRename={renameRelease}
-                formatRating={formatRating}
-                isSeriesItem={isSeriesItem}
-              />
-            );
-          })}
+          {globalTop.length > 0 ? (
+            <TopReleasesListSection
+              items={globalTop}
+              sectionTitle={globalTitle}
+              sourceNameById={sourceNameById}
+              onOpen={openDetails}
+              onRename={renameRelease}
+              formatRating={formatRating}
+              isSeriesItem={isSeriesItem}
+              headerAction={(
+                <Link className="btn-soft btn-soft--small top24-sectionLink" to={globalLibraryLink}>
+                  Voir dans Library
+                </Link>
+              )}
+            />
+          ) : (
+            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} to={globalLibraryLink} />
+          )}
+          {categorySections.map((section) => (
+            <TopReleasesListSection
+              key={section.key}
+              items={section.top}
+              sectionTitle={`📊 Top ${TOP_TAKE} - ${section.label} (${section.count})`}
+              sourceNameById={sourceNameById}
+              onOpen={openDetails}
+              onRename={renameRelease}
+              formatRating={formatRating}
+              isSeriesItem={isSeriesItem}
+              headerAction={(
+                <Link className="btn-soft btn-soft--small top24-sectionLink" to={buildLibraryLink(section.key, sourceId)}>
+                  Voir dans Library
+                </Link>
+              )}
+            />
+          ))}
         </>
       )}
 
@@ -711,7 +691,7 @@ export default function TopReleases() {
           <div className="field" style={{ marginBottom: 12 }}>
             <label className="muted">Titre original</label>
             <div className="rename-original" style={{ padding: "4px 0" }}>
-              {renameOriginal || "—"}
+              {renameOriginal || "-"}
             </div>
           </div>
           <div className="field" style={{ marginBottom: 12 }}>

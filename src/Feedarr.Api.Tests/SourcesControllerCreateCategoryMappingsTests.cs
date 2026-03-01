@@ -18,7 +18,7 @@ namespace Feedarr.Api.Tests;
 public sealed class SourcesControllerCreateCategoryMappingsTests
 {
     [Fact]
-    public async Task CreateSource_WithCategories_PersistsActiveMappings()
+    public async Task CreateSource_WithCategories_PersistsSelectedCategoriesAndMappings()
     {
         using var ctx = TestContext.Create();
 
@@ -57,8 +57,8 @@ public sealed class SourcesControllerCreateCategoryMappingsTests
         using var body = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
         var sourceId = body.RootElement.GetProperty("id").GetInt64();
 
-        var active = ctx.Sources.GetActiveCategoryIds(sourceId).OrderBy(x => x).ToArray();
-        Assert.Equal(new[] { 2000, 5000 }, active);
+        var selected = ctx.Sources.GetSelectedCategoryIds(sourceId).OrderBy(x => x).ToArray();
+        Assert.Equal(new[] { 2000, 5000 }, selected);
 
         using var conn = ctx.Db.Open();
         var mappings = conn.Query<MappingRow>(
@@ -73,10 +73,9 @@ public sealed class SourcesControllerCreateCategoryMappingsTests
             """,
             new { sid = sourceId }).ToList();
 
-        Assert.Equal(2, mappings.Count);
+        Assert.Single(mappings);
         Assert.Equal("films", mappings.Single(m => m.CatId == 2000).GroupKey);
         Assert.Equal("Films", mappings.Single(m => m.CatId == 2000).GroupLabel);
-        Assert.Null(mappings.Single(m => m.CatId == 5000).GroupKey);
     }
 
     private sealed class MappingRow

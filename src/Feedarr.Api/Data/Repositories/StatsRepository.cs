@@ -1,9 +1,18 @@
 using Dapper;
 using Microsoft.Extensions.Caching.Memory;
+using System.Text;
 
 namespace Feedarr.Api.Data.Repositories;
 
-public sealed class StatsRepository
+public sealed record ProviderStatDelta(string Key, long Delta, long TotalAfterIncrement);
+
+public interface IProviderStatsStore
+{
+    Dictionary<string, long> GetAll();
+    Task IncrementProviderStatsBatchAsync(IReadOnlyList<ProviderStatDelta> rows, CancellationToken ct);
+}
+
+public sealed class StatsRepository : IProviderStatsStore
 {
     // GetAll() is called once at startup by ProviderStatsService.EnsureLoaded()
     // and never again (guarded by its own _loaded flag). The cache here is a
@@ -50,6 +59,46 @@ public sealed class StatsRepository
               ON CONFLICT(key) DO UPDATE SET value = value + @delta, updated_at_ts = @ts",
             new { key, delta, ts }
         );
+        _cache.Remove(GetAllCacheKey);
+    }
+
+    public Task IncrementProviderStatsBatchAsync(IReadOnlyList<ProviderStatDelta> rows, CancellationToken ct)
+    {
+        if (rows.Count == 0)
+            return Task.CompletedTask;
+
+        using var conn = _db.Open();
+        using var tx = conn.BeginTransaction();
+        var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var sql = new StringBuilder(
+            "INSERT INTO stats (key, value, updated_at_ts) VALUES ");
+        var args = new DynamicParameters();
+        args.Add("ts", ts);
+
+        for (var i = 0; i < rows.Count; i++)
+        {
+            if (i > 0)
+                sql.Append(',');
+
+            sql.Append($"(@key{i}, @delta{i}, @ts)");
+            args.Add($"key{i}", rows[i].Key);
+            args.Add($"delta{i}", rows[i].Delta);
+        }
+
+        sql.Append(
+            " ON CONFLICT(key) DO UPDATE SET value = value + excluded.value, updated_at_ts = excluded.updated_at_ts;");
+
+        var command = new CommandDefinition(sql.ToString(), args, tx, cancellationToken: ct);
+        return ExecuteBatchAsync(conn, tx, command);
+    }
+
+    private async Task ExecuteBatchAsync(
+        System.Data.IDbConnection conn,
+        System.Data.IDbTransaction tx,
+        CommandDefinition command)
+    {
+        await conn.ExecuteAsync(command);
+        tx.Commit();
         _cache.Remove(GetAllCacheKey);
     }
 

@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Text;
 using Dapper;
 using Feedarr.Api.Services.Matching;
 
@@ -9,6 +10,11 @@ namespace Feedarr.Api.Data.Repositories;
 
 public sealed class ArrLibraryRepository
 {
+    private const string StageTableName = "arr_library_stage";
+    private const string AlternateTitleStageTableName = "arr_library_alt_titles_stage";
+    private const int StageInsertBatchSize = 90;
+    private const int AlternateTitleStageInsertBatchSize = 200;
+
     private readonly Db _db;
 
     public ArrLibraryRepository(Db db)
@@ -50,46 +56,62 @@ public sealed class ArrLibraryRepository
     public void SyncAppLibrary(long appId, string type, List<LibraryItemDto> items)
     {
         using var conn = _db.Open();
-        using var tx = conn.BeginTransaction();
-
+        var stagedItems = PrepareSyncItems(items ?? new List<LibraryItemDto>());
         try
         {
-            // Delete existing items for this app and type
+            PrepareStageTables(conn);
+            BulkInsertStageRows(conn, stagedItems);
+            BulkInsertAlternateTitleStageRows(conn, stagedItems);
+            var stagedCount = conn.ExecuteScalar<int>($"SELECT COUNT(1) FROM {StageTableName};");
+
+            using var tx = conn.BeginTransaction();
+
             conn.Execute(
                 "DELETE FROM arr_library_items WHERE app_id = @appId AND type = @type",
                 new { appId, type },
                 tx);
 
-            // Insert new items
-            foreach (var item in items)
-            {
-                var titleNormalized = TitleNormalizer.NormalizeTitleStrict(item.Title);
-                var alternateTitlesJson = item.AlternateTitles?.Count > 0
-                    ? JsonSerializer.Serialize(item.AlternateTitles)
-                    : null;
+            conn.Execute($"""
+                INSERT INTO arr_library_items
+                (app_id, type, tmdb_id, tvdb_id, internal_id, title, original_title, title_slug, alternate_titles, title_normalized, synced_at)
+                SELECT
+                    @appId,
+                    @type,
+                    tmdb_id,
+                    tvdb_id,
+                    internal_id,
+                    title,
+                    original_title,
+                    title_slug,
+                    alternate_titles,
+                    title_normalized,
+                    synced_at
+                FROM {StageTableName}
+                ORDER BY row_order;
+                """,
+                new { appId, type },
+                tx);
 
-                conn.Execute(@"
-                    INSERT INTO arr_library_items
-                    (app_id, type, tmdb_id, tvdb_id, internal_id, title, original_title, title_slug, alternate_titles, title_normalized, synced_at)
-                    VALUES
-                    (@appId, @type, @tmdbId, @tvdbId, @internalId, @title, @originalTitle, @titleSlug, @alternateTitles, @titleNormalized, datetime('now'))",
-                    new
-                    {
-                        appId,
-                        type,
-                        tmdbId = item.TmdbId,
-                        tvdbId = item.TvdbId,
-                        internalId = item.InternalId,
-                        title = item.Title,
-                        originalTitle = item.OriginalTitle,
-                        titleSlug = item.TitleSlug,
-                        alternateTitles = alternateTitlesJson,
-                        titleNormalized
-                    },
-                    tx);
-            }
+            conn.Execute(
+                "DELETE FROM arr_alternate_titles WHERE app_id = @appId AND type = @type",
+                new { appId, type },
+                tx);
 
-            // Update sync status
+            conn.Execute($"""
+                INSERT INTO arr_alternate_titles
+                (app_id, type, internal_id, title_norm, title_raw)
+                SELECT
+                    @appId,
+                    @type,
+                    internal_id,
+                    title_norm,
+                    title_raw
+                FROM {AlternateTitleStageTableName}
+                ORDER BY internal_id, title_norm;
+                """,
+                new { appId, type },
+                tx);
+
             conn.Execute(@"
                 INSERT INTO arr_sync_status (app_id, last_sync_at, last_sync_count, last_error)
                 VALUES (@appId, datetime('now'), @count, NULL)
@@ -97,16 +119,212 @@ public sealed class ArrLibraryRepository
                     last_sync_at = datetime('now'),
                     last_sync_count = @count,
                     last_error = NULL",
-                new { appId, count = items.Count },
+                new { appId, count = stagedCount },
                 tx);
 
             tx.Commit();
         }
         catch
         {
-            tx.Rollback();
             throw;
         }
+        finally
+        {
+            conn.Execute($"DROP TABLE IF EXISTS {AlternateTitleStageTableName};");
+            conn.Execute($"DROP TABLE IF EXISTS {StageTableName};");
+        }
+    }
+
+    private static List<StagedLibraryItem> PrepareSyncItems(IReadOnlyList<LibraryItemDto> items)
+    {
+        if (items.Count == 0)
+            return new List<StagedLibraryItem>();
+
+        var syncedAt = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+        var latestByInternalId = new Dictionary<int, StagedLibraryItem>(items.Count);
+
+        for (var index = 0; index < items.Count; index++)
+        {
+            var item = items[index];
+            var alternateTitles = item.AlternateTitles?
+                .Where(static title => !string.IsNullOrWhiteSpace(title))
+                .ToArray();
+
+            latestByInternalId[item.InternalId] = new StagedLibraryItem
+            {
+                InternalId = item.InternalId,
+                RowOrder = index,
+                TmdbId = item.TmdbId,
+                TvdbId = item.TvdbId,
+                Title = item.Title,
+                OriginalTitle = item.OriginalTitle,
+                TitleSlug = item.TitleSlug,
+                AlternateTitles = alternateTitles,
+                AlternateTitlesJson = alternateTitles is { Length: > 0 }
+                    ? JsonSerializer.Serialize(alternateTitles)
+                    : null,
+                TitleNormalized = TitleNormalizer.NormalizeTitleStrict(item.Title),
+                SyncedAt = syncedAt
+            };
+        }
+
+        return latestByInternalId.Values
+            .OrderBy(static item => item.RowOrder)
+            .ToList();
+    }
+
+    private static void PrepareStageTables(System.Data.IDbConnection conn)
+    {
+        conn.Execute($"DROP TABLE IF EXISTS {StageTableName};");
+        conn.Execute($"DROP TABLE IF EXISTS {AlternateTitleStageTableName};");
+        conn.Execute($"""
+            CREATE TEMP TABLE {StageTableName} (
+                internal_id INTEGER NOT NULL PRIMARY KEY,
+                row_order INTEGER NOT NULL,
+                tmdb_id INTEGER,
+                tvdb_id INTEGER,
+                title TEXT NOT NULL,
+                original_title TEXT,
+                title_slug TEXT,
+                alternate_titles TEXT,
+                title_normalized TEXT,
+                synced_at TEXT NOT NULL
+            );
+            """);
+        conn.Execute($"""
+            CREATE TEMP TABLE {AlternateTitleStageTableName} (
+                internal_id INTEGER NOT NULL,
+                title_norm TEXT NOT NULL,
+                title_raw TEXT,
+                PRIMARY KEY (internal_id, title_norm)
+            );
+            """);
+    }
+
+    private static void BulkInsertStageRows(System.Data.IDbConnection conn, IReadOnlyList<StagedLibraryItem> items)
+    {
+        if (items.Count == 0)
+            return;
+
+        for (var offset = 0; offset < items.Count; offset += StageInsertBatchSize)
+        {
+            var batchCount = Math.Min(StageInsertBatchSize, items.Count - offset);
+            var sql = new StringBuilder($"""
+                INSERT INTO {StageTableName}
+                (internal_id, row_order, tmdb_id, tvdb_id, title, original_title, title_slug, alternate_titles, title_normalized, synced_at)
+                VALUES
+                """);
+            var args = new DynamicParameters();
+
+            for (var i = 0; i < batchCount; i++)
+            {
+                var item = items[offset + i];
+                var parameterIndex = i;
+
+                if (i > 0)
+                    sql.Append(',');
+
+                sql.Append($"""
+                    (@internalId{parameterIndex}, @rowOrder{parameterIndex}, @tmdbId{parameterIndex}, @tvdbId{parameterIndex}, @title{parameterIndex}, @originalTitle{parameterIndex}, @titleSlug{parameterIndex}, @alternateTitles{parameterIndex}, @titleNormalized{parameterIndex}, @syncedAt{parameterIndex})
+                    """);
+
+                args.Add($"internalId{parameterIndex}", item.InternalId);
+                args.Add($"rowOrder{parameterIndex}", item.RowOrder);
+                args.Add($"tmdbId{parameterIndex}", item.TmdbId);
+                args.Add($"tvdbId{parameterIndex}", item.TvdbId);
+                args.Add($"title{parameterIndex}", item.Title);
+                args.Add($"originalTitle{parameterIndex}", item.OriginalTitle);
+                args.Add($"titleSlug{parameterIndex}", item.TitleSlug);
+                args.Add($"alternateTitles{parameterIndex}", item.AlternateTitlesJson);
+                args.Add($"titleNormalized{parameterIndex}", item.TitleNormalized);
+                args.Add($"syncedAt{parameterIndex}", item.SyncedAt);
+            }
+
+            sql.Append("""
+                
+                ON CONFLICT(internal_id) DO UPDATE SET
+                    row_order = excluded.row_order,
+                    tmdb_id = excluded.tmdb_id,
+                    tvdb_id = excluded.tvdb_id,
+                    title = excluded.title,
+                    original_title = excluded.original_title,
+                    title_slug = excluded.title_slug,
+                    alternate_titles = excluded.alternate_titles,
+                    title_normalized = excluded.title_normalized,
+                    synced_at = excluded.synced_at;
+                """);
+
+            conn.Execute(sql.ToString(), args);
+        }
+    }
+
+    private static void BulkInsertAlternateTitleStageRows(System.Data.IDbConnection conn, IReadOnlyList<StagedLibraryItem> items)
+    {
+        if (items.Count == 0)
+            return;
+
+        var batch = new List<AlternateTitleStageRow>(AlternateTitleStageInsertBatchSize);
+        foreach (var item in items)
+        {
+            if (item.AlternateTitles is not { Length: > 0 })
+                continue;
+
+            var seenVariants = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var rawTitle in item.AlternateTitles)
+            {
+                foreach (var variant in TitleNormalizer.BuildTitleVariants(rawTitle))
+                {
+                    if (string.IsNullOrWhiteSpace(variant) || !seenVariants.Add(variant))
+                        continue;
+
+                    batch.Add(new AlternateTitleStageRow
+                    {
+                        InternalId = item.InternalId,
+                        TitleNorm = variant,
+                        TitleRaw = rawTitle
+                    });
+
+                    if (batch.Count >= AlternateTitleStageInsertBatchSize)
+                    {
+                        InsertAlternateTitleStageBatch(conn, batch);
+                        batch.Clear();
+                    }
+                }
+            }
+        }
+
+        if (batch.Count > 0)
+        {
+            InsertAlternateTitleStageBatch(conn, batch);
+        }
+    }
+
+    private static void InsertAlternateTitleStageBatch(System.Data.IDbConnection conn, IReadOnlyList<AlternateTitleStageRow> batch)
+    {
+        var sql = new StringBuilder($"""
+            INSERT INTO {AlternateTitleStageTableName}
+            (internal_id, title_norm, title_raw)
+            VALUES
+            """);
+        var args = new DynamicParameters();
+
+        for (var i = 0; i < batch.Count; i++)
+        {
+            if (i > 0)
+                sql.Append(',');
+
+            sql.Append($"(@internalId{i}, @titleNorm{i}, @titleRaw{i})");
+            args.Add($"internalId{i}", batch[i].InternalId);
+            args.Add($"titleNorm{i}", batch[i].TitleNorm);
+            args.Add($"titleRaw{i}", batch[i].TitleRaw);
+        }
+
+        sql.Append("""
+            
+            ON CONFLICT(internal_id, title_norm) DO NOTHING;
+            """);
+
+        conn.Execute(sql.ToString(), args);
     }
 
     /// <summary>
@@ -356,67 +574,8 @@ public sealed class ArrLibraryRepository
 
         if (result != null) return result;
 
-        // Layer 4: Try alternate titles (search in JSON array)
-        var items = conn.Query<(long Id, string? AlternateTitles, int InternalId, int? TmdbId, string Title, string? TitleSlug, string BaseUrl, long AppId)>(@"
-            SELECT
-                li.id AS Id,
-                li.alternate_titles AS AlternateTitles,
-                li.internal_id AS InternalId,
-                li.tmdb_id AS TmdbId,
-                li.title AS Title,
-                li.title_slug AS TitleSlug,
-                a.base_url AS BaseUrl,
-                a.id AS AppId
-            FROM arr_library_items li
-            JOIN arr_applications a ON a.id = li.app_id
-            WHERE li.type = 'movie'
-              AND a.is_enabled = 1
-              AND li.alternate_titles IS NOT NULL");
-
-        foreach (var item in items)
-        {
-            if (string.IsNullOrEmpty(item.AlternateTitles)) continue;
-            try
-            {
-                var altTitles = JsonSerializer.Deserialize<List<string>>(item.AlternateTitles);
-                if (altTitles is not null)
-                {
-                    foreach (var alt in altTitles)
-                    {
-                        var altStrict = TitleNormalizer.NormalizeTitleStrict(alt);
-                        if (!string.IsNullOrEmpty(altStrict) && variantSet.Contains(altStrict))
-                        {
-                            return new LibraryMatchResult
-                            {
-                                InternalId = item.InternalId,
-                                TmdbId = item.TmdbId,
-                                Title = item.Title,
-                                TitleSlug = item.TitleSlug,
-                                BaseUrl = item.BaseUrl,
-                                AppId = item.AppId
-                            };
-                        }
-
-                        var altLoose = TitleNormalizer.NormalizeTitle(alt);
-                        if (!string.IsNullOrEmpty(altLoose) && variantSet.Contains(altLoose))
-                        {
-                            return new LibraryMatchResult
-                            {
-                                InternalId = item.InternalId,
-                                TmdbId = item.TmdbId,
-                                Title = item.Title,
-                                TitleSlug = item.TitleSlug,
-                                BaseUrl = item.BaseUrl,
-                                AppId = item.AppId
-                            };
-                        }
-                    }
-                }
-            }
-            catch { }
-        }
-
-        return null;
+        // Layer 4: Try alternate titles via normalized lookup table
+        return FindByAlternateTitle(conn, "movie", variantSet.ToArray());
     }
 
     /// <summary>
@@ -497,67 +656,35 @@ public sealed class ArrLibraryRepository
 
         if (result != null) return result;
 
-        // Layer 4: Try alternate titles
-        var items = conn.Query<(long Id, string? AlternateTitles, int InternalId, int? TvdbId, string Title, string? TitleSlug, string BaseUrl, long AppId)>(@"
+        // Layer 4: Try alternate titles via normalized lookup table
+        return FindByAlternateTitle(conn, "series", variantSet.ToArray());
+    }
+
+    private static LibraryMatchResult? FindByAlternateTitle(System.Data.IDbConnection conn, string type, string[] variants)
+    {
+        if (variants.Length == 0)
+            return null;
+
+        return conn.QueryFirstOrDefault<LibraryMatchResult>(@"
             SELECT
-                li.id AS Id,
-                li.alternate_titles AS AlternateTitles,
                 li.internal_id AS InternalId,
+                li.tmdb_id AS TmdbId,
                 li.tvdb_id AS TvdbId,
                 li.title AS Title,
                 li.title_slug AS TitleSlug,
                 a.base_url AS BaseUrl,
                 a.id AS AppId
-            FROM arr_library_items li
+            FROM arr_alternate_titles t INDEXED BY idx_arr_alt_titles_lookup
+            JOIN arr_library_items li
+              ON li.app_id = t.app_id
+             AND li.type = t.type
+             AND li.internal_id = t.internal_id
             JOIN arr_applications a ON a.id = li.app_id
-            WHERE li.type = 'series'
+            WHERE t.type = @type
+              AND t.title_norm IN @variants
               AND a.is_enabled = 1
-              AND li.alternate_titles IS NOT NULL");
-
-        foreach (var item in items)
-        {
-            if (string.IsNullOrEmpty(item.AlternateTitles)) continue;
-            try
-            {
-                var altTitles = JsonSerializer.Deserialize<List<string>>(item.AlternateTitles);
-                if (altTitles is not null)
-                {
-                    foreach (var alt in altTitles)
-                    {
-                        var altStrict = TitleNormalizer.NormalizeTitleStrict(alt);
-                        if (!string.IsNullOrEmpty(altStrict) && variantSet.Contains(altStrict))
-                        {
-                            return new LibraryMatchResult
-                            {
-                                InternalId = item.InternalId,
-                                TvdbId = item.TvdbId,
-                                Title = item.Title,
-                                TitleSlug = item.TitleSlug,
-                                BaseUrl = item.BaseUrl,
-                                AppId = item.AppId
-                            };
-                        }
-
-                        var altLoose = TitleNormalizer.NormalizeTitle(alt);
-                        if (!string.IsNullOrEmpty(altLoose) && variantSet.Contains(altLoose))
-                        {
-                            return new LibraryMatchResult
-                            {
-                                InternalId = item.InternalId,
-                                TvdbId = item.TvdbId,
-                                Title = item.Title,
-                                TitleSlug = item.TitleSlug,
-                                BaseUrl = item.BaseUrl,
-                                AppId = item.AppId
-                            };
-                        }
-                    }
-                }
-            }
-            catch { }
-        }
-
-        return null;
+            LIMIT 1",
+            new { type, variants });
     }
 
     /// <summary>
@@ -610,6 +737,7 @@ public sealed class ArrLibraryRepository
     {
         using var conn = _db.Open();
         conn.Execute("DELETE FROM arr_library_items WHERE app_id = @appId", new { appId });
+        conn.Execute("DELETE FROM arr_alternate_titles WHERE app_id = @appId", new { appId });
         conn.Execute("DELETE FROM arr_sync_status WHERE app_id = @appId", new { appId });
     }
 
@@ -664,6 +792,28 @@ public sealed class ArrLibraryRepository
         var searchPattern = string.IsNullOrWhiteSpace(search) ? null : $"%{search.ToLowerInvariant()}%";
 
         return conn.Query<DebugLibraryItemDto>(sql, new { type, search = searchPattern, limit }).AsList();
+    }
+
+    private sealed class StagedLibraryItem
+    {
+        public int InternalId { get; init; }
+        public int RowOrder { get; init; }
+        public int? TmdbId { get; init; }
+        public int? TvdbId { get; init; }
+        public string Title { get; init; } = "";
+        public string? OriginalTitle { get; init; }
+        public string? TitleSlug { get; init; }
+        public string[]? AlternateTitles { get; init; }
+        public string? AlternateTitlesJson { get; init; }
+        public string TitleNormalized { get; init; } = "";
+        public string SyncedAt { get; init; } = "";
+    }
+
+    private sealed class AlternateTitleStageRow
+    {
+        public int InternalId { get; init; }
+        public string TitleNorm { get; init; } = "";
+        public string? TitleRaw { get; init; }
     }
 }
 

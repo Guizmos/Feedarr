@@ -96,6 +96,21 @@ export function buildMappingDiff(previousMap, nextMap) {
   return diff;
 }
 
+export function buildCategoryMappingsPatchDto({ selectedCategoryIds, ...rest } = {}) {
+  const ids = Array.isArray(selectedCategoryIds)
+    ? selectedCategoryIds
+        .map((value) => Number(value))
+        .filter((id) => Number.isInteger(id) && id > 0)
+    : [];
+
+  const normalizedIds = Array.from(new Set(ids)).sort((a, b) => a - b);
+
+  return {
+    ...rest,
+    selectedCategoryIds: normalizedIds,
+  };
+}
+
 export function dedupeCategoriesById(categories) {
   if (!Array.isArray(categories)) return [];
 

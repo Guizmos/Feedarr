@@ -9,4 +9,5 @@ public sealed class AppOptions
     public int RssLimitPerCategory { get; set; } = 50;
     public int RssLimitGlobalPerSource { get; set; } = 250;
     public bool RssOnlySync { get; set; } = false;
+    public int StorageUsageCacheTtlSeconds { get; set; } = 30;
 }

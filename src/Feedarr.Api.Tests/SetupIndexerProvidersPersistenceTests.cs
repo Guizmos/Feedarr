@@ -9,6 +9,7 @@ using Feedarr.Api.Services.Prowlarr;
 using Feedarr.Api.Services.Security;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using OptionsFactory = Microsoft.Extensions.Options.Options;
 
@@ -28,10 +29,14 @@ public sealed class SetupIndexerProvidersPersistenceTests
         var providers = new ProviderRepository(db, protection);
         var sources = new SourceRepository(db, protection);
 
+        using var setupCache = new MemoryCache(new MemoryCacheOptions());
         var setup = new SetupController(
             db,
             settings,
             providers,
+            BuildConfiguration(),
+            new BootstrapTokenService(),
+            new SetupStateService(settings, setupCache),
             NullLogger<SetupController>.Instance);
 
         var first = setup.UpsertIndexerProvider("jackett", new SetupController.SetupIndexerProviderUpsertDto
@@ -88,10 +93,14 @@ public sealed class SetupIndexerProvidersPersistenceTests
         var settings = new SettingsRepository(db);
         var providers = new ProviderRepository(db, protection);
 
+        using var setupCache = new MemoryCache(new MemoryCacheOptions());
         var setup = new SetupController(
             db,
             settings,
             providers,
+            BuildConfiguration(),
+            new BootstrapTokenService(),
+            new SetupStateService(settings, setupCache),
             NullLogger<SetupController>.Instance);
 
         setup.UpsertIndexerProvider("jackett", new SetupController.SetupIndexerProviderUpsertDto
@@ -134,6 +143,13 @@ public sealed class SetupIndexerProvidersPersistenceTests
             DbFileName = "feedarr.db"
         });
         return new Db(options);
+    }
+
+    private static IConfiguration BuildConfiguration()
+    {
+        return new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>())
+            .Build();
     }
 
     private sealed class PassthroughProtectionService : IApiKeyProtectionService

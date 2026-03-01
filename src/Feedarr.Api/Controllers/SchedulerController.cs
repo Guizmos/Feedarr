@@ -145,7 +145,7 @@ public sealed class SchedulerController : ControllerBase
                         .ToList();
                 }
                 var insertedNew = _releases.UpsertMany((long)full.Id, name, items, nowTs, 0, categoryMap);
-                var (retentionResult, postersPurged) = _retention.ApplyRetention((long)full.Id, perCatLimit, globalLimit);
+                var (retentionResult, postersPurged, failedDeletes) = _retention.ApplyRetention((long)full.Id, perCatLimit, globalLimit);
 
                 var lastSyncAt = Convert.ToInt64(full.LastSyncAt);
                 var newIds = _releases.GetNewIdsWithoutPoster((long)full.Id, lastSyncAt);
@@ -158,7 +158,7 @@ public sealed class SchedulerController : ControllerBase
                 _sources.UpdateLastSync((long)full.Id, "ok", null);
 
                 _activity.Add((long)full.Id, "info", "sync", $"Manual Run OK ({items.Count} items, mode={usedMode})",
-                    dataJson: $"{{\"itemsCount\":{items.Count},\"usedMode\":\"{usedMode}\",\"insertedNew\":{insertedNew},\"totalBeforeRetention\":{retentionResult.TotalBefore},\"purgedByPerCat\":{retentionResult.PurgedByPerCategory},\"purgedByGlobal\":{retentionResult.PurgedByGlobal},\"postersPurged\":{postersPurged},\"elapsedMs\":{elapsedMs}}}");
+                    dataJson: $"{{\"itemsCount\":{items.Count},\"usedMode\":\"{usedMode}\",\"insertedNew\":{insertedNew},\"totalBeforeRetention\":{retentionResult.TotalBefore},\"purgedByPerCat\":{retentionResult.PurgedByPerCategory},\"purgedByGlobal\":{retentionResult.PurgedByGlobal},\"postersPurged\":{postersPurged},\"failedPosterDeletes\":{failedDeletes},\"elapsedMs\":{elapsedMs}}}");
             }
             catch (Exception ex)
             {

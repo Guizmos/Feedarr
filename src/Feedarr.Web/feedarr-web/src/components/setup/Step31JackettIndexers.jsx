@@ -6,6 +6,7 @@ import { tr } from "../../app/uiText.js";
 import CategoryMappingBoard from "../shared/CategoryMappingBoard.jsx";
 import {
   CATEGORY_GROUP_LABELS,
+  buildCategoryMappingsPatchDto,
   buildMappingsPayload,
   mapFromCapsAssignments,
   normalizeCategoryGroupKey,
@@ -433,9 +434,17 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
       if (res?.id) {
         await apiPut(`/api/sources/${res.id}/enabled`, { enabled: true });
         const mappingsPayload = buildMappingsPayload(categoryMappings);
-        if (mappingsPayload.length > 0) {
-          await apiPatch(`/api/sources/${res.id}/category-mappings`, { mappings: mappingsPayload });
-        }
+        const selectedCategoryIds = [...categoryMappings.keys()]
+          .map((catId) => Number(catId))
+          .filter((catId) => Number.isFinite(catId) && catId > 0)
+          .sort((a, b) => a - b);
+        await apiPatch(
+          `/api/sources/${res.id}/category-mappings`,
+          buildCategoryMappingsPatchDto({
+            mappings: mappingsPayload,
+            selectedCategoryIds,
+          })
+        );
       }
       await loadSources();
       setCapsOk(tr("Indexeur ajoute.", "Indexer added."));
@@ -508,13 +517,23 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
         };
       })
       .filter(Boolean);
+    const selectedCategoryIds = [...categoryMappings.keys()]
+      .map((catId) => Number(catId))
+      .filter((catId) => Number.isFinite(catId) && catId > 0)
+      .sort((a, b) => a - b);
     if (mappingsPayload.length === 0) {
       setCapsError(tr("Aucune categorie a mettre a jour.", "No category to update."));
       return;
     }
     setSaving(true);
     try {
-      await apiPatch(`/api/sources/${editingSource.id}/category-mappings`, { mappings: mappingsPayload });
+      await apiPatch(
+        `/api/sources/${editingSource.id}/category-mappings`,
+        buildCategoryMappingsPatchDto({
+          mappings: mappingsPayload,
+          selectedCategoryIds,
+        })
+      );
       await loadSources();
       setCapsOk(tr("Categories mises a jour.", "Categories updated."));
       closeModal();
@@ -694,7 +713,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
         open={modalOpen}
         title={modalTitle}
         onClose={closeModal}
-        width={840}
+        width="75vw"
       >
         {manualMode && !editingSource && (
           <div className="formgrid formgrid--edit" style={{ marginBottom: 12 }}>
@@ -753,6 +772,34 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
               variant="wizard"
               categories={capsCategories}
               mappings={categoryMappings}
+              sourceId={editingSource?.id}
+              infoNote={(
+                <div className="setup-jackett__info-note" role="note">
+                  <span className="setup-jackett__info-note-icon" aria-hidden="true">i</span>
+                  <div className="setup-jackett__info-note-copy">
+                    <div className="setup-jackett__info-note-title">
+                      {tr("Conseil de tri", "Sorting tip")}
+                    </div>
+                    <div>
+                      {tr(
+                        "Choisissez de preference les categories specifiques, plus pertinentes. Les categories \"parents\" incluent souvent des sous-categories qui peuvent provoquer un mauvais tri.",
+                        "Prefer specific categories when possible. Parent categories often include subcategories that can cause incorrect sorting."
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+              previewCredentials={!editingSource?.id ? {
+                providerId: Number(providerConfigs[selectedProviderKey]?.providerId || 0) || null,
+                torznabUrl: manualMode
+                  ? normalizeUrl(manualTorznabUrl)
+                  : (selectedIndexer?.torznabUrl ?? ""),
+                indexerId: manualMode ? null : (selectedIndexer?.id ?? null),
+                authMode: "query",
+                sourceName: manualMode
+                  ? (manualName.trim() || tr("Manuel", "Manual"))
+                  : (selectedIndexer?.name ?? ""),
+              } : null}
               onChangeMapping={(catId, groupKey) => {
                 const normalized = normalizeCategoryGroupKey(groupKey);
                 setCategoryMappings((prev) => {
@@ -773,15 +820,6 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
         )}
 
         <div className="setup-jackett__actions setup-jackett__footer">
-          <div className="setup-jackett__footer-note" role="note">
-            <span className="setup-jackett__footer-note-icon" aria-hidden="true">i</span>
-            <span>
-              {tr(
-                "Choisissez de preference les categories specifiques, plus pertinentes. Les categories \"parents\" incluent souvent des sous-categories qui peuvent provoquer un mauvais tri.",
-                "Prefer specific categories when possible. Parent categories often include subcategories that can cause incorrect sorting."
-              )}
-            </span>
-          </div>
           {editingSource ? (
             <div style={{ display: "flex", gap: 8 }}>
               <button
