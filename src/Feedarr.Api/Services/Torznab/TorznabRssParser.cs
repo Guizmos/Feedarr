@@ -8,6 +8,18 @@ public sealed class TorznabRssParser
     // Les 2 namespaces qu'on rencontre souvent
     private static readonly XNamespace TorznabNs = "http://torznab.com/schemas/2015/feed";
     private static readonly XNamespace NewznabNs = "http://www.newznab.com/DTD/2010/feeds/attributes/";
+    private static readonly string[] GrabKeys =
+    {
+        "grabs",
+        "download",
+        "downloads",
+        "downloaded",
+        "snatches",
+        "completed",
+        "completedcount",
+        "times_completed",
+        "timescompleted"
+    };
 
     public List<TorznabItem> Parse(string xml)
     {
@@ -50,8 +62,8 @@ public sealed class TorznabRssParser
             var sizeBytes = TryLong(attrs, "size")
                 ?? TryLongValue(GetElementValueByLocalName(it, "size"))
                 ?? TryLongValue((string?)it.Element("enclosure")?.Attribute("length"));
-            var grabs = TryInt(attrs, "grabs")
-                ?? TryIntValue(GetElementValueByLocalName(it, "grabs"));
+            var grabs = TryFirstInt(attrs, GrabKeys)
+                ?? TryFirstElementInt(it, GrabKeys);
 
             var item = new TorznabItem
             {
@@ -74,18 +86,17 @@ public sealed class TorznabRssParser
                 Attrs = attrs
             };
 
-            // Certains indexers mettent "seeders/leechers" en texte (description/content)
-            // -> fallback léger si attrs vides
-            if (item.Seeders is null || item.Leechers is null)
+            var desc = (string?)it.Element("description") ?? (string?)it.Element("summary");
+
+            // Certains indexers mettent "seeders/leechers" ou "grabs" en texte.
+            if (item.Seeders is null || item.Leechers is null || item.Grabs is null)
             {
-                var desc = (string?)it.Element("description") ?? (string?)it.Element("summary");
                 if (!string.IsNullOrWhiteSpace(desc))
                 {
-                    // ⚠️ Fallback simple, tu peux durcir plus tard
-                    // Ex: "Seeders: 123 Leechers: 45"
                     var (s, l) = ParseSeedLeechFromText(desc);
                     item.Seeders ??= s;
                     item.Leechers ??= l;
+                    item.Grabs ??= ParseGrabsFromText(desc);
                 }
             }
 
@@ -211,6 +222,17 @@ public sealed class TorznabRssParser
     private static string? TryString(Dictionary<string, string> attrs, string key)
         => attrs.TryGetValue(key, out var v) && !string.IsNullOrWhiteSpace(v) ? v : null;
 
+    private static int? TryFirstInt(Dictionary<string, string> attrs, IEnumerable<string> keys)
+    {
+        foreach (var key in keys)
+        {
+            var value = TryInt(attrs, key);
+            if (value.HasValue) return value;
+        }
+
+        return null;
+    }
+
     private static int? TryInt(Dictionary<string, string> attrs, string key)
         => attrs.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : null;
 
@@ -223,6 +245,27 @@ public sealed class TorznabRssParser
     private static int? TryIntValue(string? value)
         => !string.IsNullOrWhiteSpace(value) && int.TryParse(value, out var n) ? n : null;
 
+    private static int? TryFirstElementInt(XElement item, IEnumerable<string> localNames)
+    {
+        foreach (var localName in localNames)
+        {
+            var value = TryIntValue(GetElementValueByLocalName(item, localName));
+            if (value.HasValue) return value;
+        }
+
+        return null;
+    }
+
     private static string? GetElementValueByLocalName(XElement item, string localName)
         => item.Elements().FirstOrDefault(el => string.Equals(el.Name.LocalName, localName, StringComparison.OrdinalIgnoreCase))?.Value;
+
+    private static int? ParseGrabsFromText(string text)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(
+            text,
+            @"(?:grabs?|downloads?|downloaded|snatches|completed|times[_\s-]?completed|t[ée]l[ée]chargements?)\s*[:=]\s*(\d+)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        return match.Success && int.TryParse(match.Groups[1].Value, out var value) ? value : null;
+    }
 }

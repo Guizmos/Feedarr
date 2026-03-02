@@ -376,6 +376,74 @@ public sealed class SourcesCategoryPreviewTests
     }
 
     [Fact]
+    public void TorznabRssParser_ParsesGrabsFromCommonAttrAliases()
+    {
+        var parser = new TorznabRssParser();
+        const string xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+              <channel>
+                <item>
+                  <title>Alias Attr</title>
+                  <torznab:attr name="downloads" value="321" />
+                </item>
+              </channel>
+            </rss>
+            """;
+
+        var items = parser.Parse(xml);
+
+        Assert.Single(items);
+        Assert.Equal(321, items[0].Grabs);
+    }
+
+    [Fact]
+    public void TorznabRssParser_ParsesGrabsFromCommonElementAliases()
+    {
+        var parser = new TorznabRssParser();
+        const string xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <rss version="2.0">
+              <channel>
+                <item>
+                  <title>Alias Element</title>
+                  <completed>45</completed>
+                </item>
+              </channel>
+            </rss>
+            """;
+
+        var items = parser.Parse(xml);
+
+        Assert.Single(items);
+        Assert.Equal(45, items[0].Grabs);
+    }
+
+    [Fact]
+    public void TorznabRssParser_ParsesGrabsFromDescriptionText()
+    {
+        var parser = new TorznabRssParser();
+        const string xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <rss version="2.0">
+              <channel>
+                <item>
+                  <title>Alias Description</title>
+                  <description><![CDATA[Seeders: 12 Leechers: 2 Telechargements: 89]]></description>
+                </item>
+              </channel>
+            </rss>
+            """;
+
+        var items = parser.Parse(xml);
+
+        Assert.Single(items);
+        Assert.Equal(12, items[0].Seeders);
+        Assert.Equal(2, items[0].Leechers);
+        Assert.Equal(89, items[0].Grabs);
+    }
+
+    [Fact]
     public void CategoryPreviewLive_NoPostFilter_TrustsIndexerResult()
     {
         // Documents old bug + new behaviour.

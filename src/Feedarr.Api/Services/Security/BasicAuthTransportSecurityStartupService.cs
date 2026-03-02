@@ -72,16 +72,25 @@ public sealed class BasicAuthTransportSecurityStartupService : IHostedService
         {
             var hasForwardedProto = (forwardedHeadersOptions.ForwardedHeaders & ForwardedHeaders.XForwardedProto) != 0;
             var hasKnownProxy = forwardedHeadersOptions.KnownProxies.Count > 0 || forwardedHeadersOptions.KnownNetworks.Count > 0;
-            if (hasForwardedProto && hasKnownProxy)
+            var trustsAllForwarders = forwardedHeadersOptions.KnownProxies.Count == 0 && forwardedHeadersOptions.KnownNetworks.Count == 0;
+            if (hasForwardedProto && (hasKnownProxy || trustsAllForwarders))
             {
-                log.LogInformation(
-                    "Basic Auth startup transport check accepted trusted reverse proxy TLS configuration");
+                if (trustsAllForwarders)
+                {
+                    log.LogWarning(
+                        "Basic Auth startup transport check accepted reverse proxy TLS with permissive forwarded headers configuration");
+                }
+                else
+                {
+                    log.LogInformation(
+                        "Basic Auth startup transport check accepted trusted reverse proxy TLS configuration");
+                }
                 return;
             }
 
             throw new InvalidOperationException(
                 "Basic Auth requires trusted TLS transport. Security:TrustedReverseProxyTls=true was set, " +
-                "but forwarded headers are not safely configured with X-Forwarded-Proto and at least one known proxy/network.");
+                "but forwarded headers are not configured with X-Forwarded-Proto.");
         }
 
         var enforceHttps = configuration.GetValue("App:Security:EnforceHttps", false);

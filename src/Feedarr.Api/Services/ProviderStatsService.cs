@@ -63,30 +63,22 @@ public sealed class ProviderStatsService
         _flushOptions = flushOptions?.Value ?? new ProviderStatsFlushOptions();
     }
 
-    public void RecordTmdb(bool ok)
-        => RecordTmdb(ok, 0);
+    // Provider shortcuts: optional elapsedMs replaces former no-arg overloads.
+    // RecordTmdb(ok) and RecordTmdb(ok, ms) both still compile unchanged.
+    // Adding a new provider requires no new method here — use RecordExternal directly.
+    public void RecordTmdb(bool ok, long elapsedMs = 0)
+        => RecordExternal(ExternalProviderKeys.Tmdb, ok, elapsedMs);
 
-    public void RecordTmdb(bool ok, long elapsedMs)
-        => RecordProviderCall(ExternalProviderKeys.Tmdb, ok, elapsedMs);
+    public void RecordFanart(bool ok, long elapsedMs = 0)
+        => RecordExternal(ExternalProviderKeys.Fanart, ok, elapsedMs);
 
-    public void RecordFanart(bool ok)
-        => RecordFanart(ok, 0);
+    public void RecordIgdb(bool ok, long elapsedMs = 0)
+        => RecordExternal(ExternalProviderKeys.Igdb, ok, elapsedMs);
 
-    public void RecordFanart(bool ok, long elapsedMs)
-        => RecordProviderCall(ExternalProviderKeys.Fanart, ok, elapsedMs);
+    public void RecordTvmaze(bool ok, long elapsedMs = 0)
+        => RecordExternal(ExternalProviderKeys.Tvmaze, ok, elapsedMs);
 
-    public void RecordIgdb(bool ok)
-        => RecordIgdb(ok, 0);
-
-    public void RecordIgdb(bool ok, long elapsedMs)
-        => RecordProviderCall(ExternalProviderKeys.Igdb, ok, elapsedMs);
-
-    public void RecordTvmaze(bool ok)
-        => RecordTvmaze(ok, 0);
-
-    public void RecordTvmaze(bool ok, long elapsedMs)
-        => RecordProviderCall(ExternalProviderKeys.Tvmaze, ok, elapsedMs);
-
+    // Generic entry point used by all other providers (Jikan, GoogleBooks, etc.).
     public void RecordExternal(string providerKey, bool ok, long elapsedMs = 0)
         => RecordProviderCall(providerKey, ok, elapsedMs);
 

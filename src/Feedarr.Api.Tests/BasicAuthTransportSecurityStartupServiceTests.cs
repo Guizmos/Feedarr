@@ -5,6 +5,7 @@ using Feedarr.Api.Options;
 using Feedarr.Api.Services.Security;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -74,10 +75,48 @@ public sealed class BasicAuthTransportSecurityStartupServiceTests
         await service.StartAsync(CancellationToken.None);
     }
 
+    [Fact]
+    public async Task Production_BasicAuthWithPermissiveForwardedProxyTls_AllowsStartup()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var settings = new SettingsRepository(db);
+        settings.SaveSecurity(new SecuritySettings
+        {
+            AuthMode = "strict",
+            Username = "admin",
+            PasswordHash = "hash",
+            PasswordSalt = "salt"
+        });
+
+        var forwardedHeadersOptions = new ForwardedHeadersOptions
+        {
+            ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost
+        };
+        forwardedHeadersOptions.KnownNetworks.Clear();
+        forwardedHeadersOptions.KnownProxies.Clear();
+
+        var service = CreateService(
+            environmentName: "Production",
+            settings,
+            new Dictionary<string, string?>
+            {
+                ["Security:RequireHttpsForBasicAuth"] = "true",
+                ["Security:TrustedReverseProxyTls"] = "true",
+                ["App:Security:EnforceHttps"] = "false"
+            },
+            forwardedHeadersOptions);
+
+        await service.StartAsync(CancellationToken.None);
+    }
+
     private static BasicAuthTransportSecurityStartupService CreateService(
         string environmentName,
         SettingsRepository settingsRepository,
-        Dictionary<string, string?> configValues)
+        Dictionary<string, string?> configValues,
+        ForwardedHeadersOptions? forwardedHeadersOptions = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(configValues)
@@ -90,7 +129,7 @@ public sealed class BasicAuthTransportSecurityStartupServiceTests
                 RequireHttpsForBasicAuth = configuration.GetValue<bool?>("Security:RequireHttpsForBasicAuth"),
                 TrustedReverseProxyTls = configuration.GetValue("Security:TrustedReverseProxyTls", false)
             }),
-            OptionsFactory.Create(new ForwardedHeadersOptions()),
+            OptionsFactory.Create(forwardedHeadersOptions ?? new ForwardedHeadersOptions()),
             configuration,
             settingsRepository,
             NullLogger<BasicAuthTransportSecurityStartupService>.Instance);

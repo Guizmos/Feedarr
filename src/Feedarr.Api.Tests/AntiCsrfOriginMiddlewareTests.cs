@@ -43,6 +43,52 @@ public sealed class AntiCsrfOriginMiddlewareTests
     }
 
     [Fact]
+    public async Task UnsafeRequest_WithForwardedSameOrigin_PassesThrough()
+    {
+        var configuration = BuildConfiguration();
+
+        var (nextCalled, context) = await InvokeAsync(configuration, new Dictionary<string, string>
+        {
+            ["Origin"] = "https://feedarr.dalg.ovh",
+            ["X-Forwarded-Proto"] = "https",
+            ["X-Forwarded-Host"] = "feedarr.dalg.ovh"
+        });
+
+        Assert.True(nextCalled);
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UnsafeRequest_WithForwardedSameOriginReferer_PassesThrough()
+    {
+        var configuration = BuildConfiguration();
+
+        var (nextCalled, context) = await InvokeAsync(configuration, new Dictionary<string, string>
+        {
+            ["Referer"] = "https://feedarr.dalg.ovh/settings/security",
+            ["X-Forwarded-Proto"] = "https",
+            ["X-Forwarded-Host"] = "feedarr.dalg.ovh"
+        });
+
+        Assert.True(nextCalled);
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task SecuritySetupEndpoint_IsExemptFromOriginGuard()
+    {
+        var configuration = BuildConfiguration();
+
+        var (nextCalled, context) = await InvokeAsync(
+            configuration,
+            headers: null,
+            path: "/api/settings/security");
+
+        Assert.True(nextCalled);
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+    }
+
+    [Fact]
     public async Task UnsafeRequest_WithoutOriginOrRefererAndWithoutTrustedHeader_Returns403()
     {
         var configuration = BuildConfiguration();
@@ -79,7 +125,8 @@ public sealed class AntiCsrfOriginMiddlewareTests
 
     private static async Task<(bool nextCalled, DefaultHttpContext context)> InvokeAsync(
         IConfiguration configuration,
-        Dictionary<string, string>? headers)
+        Dictionary<string, string>? headers,
+        string path = "/api/sources")
     {
         var nextCalled = false;
         var middleware = new AntiCsrfOriginMiddleware(context =>
@@ -91,7 +138,7 @@ public sealed class AntiCsrfOriginMiddlewareTests
 
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Post;
-        context.Request.Path = "/api/settings/security";
+        context.Request.Path = path;
         context.Request.Scheme = "http";
         context.Request.Host = new HostString("localhost", 5003);
         context.Response.Body = new MemoryStream();

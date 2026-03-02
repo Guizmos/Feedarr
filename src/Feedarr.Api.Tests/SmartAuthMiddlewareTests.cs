@@ -128,6 +128,35 @@ public sealed class SmartAuthMiddlewareTests
         Assert.Contains("security_setup_required", body, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("/manifest.webmanifest")]
+    [InlineData("/favicon.ico")]
+    [InlineData("/favicon-32.png")]
+    [InlineData("/assets/main.js")]
+    [InlineData("/service-worker.js")]
+    public async Task StrictMode_PublicStaticAssets_DoNotRequireAuth(string path)
+    {
+        using var fixture = new MiddlewareFixture();
+        fixture.SetupState.MarkSetupCompleted();
+        var (hash, salt) = HashPassword("StrongP@ssw0rd!");
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        {
+            AuthMode = "strict",
+            Username = "admin",
+            PasswordHash = hash,
+            PasswordSalt = salt
+        });
+
+        var (nextCalled, context) = await fixture.InvokeAsync(
+            path: path,
+            method: "GET",
+            host: "feedarr.example.com",
+            remoteIp: IPAddress.Parse("203.0.113.16"));
+
+        Assert.True(nextCalled);
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+    }
+
     [Fact]
     public async Task BootstrapTokenRoute_RequiresLoopbackOrBootstrapSecret()
     {
