@@ -135,10 +135,10 @@ Pages principales :
 - Sauvegarde / restauration : `/settings/backup`
 - Indexers : `/indexers`
 
-Guides détaillés :
+Guide détaillé:
 
-- Français : `docs/configuration-wizard.fr.md`
-- English : `docs/configuration-wizard.md`
+- [English](docs/configuration-wizard.md)
+- [Français](docs/configuration-wizard.fr.md)
 
 ---
 

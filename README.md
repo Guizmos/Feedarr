@@ -137,8 +137,8 @@ Direct configuration pages:
 
 Full step-by-step guides:
 
-- English: `docs/configuration-wizard.md`
-- Français: `docs/configuration-wizard.fr.md`
+- [English (default)](docs/configuration-wizard.md)
+- [Français](docs/configuration-wizard.fr.md)
 
 ---
 
