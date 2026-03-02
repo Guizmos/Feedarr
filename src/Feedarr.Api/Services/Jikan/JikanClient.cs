@@ -45,8 +45,7 @@ public sealed class JikanClient
             return false;
 
         var endpoint = BuildEndpoint("anime?q=naruto&limit=1");
-        using var resp = await GetTrackedAsync(endpoint, ct);
-        return resp.IsSuccessStatusCode;
+        using var resp = await GetTrackedAsync(endpoint, ct).ConfigureAwait(false);        return resp.IsSuccessStatusCode;
     }
 
     public async Task<AnimeResult?> SearchAnimeAsync(string title, int? year, CancellationToken ct)
@@ -60,13 +59,11 @@ public sealed class JikanClient
             return null;
 
         var endpoint = BuildEndpoint($"anime?q={Uri.EscapeDataString(query)}&limit=10");
-        using var resp = await GetTrackedAsync(endpoint, ct);
-        if (!resp.IsSuccessStatusCode)
+        using var resp = await GetTrackedAsync(endpoint, ct).ConfigureAwait(false);        if (!resp.IsSuccessStatusCode)
             return null;
 
         await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-        var payload = await JsonSerializer.DeserializeAsync<JikanSearchResponse>(stream, JsonOpts, ct);
-        if (payload?.Data is null || payload.Data.Count == 0)
+        var payload = await JsonSerializer.DeserializeAsync<JikanSearchResponse>(stream, JsonOpts, ct).ConfigureAwait(false);        if (payload?.Data is null || payload.Data.Count == 0)
             return null;
 
         var best = payload.Data
@@ -108,12 +105,10 @@ public sealed class JikanClient
         if (string.IsNullOrWhiteSpace(normalized))
             return null;
 
-        using var resp = await GetTrackedAsync(normalized, ct);
-        if (!resp.IsSuccessStatusCode)
+        using var resp = await GetTrackedAsync(normalized, ct).ConfigureAwait(false);        if (!resp.IsSuccessStatusCode)
             return null;
 
-        return await resp.Content.ReadAsByteArrayAsync(ct);
-    }
+        return await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);    }
 
     private string BuildEndpoint(string relative)
     {
@@ -131,8 +126,7 @@ public sealed class JikanClient
         var sw = Stopwatch.StartNew();
         try
         {
-            var resp = await _http.GetAsync(endpoint, ct);
-            _stats.RecordExternal(ExternalProviderKeys.Jikan, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+            var resp = await _http.GetAsync(endpoint, ct).ConfigureAwait(false);            _stats.RecordExternal(ExternalProviderKeys.Jikan, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
             return resp;
         }
         catch

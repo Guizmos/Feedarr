@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { apiGet, apiPost } from "../api/client.js";
 import Loader from "../ui/Loader.jsx";
 import { useSubbarSetter } from "../layout/useSubbar.js";
@@ -23,6 +23,22 @@ import {
 
 const TOP_HOURS = 24;
 const TOP_TAKE = 5;
+const TOP_PER_CATEGORY_TAKE = 5;
+const TOP_SORT_STORAGE_KEY = "feedarr.top24.sort";
+const TOP_DEDUPE_STORAGE_KEY = "feedarr.top24.dedupe";
+
+const sortOptions = [
+  { value: "score", label: "Score" },
+  { value: "grabs", label: "Telechargements" },
+  { value: "seeders", label: "Seeders" },
+  { value: "recent", label: "Recents" },
+];
+
+const dedupeOptionsBase = [
+  { value: "none", label: "Off" },
+  { value: "title_year", label: "Titre+annee" },
+  { value: "title", label: "Titre" },
+];
 
 const viewOptions = [
   { value: "grid", label: "Cartes" },
@@ -31,12 +47,64 @@ const viewOptions = [
   { value: "list", label: "Liste" },
 ];
 
+function readTopStorage(key) {
+  if (typeof window === "undefined") return "";
+  try {
+    return String(window.localStorage.getItem(key) || "");
+  } catch {
+    return "";
+  }
+}
+
+function writeTopStorage(key, value) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, String(value || ""));
+  } catch {
+  }
+}
+
+function normalizeTopSort(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return sortOptions.some((opt) => opt.value === normalized) ? normalized : "score";
+}
+
+function normalizeTopDedupe(value, supportsEntityDedupe = true) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "none") return "none";
+  if (normalized === "entity") return supportsEntityDedupe ? "entity" : "title_year";
+  if (normalized === "title") return "title";
+  if (normalized === "title_year") return "title_year";
+  return supportsEntityDedupe ? "entity" : "title_year";
+}
+
+function getTopDedupeDefault(supportsEntityDedupe = true) {
+  return supportsEntityDedupe ? "entity" : "title_year";
+}
+
+function getSortLabel(sortMode) {
+  return sortOptions.find((opt) => opt.value === sortMode)?.label || "Score";
+}
+
+function getDedupeLabel(dedupeMode, supportsEntityDedupe = true) {
+  const options = supportsEntityDedupe
+    ? [{ value: "entity", label: "Par media" }, ...dedupeOptionsBase]
+    : dedupeOptionsBase;
+  return options.find((opt) => opt.value === dedupeMode)?.label || "Par media";
+}
+
 function TopReleasesSubbar({
   subbarClassName,
   sources,
   sourceId,
   setSourceId,
   enabledSources,
+  sortMode,
+  setSortMode,
+  showDedupeControl,
+  dedupeMode,
+  setDedupeMode,
+  dedupeOptions,
   viewMode,
   setViewMode,
 }) {
@@ -62,6 +130,36 @@ function TopReleasesSubbar({
               </option>
             );
           })}
+        </TopReleasesSubSelectIcon>
+      ) : null}
+
+      <TopReleasesSubSelectIcon
+        icon="military_tech"
+        label="Tri"
+        value={sortMode}
+        active={sortMode !== "score"}
+        onChange={(e) => setSortMode(e.target.value)}
+      >
+        {sortOptions.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </TopReleasesSubSelectIcon>
+
+      {showDedupeControl ? (
+        <TopReleasesSubSelectIcon
+          icon="select_all"
+          label="Dedup"
+          value={dedupeMode}
+          active={dedupeMode !== "none"}
+          onChange={(e) => setDedupeMode(e.target.value)}
+        >
+          {dedupeOptions.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
         </TopReleasesSubSelectIcon>
       ) : null}
 
@@ -142,15 +240,15 @@ function updateTopSections(prevSections, updater) {
   }));
 }
 
-function TopGlobalEmptyState({ title, hours, field }) {
+function TopGlobalEmptyState({ title, hours, field, sortLabel, dedupeLabel }) {
   return (
     <section style={{ marginBottom: 40 }}>
       <div className="top24-sectionHead">
         <h2 style={{ marginBottom: 0, fontSize: 18 }}>{title}</h2>
       </div>
       <div className="top24-empty">
-        <strong>Aucun item sur les dernieres {hours}h.</strong>
-        <span>Fenetre identique a Library, basee sur {field}.</span>
+        <strong>Aucun item classe sur les dernieres {hours}h.</strong>
+        <span>Mode {sortLabel} avec dedup {dedupeLabel}, fenetre basee sur {field}.</span>
       </div>
     </section>
   );
@@ -158,6 +256,7 @@ function TopGlobalEmptyState({ title, hours, field }) {
 
 export default function TopReleases() {
   const setContent = useSubbarSetter();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [windowInfo, setWindowInfo] = useState(null);
@@ -166,6 +265,14 @@ export default function TopReleases() {
   const [sourceId, setSourceId] = useState("");
   const [sources, setSources] = useState([]);
   const [viewMode, setViewMode] = useState("grid");
+  const [showDedupeControl, setShowDedupeControl] = useState(false);
+  const [sortMode, setSortModeState] = useState(() => normalizeTopSort(searchParams.get("sort") || readTopStorage(TOP_SORT_STORAGE_KEY)));
+  const [dedupeMode, setDedupeModeState] = useState(() => normalizeTopDedupe(searchParams.get("dedupe") || readTopStorage(TOP_DEDUPE_STORAGE_KEY), true));
+  const [supportsEntityDedupe, setSupportsEntityDedupe] = useState(true);
+  const [sortUsed, setSortUsed] = useState(() => normalizeTopSort(searchParams.get("sort") || readTopStorage(TOP_SORT_STORAGE_KEY)));
+  const [dedupeUsed, setDedupeUsed] = useState(() => normalizeTopDedupe(searchParams.get("dedupe") || readTopStorage(TOP_DEDUPE_STORAGE_KEY), true));
+  const [takeUsed, setTakeUsed] = useState(TOP_TAKE);
+  const [perCategoryTakeUsed, setPerCategoryTakeUsed] = useState(TOP_PER_CATEGORY_TAKE);
   const [selectedItem, setSelectedItem] = useState(null);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -178,6 +285,46 @@ export default function TopReleases() {
     () => (sources || []).filter((s) => Number(s.enabled ?? 1) === 1),
     [sources]
   );
+
+  const dedupeOptions = useMemo(
+    () => (
+      supportsEntityDedupe
+        ? [{ value: "entity", label: "Par media" }, ...dedupeOptionsBase]
+        : dedupeOptionsBase
+    ),
+    [supportsEntityDedupe]
+  );
+
+  const effectiveDedupeMode = useMemo(
+    () => (
+      showDedupeControl
+        ? dedupeMode
+        : getTopDedupeDefault(supportsEntityDedupe)
+    ),
+    [dedupeMode, showDedupeControl, supportsEntityDedupe]
+  );
+
+  const updateTopSearchParam = useCallback((key, value, defaultValue) => {
+    const next = new URLSearchParams(searchParams);
+    if (!value || value === defaultValue) next.delete(key);
+    else next.set(key, value);
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  const setSortMode = useCallback((value) => {
+    const normalized = normalizeTopSort(value);
+    setSortModeState(normalized);
+    writeTopStorage(TOP_SORT_STORAGE_KEY, normalized);
+    updateTopSearchParam("sort", normalized, "score");
+  }, [updateTopSearchParam]);
+
+  const setDedupeMode = useCallback((value) => {
+    const normalized = normalizeTopDedupe(value, supportsEntityDedupe);
+    const defaultValue = getTopDedupeDefault(supportsEntityDedupe);
+    setDedupeModeState(normalized);
+    writeTopStorage(TOP_DEDUPE_STORAGE_KEY, normalized);
+    updateTopSearchParam("dedupe", normalized, defaultValue);
+  }, [supportsEntityDedupe, updateTopSearchParam]);
 
   const sourceNameById = useMemo(() => {
     const map = new Map();
@@ -219,10 +366,18 @@ export default function TopReleases() {
       const q = new URLSearchParams();
       q.set("hours", String(TOP_HOURS));
       q.set("take", String(TOP_TAKE));
+      q.set("perCategoryTake", String(TOP_PER_CATEGORY_TAKE));
+      q.set("sort", sortMode);
+      q.set("dedupe", effectiveDedupeMode);
       if (sourceId) q.set("sourceId", sourceId);
 
       const data = await apiGet(`/api/feed/top?${q.toString()}`);
       setWindowInfo(data?.window ?? null);
+      setSupportsEntityDedupe(data?.supportsEntityDedupe !== false);
+      setSortUsed(normalizeTopSort(data?.sortUsed || sortMode));
+      setDedupeUsed(normalizeTopDedupe(data?.dedupeUsed || effectiveDedupeMode, data?.supportsEntityDedupe !== false));
+      setTakeUsed(Number(data?.takeUsed || TOP_TAKE));
+      setPerCategoryTakeUsed(Number(data?.perCategoryTakeUsed || TOP_PER_CATEGORY_TAKE));
       setGlobalTop(mapTopItems(data?.globalTop));
       setCategorySections(
         (Array.isArray(data?.categories) ? data.categories : []).map((section) => ({
@@ -239,17 +394,43 @@ export default function TopReleases() {
       fallbackMessage: "Erreur lors du chargement des tops",
       onFinally: () => setLoading(false),
     });
-  }, [sourceId]);
+  }, [effectiveDedupeMode, sortMode, sourceId]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   useEffect(() => {
+    const nextSort = normalizeTopSort(searchParams.get("sort") || readTopStorage(TOP_SORT_STORAGE_KEY));
+    if (nextSort !== sortMode) setSortModeState(nextSort);
+
+    if (!showDedupeControl) return;
+    const nextDedupe = normalizeTopDedupe(
+      searchParams.get("dedupe") || readTopStorage(TOP_DEDUPE_STORAGE_KEY),
+      supportsEntityDedupe
+    );
+    if (nextDedupe !== dedupeMode) setDedupeModeState(nextDedupe);
+  }, [dedupeMode, searchParams, showDedupeControl, sortMode, supportsEntityDedupe]);
+
+  useEffect(() => {
+    if (!supportsEntityDedupe && dedupeMode === "entity") {
+      setDedupeMode("title_year");
+    }
+  }, [dedupeMode, setDedupeMode, supportsEntityDedupe]);
+
+  useEffect(() => {
+    if (!showDedupeControl) {
+      setDedupeModeState(getTopDedupeDefault(supportsEntityDedupe));
+      writeTopStorage(TOP_DEDUPE_STORAGE_KEY, getTopDedupeDefault(supportsEntityDedupe));
+      updateTopSearchParam("dedupe", getTopDedupeDefault(supportsEntityDedupe), getTopDedupeDefault(supportsEntityDedupe));
+    }
+  }, [showDedupeControl, supportsEntityDedupe, updateTopSearchParam]);
+
+  useEffect(() => {
     if ((viewMode !== "grid" && viewMode !== "poster") || globalTop.length === 0) return;
     const timer = setTimeout(() => setTop5AnimKey((prev) => prev + 1), 140);
     return () => clearTimeout(timer);
-  }, [viewMode, globalTop.length]);
+  }, [viewMode, globalTop.length, sortMode, effectiveDedupeMode]);
 
   function download(it) {
     const path =
@@ -413,6 +594,7 @@ export default function TopReleases() {
     apiGet("/api/settings/ui")
       .then((ui) => {
         if (cancelled) return;
+        setShowDedupeControl(!!ui?.showTop24DedupeControl);
         const def = String(ui?.defaultView || "grid").toLowerCase();
         const normalized = def === "cards" ? "grid" : def;
         if (viewOptions.some((opt) => opt.value === normalized)) {
@@ -435,13 +617,19 @@ export default function TopReleases() {
         sourceId={sourceId}
         setSourceId={setSourceId}
         enabledSources={enabledSources}
+        sortMode={sortMode}
+        setSortMode={setSortMode}
+        showDedupeControl={showDedupeControl}
+        dedupeMode={dedupeMode}
+        setDedupeMode={setDedupeMode}
+        dedupeOptions={dedupeOptions}
         viewMode={viewMode}
         setViewMode={setViewMode}
       />
     );
 
     return () => setContent(null);
-  }, [setContent, sources, sourceId, enabledSources, viewMode]);
+  }, [dedupeMode, dedupeOptions, enabledSources, setContent, setDedupeMode, setSortMode, showDedupeControl, sortMode, sourceId, sources, viewMode]);
 
   const selectedSourceName = useMemo(() => {
     if (!sourceId) return "";
@@ -460,18 +648,20 @@ export default function TopReleases() {
     if (Number.isNaN(date.getTime())) return "";
     return date.toLocaleString(uiLanguage, { dateStyle: "short", timeStyle: "short" });
   }, [windowInfo?.sinceUtc, uiLanguage]);
+  const sortLabel = useMemo(() => getSortLabel(sortUsed), [sortUsed]);
+  const dedupeLabel = useMemo(() => getDedupeLabel(dedupeUsed, supportsEntityDedupe), [dedupeUsed, supportsEntityDedupe]);
   const topSummary = useMemo(() => {
     const hours = Number(windowInfo?.hours || TOP_HOURS);
     const field = String(windowInfo?.field || "published_at_ts");
     const sourceSummary = selectedSourceName ? ` • Source: ${selectedSourceName}` : " • Tous indexeurs";
     const sinceSummary = sinceLabel ? ` • Depuis ${sinceLabel}` : "";
-    return `Base sur ${field} depuis ${hours}h${sinceSummary} • ${totalItems} items • ${categorySections.length} categories${sourceSummary}`;
-  }, [windowInfo?.hours, windowInfo?.field, selectedSourceName, sinceLabel, totalItems, categorySections.length]);
+    return `Classement ${sortLabel} • Dedup ${dedupeLabel} • Fenetre ${field} sur ${hours}h${sinceSummary} • ${totalItems} items • ${categorySections.length} categories${sourceSummary}`;
+  }, [windowInfo?.hours, windowInfo?.field, selectedSourceName, sinceLabel, totalItems, categorySections.length, sortLabel, dedupeLabel]);
 
   if (loading) return <Loader />;
   if (err) return <div className="error">{err}</div>;
 
-  const globalTitle = `🏆 Top ${TOP_TAKE} Global${selectedSourceName ? ` • ${selectedSourceName}` : ""}`;
+  const globalTitle = `🏆 Top ${takeUsed} Global${selectedSourceName ? ` • ${selectedSourceName}` : ""}`;
   return (
     <div className="page page--top24h">
       <div className="pagehead">
@@ -493,26 +683,32 @@ export default function TopReleases() {
               compact={false}
               isGlobalTop={true}
               top5AnimKey={top5AnimKey}
-              sortBy="recent"
+              sortBy={sortUsed}
               sourceNameById={sourceNameById}
               onDownload={download}
               onOpen={openDetails}
             />
           ) : (
-            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} />
+            <TopGlobalEmptyState
+              title={globalTitle}
+              hours={windowInfo?.hours || TOP_HOURS}
+              field={windowInfo?.field || "published_at_ts"}
+              sortLabel={sortLabel}
+              dedupeLabel={dedupeLabel}
+            />
           )}
           {categorySections.map((section) => (
             <TopReleasesGridSection
               key={section.key}
               items={section.top}
-              sectionTitle={`📊 Top ${TOP_TAKE} - ${section.label} (${section.count})`}
+              sectionTitle={`📊 Top ${perCategoryTakeUsed} - ${section.label} (${section.count})`}
               showRank={true}
               rankColor="#fff"
               showIndexerPill={!sourceId}
               compact={true}
               isGlobalTop={false}
               top5AnimKey={top5AnimKey}
-              sortBy="recent"
+              sortBy={sortUsed}
               sourceNameById={sourceNameById}
               onDownload={download}
               onOpen={openDetails}
@@ -534,13 +730,19 @@ export default function TopReleases() {
               onOpen={openDetails}
             />
           ) : (
-            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} />
+            <TopGlobalEmptyState
+              title={globalTitle}
+              hours={windowInfo?.hours || TOP_HOURS}
+              field={windowInfo?.field || "published_at_ts"}
+              sortLabel={sortLabel}
+              dedupeLabel={dedupeLabel}
+            />
           )}
           {categorySections.map((section) => (
             <TopReleasesPosterSection
               key={section.key}
               items={section.top}
-              sectionTitle={`📊 Top ${TOP_TAKE} - ${section.label} (${section.count})`}
+              sectionTitle={`📊 Top ${perCategoryTakeUsed} - ${section.label} (${section.count})`}
               showRank={true}
               rankColor="#fff"
               isGlobalTop={false}
@@ -564,13 +766,19 @@ export default function TopReleases() {
               formatRating={formatRating}
             />
           ) : (
-            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} />
+            <TopGlobalEmptyState
+              title={globalTitle}
+              hours={windowInfo?.hours || TOP_HOURS}
+              field={windowInfo?.field || "published_at_ts"}
+              sortLabel={sortLabel}
+              dedupeLabel={dedupeLabel}
+            />
           )}
           {categorySections.map((section) => (
             <TopReleasesBannerSection
               key={section.key}
               items={section.top}
-              sectionTitle={`📊 Top ${TOP_TAKE} - ${section.label} (${section.count})`}
+              sectionTitle={`📊 Top ${perCategoryTakeUsed} - ${section.label} (${section.count})`}
               showRank={true}
               rankColor="#fff"
               sourceNameById={sourceNameById}
@@ -594,13 +802,19 @@ export default function TopReleases() {
               isSeriesItem={isSeriesItem}
             />
           ) : (
-            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} />
+            <TopGlobalEmptyState
+              title={globalTitle}
+              hours={windowInfo?.hours || TOP_HOURS}
+              field={windowInfo?.field || "published_at_ts"}
+              sortLabel={sortLabel}
+              dedupeLabel={dedupeLabel}
+            />
           )}
           {categorySections.map((section) => (
             <TopReleasesListSection
               key={section.key}
               items={section.top}
-              sectionTitle={`📊 Top ${TOP_TAKE} - ${section.label} (${section.count})`}
+              sectionTitle={`📊 Top ${perCategoryTakeUsed} - ${section.label} (${section.count})`}
               sourceNameById={sourceNameById}
               onOpen={openDetails}
               onRename={renameRelease}

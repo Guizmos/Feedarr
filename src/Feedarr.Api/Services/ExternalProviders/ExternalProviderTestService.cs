@@ -36,8 +36,7 @@ public sealed class ExternalProviderTestService
         {
             if (key == ExternalProviderKeys.ComicVine)
             {
-                var comicVineResult = await TestComicVineAsync(baseUrl, auth, ct);
-                return new ExternalProviderTestOutcome(
+                var comicVineResult = await TestComicVineAsync(baseUrl, auth, ct).ConfigureAwait(false);                return new ExternalProviderTestOutcome(
                     comicVineResult.Ok,
                     sw.ElapsedMilliseconds,
                     comicVineResult.Error ?? (comicVineResult.Ok ? null : "provider test failed"));
@@ -83,8 +82,7 @@ public sealed class ExternalProviderTestService
         var url = new Uri(baseUri, $"configuration?api_key={Uri.EscapeDataString(apiKey)}");
 
         var sw = Stopwatch.StartNew();
-        using var resp = await client.GetAsync(url, ct);
-        _stats.RecordTmdb(resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+        using var resp = await client.GetAsync(url, ct).ConfigureAwait(false);        _stats.RecordTmdb(resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
         return resp.IsSuccessStatusCode;
     }
 
@@ -96,8 +94,7 @@ public sealed class ExternalProviderTestService
         var url = new Uri(baseUri, "search/shows?q=the");
 
         var sw = Stopwatch.StartNew();
-        using var resp = await client.GetAsync(url, ct);
-        _stats.RecordTvmaze(resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+        using var resp = await client.GetAsync(url, ct).ConfigureAwait(false);        _stats.RecordTvmaze(resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
         return resp.IsSuccessStatusCode;
     }
 
@@ -113,8 +110,7 @@ public sealed class ExternalProviderTestService
         var url = new Uri(baseUri, $"movies/550?api_key={Uri.EscapeDataString(apiKey)}");
 
         var sw = Stopwatch.StartNew();
-        using var resp = await client.GetAsync(url, ct);
-        _stats.RecordFanart(resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+        using var resp = await client.GetAsync(url, ct).ConfigureAwait(false);        _stats.RecordFanart(resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
         return resp.IsSuccessStatusCode;
     }
 
@@ -135,14 +131,12 @@ public sealed class ExternalProviderTestService
         });
 
         var sw = Stopwatch.StartNew();
-        using var resp = await client.PostAsync("https://id.twitch.tv/oauth2/token", form, ct);
-        _stats.RecordIgdb(resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+        using var resp = await client.PostAsync("https://id.twitch.tv/oauth2/token", form, ct).ConfigureAwait(false);        _stats.RecordIgdb(resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
         if (!resp.IsSuccessStatusCode)
             return false;
 
         await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
-        return doc.RootElement.TryGetProperty("access_token", out var token)
+        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);        return doc.RootElement.TryGetProperty("access_token", out var token)
             && token.ValueKind == JsonValueKind.String
             && !string.IsNullOrWhiteSpace(token.GetString());
     }
@@ -155,8 +149,7 @@ public sealed class ExternalProviderTestService
         var url = new Uri(baseUri, "anime?q=naruto&limit=1");
 
         var sw = Stopwatch.StartNew();
-        using var resp = await client.GetAsync(url, ct);
-        _stats.RecordExternal(ExternalProviderKeys.Jikan, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+        using var resp = await client.GetAsync(url, ct).ConfigureAwait(false);        _stats.RecordExternal(ExternalProviderKeys.Jikan, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
         return resp.IsSuccessStatusCode;
     }
 
@@ -173,8 +166,7 @@ public sealed class ExternalProviderTestService
 
         var url = new Uri(baseUri, relative);
         var sw = Stopwatch.StartNew();
-        using var resp = await client.GetAsync(url, ct);
-        _stats.RecordExternal(ExternalProviderKeys.GoogleBooks, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+        using var resp = await client.GetAsync(url, ct).ConfigureAwait(false);        _stats.RecordExternal(ExternalProviderKeys.GoogleBooks, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
         return resp.IsSuccessStatusCode;
     }
 
@@ -191,8 +183,7 @@ public sealed class ExternalProviderTestService
         var url = new Uri(baseUri, relative);
 
         var sw = Stopwatch.StartNew();
-        using var resp = await client.GetAsync(url, ct);
-        _stats.RecordExternal(ExternalProviderKeys.TheAudioDb, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+        using var resp = await client.GetAsync(url, ct).ConfigureAwait(false);        _stats.RecordExternal(ExternalProviderKeys.TheAudioDb, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
         return resp.IsSuccessStatusCode;
     }
 
@@ -203,8 +194,7 @@ public sealed class ExternalProviderTestService
         var baseUri = BuildBaseUri(baseUrl, "https://openlibrary.org/");
         var url = new Uri(baseUri, "search.json?title=Harry+Potter&limit=1&fields=title,cover_i");
         var sw = Stopwatch.StartNew();
-        using var resp = await client.GetAsync(url, ct);
-        _stats.RecordExternal(ExternalProviderKeys.OpenLibrary, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+        using var resp = await client.GetAsync(url, ct).ConfigureAwait(false);        _stats.RecordExternal(ExternalProviderKeys.OpenLibrary, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
         return resp.IsSuccessStatusCode;
     }
 
@@ -225,8 +215,7 @@ public sealed class ExternalProviderTestService
         if (!string.IsNullOrWhiteSpace(clientId))
             req.Headers.TryAddWithoutValidation("X-Application", clientId);
 
-        using var resp = await client.SendAsync(req, ct);
-        _stats.RecordExternal(ExternalProviderKeys.MusicBrainz, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+        using var resp = await client.SendAsync(req, ct).ConfigureAwait(false);        _stats.RecordExternal(ExternalProviderKeys.MusicBrainz, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
         return resp.IsSuccessStatusCode;
     }
 
@@ -242,8 +231,7 @@ public sealed class ExternalProviderTestService
         var url = new Uri(baseUri, $"games?key={Uri.EscapeDataString(apiKey)}&page_size=1&search=halo");
 
         var sw = Stopwatch.StartNew();
-        using var resp = await client.GetAsync(url, ct);
-        _stats.RecordExternal(ExternalProviderKeys.Rawg, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+        using var resp = await client.GetAsync(url, ct).ConfigureAwait(false);        _stats.RecordExternal(ExternalProviderKeys.Rawg, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
         return resp.IsSuccessStatusCode;
     }
 
@@ -268,9 +256,7 @@ public sealed class ExternalProviderTestService
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
             req.Headers.UserAgent.ParseAdd(ComicVineUserAgent);
 
-            using var resp = await client.SendAsync(req, ct);
-            var body = await resp.Content.ReadAsStringAsync(ct);
-
+            using var resp = await client.SendAsync(req, ct).ConfigureAwait(false);            var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             if ((int)resp.StatusCode != 200)
             {
                 _stats.RecordExternal(ExternalProviderKeys.ComicVine, ok: false, sw.ElapsedMilliseconds);

@@ -196,6 +196,22 @@ export default function SettingsUI({
             </div>
           </div>
 
+          <div className={cardClass("ui.top24DedupeControl", !!ui.showTop24DedupeControl)}>
+            <div className="indexer-row indexer-row--settings">
+              <span className="indexer-title">Afficher le filtre dedup Top 24h</span>
+              <div className="indexer-actions">
+                <span className="indexer-status">
+                  {ui.showTop24DedupeControl ? "Actif" : "Désactivé"}
+                </span>
+                <ToggleSwitch
+                  checked={ui.showTop24DedupeControl}
+                  onIonChange={(e) => setUi((u) => ({ ...u, showTop24DedupeControl: e.detail.checked }))}
+                  className="settings-toggle"
+                />
+              </div>
+            </div>
+          </div>
+
           <div className={cardClass("ui.missingPosterView", !!ui.enableMissingPosterView)}>
             <div className="indexer-row indexer-row--settings">
               <span className="indexer-title">Activer Vue Sans poster</span>

@@ -15,18 +15,15 @@ internal sealed class TransientHttpRetryHandler : DelegatingHandler
     {
         // Only retry idempotent methods — POST/PUT may not be safe to replay
         if (request.Method != HttpMethod.Get && request.Method != HttpMethod.Head)
-            return await base.SendAsync(request, ct);
-
-        var snapshot = await RequestSnapshot.CreateAsync(request, ct);
-        HttpResponseMessage? lastResponse = null;
+            return await base.SendAsync(request, ct).ConfigureAwait(false);
+        var snapshot = await RequestSnapshot.CreateAsync(request, ct).ConfigureAwait(false);        HttpResponseMessage? lastResponse = null;
 
         for (var attempt = 0; attempt <= MaxRetries; attempt++)
         {
             var attemptRequest = snapshot.CreateRequest();
             try
             {
-                lastResponse = await base.SendAsync(attemptRequest, ct);
-
+                lastResponse = await base.SendAsync(attemptRequest, ct).ConfigureAwait(false);
                 if (!IsTransientError(lastResponse) || attempt == MaxRetries)
                     return lastResponse;
 
@@ -52,8 +49,7 @@ internal sealed class TransientHttpRetryHandler : DelegatingHandler
 
             var backoff = TimeSpan.FromSeconds(Math.Pow(2, attempt))
                           + TimeSpan.FromMilliseconds(Random.Shared.Next(100, 500));
-            await Task.Delay(backoff, ct);
-        }
+            await Task.Delay(backoff, ct).ConfigureAwait(false);        }
 
         // Should not be reached, but satisfy the compiler
         return lastResponse ?? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
@@ -112,8 +108,7 @@ internal sealed class TransientHttpRetryHandler : DelegatingHandler
             var contentHeaders = new List<KeyValuePair<string, IEnumerable<string>>>();
             if (source.Content is not null)
             {
-                contentBytes = await source.Content.ReadAsByteArrayAsync(ct);
-                contentHeaders = source.Content.Headers
+                contentBytes = await source.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);                contentHeaders = source.Content.Headers
                     .Select(h => new KeyValuePair<string, IEnumerable<string>>(h.Key, h.Value.ToArray()))
                     .ToList();
             }

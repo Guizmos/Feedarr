@@ -53,8 +53,7 @@ public sealed class RawgClient
         var sw = Stopwatch.StartNew();
         try
         {
-            using var resp = await _http.GetAsync(url, ct);
-            _stats.RecordExternal(ExternalProviderKeys.Rawg, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+            using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);            _stats.RecordExternal(ExternalProviderKeys.Rawg, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
             return resp.IsSuccessStatusCode;
         }
         catch
@@ -67,8 +66,7 @@ public sealed class RawgClient
     public async Task<(int rawgId, string title, int? year, string coverUrl)?> SearchGameAsync(
         string title, int? year, CancellationToken ct)
     {
-        var results = await SearchRawAsync(title, 5, ct);
-        if (results is null || results.Count == 0) return null;
+        var results = await SearchRawAsync(title, 5, ct).ConfigureAwait(false);        if (results is null || results.Count == 0) return null;
 
         // If year provided, prefer an exact year match
         if (year.HasValue)
@@ -85,8 +83,7 @@ public sealed class RawgClient
     public async Task<List<(int rawgId, string title, int? year, string coverUrl)>> SearchGameListAsync(
         string title, CancellationToken ct)
     {
-        var results = await SearchRawAsync(title, 15, ct);
-        if (results is null) return new List<(int, string, int?, string)>();
+        var results = await SearchRawAsync(title, 15, ct).ConfigureAwait(false);        if (results is null) return new List<(int, string, int?, string)>();
 
         return results
             .Where(r => !string.IsNullOrWhiteSpace(r.BackgroundImage))
@@ -99,8 +96,7 @@ public sealed class RawgClient
         if (string.IsNullOrWhiteSpace(url)) return null;
         try
         {
-            return await _http.GetByteArrayAsync(url, ct);
-        }
+            return await _http.GetByteArrayAsync(url, ct).ConfigureAwait(false);        }
         catch
         {
             return null;
@@ -128,14 +124,12 @@ public sealed class RawgClient
         var sw = Stopwatch.StartNew();
         try
         {
-            using var resp = await _http.GetAsync(url, ct);
-            sw.Stop();
+            using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);            sw.Stop();
             _stats.RecordExternal(ExternalProviderKeys.Rawg, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
 
             if (!resp.IsSuccessStatusCode) return null;
 
-            var content = await resp.Content.ReadAsStringAsync(ct);
-            var parsed = JsonSerializer.Deserialize<RawgSearchResponse>(content, JsonOpts);
+            var content = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);            var parsed = JsonSerializer.Deserialize<RawgSearchResponse>(content, JsonOpts);
             return parsed?.Results;
         }
         catch

@@ -122,6 +122,7 @@ SqlMapper.AddTypeHandler(new SqliteNullableInt32Handler());
 
 // Options + DB
 builder.Services.Configure<AppOptions>(builder.Configuration.GetSection("App"));
+builder.Services.Configure<PosterFetchOptions>(builder.Configuration.GetSection("PosterFetch"));
 builder.Services.Configure<ProviderStatsFlushOptions>(builder.Configuration.GetSection("App:ProviderStatsFlush"));
 builder.Services.Configure<UpdatesOptions>(builder.Configuration.GetSection("App:Updates"));
 builder.Services.Configure<BasicAuthTransportSecurityOptions>(builder.Configuration.GetSection("Security"));

@@ -30,8 +30,7 @@ public sealed class ProwlarrClient
     {
         var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Options.Set(ProtocolDowngradeRedirectHandler.AllowHttpsToHttpDowngradeOption, true);
-        return await _http.SendAsync(request, ct);
-    }
+        return await _http.SendAsync(request, ct).ConfigureAwait(false);    }
 
     private static bool? GetBool(JsonElement element, string prop)
     {
@@ -62,12 +61,10 @@ public sealed class ProwlarrClient
         string baseUrl, string apiKey, CancellationToken ct)
     {
         var url = BuildIndexersUrl(baseUrl, apiKey);
-        using var resp = await SendGetAllowingSameHostDowngradeAsync(url, ct);
-        resp.EnsureSuccessStatusCode();
+        using var resp = await SendGetAllowingSameHostDowngradeAsync(url, ct).ConfigureAwait(false);        resp.EnsureSuccessStatusCode();
 
         var contentType = resp.Content.Headers.ContentType?.MediaType ?? "";
-        var json = await resp.Content.ReadAsStringAsync(ct);
-        if (!string.IsNullOrWhiteSpace(contentType) &&
+        var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);        if (!string.IsNullOrWhiteSpace(contentType) &&
             !contentType.Contains("json", StringComparison.OrdinalIgnoreCase))
         {
             throw new JsonException($"Invalid JSON response (content-type={contentType})");
@@ -115,13 +112,10 @@ public sealed class ProwlarrClient
     {
         try
         {
-            return await ListIndexersCoreAsync(baseUrl, apiKey, ct);
-        }
+            return await ListIndexersCoreAsync(baseUrl, apiKey, ct).ConfigureAwait(false);        }
         catch (JsonException ex) when (ShouldRetryJson(ex))
         {
-            await Task.Delay(350, ct);
-            return await ListIndexersCoreAsync(baseUrl, apiKey, ct);
-        }
+            await Task.Delay(350, ct).ConfigureAwait(false);            return await ListIndexersCoreAsync(baseUrl, apiKey, ct).ConfigureAwait(false);        }
     }
 
     private static bool ShouldRetryJson(Exception ex)

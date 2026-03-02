@@ -87,14 +87,12 @@ public sealed class TmdbClient
 
         try
         {
-            using var resp = await _http.GetAsync(relativeUrl, ct);
-            var ok = resp.IsSuccessStatusCode;
+            using var resp = await _http.GetAsync(relativeUrl, ct).ConfigureAwait(false);            var ok = resp.IsSuccessStatusCode;
             _stats.RecordTmdb(ok, sw.ElapsedMilliseconds);
             recorded = true;
             if (!ok) resp.EnsureSuccessStatusCode();
             await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-            return await JsonSerializer.DeserializeAsync<T>(stream, JsonOpts, ct);
-        }
+            return await JsonSerializer.DeserializeAsync<T>(stream, JsonOpts, ct).ConfigureAwait(false);        }
         catch
         {
             if (!recorded)
@@ -112,8 +110,7 @@ public sealed class TmdbClient
 
         try
         {
-            using var resp = await _http.GetAsync(url, ct);
-            var ok = resp.IsSuccessStatusCode;
+            using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);            var ok = resp.IsSuccessStatusCode;
             _stats.RecordTmdb(ok, sw.ElapsedMilliseconds);
             recorded = true;
             return ok;
@@ -137,8 +134,7 @@ public sealed class TmdbClient
         var url = $"search/movie?api_key={Uri.EscapeDataString(key)}&query={Uri.EscapeDataString(title)}&include_adult=false";
         if (year is >= 1800 and <= 2100) url += $"&year={year.Value}";
 
-        var r = await GetJsonAsync<SearchResponse>(url, ct);
-
+        var r = await GetJsonAsync<SearchResponse>(url, ct).ConfigureAwait(false);
         // on prend le 1er qui a un poster (ou le 1er tout court si poster non requis)
         var best = requirePoster
             ? r?.Results?.FirstOrDefault(x => x.Id > 0 && !string.IsNullOrWhiteSpace(x.PosterPath))
@@ -149,8 +145,7 @@ public sealed class TmdbClient
         if (year is not null)
         {
             var url2 = $"search/movie?api_key={Uri.EscapeDataString(key)}&query={Uri.EscapeDataString(title)}&include_adult=false";
-            var r2 = await GetJsonAsync<SearchResponse>(url2, ct);
-            var best2 = requirePoster
+            var r2 = await GetJsonAsync<SearchResponse>(url2, ct).ConfigureAwait(false);            var best2 = requirePoster
                 ? r2?.Results?.FirstOrDefault(x => x.Id > 0 && !string.IsNullOrWhiteSpace(x.PosterPath))
                 : r2?.Results?.FirstOrDefault(x => x.Id > 0);
             if (best2 is not null) return (best2.Id, best2.PosterPath);
@@ -163,9 +158,7 @@ public sealed class TmdbClient
     {
         var results = new List<SearchResult>();
         var mediaInfoLanguage = GetMediaInfoLanguage();
-        results.AddRange(await SearchMovieListWithLanguageAsync(title, year, null, ct, limit));
-        results.AddRange(await SearchMovieListWithLanguageAsync(title, year, mediaInfoLanguage, ct, limit));
-        return results;
+        results.AddRange(await SearchMovieListWithLanguageAsync(title, year, null, ct, limit).ConfigureAwait(false));        results.AddRange(await SearchMovieListWithLanguageAsync(title, year, mediaInfoLanguage, ct, limit).ConfigureAwait(false));        return results;
     }
 
     // --------- Search TV ----------
@@ -179,8 +172,7 @@ public sealed class TmdbClient
         var url = $"search/tv?api_key={Uri.EscapeDataString(key)}&query={Uri.EscapeDataString(title)}&include_adult=false";
         if (year is >= 1800 and <= 2100) url += $"&first_air_date_year={year.Value}";
 
-        var r = await GetJsonAsync<SearchResponse>(url, ct);
-
+        var r = await GetJsonAsync<SearchResponse>(url, ct).ConfigureAwait(false);
         var best = requirePoster
             ? r?.Results?.FirstOrDefault(x => x.Id > 0 && !string.IsNullOrWhiteSpace(x.PosterPath))
             : r?.Results?.FirstOrDefault(x => x.Id > 0);
@@ -190,8 +182,7 @@ public sealed class TmdbClient
         if (year is not null)
         {
             var url2 = $"search/tv?api_key={Uri.EscapeDataString(key)}&query={Uri.EscapeDataString(title)}&include_adult=false";
-            var r2 = await GetJsonAsync<SearchResponse>(url2, ct);
-            var best2 = requirePoster
+            var r2 = await GetJsonAsync<SearchResponse>(url2, ct).ConfigureAwait(false);            var best2 = requirePoster
                 ? r2?.Results?.FirstOrDefault(x => x.Id > 0 && !string.IsNullOrWhiteSpace(x.PosterPath))
                 : r2?.Results?.FirstOrDefault(x => x.Id > 0);
             if (best2 is not null) return (best2.Id, best2.PosterPath);
@@ -204,9 +195,7 @@ public sealed class TmdbClient
     {
         var results = new List<SearchResult>();
         var mediaInfoLanguage = GetMediaInfoLanguage();
-        results.AddRange(await SearchTvListWithLanguageAsync(title, year, null, ct, limit));
-        results.AddRange(await SearchTvListWithLanguageAsync(title, year, mediaInfoLanguage, ct, limit));
-        return results;
+        results.AddRange(await SearchTvListWithLanguageAsync(title, year, null, ct, limit).ConfigureAwait(false));        results.AddRange(await SearchTvListWithLanguageAsync(title, year, mediaInfoLanguage, ct, limit).ConfigureAwait(false));        return results;
     }
 
     // --------- Download poster ----------
@@ -222,13 +211,11 @@ public sealed class TmdbClient
 
         try
         {
-            using var resp = await _http.GetAsync(url, ct);
-            var ok = resp.IsSuccessStatusCode;
+            using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);            var ok = resp.IsSuccessStatusCode;
             _stats.RecordTmdb(ok, sw.ElapsedMilliseconds);
             recorded = true;
             if (!ok) resp.EnsureSuccessStatusCode();
-            return await resp.Content.ReadAsByteArrayAsync(ct);
-        }
+            return await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);        }
         catch
         {
             if (!recorded)
@@ -251,8 +238,7 @@ public sealed class TmdbClient
         var posterLanguagePriority = UiLanguageCatalog.BuildPosterLanguagePriority(GetMediaInfoLanguage());
         var includeImageLanguage = string.Join(",", posterLanguagePriority);
         var url = $"{kind}/{tmdbId}/images?api_key={Uri.EscapeDataString(key)}&include_image_language={Uri.EscapeDataString(includeImageLanguage)}";
-        var data = await GetJsonAsync<ImagesResponse>(url, ct);
-        var posters = data?.Posters?
+        var data = await GetJsonAsync<ImagesResponse>(url, ct).ConfigureAwait(false);        var posters = data?.Posters?
             .Where(x => !string.IsNullOrWhiteSpace(x.FilePath))
             .OrderByDescending(x => x.VoteCount)
             .ThenByDescending(x => x.VoteAverage)
@@ -292,8 +278,7 @@ public sealed class TmdbClient
         var kind = mediaType == "series" ? "tv" : "movie";
         var includeImageLanguage = string.Join(",", UiLanguageCatalog.BuildPosterLanguagePriority(GetMediaInfoLanguage()));
         var url = $"{kind}/{tmdbId}/images?api_key={Uri.EscapeDataString(key)}&include_image_language={Uri.EscapeDataString(includeImageLanguage)}";
-        var data = await GetJsonAsync<ImagesResponse>(url, ct);
-        var path = data?.Backdrops?.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.FilePath))?.FilePath;
+        var data = await GetJsonAsync<ImagesResponse>(url, ct).ConfigureAwait(false);        var path = data?.Backdrops?.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.FilePath))?.FilePath;
         return string.IsNullOrWhiteSpace(path) ? null : path;
     }
 
@@ -309,13 +294,11 @@ public sealed class TmdbClient
 
         try
         {
-            using var resp = await _http.GetAsync(url, ct);
-            var ok = resp.IsSuccessStatusCode;
+            using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);            var ok = resp.IsSuccessStatusCode;
             _stats.RecordTmdb(ok, sw.ElapsedMilliseconds);
             recorded = true;
             if (!ok) resp.EnsureSuccessStatusCode();
-            return await resp.Content.ReadAsByteArrayAsync(ct);
-        }
+            return await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);        }
         catch
         {
             if (!recorded)
@@ -334,8 +317,7 @@ public sealed class TmdbClient
         var url = $"tv/{tmdbId}/external_ids?api_key={Uri.EscapeDataString(key)}";
         try
         {
-            var r = await GetJsonAsync<ExternalIdsResponse>(url, ct);
-            return r?.TvdbId > 0 ? r.TvdbId : null;
+            var r = await GetJsonAsync<ExternalIdsResponse>(url, ct).ConfigureAwait(false);            return r?.TvdbId > 0 ? r.TvdbId : null;
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
@@ -352,8 +334,7 @@ public sealed class TmdbClient
         var url = $"find/{tvdbId}?api_key={Uri.EscapeDataString(key)}&external_source=tvdb_id";
         try
         {
-            var r = await GetJsonAsync<FindResponse>(url, ct);
-            var tmdbId = r?.TvResults?.FirstOrDefault(x => x.Id > 0)?.Id;
+            var r = await GetJsonAsync<FindResponse>(url, ct).ConfigureAwait(false);            var tmdbId = r?.TvResults?.FirstOrDefault(x => x.Id > 0)?.Id;
             return tmdbId > 0 ? tmdbId : null;
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
@@ -371,10 +352,8 @@ public sealed class TmdbClient
 
         var mediaInfoLanguage = GetMediaInfoLanguage();
         var url = $"movie/{tmdbId}?api_key={Uri.EscapeDataString(key)}&language={Uri.EscapeDataString(mediaInfoLanguage)}";
-        var r = await GetJsonAsync<MovieDetailsResponse>(url, ct);
-        if (r is null) return null;
-        var credits = await GetMovieCreditsAsync(tmdbId, mediaInfoLanguage, ct);
-
+        var r = await GetJsonAsync<MovieDetailsResponse>(url, ct).ConfigureAwait(false);        if (r is null) return null;
+        var credits = await GetMovieCreditsAsync(tmdbId, mediaInfoLanguage, ct).ConfigureAwait(false);
         return new DetailsResult(
             r.Title?.Trim(),
             r.Overview?.Trim(),
@@ -398,10 +377,8 @@ public sealed class TmdbClient
 
         var mediaInfoLanguage = GetMediaInfoLanguage();
         var url = $"tv/{tmdbId}?api_key={Uri.EscapeDataString(key)}&language={Uri.EscapeDataString(mediaInfoLanguage)}";
-        var r = await GetJsonAsync<TvDetailsResponse>(url, ct);
-        if (r is null) return null;
-        var credits = await GetTvCreditsAsync(tmdbId, mediaInfoLanguage, ct);
-
+        var r = await GetJsonAsync<TvDetailsResponse>(url, ct).ConfigureAwait(false);        if (r is null) return null;
+        var credits = await GetTvCreditsAsync(tmdbId, mediaInfoLanguage, ct).ConfigureAwait(false);
         var runtime = r.EpisodeRunTime?.FirstOrDefault(x => x > 0);
         return new DetailsResult(
             r.Name?.Trim(),
@@ -616,8 +593,7 @@ public sealed class TmdbClient
         if (tmdbId <= 0) return null;
 
         var url = $"movie/{tmdbId}/credits?api_key={Uri.EscapeDataString(key)}&language={Uri.EscapeDataString(mediaInfoLanguage)}";
-        var r = await GetJsonAsync<CreditsResponse>(url, ct);
-        if (r is null) return null;
+        var r = await GetJsonAsync<CreditsResponse>(url, ct).ConfigureAwait(false);        if (r is null) return null;
 
         var directors = r.Crew?
             .Where(x => string.Equals(x.Job, "Director", StringComparison.OrdinalIgnoreCase))
@@ -658,8 +634,7 @@ public sealed class TmdbClient
         if (tmdbId <= 0) return null;
 
         var url = $"tv/{tmdbId}/credits?api_key={Uri.EscapeDataString(key)}&language={Uri.EscapeDataString(mediaInfoLanguage)}";
-        var r = await GetJsonAsync<CreditsResponse>(url, ct);
-        if (r is null) return null;
+        var r = await GetJsonAsync<CreditsResponse>(url, ct).ConfigureAwait(false);        if (r is null) return null;
 
         var directors = r.Crew?
             .Where(x => string.Equals(x.Job, "Creator", StringComparison.OrdinalIgnoreCase)
@@ -710,8 +685,7 @@ public sealed class TmdbClient
             url += $"&language={Uri.EscapeDataString(language)}";
         if (year is >= 1800 and <= 2100) url += $"&year={year.Value}";
 
-        var r = await GetJsonAsync<SearchResponse>(url, ct);
-        if (r?.Results is null) return new List<SearchResult>();
+        var r = await GetJsonAsync<SearchResponse>(url, ct).ConfigureAwait(false);        if (r?.Results is null) return new List<SearchResult>();
 
         return r.Results
             .Where(x => x.Id > 0)
@@ -746,8 +720,7 @@ public sealed class TmdbClient
             url += $"&language={Uri.EscapeDataString(language)}";
         if (year is >= 1800 and <= 2100) url += $"&first_air_date_year={year.Value}";
 
-        var r = await GetJsonAsync<SearchResponse>(url, ct);
-        if (r?.Results is null) return new List<SearchResult>();
+        var r = await GetJsonAsync<SearchResponse>(url, ct).ConfigureAwait(false);        if (r?.Results is null) return new List<SearchResult>();
 
         return r.Results
             .Where(x => x.Id > 0)

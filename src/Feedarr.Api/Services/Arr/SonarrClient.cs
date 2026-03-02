@@ -43,15 +43,13 @@ public sealed class SonarrClient
         try
         {
             using var request = CreateRequest(HttpMethod.Get, baseUrl, "system/status", apiKey);
-            using var response = await _http.SendAsync(request, ct);
-
+            using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
                 return (false, null, null, $"HTTP {(int)response.StatusCode}");
             }
 
-            var json = await response.Content.ReadAsStringAsync(ct);
-            var status = JsonSerializer.Deserialize<SystemStatusResponse>(json, JsonOpts);
+            var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);            var status = JsonSerializer.Deserialize<SystemStatusResponse>(json, JsonOpts);
             return (true, status?.Version, status?.AppName ?? "Sonarr", null);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -80,29 +78,24 @@ public sealed class SonarrClient
         string baseUrl, string apiKey, int tvdbId, CancellationToken ct)
     {
         using var request = CreateRequest(HttpMethod.Get, baseUrl, $"series/lookup?term=tvdb:{tvdbId}", apiKey);
-        using var response = await _http.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
+        using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);        response.EnsureSuccessStatusCode();
 
-        var json = await response.Content.ReadAsStringAsync(ct);
-        return JsonSerializer.Deserialize<List<SeriesLookupResult>>(json, JsonOpts) ?? new();
+        var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);        return JsonSerializer.Deserialize<List<SeriesLookupResult>>(json, JsonOpts) ?? new();
     }
 
     public async Task<List<SeriesResult>> GetAllSeriesAsync(
         string baseUrl, string apiKey, CancellationToken ct)
     {
         using var request = CreateRequest(HttpMethod.Get, baseUrl, "series", apiKey);
-        using var response = await _http.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
+        using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);        response.EnsureSuccessStatusCode();
 
-        var json = await response.Content.ReadAsStringAsync(ct);
-        return JsonSerializer.Deserialize<List<SeriesResult>>(json, JsonOpts) ?? new();
+        var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);        return JsonSerializer.Deserialize<List<SeriesResult>>(json, JsonOpts) ?? new();
     }
 
     public async Task<SeriesResult?> GetSeriesByTvdbIdAsync(
         string baseUrl, string apiKey, int tvdbId, CancellationToken ct)
     {
-        var all = await GetAllSeriesAsync(baseUrl, apiKey, ct);
-        return all.FirstOrDefault(s => s.TvdbId == tvdbId);
+        var all = await GetAllSeriesAsync(baseUrl, apiKey, ct).ConfigureAwait(false);        return all.FirstOrDefault(s => s.TvdbId == tvdbId);
     }
 
     public async Task<AddSeriesResult> AddSeriesAsync(
@@ -147,9 +140,7 @@ public sealed class SonarrClient
             "application/json"
         );
 
-        using var response = await _http.SendAsync(request, ct);
-        var responseBody = await response.Content.ReadAsStringAsync(ct);
-
+        using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);        var responseBody = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.Created || response.IsSuccessStatusCode)
         {
             var series = JsonSerializer.Deserialize<SeriesResult>(responseBody, JsonOpts);
@@ -167,8 +158,7 @@ public sealed class SonarrClient
             responseBody.Contains("already been added", StringComparison.OrdinalIgnoreCase) ||
             responseBody.Contains("SeriesExistsValidator", StringComparison.OrdinalIgnoreCase))
         {
-            var existing = await GetSeriesByTvdbIdAsync(baseUrl, apiKey, lookup.TvdbId, ct);
-            return new AddSeriesResult
+            var existing = await GetSeriesByTvdbIdAsync(baseUrl, apiKey, lookup.TvdbId, ct).ConfigureAwait(false);            return new AddSeriesResult
             {
                 Success = true,
                 Status = "exists",
@@ -191,33 +181,27 @@ public sealed class SonarrClient
         string baseUrl, string apiKey, CancellationToken ct)
     {
         using var request = CreateRequest(HttpMethod.Get, baseUrl, "rootfolder", apiKey);
-        using var response = await _http.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
+        using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);        response.EnsureSuccessStatusCode();
 
-        var json = await response.Content.ReadAsStringAsync(ct);
-        return JsonSerializer.Deserialize<List<RootFolderResult>>(json, JsonOpts) ?? new();
+        var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);        return JsonSerializer.Deserialize<List<RootFolderResult>>(json, JsonOpts) ?? new();
     }
 
     public async Task<List<QualityProfileResult>> GetQualityProfilesAsync(
         string baseUrl, string apiKey, CancellationToken ct)
     {
         using var request = CreateRequest(HttpMethod.Get, baseUrl, "qualityprofile", apiKey);
-        using var response = await _http.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
+        using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);        response.EnsureSuccessStatusCode();
 
-        var json = await response.Content.ReadAsStringAsync(ct);
-        return JsonSerializer.Deserialize<List<QualityProfileResult>>(json, JsonOpts) ?? new();
+        var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);        return JsonSerializer.Deserialize<List<QualityProfileResult>>(json, JsonOpts) ?? new();
     }
 
     public async Task<List<TagResult>> GetTagsAsync(
         string baseUrl, string apiKey, CancellationToken ct)
     {
         using var request = CreateRequest(HttpMethod.Get, baseUrl, "tag", apiKey);
-        using var response = await _http.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
+        using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);        response.EnsureSuccessStatusCode();
 
-        var json = await response.Content.ReadAsStringAsync(ct);
-        return JsonSerializer.Deserialize<List<TagResult>>(json, JsonOpts) ?? new();
+        var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);        return JsonSerializer.Deserialize<List<TagResult>>(json, JsonOpts) ?? new();
     }
 
     public string BuildOpenUrl(string baseUrl, string titleSlug)

@@ -40,8 +40,7 @@ public sealed class OpenLibraryClient
         var sw = Stopwatch.StartNew();
         try
         {
-            using var resp = await _http.GetAsync(url, ct);
-            _stats.RecordExternal(ExternalProviderKeys.OpenLibrary, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+            using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);            _stats.RecordExternal(ExternalProviderKeys.OpenLibrary, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
             return resp.IsSuccessStatusCode;
         }
         catch
@@ -57,8 +56,7 @@ public sealed class OpenLibraryClient
     /// </summary>
     public async Task<BookResult?> SearchBookAsync(string title, string? isbn, CancellationToken ct)
     {
-        var results = await SearchBooksAsync(title, isbn, 5, ct);
-        return results.FirstOrDefault(r => !string.IsNullOrWhiteSpace(r.CoverUrl))
+        var results = await SearchBooksAsync(title, isbn, 5, ct).ConfigureAwait(false);        return results.FirstOrDefault(r => !string.IsNullOrWhiteSpace(r.CoverUrl))
             ?? results.FirstOrDefault();
     }
 
@@ -67,8 +65,7 @@ public sealed class OpenLibraryClient
     /// </summary>
     public async Task<List<BookResult>> SearchBookListAsync(string title, CancellationToken ct)
     {
-        return await SearchBooksAsync(title, null, 10, ct);
-    }
+        return await SearchBooksAsync(title, null, 10, ct).ConfigureAwait(false);    }
 
     /// <summary>
     /// Downloads cover image bytes from a URL.
@@ -80,8 +77,7 @@ public sealed class OpenLibraryClient
 
         try
         {
-            var bytes = await _http.GetByteArrayAsync(url, ct);
-            return bytes.Length == 0 ? null : bytes;
+            var bytes = await _http.GetByteArrayAsync(url, ct).ConfigureAwait(false);            return bytes.Length == 0 ? null : bytes;
         }
         catch
         {
@@ -108,15 +104,13 @@ public sealed class OpenLibraryClient
         OlSearchResponse? response;
         try
         {
-            using var resp = await _http.GetAsync(url, ct);
-            _stats.RecordExternal(ExternalProviderKeys.OpenLibrary, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+            using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);            _stats.RecordExternal(ExternalProviderKeys.OpenLibrary, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
 
             if (!resp.IsSuccessStatusCode)
                 return [];
 
             await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-            response = await JsonSerializer.DeserializeAsync<OlSearchResponse>(stream, JsonOpts, ct);
-        }
+            response = await JsonSerializer.DeserializeAsync<OlSearchResponse>(stream, JsonOpts, ct).ConfigureAwait(false);        }
         catch
         {
             _stats.RecordExternal(ExternalProviderKeys.OpenLibrary, false, sw.ElapsedMilliseconds);

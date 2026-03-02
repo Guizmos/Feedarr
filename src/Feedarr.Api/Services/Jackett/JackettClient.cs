@@ -49,8 +49,7 @@ public sealed class JackettClient
     {
         var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Options.Set(ProtocolDowngradeRedirectHandler.AllowHttpsToHttpDowngradeOption, true);
-        return await _http.SendAsync(request, ct);
-    }
+        return await _http.SendAsync(request, ct).ConfigureAwait(false);    }
 
     // ── JSON helpers ────────────────────────────────────────────────
 
@@ -77,14 +76,12 @@ public sealed class JackettClient
         string baseUrl, string apiKey, CancellationToken ct)
     {
         var url = BuildIndexersUrl(baseUrl, apiKey);
-        using var resp = await SendGetAllowingSameHostDowngradeAsync(url, ct);
-
+        using var resp = await SendGetAllowingSameHostDowngradeAsync(url, ct).ConfigureAwait(false);
         // If Jackett redirects to login (302) or returns error, let it throw
         resp.EnsureSuccessStatusCode();
 
         var contentType = resp.Content.Headers.ContentType?.MediaType ?? "";
-        var body = await resp.Content.ReadAsStringAsync(ct);
-
+        var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(contentType) &&
             !contentType.Contains("json", StringComparison.OrdinalIgnoreCase))
         {
@@ -126,11 +123,9 @@ public sealed class JackettClient
         string baseUrl, string apiKey, CancellationToken ct)
     {
         var url = BuildTorznabIndexersUrl(baseUrl, apiKey);
-        using var resp = await SendGetAllowingSameHostDowngradeAsync(url, ct);
-        resp.EnsureSuccessStatusCode();
+        using var resp = await SendGetAllowingSameHostDowngradeAsync(url, ct).ConfigureAwait(false);        resp.EnsureSuccessStatusCode();
 
-        var xml = await resp.Content.ReadAsStringAsync(ct);
-        var doc = XDocument.Parse(xml);
+        var xml = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);        var doc = XDocument.Parse(xml);
         var baseTrim = NormalizeBaseUrl(baseUrl);
         var results = new List<(string id, string name, string torznabUrl)>();
 
@@ -160,14 +155,12 @@ public sealed class JackettClient
         // Try management API first (works for direct HTTP access)
         try
         {
-            return await ListViaManagementApiAsync(baseUrl, apiKey, ct);
-        }
+            return await ListViaManagementApiAsync(baseUrl, apiKey, ct).ConfigureAwait(false);        }
         catch
         {
             // Management API failed (redirect to login, 404, non-JSON, etc.)
             // Fall back to torznab t=indexers which works behind reverse proxies
         }
 
-        return await ListViaTorznabAsync(baseUrl, apiKey, ct);
-    }
+        return await ListViaTorznabAsync(baseUrl, apiKey, ct).ConfigureAwait(false);    }
 }

@@ -50,8 +50,7 @@ public sealed class ApiKeyMigrationService
 
         using var conn = _db.Open();
 
-        var pendingCount = await CountPendingMigrationsAsync(conn, cancellationToken);
-        if (pendingCount == 0)
+        var pendingCount = await CountPendingMigrationsAsync(conn, cancellationToken).ConfigureAwait(false);        if (pendingCount == 0)
         {
             _logger.LogInformation("Aucune clé API à migrer");
             return;
@@ -64,13 +63,7 @@ public sealed class ApiKeyMigrationService
         using var tx = conn.BeginTransaction();
         try
         {
-            var sourcesCount = await MigrateSourcesAsync(conn, tx, cancellationToken);
-            var providersCount = await MigrateProvidersAsync(conn, tx, cancellationToken);
-            var arrAppsCount = await MigrateArrApplicationsAsync(conn, tx, cancellationToken);
-            var externalSettingsCount = await MigrateExternalSettingsAsync(conn, tx, cancellationToken);
-            var legacyExternalCount = await MigrateLegacyExternalJsonAsync(conn, tx, cancellationToken);
-            var externalInstancesCount = await MigrateExternalProviderInstancesAsync(conn, tx, cancellationToken);
-
+            var sourcesCount = await MigrateSourcesAsync(conn, tx, cancellationToken).ConfigureAwait(false);            var providersCount = await MigrateProvidersAsync(conn, tx, cancellationToken).ConfigureAwait(false);            var arrAppsCount = await MigrateArrApplicationsAsync(conn, tx, cancellationToken).ConfigureAwait(false);            var externalSettingsCount = await MigrateExternalSettingsAsync(conn, tx, cancellationToken).ConfigureAwait(false);            var legacyExternalCount = await MigrateLegacyExternalJsonAsync(conn, tx, cancellationToken).ConfigureAwait(false);            var externalInstancesCount = await MigrateExternalProviderInstancesAsync(conn, tx, cancellationToken).ConfigureAwait(false);
             tx.Commit();
 
             _logger.LogInformation(
@@ -135,7 +128,7 @@ public sealed class ApiKeyMigrationService
     private async Task<int> MigrateProvidersAsync(SqliteConnection conn, SqliteTransaction tx, CancellationToken cancellationToken)
     {
         var providers = await conn.QueryAsync<(long Id, string? ApiKey)>(
-            "SELECT id, api_key FROM providers WHERE api_key IS NOT NULL AND api_key <> ''",
+            "SELECT id, api_key_encrypted FROM providers WHERE api_key_encrypted IS NOT NULL AND api_key_encrypted <> ''",
             transaction: tx);
 
         var migratedCount = 0;
@@ -154,7 +147,7 @@ public sealed class ApiKeyMigrationService
             {
                 var encrypted = _protectionService.Protect(provider.ApiKey);
                 await conn.ExecuteAsync(
-                    "UPDATE providers SET api_key = @key WHERE id = @id",
+                    "UPDATE providers SET api_key_encrypted = @key WHERE id = @id",
                     new { key = encrypted, id = provider.Id },
                     tx);
 
@@ -398,7 +391,7 @@ public sealed class ApiKeyMigrationService
         pending += await conn.ExecuteScalarAsync<int>(
             "SELECT COUNT(1) FROM sources WHERE api_key IS NOT NULL AND api_key <> '' AND api_key NOT LIKE 'ENC:%'");
         pending += await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(1) FROM providers WHERE api_key IS NOT NULL AND api_key <> '' AND api_key NOT LIKE 'ENC:%'");
+            "SELECT COUNT(1) FROM providers WHERE api_key_encrypted IS NOT NULL AND api_key_encrypted <> '' AND api_key_encrypted NOT LIKE 'ENC:%'");
         pending += await conn.ExecuteScalarAsync<int>(
             "SELECT COUNT(1) FROM arr_applications WHERE api_key_encrypted IS NOT NULL AND api_key_encrypted <> '' AND api_key_encrypted NOT LIKE 'ENC:%'");
 
@@ -417,8 +410,7 @@ public sealed class ApiKeyMigrationService
         var legacyValueJson = await conn.ExecuteScalarAsync<string?>(
             "SELECT value_json FROM app_settings WHERE key = 'external'");
         pending += CountUnprotectedLegacyExternalKeys(legacyValueJson);
-        pending += await CountPendingExternalProviderInstancesAsync(conn, cancellationToken);
-
+        pending += await CountPendingExternalProviderInstancesAsync(conn, cancellationToken).ConfigureAwait(false);
         return pending;
     }
 

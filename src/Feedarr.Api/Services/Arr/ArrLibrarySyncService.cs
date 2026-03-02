@@ -67,13 +67,11 @@ public sealed class ArrLibrarySyncService : BackgroundService
         _logger.LogInformation("ArrLibrarySyncService started");
 
         // Wait a bit before first sync to let the app start up
-        await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
-
+        await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken).ConfigureAwait(false);
         // Initial sync on startup (only if at least one app is enabled)
         if (HasEnabledArrApps())
         {
-            await SyncAllAppsAsync(stoppingToken, skipWhenBackupBusy: true);
-        }
+            await SyncAllAppsAsync(stoppingToken, skipWhenBackupBusy: true).ConfigureAwait(false);        }
 
         // Periodic sync with configurable interval
         while (!stoppingToken.IsCancellationRequested)
@@ -86,26 +84,22 @@ public sealed class ArrLibrarySyncService : BackgroundService
                 if (!settings.ArrAutoSyncEnabled)
                 {
                     _logger.LogDebug("Arr auto-sync is disabled, waiting 1 minute before checking again");
-                    await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
-                    continue;
+                    await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken).ConfigureAwait(false);                    continue;
                 }
 
                 if (!HasEnabledArrApps())
                 {
                     _logger.LogDebug("Arr auto-sync skipped (no enabled apps), waiting 1 minute before checking again");
-                    await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
-                    continue;
+                    await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken).ConfigureAwait(false);                    continue;
                 }
 
                 _logger.LogDebug("Next Arr sync in {Interval} minutes", syncInterval.TotalMinutes);
-                await Task.Delay(syncInterval, stoppingToken);
-
+                await Task.Delay(syncInterval, stoppingToken).ConfigureAwait(false);
                 // Re-check settings in case they changed while waiting
                 settings = GetSettings();
                 if (settings.ArrAutoSyncEnabled && HasEnabledArrApps())
                 {
-                    await SyncAllAppsAsync(stoppingToken, skipWhenBackupBusy: true);
-                }
+                    await SyncAllAppsAsync(stoppingToken, skipWhenBackupBusy: true).ConfigureAwait(false);                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -116,8 +110,7 @@ public sealed class ArrLibrarySyncService : BackgroundService
             {
                 _logger.LogError(ex, "Error in periodic sync loop");
                 // Wait a bit before retrying to avoid tight loop on persistent errors
-                await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
-            }
+                await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken).ConfigureAwait(false);            }
         }
 
         _logger.LogInformation("ArrLibrarySyncService stopped");
@@ -170,16 +163,13 @@ public sealed class ArrLibrarySyncService : BackgroundService
             {
                 if (app.Type == "sonarr")
                 {
-                    await SyncSonarrLibraryAsync(app, sonarr, libraryRepo, ct);
-                }
+                    await SyncSonarrLibraryAsync(app, sonarr, libraryRepo, ct).ConfigureAwait(false);                }
                 else if (app.Type == "radarr")
                 {
-                    await SyncRadarrLibraryAsync(app, radarr, libraryRepo, ct);
-                }
+                    await SyncRadarrLibraryAsync(app, radarr, libraryRepo, ct).ConfigureAwait(false);                }
                 else if (app.Type == "overseerr" || app.Type == "jellyseerr" || app.Type == "seer")
                 {
-                    await SyncRequestAppAsync(app, eerr, libraryRepo, ct);
-                }
+                    await SyncRequestAppAsync(app, eerr, libraryRepo, ct).ConfigureAwait(false);                }
             }
             catch (Exception ex)
             {
@@ -235,16 +225,13 @@ public sealed class ArrLibrarySyncService : BackgroundService
         {
             if (app.Type == "sonarr")
             {
-                await SyncSonarrLibraryAsync(app, sonarr, libraryRepo, ct);
-            }
+                await SyncSonarrLibraryAsync(app, sonarr, libraryRepo, ct).ConfigureAwait(false);            }
             else if (app.Type == "radarr")
             {
-                await SyncRadarrLibraryAsync(app, radarr, libraryRepo, ct);
-            }
+                await SyncRadarrLibraryAsync(app, radarr, libraryRepo, ct).ConfigureAwait(false);            }
             else if (app.Type == "overseerr" || app.Type == "jellyseerr" || app.Type == "seer")
             {
-                await SyncRequestAppAsync(app, eerr, libraryRepo, ct);
-            }
+                await SyncRequestAppAsync(app, eerr, libraryRepo, ct).ConfigureAwait(false);            }
         }
         catch (Exception ex)
         {
@@ -263,8 +250,7 @@ public sealed class ArrLibrarySyncService : BackgroundService
     {
         _logger.LogInformation("Syncing Sonarr library for '{Name}' ({Url})", app.Name, app.BaseUrl);
 
-        var series = await sonarr.GetAllSeriesAsync(app.BaseUrl, app.ApiKeyEncrypted, ct);
-        _logger.LogInformation("Fetched {Total} series from Sonarr API", series.Count);
+        var series = await sonarr.GetAllSeriesAsync(app.BaseUrl, app.ApiKeyEncrypted, ct).ConfigureAwait(false);        _logger.LogInformation("Fetched {Total} series from Sonarr API", series.Count);
 
         // Log series without tvdbId for debugging
         var seriesWithoutTvdbId = series.Where(s => s.TvdbId <= 0).ToList();
@@ -307,8 +293,7 @@ public sealed class ArrLibrarySyncService : BackgroundService
     {
         _logger.LogInformation("Syncing Radarr library for '{Name}' ({Url})", app.Name, app.BaseUrl);
 
-        var movies = await radarr.GetAllMoviesAsync(app.BaseUrl, app.ApiKeyEncrypted, ct);
-        _logger.LogInformation("Fetched {Total} movies from Radarr API", movies.Count);
+        var movies = await radarr.GetAllMoviesAsync(app.BaseUrl, app.ApiKeyEncrypted, ct).ConfigureAwait(false);        _logger.LogInformation("Fetched {Total} movies from Radarr API", movies.Count);
 
         // Log movies without tmdbId for debugging
         var moviesWithoutTmdbId = movies.Where(m => m.TmdbId <= 0).ToList();
@@ -360,8 +345,7 @@ public sealed class ArrLibrarySyncService : BackgroundService
     {
         _logger.LogInformation("Syncing {Type} requests for '{Name}' ({Url})", app.Type, app.Name, app.BaseUrl);
 
-        var requests = await eerr.GetRequestsAsync(app.BaseUrl, app.ApiKeyEncrypted, ct);
-        libraryRepo.SetSyncSuccess(app.Id, requests.Count);
+        var requests = await eerr.GetRequestsAsync(app.BaseUrl, app.ApiKeyEncrypted, ct).ConfigureAwait(false);        libraryRepo.SetSyncSuccess(app.Id, requests.Count);
 
         _logger.LogInformation(
             "Synced {Count} requests from {Type} '{Name}' (appId={AppId})",

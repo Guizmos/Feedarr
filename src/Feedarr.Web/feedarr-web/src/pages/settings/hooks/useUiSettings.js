@@ -15,6 +15,7 @@ const defaultUi = {
   mediaInfoLanguage: DEFAULT_MEDIA_INFO_LANGUAGE,
   hideSeenByDefault: false,
   showCategories: true,
+  showTop24DedupeControl: false,
   defaultView: "grid",
   defaultSort: "date",
   defaultMaxAgeDays: "",
@@ -40,6 +41,7 @@ export function buildUiPayload(source, overrides = {}) {
     mediaInfoLanguage: normalizeMediaInfoLanguage(merged.mediaInfoLanguage),
     hideSeenByDefault: !!merged.hideSeenByDefault,
     showCategories: !!merged.showCategories,
+    showTop24DedupeControl: !!merged.showTop24DedupeControl,
     defaultView: merged.defaultView || "grid",
     defaultSort: merged.defaultSort || "date",
     defaultMaxAgeDays: merged.defaultMaxAgeDays ?? "",
@@ -86,6 +88,7 @@ export default function useUiSettings() {
           defaultFilterCategoryId: u.defaultFilterCategoryId ?? "",
           defaultFilterQuality: u.defaultFilterQuality ?? "",
           theme: u.theme || "light",
+          showTop24DedupeControl: !!u.showTop24DedupeControl,
           enableMissingPosterView: !!u.enableMissingPosterView,
           animationsEnabled: u.animationsEnabled !== false,
           onboardingDone: !!u.onboardingDone,
@@ -104,6 +107,7 @@ export default function useUiSettings() {
     if (ui.mediaInfoLanguage !== initialUi.mediaInfoLanguage) changed.add("ui.mediaInfoLanguage");
     if (ui.hideSeenByDefault !== initialUi.hideSeenByDefault) changed.add("ui.hideSeen");
     if (ui.showCategories !== initialUi.showCategories) changed.add("ui.showCategories");
+    if (ui.showTop24DedupeControl !== initialUi.showTop24DedupeControl) changed.add("ui.top24DedupeControl");
     if (ui.defaultView !== initialUi.defaultView) changed.add("ui.defaultView");
     if (ui.defaultSort !== initialUi.defaultSort) changed.add("ui.defaultSort");
     if (ui.defaultMaxAgeDays !== initialUi.defaultMaxAgeDays) changed.add("ui.defaultMaxAgeDays");

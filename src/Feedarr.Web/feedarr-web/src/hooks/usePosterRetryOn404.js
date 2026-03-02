@@ -34,6 +34,14 @@ export default function usePosterRetryOn404(itemId, posterUrl) {
   const retryCountRef = useRef(0);
   const loaderTimerRef = useRef(null);
   const hasRefreshedRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const basePosterUrl = useMemo(() => {
     if (posterUrl) return posterUrl;
@@ -79,6 +87,7 @@ export default function usePosterRetryOn404(itemId, posterUrl) {
   }, [refreshing]);
 
   const handleImageError = useCallback(async () => {
+    if (!mountedRef.current) return;
     setImgError(true);
     if (!itemId || !basePosterUrl) return;
     if (!isLocalPosterUrl(basePosterUrl)) return;
@@ -86,7 +95,7 @@ export default function usePosterRetryOn404(itemId, posterUrl) {
       if (!loaderTimerRef.current) {
         loaderTimerRef.current = setTimeout(() => {
           loaderTimerRef.current = null;
-          setRefreshing(false);
+          if (mountedRef.current) setRefreshing(false);
         }, LOADER_MAX_MS);
       }
       setRefreshing(true);
@@ -107,6 +116,11 @@ export default function usePosterRetryOn404(itemId, posterUrl) {
         shouldRefresh = false;
       }
 
+      if (!mountedRef.current) {
+        refreshInFlightRef.current = false;
+        return;
+      }
+
       if (shouldRefresh) {
         hasRefreshedRef.current = true;
         try {
@@ -118,6 +132,8 @@ export default function usePosterRetryOn404(itemId, posterUrl) {
 
       refreshInFlightRef.current = false;
     }
+
+    if (!mountedRef.current) return;
 
     if (retryTimerRef.current) return;
     if (retryCountRef.current >= RETRY_DELAYS_MS.length) {
@@ -134,8 +150,10 @@ export default function usePosterRetryOn404(itemId, posterUrl) {
 
     retryTimerRef.current = setTimeout(() => {
       retryTimerRef.current = null;
-      setCacheBust(Date.now());
-      setImgError(false);
+      if (mountedRef.current) {
+        setCacheBust(Date.now());
+        setImgError(false);
+      }
     }, delay);
   }, [basePosterUrl, itemId]);
 

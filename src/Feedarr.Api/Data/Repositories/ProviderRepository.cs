@@ -31,7 +31,7 @@ public sealed class ProviderRepository
                 p.type as Type,
                 p.name as Name,
                 p.base_url as BaseUrl,
-                CASE WHEN p.api_key IS NULL OR p.api_key = '' THEN 0 ELSE 1 END as HasApiKey,
+                CASE WHEN p.api_key_encrypted IS NULL OR p.api_key_encrypted = '' THEN 0 ELSE 1 END as HasApiKey,
                 p.enabled as Enabled,
                 p.last_test_ok_at_ts as LastTestOkAt,
                 p.created_at_ts as CreatedAt,
@@ -53,7 +53,7 @@ public sealed class ProviderRepository
                 type as Type,
                 name as Name,
                 base_url as BaseUrl,
-                api_key as ApiKey,
+                api_key_encrypted as ApiKey,
                 enabled as Enabled,
                 last_test_ok_at_ts as LastTestOkAt,
                 created_at_ts as CreatedAt,
@@ -79,7 +79,7 @@ public sealed class ProviderRepository
 
         return conn.ExecuteScalar<long>(
             """
-            INSERT INTO providers(type, name, base_url, api_key, enabled, created_at_ts, updated_at_ts)
+            INSERT INTO providers(type, name, base_url, api_key_encrypted, enabled, created_at_ts, updated_at_ts)
             VALUES (@type, @name, @baseUrl, @apiKey, @enabled, @now, @now);
             SELECT last_insert_rowid();
             """,
@@ -110,7 +110,7 @@ public sealed class ProviderRepository
                 UPDATE providers
                 SET name = @name,
                     base_url = @baseUrl,
-                    api_key = @apiKey,
+                    api_key_encrypted = @apiKey,
                     enabled = @enabled,
                     updated_at_ts = @now
                 WHERE id = @id;
@@ -130,7 +130,7 @@ public sealed class ProviderRepository
 
         return conn.ExecuteScalar<long>(
             """
-            INSERT INTO providers(type, name, base_url, api_key, enabled, created_at_ts, updated_at_ts)
+            INSERT INTO providers(type, name, base_url, api_key_encrypted, enabled, created_at_ts, updated_at_ts)
             VALUES (@type, @name, @baseUrl, @apiKey, @enabled, @now, @now);
             SELECT last_insert_rowid();
             """,
@@ -174,7 +174,7 @@ public sealed class ProviderRepository
                 SET type = @type,
                     name = @name,
                     base_url = @baseUrl,
-                    api_key = @apiKey,
+                    api_key_encrypted = @apiKey,
                     updated_at_ts = @now
                 WHERE id = @id;
                 """,
@@ -264,7 +264,7 @@ public sealed class ProviderRepository
             var name = type.Equals("prowlarr", StringComparison.OrdinalIgnoreCase) ? "Prowlarr" : "Jackett";
             var id = conn.ExecuteScalar<long>(
                 """
-                INSERT INTO providers(type, name, base_url, api_key, enabled, created_at_ts, updated_at_ts)
+                INSERT INTO providers(type, name, base_url, api_key_encrypted, enabled, created_at_ts, updated_at_ts)
                 VALUES (@type, @name, @baseUrl, @apiKey, 1, @now, @now);
                 SELECT last_insert_rowid();
                 """,

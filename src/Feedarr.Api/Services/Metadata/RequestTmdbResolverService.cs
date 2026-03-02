@@ -80,16 +80,14 @@ public sealed class RequestTmdbResolverService
 
         if (tvdbId.HasValue)
         {
-            var mappedTmdb = await TryResolveFromTvdbAsync(tvdbId.Value, ct);
-            if (mappedTmdb.HasValue)
+            var mappedTmdb = await TryResolveFromTvdbAsync(tvdbId.Value, ct).ConfigureAwait(false);            if (mappedTmdb.HasValue)
             {
                 Persist(releaseId, mappedTmdb.Value, StatusResolvedTvdbMap, persistMainTmdb: true);
                 return new RequestTmdbResolveResult(mappedTmdb, tvdbId, StatusResolvedTvdbMap, true);
             }
         }
 
-        var searchedTmdb = await TryResolveFromTitleSearchAsync(title, year, tvdbId, ct);
-        if (searchedTmdb.HasValue)
+        var searchedTmdb = await TryResolveFromTitleSearchAsync(title, year, tvdbId, ct).ConfigureAwait(false);        if (searchedTmdb.HasValue)
         {
             Persist(releaseId, searchedTmdb.Value, StatusResolvedTitleSearch, persistMainTmdb: true);
             return new RequestTmdbResolveResult(searchedTmdb, tvdbId, StatusResolvedTitleSearch, false);
@@ -103,8 +101,7 @@ public sealed class RequestTmdbResolverService
     {
         try
         {
-            return await _tmdb.GetTvTmdbIdByTvdbIdAsync(tvdbId, ct);
-        }
+            return await _tmdb.GetTvTmdbIdByTvdbIdAsync(tvdbId, ct).ConfigureAwait(false);        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Request TMDB resolve failed tvdb->tmdb for tvdbId={TvdbId}", tvdbId);
@@ -120,10 +117,8 @@ public sealed class RequestTmdbResolverService
         var candidates = new List<TmdbClient.SearchResult>();
         try
         {
-            candidates.AddRange(await _tmdb.SearchTvListAsync(title, year, ct, limit: 12));
-            if (year.HasValue)
-                candidates.AddRange(await _tmdb.SearchTvListAsync(title, null, ct, limit: 12));
-        }
+            candidates.AddRange(await _tmdb.SearchTvListAsync(title, year, ct, limit: 12).ConfigureAwait(false));            if (year.HasValue)
+                candidates.AddRange(await _tmdb.SearchTvListAsync(title, null, ct, limit: 12).ConfigureAwait(false));        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Request TMDB resolve failed title search for title='{Title}' year={Year}", title, year);
@@ -164,8 +159,7 @@ public sealed class RequestTmdbResolverService
 
             if (expectedTvdbId.HasValue && expectedTvdbId.Value > 0)
             {
-                var candidateTvdb = await TryResolveTvdbFromTmdbAsync(row.Candidate.TmdbId, ct);
-                if (!candidateTvdb.HasValue || candidateTvdb.Value != expectedTvdbId.Value)
+                var candidateTvdb = await TryResolveTvdbFromTmdbAsync(row.Candidate.TmdbId, ct).ConfigureAwait(false);                if (!candidateTvdb.HasValue || candidateTvdb.Value != expectedTvdbId.Value)
                     continue;
             }
 
@@ -179,8 +173,7 @@ public sealed class RequestTmdbResolverService
     {
         try
         {
-            return await _tmdb.GetTvdbIdAsync(tmdbId, ct);
-        }
+            return await _tmdb.GetTvdbIdAsync(tmdbId, ct).ConfigureAwait(false);        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Request TMDB resolve failed tmdb->tvdb verify for tmdbId={TmdbId}", tmdbId);

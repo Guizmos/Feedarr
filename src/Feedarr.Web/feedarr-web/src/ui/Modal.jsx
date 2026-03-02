@@ -1,6 +1,7 @@
 import React, { useEffect } from "react";
 import { createPortal } from "react-dom";
 import AppIcon from "./AppIcon.jsx";
+import ModalErrorBoundary from "./ModalErrorBoundary.jsx";
 
 export default function Modal({
   open,
@@ -85,7 +86,11 @@ export default function Modal({
             <AppIcon name="close" />
           </button>
         </div>
-        <div className="modal-body">{children}</div>
+        <div className="modal-body">
+          <ModalErrorBoundary resetKey={title}>
+            {children}
+          </ModalErrorBoundary>
+        </div>
       </div>
     </div>,
     document.body

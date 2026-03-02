@@ -88,8 +88,7 @@ public sealed class ReleaseInfoService
             return BuildResult(cfg, currentVersion, cached.Releases);
         }
 
-        await _refreshLock.WaitAsync(ct);
-        try
+        await _refreshLock.WaitAsync(ct).ConfigureAwait(false);        try
         {
             now = DateTimeOffset.UtcNow;
             cached = _cache.Get<CachedReleaseState>(CacheKey);
@@ -105,8 +104,7 @@ public sealed class ReleaseInfoService
 
             try
             {
-                var releases = await FetchReleasesAsync(cfg, ct);
-                var cacheState = new CachedReleaseState(releases, now.Add(ttl));
+                var releases = await FetchReleasesAsync(cfg, ct).ConfigureAwait(false);                var cacheState = new CachedReleaseState(releases, now.Add(ttl));
                 _cache.Set(CacheKey, cacheState, ttl);
 
                 _consecutiveFailures = 0;
@@ -172,8 +170,7 @@ public sealed class ReleaseInfoService
         var baseUrl = cfg.GitHubApiBaseUrl.TrimEnd('/');
 
         var uri = $"{baseUrl}/repos/{Uri.EscapeDataString(cfg.RepoOwner)}/{Uri.EscapeDataString(cfg.RepoName)}/releases?per_page=10";
-        var list = await SendAndReadAsync<List<GitHubReleasePayload>>(client, uri, cfg, ct, allowNotFound: true) ?? new List<GitHubReleasePayload>();
-        if (list.Count == 0)
+        var list = await SendAndReadAsync<List<GitHubReleasePayload>>(client, uri, cfg, ct, allowNotFound: true).ConfigureAwait(false) ?? new List<GitHubReleasePayload>();        if (list.Count == 0)
         {
             return Array.Empty<LatestReleaseInfo>();
         }
@@ -260,14 +257,12 @@ public sealed class ReleaseInfoService
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(cfg.TimeoutSeconds));
 
-        using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token);
-        if (allowNotFound && resp.StatusCode == HttpStatusCode.NotFound)
+        using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token).ConfigureAwait(false);        if (allowNotFound && resp.StatusCode == HttpStatusCode.NotFound)
             return null;
 
         resp.EnsureSuccessStatusCode();
         await using var stream = await resp.Content.ReadAsStreamAsync(timeoutCts.Token);
-        return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, timeoutCts.Token);
-    }
+        return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, timeoutCts.Token).ConfigureAwait(false);    }
 
     private static NormalizedOptions Normalize(UpdatesOptions? options)
     {

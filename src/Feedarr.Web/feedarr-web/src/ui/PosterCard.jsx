@@ -5,7 +5,7 @@ import { buildIndexerPillStyle } from "../utils/sourceColors.js";
 import AppIcon from "./AppIcon.jsx";
 import { getAppLabel, normalizeRequestMode } from "../utils/appTypes.js";
 
-export default function PosterCard({
+function PosterCard({
   item,
   onOpen,
   selectionMode = false,
@@ -193,6 +193,15 @@ export default function PosterCard({
               <span>Téléchargé: {item.grabs ?? "-"}</span>
             </div>
           </>
+        ) : sortBy === "score" ? (
+          <>
+            <div className="posterSub posterSubAlt">
+              <span>Date: {item.date || "-"}</span>
+            </div>
+            <div className="posterSub">
+              <span>Score: {formatTopScore(item)}</span>
+            </div>
+          </>
         ) : sortBy === "recent" ? (
           <>
             <div className="posterSub posterSubAlt">
@@ -253,3 +262,11 @@ function formatRating(it) {
   const suffix = Number.isFinite(count) && count > 0 ? ` (${count})` : "";
   return `${v.toFixed(1)}/10${suffix}`;
 }
+
+function formatTopScore(it) {
+  const grabs = Number(it?.grabs || 0);
+  const seeders = Number(it?.seeders || 0);
+  return String((grabs * 5) + seeders);
+}
+
+export default React.memo(PosterCard);

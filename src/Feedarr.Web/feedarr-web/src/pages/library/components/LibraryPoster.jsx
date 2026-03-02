@@ -183,7 +183,7 @@ function getIndexerClass(value) {
   return "";
 }
 
-export default function LibraryPoster({
+function LibraryPoster({
   items,
   onOpen,
   selectionMode,
@@ -197,12 +197,16 @@ export default function LibraryPoster({
   integrationMode,
   cardSize,
 }) {
-  const gridStyle = cardSize
-    ? {
-        gridTemplateColumns: `repeat(auto-fill, minmax(${Math.round(cardSize)}px, 1fr))`,
-        '--card-scale': cardSize / 180,
-      }
-    : undefined;
+  const gridStyle = useMemo(
+    () =>
+      cardSize
+        ? {
+            gridTemplateColumns: `repeat(auto-fill, minmax(${Math.round(cardSize)}px, 1fr))`,
+            '--card-scale': cardSize / 180,
+          }
+        : undefined,
+    [cardSize]
+  );
 
   return (
     <div className="grid grid--poster" style={gridStyle}>
@@ -225,3 +229,5 @@ export default function LibraryPoster({
     </div>
   );
 }
+
+export default React.memo(LibraryPoster);

@@ -4,6 +4,8 @@
 --   During parent-table replacement, dropping arr_applications would cascade-delete child rows.
 --   We preserve child data in backup tables and restore them after the parent swap.
 
+DROP TABLE IF EXISTS arr_applications_new;
+
 CREATE TABLE IF NOT EXISTS arr_applications_new (
   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
   type                TEXT NOT NULL CHECK(type IN ('sonarr', 'radarr', 'overseerr', 'jellyseerr')),
@@ -64,7 +66,7 @@ FROM arr_sync_status;
 DROP TABLE IF EXISTS arr_library_items;
 DROP TABLE IF EXISTS arr_sync_status;
 
-DROP TABLE arr_applications;
+DROP TABLE IF EXISTS arr_applications;
 ALTER TABLE arr_applications_new RENAME TO arr_applications;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_arr_apps_default_per_type

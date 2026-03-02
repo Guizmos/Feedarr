@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useSubbarSetter } from "../layout/useSubbar.js";
 import SubAction from "../ui/SubAction.jsx";
 import { apiGet, apiPost, resolveApiUrl } from "../api/client.js";
@@ -65,8 +65,8 @@ export default function Activity() {
           });
           setSourcesById(map);
         }
-      } catch {
-        // ignore
+      } catch (e) {
+        console.warn("[Activity] Impossible de charger les sources.", e);
       }
     })();
   }, []);
@@ -128,11 +128,15 @@ export default function Activity() {
     return () => setContent(null);
   }, [setContent, load, eventType, level, purgeLoading, items.length]);
 
-  const filteredItems = items.filter((it) => {
-    if (eventType && String(it.eventType || "") !== eventType) return false;
-    if (level && String(it.level || "") !== level) return false;
-    return true;
-  });
+  const filteredItems = useMemo(
+    () =>
+      items.filter((it) => {
+        if (eventType && String(it.eventType || "") !== eventType) return false;
+        if (level && String(it.level || "") !== level) return false;
+        return true;
+      }),
+    [items, eventType, level]
+  );
 
   function toggleExpanded(id) {
     setExpandedIds((prev) => {

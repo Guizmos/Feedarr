@@ -1,4 +1,7 @@
 -- Extend arr_applications type check to support Seer
+
+DROP TABLE IF EXISTS arr_applications_new;
+
 CREATE TABLE IF NOT EXISTS arr_applications_new (
   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
   type                TEXT NOT NULL CHECK(type IN ('sonarr', 'radarr', 'overseerr', 'jellyseerr', 'seer')),
@@ -43,7 +46,7 @@ SELECT
   created_at_ts, updated_at_ts
 FROM arr_applications;
 
-DROP TABLE arr_applications;
+DROP TABLE IF EXISTS arr_applications;
 ALTER TABLE arr_applications_new RENAME TO arr_applications;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_arr_apps_default_per_type

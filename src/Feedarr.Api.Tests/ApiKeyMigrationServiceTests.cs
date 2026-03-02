@@ -27,7 +27,7 @@ public sealed class ApiKeyMigrationServiceTests
         using (var conn = db.Open())
         {
             conn.Execute("INSERT INTO sources(id, api_key) VALUES (1, 'source-legacy');");
-            conn.Execute("INSERT INTO providers(id, api_key) VALUES (1, 'provider-legacy');");
+            conn.Execute("INSERT INTO providers(id, api_key_encrypted) VALUES (1, 'provider-legacy');");
             conn.Execute("INSERT INTO arr_applications(id, api_key_encrypted) VALUES (1, 'arr-legacy');");
             conn.Execute(
                 "INSERT INTO app_settings(key, value_json, updated_at_ts) VALUES ('tmdb_api_key', @value, @ts);",
@@ -81,7 +81,7 @@ public sealed class ApiKeyMigrationServiceTests
         using (var conn = db.Open())
         {
             conn.Execute("INSERT INTO sources(id, api_key) VALUES (1, 'source-legacy');");
-            conn.Execute("INSERT INTO providers(id, api_key) VALUES (1, 'explode');");
+            conn.Execute("INSERT INTO providers(id, api_key_encrypted) VALUES (1, 'explode');");
         }
 
         var service = new ApiKeyMigrationService(
@@ -95,7 +95,7 @@ public sealed class ApiKeyMigrationServiceTests
         using (var conn = db.Open())
         {
             var source = conn.ExecuteScalar<string?>("SELECT api_key FROM sources WHERE id = 1;");
-            var provider = conn.ExecuteScalar<string?>("SELECT api_key FROM providers WHERE id = 1;");
+            var provider = conn.ExecuteScalar<string?>("SELECT api_key_encrypted FROM providers WHERE id = 1;");
             Assert.Equal("source-legacy", source);
             Assert.Equal("explode", provider);
         }
@@ -127,7 +127,7 @@ public sealed class ApiKeyMigrationServiceTests
 
             CREATE TABLE IF NOT EXISTS providers (
                 id INTEGER PRIMARY KEY,
-                api_key TEXT NULL
+                api_key_encrypted TEXT NULL
             );
 
             CREATE TABLE IF NOT EXISTS arr_applications (
@@ -147,7 +147,7 @@ public sealed class ApiKeyMigrationServiceTests
     {
         using var conn = db.Open();
         var source = conn.ExecuteScalar<string?>("SELECT api_key FROM sources WHERE id = 1;") ?? "";
-        var provider = conn.ExecuteScalar<string?>("SELECT api_key FROM providers WHERE id = 1;") ?? "";
+        var provider = conn.ExecuteScalar<string?>("SELECT api_key_encrypted FROM providers WHERE id = 1;") ?? "";
         var arrApp = conn.ExecuteScalar<string?>("SELECT api_key_encrypted FROM arr_applications WHERE id = 1;") ?? "";
         var tmdbRaw = conn.ExecuteScalar<string?>("SELECT value_json FROM app_settings WHERE key = 'tmdb_api_key';") ?? "";
         var tmdbSetting = JsonSerializer.Deserialize<string>(tmdbRaw, JsonOpts) ?? "";

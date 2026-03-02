@@ -46,8 +46,7 @@ public sealed class GoogleBooksClient
             return false;
 
         var endpoint = BuildVolumesEndpoint("intitle:harry potter", null);
-        using var resp = await GetTrackedAsync(endpoint, ct);
-        return resp.IsSuccessStatusCode;
+        using var resp = await GetTrackedAsync(endpoint, ct).ConfigureAwait(false);        return resp.IsSuccessStatusCode;
     }
 
     public async Task<BookResult?> SearchBookAsync(string title, string? isbn, CancellationToken ct, string? author = null)
@@ -71,13 +70,11 @@ public sealed class GoogleBooksClient
             query = $"intitle:{trimmedTitle}";
 
         var endpoint = BuildVolumesEndpoint(query, active.Auth.TryGetValue("apiKey", out var apiKey) ? apiKey : null);
-        using var resp = await GetTrackedAsync(endpoint, ct);
-        if (!resp.IsSuccessStatusCode)
+        using var resp = await GetTrackedAsync(endpoint, ct).ConfigureAwait(false);        if (!resp.IsSuccessStatusCode)
             return null;
 
         await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-        var payload = await JsonSerializer.DeserializeAsync<GoogleBooksSearchResponse>(stream, JsonOpts, ct);
-        if (payload?.Items is null || payload.Items.Count == 0)
+        var payload = await JsonSerializer.DeserializeAsync<GoogleBooksSearchResponse>(stream, JsonOpts, ct).ConfigureAwait(false);        if (payload?.Items is null || payload.Items.Count == 0)
             return null;
 
         var best = payload.Items
@@ -112,12 +109,10 @@ public sealed class GoogleBooksClient
         if (string.IsNullOrWhiteSpace(normalized))
             return null;
 
-        using var resp = await GetTrackedAsync(normalized, ct);
-        if (!resp.IsSuccessStatusCode)
+        using var resp = await GetTrackedAsync(normalized, ct).ConfigureAwait(false);        if (!resp.IsSuccessStatusCode)
             return null;
 
-        return await resp.Content.ReadAsByteArrayAsync(ct);
-    }
+        return await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);    }
 
     private string BuildVolumesEndpoint(string q, string? apiKey)
     {
@@ -195,8 +190,7 @@ public sealed class GoogleBooksClient
         var sw = Stopwatch.StartNew();
         try
         {
-            var resp = await _http.GetAsync(endpoint, ct);
-            _stats.RecordExternal(ExternalProviderKeys.GoogleBooks, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+            var resp = await _http.GetAsync(endpoint, ct).ConfigureAwait(false);            _stats.RecordExternal(ExternalProviderKeys.GoogleBooks, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
             return resp;
         }
         catch

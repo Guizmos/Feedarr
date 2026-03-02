@@ -39,13 +39,11 @@ public sealed class EerrRequestClient
         try
         {
             using var request = CreateRequest(HttpMethod.Get, baseUrl, "status", apiKey);
-            using var response = await _http.SendAsync(request, ct);
-
+            using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
                 return (false, null, null, $"HTTP {(int)response.StatusCode}");
 
-            var json = await response.Content.ReadAsStringAsync(ct);
-            return (true, ExtractVersion(json), GetAppLabel(appType), null);
+            var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);            return (true, ExtractVersion(json), GetAppLabel(appType), null);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -121,9 +119,7 @@ public sealed class EerrRequestClient
         using var request = CreateRequest(HttpMethod.Post, baseUrl, "request", apiKey);
         request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
 
-        using var response = await _http.SendAsync(request, ct);
-        var body = await response.Content.ReadAsStringAsync(ct);
-        var requestId = ExtractRequestId(body);
+        using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);        var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);        var requestId = ExtractRequestId(body);
 
         if (response.IsSuccessStatusCode)
         {
@@ -173,11 +169,9 @@ public sealed class EerrRequestClient
         while (requests.Count < safeMax)
         {
             using var request = CreateRequest(HttpMethod.Get, baseUrl, $"request?take={take}&skip={skip}", apiKey);
-            using var response = await _http.SendAsync(request, ct);
-            response.EnsureSuccessStatusCode();
+            using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);            response.EnsureSuccessStatusCode();
 
-            var body = await response.Content.ReadAsStringAsync(ct);
-            var page = ParseRequestPage(body);
+            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);            var page = ParseRequestPage(body);
             if (page.Results.Count == 0)
                 break;
 

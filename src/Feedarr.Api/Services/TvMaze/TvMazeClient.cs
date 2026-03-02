@@ -47,12 +47,10 @@ public sealed class TvMazeClient
         if (string.IsNullOrWhiteSpace(query)) return new List<ShowResult>();
 
         var url = $"search/shows?q={Uri.EscapeDataString(query)}";
-        using var resp = await GetAsyncRecorded(url, ct);
-        resp.EnsureSuccessStatusCode();
+        using var resp = await GetAsyncRecorded(url, ct).ConfigureAwait(false);        resp.EnsureSuccessStatusCode();
 
         await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-        var data = await JsonSerializer.DeserializeAsync<List<SearchItem>>(stream, JsonOpts, ct);
-        if (data is null || data.Count == 0) return new List<ShowResult>();
+        var data = await JsonSerializer.DeserializeAsync<List<SearchItem>>(stream, JsonOpts, ct).ConfigureAwait(false);        if (data is null || data.Count == 0) return new List<ShowResult>();
 
         var results = data
             .Select(x => x.Show)
@@ -80,11 +78,9 @@ public sealed class TvMazeClient
 
         if (id <= 0) return null;
         var url = $"shows/{id}";
-        using var resp = await GetAsyncRecorded(url, ct);
-        if (!resp.IsSuccessStatusCode) return null;
+        using var resp = await GetAsyncRecorded(url, ct).ConfigureAwait(false);        if (!resp.IsSuccessStatusCode) return null;
         await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-        var show = await JsonSerializer.DeserializeAsync<ShowItem>(stream, JsonOpts, ct);
-        if (show is null || show.Id <= 0 || string.IsNullOrWhiteSpace(show.Name)) return null;
+        var show = await JsonSerializer.DeserializeAsync<ShowItem>(stream, JsonOpts, ct).ConfigureAwait(false);        if (show is null || show.Id <= 0 || string.IsNullOrWhiteSpace(show.Name)) return null;
         return new ShowResult(
             show.Id,
             show.Name?.Trim() ?? "",
@@ -100,8 +96,7 @@ public sealed class TvMazeClient
         if (!IsEnabled())
             return false;
 
-        var results = await SearchShowsAsync("the", ct, 1);
-        return results.Count > 0;
+        var results = await SearchShowsAsync("the", ct, 1).ConfigureAwait(false);        return results.Count > 0;
     }
 
     public async Task<byte[]?> DownloadImageAsync(string url, CancellationToken ct)
@@ -110,10 +105,8 @@ public sealed class TvMazeClient
             return null;
 
         if (string.IsNullOrWhiteSpace(url)) return null;
-        using var resp = await GetAsyncRecorded(url, ct);
-        if (!resp.IsSuccessStatusCode) return null;
-        return await resp.Content.ReadAsByteArrayAsync(ct);
-    }
+        using var resp = await GetAsyncRecorded(url, ct).ConfigureAwait(false);        if (!resp.IsSuccessStatusCode) return null;
+        return await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);    }
 
     private bool IsEnabled()
     {
@@ -126,8 +119,7 @@ public sealed class TvMazeClient
         var sw = Stopwatch.StartNew();
         try
         {
-            var resp = await _http.GetAsync(relativeUrl, ct);
-            _stats.RecordTvmaze(resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+            var resp = await _http.GetAsync(relativeUrl, ct).ConfigureAwait(false);            _stats.RecordTvmaze(resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
             return resp;
         }
         catch
