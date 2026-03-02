@@ -679,7 +679,8 @@ public sealed class BackupService
 
         var report = CredentialRestoreReport.Empty;
         NormalizeCredentialsColumn(conn, tx, "sources", "api_key", ref report);
-        NormalizeCredentialsColumn(conn, tx, "providers", "api_key_encrypted", ref report);
+        NormalizeCredentialsColumn(conn, tx, "providers", "api_key", ref report);           // legacy column name (pre-migration 0045)
+        NormalizeCredentialsColumn(conn, tx, "providers", "api_key_encrypted", ref report); // current column name (post-migration 0045)
         NormalizeCredentialsColumn(conn, tx, "arr_applications", "api_key_encrypted", ref report);
 
         tx.Commit();
@@ -865,7 +866,8 @@ public sealed class BackupService
         var wouldClear = 0;
 
         AnalyzeCredentialsColumn(conn, tx, "sources", "api_key", ref wouldReencrypt, ref wouldClear);
-        AnalyzeCredentialsColumn(conn, tx, "providers", "api_key_encrypted", ref wouldReencrypt, ref wouldClear);
+        AnalyzeCredentialsColumn(conn, tx, "providers", "api_key", ref wouldReencrypt, ref wouldClear);           // legacy column name (pre-migration 0045)
+        AnalyzeCredentialsColumn(conn, tx, "providers", "api_key_encrypted", ref wouldReencrypt, ref wouldClear); // current column name (post-migration 0045)
         AnalyzeCredentialsColumn(conn, tx, "arr_applications", "api_key_encrypted", ref wouldReencrypt, ref wouldClear);
 
         tx.Rollback(); // Nothing persisted — temp file remains unmodified.
