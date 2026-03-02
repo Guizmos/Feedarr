@@ -142,15 +142,7 @@ function updateTopSections(prevSections, updater) {
   }));
 }
 
-function buildLibraryLink(categoryKey, sourceId) {
-  const params = new URLSearchParams();
-  params.set("maxAgeDays", "1");
-  if (categoryKey) params.set("categoryId", categoryKey);
-  if (sourceId) params.set("sourceId", sourceId);
-  return `/library?${params.toString()}`;
-}
-
-function TopGlobalEmptyState({ title, hours, field, to }) {
+function TopGlobalEmptyState({ title, hours, field }) {
   return (
     <section style={{ marginBottom: 40 }}>
       <div className="top24-sectionHead">
@@ -480,8 +472,6 @@ export default function TopReleases() {
   if (err) return <div className="error">{err}</div>;
 
   const globalTitle = `🏆 Top ${TOP_TAKE} Global${selectedSourceName ? ` • ${selectedSourceName}` : ""}`;
-  const globalLibraryLink = buildLibraryLink("", sourceId);
-
   return (
     <div className="page page--top24h">
       <div className="pagehead">
@@ -509,7 +499,7 @@ export default function TopReleases() {
               onOpen={openDetails}
             />
           ) : (
-            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} to={globalLibraryLink} />
+            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} />
           )}
           {categorySections.map((section) => (
             <TopReleasesGridSection
@@ -544,7 +534,7 @@ export default function TopReleases() {
               onOpen={openDetails}
             />
           ) : (
-            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} to={globalLibraryLink} />
+            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} />
           )}
           {categorySections.map((section) => (
             <TopReleasesPosterSection
@@ -574,7 +564,7 @@ export default function TopReleases() {
               formatRating={formatRating}
             />
           ) : (
-            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} to={globalLibraryLink} />
+            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} />
           )}
           {categorySections.map((section) => (
             <TopReleasesBannerSection
@@ -604,7 +594,7 @@ export default function TopReleases() {
               isSeriesItem={isSeriesItem}
             />
           ) : (
-            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} to={globalLibraryLink} />
+            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} />
           )}
           {categorySections.map((section) => (
             <TopReleasesListSection
