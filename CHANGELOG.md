@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.2.0](https://github.com/Guizmos/Feedarr/compare/v2.1.0...v2.2.0) (2026-03-02)
+
+
+### Features
+
+* enforce bounded RSS limits (backend clamp + UI validation) ([90a9c4f](https://github.com/Guizmos/Feedarr/commit/90a9c4f0838d608bc3ab9508e52c5cd9c1d66291))
+
+
+### Bug Fixes
+
+* **security:** correct same-origin detection behind reverse proxy + unblock strict mode ([26683fa](https://github.com/Guizmos/Feedarr/commit/26683fa07f01297cd709c1db80d2de3a74a3d9a2))
+* **security:** harden same-origin detection behind reverse proxy and unblock strict mode ([8160d7e](https://github.com/Guizmos/Feedarr/commit/8160d7e5c80dc1038e5929720951452ff6cf542b))
+* **web:** resolve eslint no-unused-vars in TopReleases ([ca04e83](https://github.com/Guizmos/Feedarr/commit/ca04e83e64eadc16da2ca909b190346f73b9cf3d))
+
 ## [2.1.0](https://github.com/Guizmos/Feedarr/compare/v2.0.0...v2.1.0) (2026-03-01)
 
 
