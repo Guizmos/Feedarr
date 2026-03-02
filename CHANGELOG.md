@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.2.1](https://github.com/Guizmos/Feedarr/compare/v2.2.0...v2.2.1) (2026-03-02)
+
+
+### Bug Fixes
+
+* **backup:** handle legacy providers.api_key during restore ([92b178a](https://github.com/Guizmos/Feedarr/commit/92b178a90692ccc21b2e8e2d8be98d872ad98c7a))
+
+
+### Performance Improvements
+
+* **stability:** async ConfigureAwait, sqlite pooling, poster fetch options, FK + migrations guards ([2710551](https://github.com/Guizmos/Feedarr/commit/2710551e4b1c86d1112d2e54251eced6000c0e71))
+
 ## [2.2.0](https://github.com/Guizmos/Feedarr/compare/v2.1.0...v2.2.0) (2026-03-02)
 
 
