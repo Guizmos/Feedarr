@@ -36,8 +36,6 @@ using Microsoft.AspNetCore.RateLimiting;
 using System.Data;
 using System.Diagnostics;
 using System.Globalization;
-using System.Net;
-using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading.RateLimiting;
@@ -73,28 +71,12 @@ var dataProtectionBuilder = builder.Services.AddDataProtection()
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
-    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-    options.ForwardLimit = 1;
-
-    var trustedProxies = GetConfiguredStringArray(
-        builder.Configuration,
-        "Security:KnownProxies",
-        "App:ReverseProxy:TrustedProxies");
-    foreach (var raw in trustedProxies)
-    {
-        if (IPAddress.TryParse(raw?.Trim(), out var ip))
-            options.KnownProxies.Add(ip);
-    }
-
-    var trustedNetworks = GetConfiguredStringArray(
-        builder.Configuration,
-        "Security:KnownNetworks",
-        "App:ReverseProxy:TrustedNetworks");
-    foreach (var raw in trustedNetworks)
-    {
-        if (TryParseIpNetwork(raw, out var network))
-            options.KnownNetworks.Add(network);
-    }
+    options.ForwardedHeaders =
+        ForwardedHeaders.XForwardedFor |
+        ForwardedHeaders.XForwardedProto |
+        ForwardedHeaders.XForwardedHost;
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
 });
 
 // Chiffrement des master keys selon la plateforme
@@ -859,49 +841,6 @@ if (app.Environment.IsDevelopment())
 }
 
 await app.RunAsync();
-
-static bool TryParseIpNetwork(string? value, out Microsoft.AspNetCore.HttpOverrides.IPNetwork network)
-{
-    network = default!;
-    if (string.IsNullOrWhiteSpace(value))
-        return false;
-
-    var trimmed = value.Trim();
-    var slash = trimmed.IndexOf('/');
-
-    if (slash < 0)
-    {
-        if (!IPAddress.TryParse(trimmed, out var singleAddress))
-            return false;
-
-        var singlePrefix = singleAddress.AddressFamily == AddressFamily.InterNetwork ? 32 : 128;
-        network = new Microsoft.AspNetCore.HttpOverrides.IPNetwork(singleAddress, singlePrefix);
-        return true;
-    }
-
-    var addressPart = trimmed[..slash].Trim();
-    var prefixPart = trimmed[(slash + 1)..].Trim();
-    if (!IPAddress.TryParse(addressPart, out var address))
-        return false;
-    if (!int.TryParse(prefixPart, out var prefixLength))
-        return false;
-
-    var maxPrefix = address.AddressFamily == AddressFamily.InterNetwork ? 32 : 128;
-    if (prefixLength < 0 || prefixLength > maxPrefix)
-        return false;
-
-    network = new Microsoft.AspNetCore.HttpOverrides.IPNetwork(address, prefixLength);
-    return true;
-}
-
-static string[] GetConfiguredStringArray(IConfiguration configuration, string primarySection, string fallbackSection)
-{
-    var primary = configuration.GetSection(primarySection).Get<string[]>();
-    if (primary is { Length: > 0 })
-        return primary;
-
-    return configuration.GetSection(fallbackSection).Get<string[]>() ?? Array.Empty<string>();
-}
 
 static void MigrateLegacyDataProtectionKeys(string legacyPath, string targetPath)
 {

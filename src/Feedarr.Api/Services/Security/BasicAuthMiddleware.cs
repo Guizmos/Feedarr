@@ -69,6 +69,13 @@ public sealed class BasicAuthMiddleware
             return;
         }
 
+        if (IsPublicStaticAssetRequest(context.Request))
+        {
+            context.Items[AuthPassedKey] = true;
+            await _next(context);
+            return;
+        }
+
         var security = cache.GetOrCreate(SecuritySettingsCache.CacheKey, entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = SecuritySettingsCache.Duration;
@@ -371,6 +378,29 @@ public sealed class BasicAuthMiddleware
         }
 
         return false;
+    }
+
+    private static bool IsPublicStaticAssetRequest(HttpRequest request)
+    {
+        if (!(HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method)))
+            return false;
+
+        var path = request.Path.Value ?? "";
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        if (PathEqualsOrUnder(path, "/assets"))
+            return true;
+
+        if (path.Equals("/manifest.webmanifest", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("/service-worker.js", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("/favicon.ico", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return path.StartsWith("/favicon-", StringComparison.OrdinalIgnoreCase) ||
+               path.StartsWith("/favicon.", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsAllowedDuringSecuritySetup(HttpRequest request)

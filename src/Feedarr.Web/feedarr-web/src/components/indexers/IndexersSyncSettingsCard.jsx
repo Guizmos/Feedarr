@@ -10,6 +10,9 @@ const DEFAULT_GENERAL = {
   autoSyncEnabled: true,
 };
 
+const RSS_PER_CAT = { min: 10, max: 500 };
+const RSS_GLOBAL = { min: 50, max: 2000 };
+
 const toInt = (value, fallback) => {
   const raw = String(value ?? "").trim();
   if (!raw) return fallback;
@@ -69,6 +72,16 @@ export default function IndexersSyncSettingsCard({ onStateChange, showSaveButton
       || String(general.rssLimitGlobalPerSource) !== initialGeneral.rssLimitGlobalPerSource
     );
   }, [general, initialGeneral]);
+
+  const isValid = useMemo(() => {
+    const perCat = toInt(general.rssLimitPerCategory, 0);
+    const global = toInt(general.rssLimitGlobalPerSource, 0);
+    return (
+      perCat >= RSS_PER_CAT.min && perCat <= RSS_PER_CAT.max &&
+      global >= RSS_GLOBAL.min && global <= RSS_GLOBAL.max &&
+      global >= perCat
+    );
+  }, [general.rssLimitPerCategory, general.rssLimitGlobalPerSource]);
 
   const pulseClass = useCallback((key) => {
     if (!pulseKeys.has(key)) return "";
@@ -207,8 +220,8 @@ export default function IndexersSyncSettingsCard({ onStateChange, showSaveButton
               <div className="indexer-actions">
                 <input
                   type="number"
-                  min={1}
-                  max={200}
+                  min={RSS_PER_CAT.min}
+                  max={RSS_PER_CAT.max}
                   value={general.rssLimitPerCategory}
                   ref={rssLimitPerCatRef}
                   onChange={(e) => {
@@ -217,7 +230,7 @@ export default function IndexersSyncSettingsCard({ onStateChange, showSaveButton
                 />
               </div>
             </div>
-            <div className="settings-help">Remplissage progressif par catégorie, purge des plus anciens.</div>
+            <div className="settings-help">Entre {RSS_PER_CAT.min} et {RSS_PER_CAT.max}. Remplissage progressif par catégorie, purge des plus anciens.</div>
           </div>
 
           <div className={`indexer-card${pulseClass("general.rssGlobal")}`}>
@@ -231,8 +244,8 @@ export default function IndexersSyncSettingsCard({ onStateChange, showSaveButton
               <div className="indexer-actions">
                 <input
                   type="number"
-                  min={1}
-                  max={2000}
+                  min={RSS_GLOBAL.min}
+                  max={RSS_GLOBAL.max}
                   value={general.rssLimitGlobalPerSource}
                   ref={rssLimitGlobalRef}
                   onChange={(e) => {
@@ -241,18 +254,24 @@ export default function IndexersSyncSettingsCard({ onStateChange, showSaveButton
                 />
               </div>
             </div>
-            <div className="settings-help">Plafond global par source, purge des plus anciens.</div>
+            <div className="settings-help">Entre {RSS_GLOBAL.min} et {RSS_GLOBAL.max}. Plafond global par source (≥ limite par catégorie), purge des plus anciens.</div>
           </div>
+
+          {!isValid && (
+            <div className="settings-help" style={{ color: "var(--color-danger, #d9534f)", marginTop: 4 }}>
+              Valeur(s) hors bornes ou incohérentes — la limite globale doit être ≥ à la limite par catégorie.
+            </div>
+          )}
         </div>
       )}
 
-      {showSaveButton && !loading && isDirty && (
+      {showSaveButton && !loading && (isDirty || !isValid) && (
         <div className="formactions" style={{ marginTop: 16 }}>
           <button
             className={`btn ${saveState === "success" ? "btn-hover-ok" : saveState === "error" ? "btn-fixed-danger btn-nohover" : "btn-hover-ok"}`}
             type="button"
             onClick={handleSave}
-            disabled={!isDirty || saveState === "loading"}
+            disabled={!isDirty || saveState === "loading" || !isValid}
           >
             {saveState === "loading" ? "Enregistrement..." : saveState === "success" ? "Enregistré" : saveState === "error" ? "Erreur" : "Enregistrer"}
           </button>

@@ -1,4 +1,1 @@
-echo * text=auto > .gitattributes
-git add .gitattributes
-git commit -m "chore: normalize line endings with .gitattributes"
-git push
+* text=auto eol=lf

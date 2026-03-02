@@ -142,22 +142,11 @@ function updateTopSections(prevSections, updater) {
   }));
 }
 
-function buildLibraryLink(categoryKey, sourceId) {
-  const params = new URLSearchParams();
-  params.set("maxAgeDays", "1");
-  if (categoryKey) params.set("categoryId", categoryKey);
-  if (sourceId) params.set("sourceId", sourceId);
-  return `/library?${params.toString()}`;
-}
-
-function TopGlobalEmptyState({ title, hours, field, to }) {
+function TopGlobalEmptyState({ title, hours, field }) {
   return (
     <section style={{ marginBottom: 40 }}>
       <div className="top24-sectionHead">
         <h2 style={{ marginBottom: 0, fontSize: 18 }}>{title}</h2>
-        <Link className="btn-soft btn-soft--small top24-sectionLink" to={to}>
-          Voir dans Library
-        </Link>
       </div>
       <div className="top24-empty">
         <strong>Aucun item sur les dernieres {hours}h.</strong>
@@ -483,8 +472,6 @@ export default function TopReleases() {
   if (err) return <div className="error">{err}</div>;
 
   const globalTitle = `🏆 Top ${TOP_TAKE} Global${selectedSourceName ? ` • ${selectedSourceName}` : ""}`;
-  const globalLibraryLink = buildLibraryLink("", sourceId);
-
   return (
     <div className="page page--top24h">
       <div className="pagehead">
@@ -510,14 +497,9 @@ export default function TopReleases() {
               sourceNameById={sourceNameById}
               onDownload={download}
               onOpen={openDetails}
-              headerAction={(
-                <Link className="btn-soft btn-soft--small top24-sectionLink" to={globalLibraryLink}>
-                  Voir dans Library
-                </Link>
-              )}
             />
           ) : (
-            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} to={globalLibraryLink} />
+            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} />
           )}
           {categorySections.map((section) => (
             <TopReleasesGridSection
@@ -534,11 +516,6 @@ export default function TopReleases() {
               sourceNameById={sourceNameById}
               onDownload={download}
               onOpen={openDetails}
-              headerAction={(
-                <Link className="btn-soft btn-soft--small top24-sectionLink" to={buildLibraryLink(section.key, sourceId)}>
-                  Voir dans Library
-                </Link>
-              )}
             />
           ))}
         </>
@@ -555,14 +532,9 @@ export default function TopReleases() {
               isGlobalTop={true}
               top5AnimKey={top5AnimKey}
               onOpen={openDetails}
-              headerAction={(
-                <Link className="btn-soft btn-soft--small top24-sectionLink" to={globalLibraryLink}>
-                  Voir dans Library
-                </Link>
-              )}
             />
           ) : (
-            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} to={globalLibraryLink} />
+            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} />
           )}
           {categorySections.map((section) => (
             <TopReleasesPosterSection
@@ -574,11 +546,6 @@ export default function TopReleases() {
               isGlobalTop={false}
               top5AnimKey={top5AnimKey}
               onOpen={openDetails}
-              headerAction={(
-                <Link className="btn-soft btn-soft--small top24-sectionLink" to={buildLibraryLink(section.key, sourceId)}>
-                  Voir dans Library
-                </Link>
-              )}
             />
           ))}
         </>
@@ -595,14 +562,9 @@ export default function TopReleases() {
               sourceNameById={sourceNameById}
               onOpen={openDetails}
               formatRating={formatRating}
-              headerAction={(
-                <Link className="btn-soft btn-soft--small top24-sectionLink" to={globalLibraryLink}>
-                  Voir dans Library
-                </Link>
-              )}
             />
           ) : (
-            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} to={globalLibraryLink} />
+            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} />
           )}
           {categorySections.map((section) => (
             <TopReleasesBannerSection
@@ -614,11 +576,6 @@ export default function TopReleases() {
               sourceNameById={sourceNameById}
               onOpen={openDetails}
               formatRating={formatRating}
-              headerAction={(
-                <Link className="btn-soft btn-soft--small top24-sectionLink" to={buildLibraryLink(section.key, sourceId)}>
-                  Voir dans Library
-                </Link>
-              )}
             />
           ))}
         </>
@@ -635,14 +592,9 @@ export default function TopReleases() {
               onRename={renameRelease}
               formatRating={formatRating}
               isSeriesItem={isSeriesItem}
-              headerAction={(
-                <Link className="btn-soft btn-soft--small top24-sectionLink" to={globalLibraryLink}>
-                  Voir dans Library
-                </Link>
-              )}
             />
           ) : (
-            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} to={globalLibraryLink} />
+            <TopGlobalEmptyState title={globalTitle} hours={windowInfo?.hours || TOP_HOURS} field={windowInfo?.field || "published_at_ts"} />
           )}
           {categorySections.map((section) => (
             <TopReleasesListSection
@@ -654,11 +606,6 @@ export default function TopReleases() {
               onRename={renameRelease}
               formatRating={formatRating}
               isSeriesItem={isSeriesItem}
-              headerAction={(
-                <Link className="btn-soft btn-soft--small top24-sectionLink" to={buildLibraryLink(section.key, sourceId)}>
-                  Voir dans Library
-                </Link>
-              )}
             />
           ))}
         </>

@@ -337,10 +337,16 @@ public sealed class SystemController : ControllerBase
         if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
             return Ok(cached);
 
+        ct.ThrowIfCancellationRequested();
+
         using var conn = _db.Open();
 
-        var activeIndexers = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM sources WHERE enabled = 1;");
-        var releasesCount = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM releases;");
+        // Single round-trip for the two scalar counts.
+        using var summaryCounts = conn.QueryMultiple(
+            "SELECT COUNT(1) FROM sources WHERE enabled=1;" +
+            "SELECT COUNT(1) FROM releases;");
+        var activeIndexers = summaryCounts.ReadSingle<int>();
+        var releasesCount  = summaryCounts.ReadSingle<int>();
 
         var providerStatsByKey = _providerStats.SnapshotByProvider();
         var indexerStats = _providerStats.IndexerSnapshot();
@@ -543,8 +549,12 @@ public sealed class SystemController : ControllerBase
 
         using var conn = _db.Open();
 
-        var activeIndexers = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM sources WHERE enabled = 1;");
-        var totalIndexers  = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM sources;");
+        // Single round-trip for the two scalar counts.
+        using var indexerCounts = conn.QueryMultiple(
+            "SELECT COUNT(1) FROM sources WHERE enabled=1;" +
+            "SELECT COUNT(1) FROM sources;");
+        var activeIndexers = indexerCounts.ReadSingle<int>();
+        var totalIndexers  = indexerCounts.ReadSingle<int>();
         var indexerStats   = _providerStats.IndexerSnapshot();
         var sourceRows     = GetSourceStatsRows(conn);
 
@@ -974,12 +984,18 @@ public sealed class SystemController : ControllerBase
         if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
             return Ok(cached);
 
+        ct.ThrowIfCancellationRequested();
+
         using var conn = _db.Open();
 
-        // Basic counts
-        var activeIndexers = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM sources WHERE enabled = 1;");
-        var totalIndexers = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM sources;");
-        var releasesCount = conn.ExecuteScalar<int>("SELECT COUNT(1) FROM releases;");
+        // Basic counts — single round-trip via QueryMultiple.
+        using var legacyCounts = conn.QueryMultiple(
+            "SELECT COUNT(1) FROM sources WHERE enabled=1;" +
+            "SELECT COUNT(1) FROM sources;" +
+            "SELECT COUNT(1) FROM releases;");
+        var activeIndexers = legacyCounts.ReadSingle<int>();
+        var totalIndexers  = legacyCounts.ReadSingle<int>();
+        var releasesCount  = legacyCounts.ReadSingle<int>();
 
         var storage = await _storageCache.GetSnapshotAsync(ct);
         var dbSizeMb = Math.Round(storage.DatabaseBytes / 1024d / 1024d, 2);
