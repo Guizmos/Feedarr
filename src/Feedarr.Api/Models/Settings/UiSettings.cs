@@ -10,6 +10,7 @@ public sealed class UiSettings
 
     public bool HideSeenByDefault { get; set; } = false;
     public bool ShowCategories { get; set; } = true;
+    public bool ShowTop24DedupeControl { get; set; } = false;
     public bool EnableMissingPosterView { get; set; } = false;
 
     // "grid" / "list" / "banner" / "poster"

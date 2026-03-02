@@ -4,6 +4,7 @@ using Dapper;
 using Feedarr.Api.Data;
 using Feedarr.Api.Models;
 using Feedarr.Api.Services.Categories;
+using Feedarr.Api.Services.Matching;
 using Microsoft.Extensions.Caching.Memory;
 using System.Text.RegularExpressions;
 
@@ -19,6 +20,8 @@ public sealed class FeedController : ControllerBase
     private static readonly TimeSpan TopCacheDuration = TimeSpan.FromSeconds(20);
     private static readonly Regex SearchTokenRegex = new(@"[a-zA-Z0-9_-]+", RegexOptions.Compiled);
     private const int MaxFtsTokenLength = 64;
+    private const int TopMaxHours = 24 * 7;
+    private const int TopMaxTake = 50;
     private const string TopWindowField = "published_at_ts";
     private const string TopOrderSql = "releases.published_at_ts DESC, releases.id DESC";
     private const string UnifiedCategoryToKeySql =
@@ -301,6 +304,57 @@ public sealed class FeedController : ControllerBase
     private static string EscapeFtsToken(string token)
         => token.Replace("\"", "\"\"", StringComparison.Ordinal);
 
+    private static string NormalizeTopSort(string? sort)
+    {
+        return (sort ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "grabs" => "grabs",
+            "seeders" => "seeders",
+            "score" => "score",
+            _ => "recent"
+        };
+    }
+
+    private static string NormalizeTopDedupe(string? dedupe, bool supportsEntityDedupe)
+    {
+        if (string.IsNullOrWhiteSpace(dedupe))
+            return "none";
+
+        return dedupe.Trim().ToLowerInvariant() switch
+        {
+            "none" => "none",
+            "entity" => supportsEntityDedupe ? "entity" : "title_year",
+            "title" => "title",
+            "title_year" => "title_year",
+            _ => supportsEntityDedupe ? "entity" : "title_year"
+        };
+    }
+
+    private static string BuildTopSortOrderSql(string alias, string sort)
+    {
+        return sort switch
+        {
+            "grabs" => $"COALESCE({alias}.grabs, 0) DESC, COALESCE({alias}.seeders, 0) DESC, COALESCE({alias}.publishedAt, 0) DESC, {alias}.id DESC",
+            "seeders" => $"COALESCE({alias}.seeders, 0) DESC, COALESCE({alias}.grabs, 0) DESC, COALESCE({alias}.publishedAt, 0) DESC, {alias}.id DESC",
+            "score" => $"COALESCE({alias}.topScore, 0) DESC, COALESCE({alias}.publishedAt, 0) DESC, {alias}.id DESC",
+            _ => $"COALESCE({alias}.publishedAt, 0) DESC, {alias}.id DESC"
+        };
+    }
+
+    private static string BuildTopDedupeKeySql(string alias, string dedupe)
+    {
+        return dedupe switch
+        {
+            "entity" =>
+                $"CASE WHEN {alias}.entityId IS NOT NULL AND {alias}.entityId > 0 THEN ('entity:' || CAST({alias}.entityId AS TEXT)) ELSE ('release:' || CAST({alias}.id AS TEXT)) END",
+            "title_year" =>
+                $"CASE WHEN COALESCE({alias}.dedupeTitle, '') <> '' THEN ('title_year:' || {alias}.dedupeTitle || '|' || COALESCE(CAST({alias}.year AS TEXT), '-') || '|' || lower(trim(COALESCE({alias}.mediaType, '')))) ELSE ('release:' || CAST({alias}.id AS TEXT)) END",
+            "title" =>
+                $"CASE WHEN COALESCE({alias}.dedupeTitle, '') <> '' THEN ('title:' || {alias}.dedupeTitle) ELSE ('release:' || CAST({alias}.id AS TEXT)) END",
+            _ => $"'release:' || CAST({alias}.id AS TEXT)"
+        };
+    }
+
     // GET /api/feed/{sourceId}?limit=50&q=foo&categoryId=102154&minSeeders=5&seen=0
     [HttpGet("{sourceId:long}")]
     public IActionResult Latest(
@@ -534,6 +588,9 @@ public sealed class FeedController : ControllerBase
     public IActionResult Top(
         [FromQuery] int? hours,
         [FromQuery] int? take,
+        [FromQuery] int? perCategoryTake,
+        [FromQuery] string? sort,
+        [FromQuery] string? dedupe,
         [FromQuery] int? limit,
         [FromQuery] long? sourceId,
         [FromQuery] long? indexerId,
@@ -541,87 +598,112 @@ public sealed class FeedController : ControllerBase
     {
         ct.ThrowIfCancellationRequested();
 
+        const bool supportsEntityDedupe = true;
         var effectiveSourceId = sourceId ?? indexerId;
-        var effectiveHours = Math.Clamp(hours ?? 24, 1, 24 * 30);
-        var effectiveTake = Math.Clamp(take ?? limit ?? 5, 1, 20);
+        var effectiveHours = Math.Clamp(hours ?? 24, 1, TopMaxHours);
+        var effectiveTake = Math.Clamp(take ?? limit ?? 5, 1, TopMaxTake);
+        var effectivePerCategoryTake = Math.Clamp(perCategoryTake ?? effectiveTake, 1, TopMaxTake);
+        var effectiveSort = NormalizeTopSort(sort);
+        // Keep omitted dedupe fully backward-compatible: no dedupe unless explicitly requested.
+        var effectiveDedupe = NormalizeTopDedupe(dedupe, supportsEntityDedupe);
         var sinceTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - (effectiveHours * 60L * 60L);
-        var cacheKey = $"feed:top:v3:{effectiveSourceId?.ToString() ?? "all"}:{effectiveHours}:{effectiveTake}";
+        var cacheKey = $"feed:top:v4:{effectiveSourceId?.ToString() ?? "all"}:{effectiveHours}:{effectiveTake}:{effectivePerCategoryTake}:{effectiveSort}:{effectiveDedupe}";
         if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
             return Ok(cached);
 
         using var conn = _db.Open();
+        conn.CreateFunction<string, string>(
+            "top_normalize_title",
+            value => TitleNormalizer.NormalizeTitleStrict(value),
+            isDeterministic: true);
+
         var sourceFilterSql = effectiveSourceId.HasValue
             ? "releases.source_id = @sid AND "
             : string.Empty;
-        var rankedSourceFilterSql = effectiveSourceId.HasValue
-            ? "r.source_id = @sid AND "
-            : string.Empty;
-        var rankedCategoryKeySql = ResolvedTopCategoryKeySql.Replace("releases.", "r.");
+        var topSortOrderSql = BuildTopSortOrderSql("deduped", effectiveSort);
+        var topDedupeKeySql = BuildTopDedupeKeySql("base", effectiveDedupe);
 
-        var globalSql = $"""
-        SELECT
-          releases.id as id,
-          releases.source_id as sourceId,
-          title,
-          releases.title_clean as titleClean,
-          releases.year,
-          season,
-          episode,
-          resolution,
-          source,
-          codec,
-          release_group as releaseGroup,
-          media_type as mediaType,
-          seeders,
-          leechers,
-          grabs,
-          size_bytes as sizeBytes,
-          published_at_ts as publishedAt,
-          releases.category_id as categoryId,
-          sc.name as categoryName,
-          std_category_id as stdCategoryId,
-          spec_category_id as specCategoryId,
-          category_ids as categoryIds,
-          releases.unified_category as unifiedCategory,
-          ({ResolvedTopCategoryKeySql}) as unifiedCategoryKey,
-          ({ResolvedTopCategoryLabelSql}) as unifiedCategoryLabel,
-          seen,
-          ('/api/releases/' || releases.id || '/download') as downloadPath,
-          releases.entity_id as entityId,
-          CASE
-              WHEN COALESCE(releases.poster_file, me.poster_file) IS NOT NULL
-                   AND COALESCE(releases.poster_file, me.poster_file) <> ''
-              THEN ('/api/posters/release/' || releases.id || '?v=' || COALESCE(releases.poster_updated_at_ts, me.poster_updated_at_ts, 0))
-              ELSE NULL
-          END as posterUrl,
-          COALESCE(releases.poster_updated_at_ts, me.poster_updated_at_ts, 0) as posterUpdatedAtTs,
-          poster_last_error as posterLastError,
-          poster_last_attempt_ts as posterLastAttemptTs,
-          COALESCE(me.ext_rating, releases.ext_rating) as rating,
-          CAST(COALESCE(me.ext_votes, releases.ext_votes) AS INTEGER) as ratingVotes,
-          COALESCE(me.ext_provider, releases.ext_provider) as detailsProvider,
-          COALESCE(me.ext_provider_id, releases.ext_provider_id) as detailsProviderId,
-          COALESCE(me.ext_updated_at_ts, releases.ext_updated_at_ts) as detailsUpdatedAtTs,
-          CAST(COALESCE(me.tmdb_id, releases.tmdb_id) AS INTEGER) as tmdbId,
-          CAST(COALESCE(me.tvdb_id, releases.tvdb_id) AS INTEGER) as tvdbId,
-          ras.in_sonarr as isInSonarr,
-          ras.in_radarr as isInRadarr,
-          ras.sonarr_url as sonarrUrl,
-          ras.radarr_url as radarrUrl,
-          COALESCE(ras.sonarr_url, ras.radarr_url) as openUrl,
-          ras.checked_at_ts as arrCheckedAtTs
-        FROM releases
-        LEFT JOIN media_entities me
-          ON me.id = releases.entity_id
-        LEFT JOIN source_categories sc
-          ON sc.source_id = releases.source_id AND sc.cat_id = releases.category_id
-        LEFT JOIN source_category_mappings scm
-          ON scm.source_id = releases.source_id AND scm.cat_id = releases.category_id
-        LEFT JOIN release_arr_status ras
-          ON ras.release_id = releases.id
-        WHERE {sourceFilterSql}releases.{TopWindowField} >= @sinceTs
-        ORDER BY {TopOrderSql}
-        LIMIT @take;
+        // Rank in SQL so the chosen business sort also drives dedupe selection and
+        // the per-category top without materializing the whole window in memory.
+        var baseCteSql = $"""
+        WITH base AS (
+          SELECT
+            releases.id as id,
+            releases.source_id as sourceId,
+            title,
+            releases.title_clean as titleClean,
+            releases.year,
+            season,
+            episode,
+            resolution,
+            source,
+            codec,
+            release_group as releaseGroup,
+            media_type as mediaType,
+            seeders,
+            leechers,
+            grabs,
+            size_bytes as sizeBytes,
+            published_at_ts as publishedAt,
+            releases.category_id as categoryId,
+            sc.name as categoryName,
+            std_category_id as stdCategoryId,
+            spec_category_id as specCategoryId,
+            category_ids as categoryIds,
+            releases.unified_category as unifiedCategory,
+            ({ResolvedTopCategoryKeySql}) as unifiedCategoryKey,
+            ({ResolvedTopCategoryLabelSql}) as unifiedCategoryLabel,
+            seen,
+            ('/api/releases/' || releases.id || '/download') as downloadPath,
+            releases.entity_id as entityId,
+            CASE
+                WHEN COALESCE(releases.poster_file, me.poster_file) IS NOT NULL
+                     AND COALESCE(releases.poster_file, me.poster_file) <> ''
+                THEN ('/api/posters/release/' || releases.id || '?v=' || COALESCE(releases.poster_updated_at_ts, me.poster_updated_at_ts, 0))
+                ELSE NULL
+            END as posterUrl,
+            COALESCE(releases.poster_updated_at_ts, me.poster_updated_at_ts, 0) as posterUpdatedAtTs,
+            poster_last_error as posterLastError,
+            poster_last_attempt_ts as posterLastAttemptTs,
+            COALESCE(me.ext_rating, releases.ext_rating) as rating,
+            CAST(COALESCE(me.ext_votes, releases.ext_votes) AS INTEGER) as ratingVotes,
+            COALESCE(me.ext_provider, releases.ext_provider) as detailsProvider,
+            COALESCE(me.ext_provider_id, releases.ext_provider_id) as detailsProviderId,
+            COALESCE(me.ext_updated_at_ts, releases.ext_updated_at_ts) as detailsUpdatedAtTs,
+            CAST(COALESCE(me.tmdb_id, releases.tmdb_id) AS INTEGER) as tmdbId,
+            CAST(COALESCE(me.tvdb_id, releases.tvdb_id) AS INTEGER) as tvdbId,
+            ras.in_sonarr as isInSonarr,
+            ras.in_radarr as isInRadarr,
+            ras.sonarr_url as sonarrUrl,
+            ras.radarr_url as radarrUrl,
+            COALESCE(ras.sonarr_url, ras.radarr_url) as openUrl,
+            ras.checked_at_ts as arrCheckedAtTs,
+            top_normalize_title(COALESCE(releases.title_clean, releases.title, '')) as dedupeTitle,
+            (COALESCE(releases.grabs, 0) * 5 + COALESCE(releases.seeders, 0)) as topScore
+          FROM releases
+          LEFT JOIN media_entities me
+            ON me.id = releases.entity_id
+          LEFT JOIN source_categories sc
+            ON sc.source_id = releases.source_id AND sc.cat_id = releases.category_id
+          LEFT JOIN source_category_mappings scm
+            ON scm.source_id = releases.source_id AND scm.cat_id = releases.category_id
+          LEFT JOIN release_arr_status ras
+            ON ras.release_id = releases.id
+          WHERE {sourceFilterSql}releases.{TopWindowField} >= @sinceTs
+        ),
+        deduped AS (
+          SELECT *
+          FROM (
+            SELECT
+              base.*,
+              ROW_NUMBER() OVER (
+                PARTITION BY {topDedupeKeySql}
+                ORDER BY {BuildTopSortOrderSql("base", effectiveSort)}
+              ) as dedupeRn
+            FROM base
+          ) ranked_dedupe
+          WHERE ranked_dedupe.dedupeRn = 1
+        )
         """;
 
         var globalArgs = new DynamicParameters();
@@ -629,113 +711,49 @@ public sealed class FeedController : ControllerBase
         globalArgs.Add("take", effectiveTake);
         if (effectiveSourceId.HasValue) globalArgs.Add("sid", effectiveSourceId.Value);
 
+        var globalSql = baseCteSql + $"""
+        SELECT *
+        FROM (
+          SELECT
+            deduped.*,
+            ROW_NUMBER() OVER (ORDER BY {topSortOrderSql}) as globalRn
+          FROM deduped
+        ) ranked_global
+        WHERE ranked_global.globalRn <= @take
+        ORDER BY ranked_global.globalRn ASC;
+        """;
+
         var globalRows = conn.Query<FeedRow>(globalSql, globalArgs).ToList();
         foreach (var row in globalRows)
         {
             PopulateUnifiedCategoryMetadata(row);
         }
 
-        var categoriesSql = $"""
-        WITH ranked AS (
+        var categoriesSql = baseCteSql + $"""
+        SELECT *
+        FROM (
           SELECT
-            r.id,
-            ({rankedCategoryKeySql}) as unifiedCategoryKey,
-            COALESCE(scm.group_label, sc.unified_label) as unifiedCategoryLabel,
+            deduped.*,
             COUNT(1) OVER (
-              PARTITION BY ({rankedCategoryKeySql})
+              PARTITION BY deduped.unifiedCategoryKey
             ) as catCount,
             ROW_NUMBER() OVER (
-              PARTITION BY ({rankedCategoryKeySql})
-              ORDER BY r.published_at_ts DESC, r.id DESC
-            ) as rn
-          FROM releases r
-          LEFT JOIN source_categories sc
-            ON sc.source_id = r.source_id AND sc.cat_id = r.category_id
-          LEFT JOIN source_category_mappings scm
-            ON scm.source_id = r.source_id AND scm.cat_id = r.category_id
-          WHERE {rankedSourceFilterSql}r.{TopWindowField} >= @sinceTs
-            AND ({rankedCategoryKeySql}) IS NOT NULL
-        ),
-        retained AS (
-          SELECT
-            ranked.id,
-            ranked.catCount
-          FROM ranked
-          WHERE ranked.rn <= @take
-        )
-        SELECT
-          releases.id as id,
-          releases.source_id as sourceId,
-          title,
-          releases.title_clean as titleClean,
-          releases.year,
-          season,
-          episode,
-          resolution,
-          source,
-          codec,
-          release_group as releaseGroup,
-          media_type as mediaType,
-          seeders,
-          leechers,
-          grabs,
-          size_bytes as sizeBytes,
-          published_at_ts as publishedAt,
-          releases.category_id as categoryId,
-          sc.name as categoryName,
-          std_category_id as stdCategoryId,
-          spec_category_id as specCategoryId,
-          category_ids as categoryIds,
-          releases.unified_category as unifiedCategory,
-          ({EffectiveTopCategoryKeySql}) as unifiedCategoryKey,
-          COALESCE(scm.group_label, sc.unified_label) as unifiedCategoryLabel,
-          seen,
-          ('/api/releases/' || releases.id || '/download') as downloadPath,
-          releases.entity_id as entityId,
-          CASE
-              WHEN COALESCE(releases.poster_file, me.poster_file) IS NOT NULL
-                   AND COALESCE(releases.poster_file, me.poster_file) <> ''
-              THEN ('/api/posters/release/' || releases.id || '?v=' || COALESCE(releases.poster_updated_at_ts, me.poster_updated_at_ts, 0))
-              ELSE NULL
-          END as posterUrl,
-          COALESCE(releases.poster_updated_at_ts, me.poster_updated_at_ts, 0) as posterUpdatedAtTs,
-          poster_last_error as posterLastError,
-          poster_last_attempt_ts as posterLastAttemptTs,
-          COALESCE(me.ext_rating, releases.ext_rating) as rating,
-          CAST(COALESCE(me.ext_votes, releases.ext_votes) AS INTEGER) as ratingVotes,
-          COALESCE(me.ext_provider, releases.ext_provider) as detailsProvider,
-          COALESCE(me.ext_provider_id, releases.ext_provider_id) as detailsProviderId,
-          COALESCE(me.ext_updated_at_ts, releases.ext_updated_at_ts) as detailsUpdatedAtTs,
-          CAST(COALESCE(me.tmdb_id, releases.tmdb_id) AS INTEGER) as tmdbId,
-          CAST(COALESCE(me.tvdb_id, releases.tvdb_id) AS INTEGER) as tvdbId,
-          ras.in_sonarr as isInSonarr,
-          ras.in_radarr as isInRadarr,
-          ras.sonarr_url as sonarrUrl,
-          ras.radarr_url as radarrUrl,
-          COALESCE(ras.sonarr_url, ras.radarr_url) as openUrl,
-          ras.checked_at_ts as arrCheckedAtTs,
-          retained.catCount as catCount
-        FROM retained
-        JOIN releases
-          ON releases.id = retained.id
-        LEFT JOIN media_entities me
-          ON me.id = releases.entity_id
-        LEFT JOIN source_categories sc
-          ON sc.source_id = releases.source_id AND sc.cat_id = releases.category_id
-        LEFT JOIN source_category_mappings scm
-          ON scm.source_id = releases.source_id AND scm.cat_id = releases.category_id
-        LEFT JOIN release_arr_status ras
-          ON ras.release_id = releases.id
-        ORDER BY retained.catCount DESC,
-                 ({ResolvedTopCategoryLabelSql}) ASC,
-                 ({ResolvedTopCategoryKeySql}) ASC,
-                 releases.published_at_ts DESC,
-                 releases.id DESC;
+              PARTITION BY deduped.unifiedCategoryKey
+              ORDER BY {topSortOrderSql}
+            ) as catRn
+          FROM deduped
+          WHERE deduped.unifiedCategoryKey IS NOT NULL
+        ) ranked_category
+        WHERE ranked_category.catRn <= @perCategoryTake
+        ORDER BY ranked_category.catCount DESC,
+                 COALESCE(ranked_category.unifiedCategoryLabel, ranked_category.unifiedCategoryKey) ASC,
+                 ranked_category.unifiedCategoryKey ASC,
+                 ranked_category.catRn ASC;
         """;
 
         var categoryArgs = new DynamicParameters();
         categoryArgs.Add("sinceTs", sinceTs);
-        categoryArgs.Add("take", effectiveTake);
+        categoryArgs.Add("perCategoryTake", effectivePerCategoryTake);
         if (effectiveSourceId.HasValue) categoryArgs.Add("sid", effectiveSourceId.Value);
 
         var categoryResults = new List<object>();
@@ -796,6 +814,11 @@ public sealed class FeedController : ControllerBase
                 sinceUtc = DateTimeOffset.FromUnixTimeSeconds(sinceTs).UtcDateTime.ToString("O"),
                 field = TopWindowField
             },
+            takeUsed = effectiveTake,
+            perCategoryTakeUsed = effectivePerCategoryTake,
+            sortUsed = effectiveSort,
+            dedupeUsed = effectiveDedupe,
+            supportsEntityDedupe,
             globalTop = globalRows,
             categories = categoryResults
         };

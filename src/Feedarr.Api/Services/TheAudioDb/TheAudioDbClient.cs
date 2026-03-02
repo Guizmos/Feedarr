@@ -47,8 +47,7 @@ public sealed class TheAudioDbClient
             return false;
 
         var endpoint = BuildEndpoint(apiKey, "searchalbum.php?s=Daft%20Punk&a=Random%20Access%20Memories");
-        using var resp = await GetTrackedAsync(endpoint, ct);
-        return resp.IsSuccessStatusCode;
+        using var resp = await GetTrackedAsync(endpoint, ct).ConfigureAwait(false);        return resp.IsSuccessStatusCode;
     }
 
     public async Task<AudioResult?> SearchAudioAsync(string title, string? artist, int? year, CancellationToken ct)
@@ -66,11 +65,9 @@ public sealed class TheAudioDbClient
         if (!string.IsNullOrWhiteSpace(safeArtist) && !string.IsNullOrWhiteSpace(safeTitle))
         {
             var trackEndpoint = BuildEndpoint(apiKey, $"searchtrack.php?s={Uri.EscapeDataString(safeArtist)}&t={Uri.EscapeDataString(safeTitle)}");
-            using var trackResp = await GetTrackedAsync(trackEndpoint, ct);
-            if (trackResp.IsSuccessStatusCode)
+            using var trackResp = await GetTrackedAsync(trackEndpoint, ct).ConfigureAwait(false);            if (trackResp.IsSuccessStatusCode)
             {
-                var trackPayload = await DeserializePayloadAsync<TrackSearchResponse>(trackResp, ct);
-                var bestTrack = trackPayload?.Track?
+                var trackPayload = await DeserializePayloadAsync<TrackSearchResponse>(trackResp, ct).ConfigureAwait(false);                var bestTrack = trackPayload?.Track?
                     .Where(t => !string.IsNullOrWhiteSpace(t.IdTrack))
                     .OrderByDescending(t => MatchScore(safeTitle, safeArtist, year, t.StrTrack, t.StrArtist, t.IntYearReleased))
                     .FirstOrDefault();
@@ -83,11 +80,9 @@ public sealed class TheAudioDbClient
         if (!string.IsNullOrWhiteSpace(safeArtist))
         {
             var albumEndpoint = BuildEndpoint(apiKey, $"searchalbum.php?s={Uri.EscapeDataString(safeArtist)}&a={Uri.EscapeDataString(safeTitle)}");
-            using var albumResp = await GetTrackedAsync(albumEndpoint, ct);
-            if (albumResp.IsSuccessStatusCode)
+            using var albumResp = await GetTrackedAsync(albumEndpoint, ct).ConfigureAwait(false);            if (albumResp.IsSuccessStatusCode)
             {
-                var albumPayload = await DeserializePayloadAsync<AlbumSearchResponse>(albumResp, ct);
-                var best = albumPayload?.Album?
+                var albumPayload = await DeserializePayloadAsync<AlbumSearchResponse>(albumResp, ct).ConfigureAwait(false);                var best = albumPayload?.Album?
                     .Where(a => !string.IsNullOrWhiteSpace(a.IdAlbum))
                     .OrderByDescending(a => MatchScore(safeTitle, safeArtist, year, a.StrAlbum, a.StrArtist, a.IntYearReleased))
                     .FirstOrDefault();
@@ -112,11 +107,9 @@ public sealed class TheAudioDbClient
                 if (string.IsNullOrWhiteSpace(tryAlbum)) continue;
 
                 var endpoint = BuildEndpoint(apiKey, $"searchalbum.php?s={Uri.EscapeDataString(tryArtist)}&a={Uri.EscapeDataString(tryAlbum)}");
-                using var resp = await GetTrackedAsync(endpoint, ct);
-                if (!resp.IsSuccessStatusCode) continue;
+                using var resp = await GetTrackedAsync(endpoint, ct).ConfigureAwait(false);                if (!resp.IsSuccessStatusCode) continue;
 
-                var payload = await DeserializePayloadAsync<AlbumSearchResponse>(resp, ct);
-                if (payload?.Album is null) continue;
+                var payload = await DeserializePayloadAsync<AlbumSearchResponse>(resp, ct).ConfigureAwait(false);                if (payload?.Album is null) continue;
 
                 var candidate = payload.Album
                     .Where(a => !string.IsNullOrWhiteSpace(a.IdAlbum))
@@ -137,11 +130,9 @@ public sealed class TheAudioDbClient
 
             // Final fallback: treat entire query as artist name (e.g., typing "Genesis" to find all albums)
             var artistEndpoint = BuildEndpoint(apiKey, $"searchalbum.php?s={Uri.EscapeDataString(safeTitle)}");
-            using var artistResp = await GetTrackedAsync(artistEndpoint, ct);
-            if (artistResp.IsSuccessStatusCode)
+            using var artistResp = await GetTrackedAsync(artistEndpoint, ct).ConfigureAwait(false);            if (artistResp.IsSuccessStatusCode)
             {
-                var artistPayload = await DeserializePayloadAsync<AlbumSearchResponse>(artistResp, ct);
-                return artistPayload?.Album?
+                var artistPayload = await DeserializePayloadAsync<AlbumSearchResponse>(artistResp, ct).ConfigureAwait(false);                return artistPayload?.Album?
                     .Where(a => !string.IsNullOrWhiteSpace(a.IdAlbum))
                     .OrderByDescending(a => !string.IsNullOrWhiteSpace(a.StrAlbumThumb) ? 1 : 0)
                     .Select(MapAlbum)
@@ -171,11 +162,9 @@ public sealed class TheAudioDbClient
         if (!string.IsNullOrWhiteSpace(safeArtist) && !string.IsNullOrWhiteSpace(safeTitle))
         {
             var trackEndpoint = BuildEndpoint(apiKey, $"searchtrack.php?s={Uri.EscapeDataString(safeArtist)}&t={Uri.EscapeDataString(safeTitle)}");
-            using var trackResp = await GetTrackedAsync(trackEndpoint, ct);
-            if (trackResp.IsSuccessStatusCode)
+            using var trackResp = await GetTrackedAsync(trackEndpoint, ct).ConfigureAwait(false);            if (trackResp.IsSuccessStatusCode)
             {
-                var payload = await DeserializePayloadAsync<TrackSearchResponse>(trackResp, ct);
-                foreach (var t in (payload?.Track ?? [])
+                var payload = await DeserializePayloadAsync<TrackSearchResponse>(trackResp, ct).ConfigureAwait(false);                foreach (var t in (payload?.Track ?? [])
                     .Where(t => !string.IsNullOrWhiteSpace(t.IdTrack))
                     .OrderByDescending(t => MatchScore(safeTitle, safeArtist, year, t.StrTrack, t.StrArtist, t.IntYearReleased)))
                 {
@@ -190,11 +179,9 @@ public sealed class TheAudioDbClient
         if (!string.IsNullOrWhiteSpace(safeArtist))
         {
             var albumEndpoint = BuildEndpoint(apiKey, $"searchalbum.php?s={Uri.EscapeDataString(safeArtist)}&a={Uri.EscapeDataString(safeTitle)}");
-            using var albumResp = await GetTrackedAsync(albumEndpoint, ct);
-            if (albumResp.IsSuccessStatusCode)
+            using var albumResp = await GetTrackedAsync(albumEndpoint, ct).ConfigureAwait(false);            if (albumResp.IsSuccessStatusCode)
             {
-                var payload = await DeserializePayloadAsync<AlbumSearchResponse>(albumResp, ct);
-                foreach (var a in (payload?.Album ?? [])
+                var payload = await DeserializePayloadAsync<AlbumSearchResponse>(albumResp, ct).ConfigureAwait(false);                foreach (var a in (payload?.Album ?? [])
                     .Where(a => !string.IsNullOrWhiteSpace(a.IdAlbum))
                     .OrderByDescending(a => MatchScore(safeTitle, safeArtist, year, a.StrAlbum, a.StrArtist, a.IntYearReleased)))
                 {
@@ -217,11 +204,9 @@ public sealed class TheAudioDbClient
                 if (string.IsNullOrWhiteSpace(tryAlbum)) continue;
 
                 var endpoint = BuildEndpoint(apiKey, $"searchalbum.php?s={Uri.EscapeDataString(tryArtist)}&a={Uri.EscapeDataString(tryAlbum)}");
-                using var resp = await GetTrackedAsync(endpoint, ct);
-                if (!resp.IsSuccessStatusCode) continue;
+                using var resp = await GetTrackedAsync(endpoint, ct).ConfigureAwait(false);                if (!resp.IsSuccessStatusCode) continue;
 
-                var payload = await DeserializePayloadAsync<AlbumSearchResponse>(resp, ct);
-                foreach (var a in (payload?.Album ?? [])
+                var payload = await DeserializePayloadAsync<AlbumSearchResponse>(resp, ct).ConfigureAwait(false);                foreach (var a in (payload?.Album ?? [])
                     .Where(a => !string.IsNullOrWhiteSpace(a.IdAlbum))
                     .OrderByDescending(a => MatchScore(tryAlbum, tryArtist, year, a.StrAlbum, a.StrArtist, a.IntYearReleased)))
                 {
@@ -233,11 +218,9 @@ public sealed class TheAudioDbClient
 
             // Full title as artist name (returns the whole discography — useful for manual search)
             var artistEndpoint = BuildEndpoint(apiKey, $"searchalbum.php?s={Uri.EscapeDataString(safeTitle)}");
-            using var artistResp = await GetTrackedAsync(artistEndpoint, ct);
-            if (artistResp.IsSuccessStatusCode)
+            using var artistResp = await GetTrackedAsync(artistEndpoint, ct).ConfigureAwait(false);            if (artistResp.IsSuccessStatusCode)
             {
-                var artistPayload = await DeserializePayloadAsync<AlbumSearchResponse>(artistResp, ct);
-                foreach (var a in (artistPayload?.Album ?? [])
+                var artistPayload = await DeserializePayloadAsync<AlbumSearchResponse>(artistResp, ct).ConfigureAwait(false);                foreach (var a in (artistPayload?.Album ?? [])
                     .Where(a => !string.IsNullOrWhiteSpace(a.IdAlbum))
                     .OrderByDescending(a => !string.IsNullOrWhiteSpace(a.StrAlbumThumb) ? 1 : 0))
                 {
@@ -257,12 +240,10 @@ public sealed class TheAudioDbClient
         if (string.IsNullOrWhiteSpace(normalized))
             return null;
 
-        using var resp = await GetTrackedAsync(normalized, ct);
-        if (!resp.IsSuccessStatusCode)
+        using var resp = await GetTrackedAsync(normalized, ct).ConfigureAwait(false);        if (!resp.IsSuccessStatusCode)
             return null;
 
-        return await resp.Content.ReadAsByteArrayAsync(ct);
-    }
+        return await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);    }
 
     private string? ResolveCreds()
     {
@@ -444,8 +425,7 @@ public sealed class TheAudioDbClient
         var sw = Stopwatch.StartNew();
         try
         {
-            var resp = await _http.GetAsync(endpoint, ct);
-            _stats.RecordExternal(ExternalProviderKeys.TheAudioDb, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+            var resp = await _http.GetAsync(endpoint, ct).ConfigureAwait(false);            _stats.RecordExternal(ExternalProviderKeys.TheAudioDb, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
             return resp;
         }
         catch
@@ -458,8 +438,7 @@ public sealed class TheAudioDbClient
     private static async Task<TPayload?> DeserializePayloadAsync<TPayload>(HttpResponseMessage response, CancellationToken ct)
         where TPayload : class
     {
-        var raw = await response.Content.ReadAsStringAsync(ct);
-        // Strip BOM (\uFEFF) that TheAudioDB occasionally returns for empty responses
+        var raw = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);        // Strip BOM (\uFEFF) that TheAudioDB occasionally returns for empty responses
         var payload = raw?.TrimStart('\uFEFF').Trim();
         if (string.IsNullOrWhiteSpace(payload))
             return null;

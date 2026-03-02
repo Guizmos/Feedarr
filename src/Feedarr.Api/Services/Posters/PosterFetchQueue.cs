@@ -73,8 +73,7 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
 
     public async ValueTask<PosterFetchJob> DequeueAsync(CancellationToken ct)
     {
-        var job = await _channel.Reader.ReadAsync(ct);
-        _pendingByItemId.TryRemove(job.ItemId, out _);
+        var job = await _channel.Reader.ReadAsync(ct).ConfigureAwait(false);        _pendingByItemId.TryRemove(job.ItemId, out _);
         return job;
     }
 

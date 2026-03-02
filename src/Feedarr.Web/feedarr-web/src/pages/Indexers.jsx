@@ -101,33 +101,36 @@ export default function Indexers() {
       const sources = Array.isArray(data) ? data : [];
       setItems(sources);
 
-      // Charger les catégories pour chaque source
+      // Charger les catégories pour chaque source (par lots de 5)
       const catsMap = {};
-      await Promise.all(
-        sources.map(async (s) => {
-          if (!s?.id) return;
-          try {
-            const mappings = await apiGet(`/api/sources/${s.id}/category-mappings`);
-            catsMap[s.id] = (Array.isArray(mappings) ? mappings : []).map((mapping) => ({
-              id: Number(mapping?.catId),
-              unifiedKey: normalizeCategoryGroupKey(mapping?.groupKey || mapping?.unifiedKey),
-              unifiedLabel:
-                mapping?.groupLabel ||
-                mapping?.unifiedLabel ||
-                CATEGORY_GROUP_LABELS[normalizeCategoryGroupKey(mapping?.groupKey || mapping?.unifiedKey)] ||
-                "",
-              name:
-                mapping?.groupLabel ||
-                mapping?.unifiedLabel ||
-                CATEGORY_GROUP_LABELS[normalizeCategoryGroupKey(mapping?.groupKey || mapping?.unifiedKey)] ||
-                "",
-            }));
-          } catch (e) {
-            console.error(`[Indexers] Impossible de charger les catégories pour la source #${s.id}.`, e);
-            catsMap[s.id] = [];
-          }
-        })
-      );
+      const BATCH_SIZE = 5;
+      for (let i = 0; i < sources.length; i += BATCH_SIZE) {
+        const batch = sources.slice(i, i + BATCH_SIZE).filter((s) => s?.id);
+        await Promise.allSettled(
+          batch.map(async (s) => {
+            try {
+              const mappings = await apiGet(`/api/sources/${s.id}/category-mappings`);
+              catsMap[s.id] = (Array.isArray(mappings) ? mappings : []).map((mapping) => ({
+                id: Number(mapping?.catId),
+                unifiedKey: normalizeCategoryGroupKey(mapping?.groupKey || mapping?.unifiedKey),
+                unifiedLabel:
+                  mapping?.groupLabel ||
+                  mapping?.unifiedLabel ||
+                  CATEGORY_GROUP_LABELS[normalizeCategoryGroupKey(mapping?.groupKey || mapping?.unifiedKey)] ||
+                  "",
+                name:
+                  mapping?.groupLabel ||
+                  mapping?.unifiedLabel ||
+                  CATEGORY_GROUP_LABELS[normalizeCategoryGroupKey(mapping?.groupKey || mapping?.unifiedKey)] ||
+                  "",
+              }));
+            } catch (e) {
+              console.error(`[Indexers] Impossible de charger les catégories pour la source #${s.id}.`, e);
+              catsMap[s.id] = [];
+            }
+          })
+        );
+      }
       setCategoriesById(catsMap);
     } catch (e) {
       setErr(e?.message || "Erreur chargement sources");

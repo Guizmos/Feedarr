@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { apiGet } from "../api/client.js";
+import usePolling from "./usePolling.js";
 import { normalizeRequestMode } from "../utils/appTypes.js";
 
 /**
@@ -12,7 +13,6 @@ export default function useArrApps({ pollMs = 60000 } = {}) {
   const [apps, setApps] = useState([]);
   const [integrationMode, setIntegrationMode] = useState("arr");
   const [loading, setLoading] = useState(true);
-  const timer = useRef(null);
   const refreshInFlight = useRef(false);
 
   const refresh = useCallback(async () => {
@@ -38,13 +38,7 @@ export default function useArrApps({ pollMs = 60000 } = {}) {
     }
   }, []);
 
-  useEffect(() => {
-    refresh();
-    if (pollMs > 0) {
-      timer.current = setInterval(refresh, pollMs);
-      return () => timer.current && clearInterval(timer.current);
-    }
-  }, [refresh, pollMs]);
+  usePolling(refresh, pollMs, pollMs > 0);
 
   // Filter apps by type that are enabled AND have API key
   const sonarrApps = apps.filter(

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, resolveApiUrl } from "../api/client.js";
+import usePolling from "./usePolling.js";
 
 const ACTIVITY_LAST_SEEN_KEY = "feedarr:lastSeen:activity";
 const RELEASES_LAST_SEEN_KEY = "feedarr:lastSeen:releases";
@@ -73,7 +74,6 @@ export default function useBadges({
     latestUpdateTag: "",
     tasks: [],
   });
-  const timer = useRef(null);
   const [sseConnected, setSseConnected] = useState(false);
 
   function parseTs(value) {
@@ -329,11 +329,7 @@ export default function useBadges({
     return base;
   }, [pollMs, sseConnected]);
 
-  useEffect(() => {
-    refresh();
-    timer.current = setInterval(refresh, effectivePollMs);
-    return () => timer.current && clearInterval(timer.current);
-  }, [refresh, effectivePollMs]);
+  usePolling(refresh, effectivePollMs);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof EventSource === "undefined") return;

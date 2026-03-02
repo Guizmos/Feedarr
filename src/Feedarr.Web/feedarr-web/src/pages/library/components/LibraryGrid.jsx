@@ -1,10 +1,10 @@
-import React from "react";
+import React, { useMemo } from "react";
 import PosterCard from "../../../ui/PosterCard.jsx";
 
 /**
  * Vue grille de la bibliothèque (cartes poster)
  */
-export default function LibraryGrid({
+function LibraryGrid({
   items,
   onDownload,
   onOpen,
@@ -20,12 +20,16 @@ export default function LibraryGrid({
   integrationMode,
   cardSize,
 }) {
-  const gridStyle = cardSize
-    ? {
-        gridTemplateColumns: `repeat(auto-fill, minmax(${Math.round(cardSize)}px, 1fr))`,
-        '--card-scale': cardSize / 190,
-      }
-    : undefined;
+  const gridStyle = useMemo(
+    () =>
+      cardSize
+        ? {
+            gridTemplateColumns: `repeat(auto-fill, minmax(${Math.round(cardSize)}px, 1fr))`,
+            '--card-scale': cardSize / 190,
+          }
+        : undefined,
+    [cardSize]
+  );
 
   return (
     <div className="grid" style={gridStyle}>
@@ -51,3 +55,5 @@ export default function LibraryGrid({
     </div>
   );
 }
+
+export default React.memo(LibraryGrid);

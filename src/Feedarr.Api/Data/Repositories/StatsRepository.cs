@@ -97,8 +97,7 @@ public sealed class StatsRepository : IProviderStatsStore
         System.Data.IDbTransaction tx,
         CommandDefinition command)
     {
-        await conn.ExecuteAsync(command);
-        tx.Commit();
+        await conn.ExecuteAsync(command).ConfigureAwait(false);        tx.Commit();
         _cache.Remove(GetAllCacheKey);
     }
 

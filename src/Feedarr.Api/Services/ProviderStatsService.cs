@@ -172,8 +172,7 @@ public sealed class ProviderStatsService
             if (batch.Count == 0)
                 return 0;
 
-            await _store.IncrementProviderStatsBatchAsync(batch, ct);
-
+            await _store.IncrementProviderStatsBatchAsync(batch, ct).ConfigureAwait(false);
             foreach (var row in batch)
             {
                 if (_counters.TryGetValue(row.Key, out var state))

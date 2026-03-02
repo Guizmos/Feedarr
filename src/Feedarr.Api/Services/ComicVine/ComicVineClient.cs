@@ -47,8 +47,7 @@ public sealed class ComicVineClient
             return false;
 
         var endpoint = BuildSearchEndpoint(apiKey, "batman");
-        using var resp = await GetTrackedAsync(endpoint, ct);
-        return resp.IsSuccessStatusCode;
+        using var resp = await GetTrackedAsync(endpoint, ct).ConfigureAwait(false);        return resp.IsSuccessStatusCode;
     }
 
     public async Task<ComicResult?> SearchComicAsync(string title, int? year, CancellationToken ct)
@@ -62,13 +61,11 @@ public sealed class ComicVineClient
             return null;
 
         var endpoint = BuildSearchEndpoint(apiKey, query);
-        using var resp = await GetTrackedAsync(endpoint, ct);
-        if (!resp.IsSuccessStatusCode)
+        using var resp = await GetTrackedAsync(endpoint, ct).ConfigureAwait(false);        if (!resp.IsSuccessStatusCode)
             return null;
 
         await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-        var payload = await JsonSerializer.DeserializeAsync<ComicVineSearchResponse>(stream, JsonOpts, ct);
-        if (payload?.Results is null || payload.Results.Count == 0)
+        var payload = await JsonSerializer.DeserializeAsync<ComicVineSearchResponse>(stream, JsonOpts, ct).ConfigureAwait(false);        if (payload?.Results is null || payload.Results.Count == 0)
             return null;
 
         var best = payload.Results
@@ -94,12 +91,10 @@ public sealed class ComicVineClient
         if (string.IsNullOrWhiteSpace(normalized))
             return null;
 
-        using var resp = await GetTrackedAsync(normalized, ct);
-        if (!resp.IsSuccessStatusCode)
+        using var resp = await GetTrackedAsync(normalized, ct).ConfigureAwait(false);        if (!resp.IsSuccessStatusCode)
             return null;
 
-        return await resp.Content.ReadAsByteArrayAsync(ct);
-    }
+        return await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);    }
 
     private string? ResolveCreds()
     {
@@ -202,8 +197,7 @@ public sealed class ComicVineClient
         {
             using var req = new HttpRequestMessage(HttpMethod.Get, endpoint);
             req.Headers.UserAgent.ParseAdd(UserAgent);
-            var resp = await _http.SendAsync(req, ct);
-            _stats.RecordExternal(ExternalProviderKeys.ComicVine, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+            var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);            _stats.RecordExternal(ExternalProviderKeys.ComicVine, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
             return resp;
         }
         catch

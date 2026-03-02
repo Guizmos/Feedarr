@@ -84,19 +84,16 @@ public sealed class TorznabClient
         var req = requestFactory();
         try
         {
-            response = await _http.SendAsync(req, ct);
-            return response;
+            response = await _http.SendAsync(req, ct).ConfigureAwait(false);            return response;
         }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)
         {
             req.Dispose();
             response?.Dispose();
-            await Task.Delay(500, ct);
-            var retryReq = requestFactory();
+            await Task.Delay(500, ct).ConfigureAwait(false);            var retryReq = requestFactory();
             try
             {
-                return await _http.SendAsync(retryReq, ct);
-            }
+                return await _http.SendAsync(retryReq, ct).ConfigureAwait(false);            }
             catch
             {
                 retryReq.Dispose();
@@ -122,17 +119,13 @@ public sealed class TorznabClient
 
         var url = BuildUrl(torznabUrl, authMode, apiKey, new() { ["t"] = "caps" });
 
-        using var resp = await SendWithRetryAsync(() => BuildReq(url, authMode, apiKey), ct);
-        await EnsureSuccessOrLogAsync(resp, ct);
-
-        return await resp.Content.ReadAsStringAsync(ct);
-    }
+        using var resp = await SendWithRetryAsync(() => BuildReq(url, authMode, apiKey), ct).ConfigureAwait(false);        await EnsureSuccessOrLogAsync(resp, ct).ConfigureAwait(false);
+        return await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);    }
 
     public async Task<List<(int id, string name, bool isSub, int? parentId)>> FetchCapsAsync(
         string torznabUrl, string authMode, string apiKey, CancellationToken ct)
     {
-        var xml = await FetchCapsRawAsync(torznabUrl, authMode, apiKey, ct);
-
+        var xml = await FetchCapsRawAsync(torznabUrl, authMode, apiKey, ct).ConfigureAwait(false);
         var doc = XmlSecureParser.Parse(xml);
         var cats = new List<(int, string, bool, int?)>();
 
@@ -209,11 +202,8 @@ public sealed class TorznabClient
 
             try
             {
-                using var resp = await SendWithRetryAsync(() => BuildReq(url, authMode, apiKey), ct);
-                await EnsureSuccessOrLogAsync(resp, ct);
-
-                var xml = await resp.Content.ReadAsStringAsync(ct);
-                var items = _parser.Parse(xml);
+                using var resp = await SendWithRetryAsync(() => BuildReq(url, authMode, apiKey), ct).ConfigureAwait(false);                await EnsureSuccessOrLogAsync(resp, ct).ConfigureAwait(false);
+                var xml = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);                var items = _parser.Parse(xml);
 
                 if (items.Count > 0)
                     return (items, mode);
@@ -262,14 +252,10 @@ public sealed class TorznabClient
             var url = BuildUrl(torznabUrl, authMode, apiKey, query);
             if (_log.IsEnabled(LogLevel.Debug))
                 _log.LogDebug("CategoryPreview url={Url} catId={CatId} q={Q}", SensitiveUrlSanitizer.Sanitize(url), catId, q);
-            using var resp = await SendWithRetryAsync(() => BuildReq(url, authMode, apiKey), ct);
-            await EnsureSuccessOrLogAsync(resp, ct);
-            var xml = await resp.Content.ReadAsStringAsync(ct);
-            return _parser.Parse(xml);
+            using var resp = await SendWithRetryAsync(() => BuildReq(url, authMode, apiKey), ct).ConfigureAwait(false);            await EnsureSuccessOrLogAsync(resp, ct).ConfigureAwait(false);            var xml = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);            return _parser.Parse(xml);
         }
 
-        var items = await SearchAsync("");
-        if (items.Count == 0)
+        var items = await SearchAsync("").ConfigureAwait(false);        if (items.Count == 0)
             items = await SearchAsync("*"); // some indexers require a non-empty q
 
         _log.LogInformation(
@@ -289,8 +275,7 @@ public sealed class TorznabClient
     {
         if (categoryIds is null || categoryIds.Count == 0)
         {
-            var (items, mode) = await FetchLatestAsync(torznabUrl, authMode, apiKey, limit, ct);
-            return (items, mode, false);
+            var (items, mode) = await FetchLatestAsync(torznabUrl, authMode, apiKey, limit, ct).ConfigureAwait(false);            return (items, mode, false);
         }
 
         // Prowlarr Torznab proxy ALWAYS uses apikey in query
@@ -301,8 +286,7 @@ public sealed class TorznabClient
         var distinctIds = categoryIds.Where(id => id > 0).Distinct().ToArray();
         if (distinctIds.Length == 0)
         {
-            var (items, mode) = await FetchLatestAsync(torznabUrl, authMode, apiKey, limit, ct);
-            return (items, mode, false);
+            var (items, mode) = await FetchLatestAsync(torznabUrl, authMode, apiKey, limit, ct).ConfigureAwait(false);            return (items, mode, false);
         }
 
         async Task<List<TorznabItem>> TrySearchAsync(string? searchQuery, string? cat)
@@ -319,11 +303,8 @@ public sealed class TorznabClient
             var url = BuildUrl(torznabUrl, authMode, apiKey, query);
             if (_log.IsEnabled(LogLevel.Debug))
                 _log.LogDebug("Torznab search url={Url} cat={Cat} q={Query}", SensitiveUrlSanitizer.Sanitize(url), cat ?? "-", searchQuery ?? "");
-            using var resp = await SendWithRetryAsync(() => BuildReq(url, authMode, apiKey), ct);
-            await EnsureSuccessOrLogAsync(resp, ct);
-
-            var xml = await resp.Content.ReadAsStringAsync(ct);
-            return _parser.Parse(xml);
+            using var resp = await SendWithRetryAsync(() => BuildReq(url, authMode, apiKey), ct).ConfigureAwait(false);            await EnsureSuccessOrLogAsync(resp, ct).ConfigureAwait(false);
+            var xml = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);            return _parser.Parse(xml);
         }
 
         static string GetMergeKey(TorznabItem it)
@@ -432,8 +413,7 @@ public sealed class TorznabClient
         {
             try
             {
-                var items = await TrySearchAsync("", catList);
-                if (items.Count == 0)
+                var items = await TrySearchAsync("", catList).ConfigureAwait(false);                if (items.Count == 0)
                     items = await TrySearchAsync("*", catList); // fallback for indexers needing a wildcard
 
                 if (items.Count > 0)
@@ -458,10 +438,8 @@ public sealed class TorznabClient
         foreach (var catId in distinctIds)
         {
             var before = merged.Count;
-            var catItems = await TrySearchAsync("", catId.ToString());
-            if (catItems.Count == 0)
-                catItems = await TrySearchAsync("*", catId.ToString());
-
+            var catItems = await TrySearchAsync("", catId.ToString()).ConfigureAwait(false);            if (catItems.Count == 0)
+                catItems = await TrySearchAsync("*", catId.ToString()).ConfigureAwait(false);
             foreach (var it in catItems)
                 MergeItem(merged, it, catId);
 
@@ -510,7 +488,6 @@ public sealed class TorznabClient
         if (merged.Count > 0)
             return (finalItems, modeUsed, usedAggregated);
 
-        var (fallbackItems, fallbackMode) = await FetchLatestAsync(torznabUrl, authMode, apiKey, limit, ct);
-        return (fallbackItems, fallbackMode, false);
+        var (fallbackItems, fallbackMode) = await FetchLatestAsync(torznabUrl, authMode, apiKey, limit, ct).ConfigureAwait(false);        return (fallbackItems, fallbackMode, false);
     }
 }

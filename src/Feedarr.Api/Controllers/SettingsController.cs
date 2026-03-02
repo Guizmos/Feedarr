@@ -187,6 +187,7 @@ public sealed class SettingsController : ControllerBase
             MediaInfoLanguage = mediaInfoLanguage,
             HideSeenByDefault = dto.HideSeenByDefault,
             ShowCategories = dto.ShowCategories,
+            ShowTop24DedupeControl = dto.ShowTop24DedupeControl,
             EnableMissingPosterView = dto.EnableMissingPosterView,
             DefaultView = view,
             DefaultSort = sort,

@@ -109,6 +109,8 @@ public sealed class SettingsRepository
                 defaults.MediaInfoLanguage = UiLanguageCatalog.NormalizeMediaInfoLanguage(loaded.MediaInfoLanguage);
             defaults.HideSeenByDefault = loaded.HideSeenByDefault;
             defaults.ShowCategories = loaded.ShowCategories;
+            if (json.Contains("showTop24DedupeControl", StringComparison.OrdinalIgnoreCase))
+                defaults.ShowTop24DedupeControl = loaded.ShowTop24DedupeControl;
             if (json.Contains("enableMissingPosterView", StringComparison.OrdinalIgnoreCase))
                 defaults.EnableMissingPosterView = loaded.EnableMissingPosterView;
             defaults.DefaultView = string.IsNullOrWhiteSpace(loaded.DefaultView) ? defaults.DefaultView : loaded.DefaultView;

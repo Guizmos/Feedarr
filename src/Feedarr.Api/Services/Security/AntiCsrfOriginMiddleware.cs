@@ -29,14 +29,12 @@ public sealed class AntiCsrfOriginMiddleware
         var request = context.Request;
         if (IsExemptPath(request.Path.Value))
         {
-            await _next(context);
-            return;
+            await _next(context).ConfigureAwait(false);            return;
         }
 
         if (RequestForgeryProtection.IsSafeMethod(request.Method))
         {
-            await _next(context);
-            return;
+            await _next(context).ConfigureAwait(false);            return;
         }
 
         var hasOrigin = request.Headers.TryGetValue("Origin", out var originValues) &&
@@ -46,14 +44,12 @@ public sealed class AntiCsrfOriginMiddleware
             var origin = originValues.ToString().Trim();
             if (IsSameOrigin(request, origin))
             {
-                await _next(context);
-                return;
+                await _next(context).ConfigureAwait(false);                return;
             }
 
             if (RequestForgeryProtection.IsAllowedOrigin(request, configuration, origin))
             {
-                await _next(context);
-                return;
+                await _next(context).ConfigureAwait(false);                return;
             }
 
             log.LogWarning(
@@ -63,8 +59,7 @@ public sealed class AntiCsrfOriginMiddleware
                 context.Request.Host,
                 context.Request.Headers["X-Forwarded-Proto"].ToString(),
                 context.Request.Headers["X-Forwarded-Host"].ToString());
-            await RejectAsync(context, log, "origin_not_allowed", origin);
-            return;
+            await RejectAsync(context, log, "origin_not_allowed", origin).ConfigureAwait(false);            return;
         }
 
         var hasReferer = request.Headers.TryGetValue("Referer", out var refererValues) &&
@@ -76,23 +71,19 @@ public sealed class AntiCsrfOriginMiddleware
                 (IsSameOrigin(request, refererOrigin) ||
                  RequestForgeryProtection.IsAllowedOrigin(request, configuration, refererOrigin)))
                 {
-                    await _next(context);
-                    return;
+                    await _next(context).ConfigureAwait(false);                    return;
                 }
 
-            await RejectAsync(context, log, "referer_not_allowed", referer);
-            return;
+            await RejectAsync(context, log, "referer_not_allowed", referer).ConfigureAwait(false);            return;
         }
 
         if (!RequestForgeryProtection.RequireExplicitHeaderForUnsafeMethods(configuration) ||
             RequestForgeryProtection.HasTrustedNonBrowserHeader(request.Headers))
         {
-            await _next(context);
-            return;
+            await _next(context).ConfigureAwait(false);            return;
         }
 
-        await RejectAsync(context, log, "trusted_request_header_missing", null);
-    }
+        await RejectAsync(context, log, "trusted_request_header_missing", null).ConfigureAwait(false);    }
 
     private static Task RejectAsync(HttpContext context, ILogger log, string reason, string? candidate)
     {

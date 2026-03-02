@@ -169,8 +169,7 @@ public sealed class SyncOrchestrationService
             var usedAggregated = false;
 
             _log.LogInformation("RSS fetch start [{Name}] url={Url} limit={Limit}", name, SensitiveUrlSanitizer.Sanitize(url), perCatLimit);
-            var rssRes = await _torznab.FetchLatestAsync(url, mode, key, perCatLimit, syncCt, allowSearch: false);
-            var rssItems = rssRes.items;
+            var rssRes = await _torznab.FetchLatestAsync(url, mode, key, perCatLimit, syncCt, allowSearch: false).ConfigureAwait(false);            var rssItems = rssRes.items;
             usedMode = rssRes.usedMode;
             _log.LogInformation(
                 "RSS fetch done [{Name}] mode={Mode} itemsCount={Count} cats={Cats} unifiedKeys={UnifiedKeys}",
@@ -201,8 +200,7 @@ public sealed class SyncOrchestrationService
                             "Torznab fallback start [{Name}] catIds={CatIds}",
                             name,
                             string.Join(",", fallbackCats.OrderBy(x => x)));
-                        var fallback = await _torznab.FetchLatestByCategoriesAsync(url, mode, key, perCatLimit, fallbackCats, syncCt);
-                        fallbackMode = fallback.usedMode;
+                        var fallback = await _torznab.FetchLatestByCategoriesAsync(url, mode, key, perCatLimit, fallbackCats, syncCt).ConfigureAwait(false);                        fallbackMode = fallback.usedMode;
                         usedAggregated = fallback.usedAggregated;
                         _log.LogInformation(
                             "Torznab fallback done [{Name}] itemsCount={Count} cats={Cats}",

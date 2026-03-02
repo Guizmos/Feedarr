@@ -60,8 +60,7 @@ public sealed class MusicBrainzClient
         var sw = Stopwatch.StartNew();
         try
         {
-            using var resp = await _http.GetAsync(url, ct);
-            _stats.RecordExternal(ExternalProviderKeys.MusicBrainz, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+            using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);            _stats.RecordExternal(ExternalProviderKeys.MusicBrainz, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
             return resp.IsSuccessStatusCode;
         }
         catch
@@ -81,8 +80,7 @@ public sealed class MusicBrainzClient
         if (string.IsNullOrWhiteSpace(safeTitle))
             return null;
 
-        var candidates = await SearchReleasesAsync(safeTitle, artist, 5, ct);
-        if (candidates.Count == 0)
+        var candidates = await SearchReleasesAsync(safeTitle, artist, 5, ct).ConfigureAwait(false);        if (candidates.Count == 0)
             return null;
 
         // Score candidates and pick best
@@ -115,8 +113,7 @@ public sealed class MusicBrainzClient
         if (string.IsNullOrWhiteSpace(safeTitle))
             return [];
 
-        return await SearchReleasesAsync(safeTitle, artist, 10, ct);
-    }
+        return await SearchReleasesAsync(safeTitle, artist, 10, ct).ConfigureAwait(false);    }
 
     /// <summary>
     /// Download image bytes from a URL (Cover Art Archive or any URL).
@@ -128,8 +125,7 @@ public sealed class MusicBrainzClient
 
         try
         {
-            var bytes = await _http.GetByteArrayAsync(url, ct);
-            return bytes.Length == 0 ? null : bytes;
+            var bytes = await _http.GetByteArrayAsync(url, ct).ConfigureAwait(false);            return bytes.Length == 0 ? null : bytes;
         }
         catch
         {
@@ -153,15 +149,13 @@ public sealed class MusicBrainzClient
             if (!string.IsNullOrWhiteSpace(clientId))
                 req.Headers.TryAddWithoutValidation("X-Application", clientId);
 
-            using var resp = await _http.SendAsync(req, ct);
-            _stats.RecordExternal(ExternalProviderKeys.MusicBrainz, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
+            using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);            _stats.RecordExternal(ExternalProviderKeys.MusicBrainz, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
 
             if (!resp.IsSuccessStatusCode)
                 return [];
 
             await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-            response = await JsonSerializer.DeserializeAsync<MbReleaseSearchResponse>(stream, JsonOpts, ct);
-        }
+            response = await JsonSerializer.DeserializeAsync<MbReleaseSearchResponse>(stream, JsonOpts, ct).ConfigureAwait(false);        }
         catch
         {
             _stats.RecordExternal(ExternalProviderKeys.MusicBrainz, false, sw.ElapsedMilliseconds);
@@ -186,8 +180,7 @@ public sealed class MusicBrainzClient
             var releaseDate = release.Date ?? release.FirstReleaseDate;
 
             // Fetch cover from CAA (may be null if no artwork exists)
-            var coverUrl = await FetchCoverUrlAsync(mbid, ct);
-
+            var coverUrl = await FetchCoverUrlAsync(mbid, ct).ConfigureAwait(false);
             results.Add(new MusicResult(mbid, releaseTitle, artistName, releaseDate, coverUrl));
         }
 
@@ -200,13 +193,11 @@ public sealed class MusicBrainzClient
         var url = $"{CaaBaseUrl}release/{mbid}/";
         try
         {
-            using var resp = await _http.GetAsync(url, ct);
-            if (!resp.IsSuccessStatusCode)
+            using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);            if (!resp.IsSuccessStatusCode)
                 return null;
 
             await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-            var caa = await JsonSerializer.DeserializeAsync<CaaResponse>(stream, JsonOpts, ct);
-
+            var caa = await JsonSerializer.DeserializeAsync<CaaResponse>(stream, JsonOpts, ct).ConfigureAwait(false);
             if (caa?.Images is null)
                 return null;
 

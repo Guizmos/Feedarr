@@ -9,18 +9,33 @@ namespace Feedarr.Api.Data;
 public sealed class Db
 {
     private readonly AppOptions _opt;
+    private string? _dbPath;
     private int _walConfigured;
 
     public Db(IOptions<AppOptions> opt) => _opt = opt.Value;
 
-    public string DbPath => Path.Combine(_opt.DataDir, _opt.DbFileName);
+    public string DbPath => _dbPath ??= Path.Combine(_opt.DataDir, _opt.DbFileName);
 
     public SqliteConnection Open()
     {
         var conn = OpenRawConnection();
-        conn.Execute("PRAGMA foreign_keys=ON;");
-        conn.Execute("PRAGMA busy_timeout=5000;");
+        try
+        {
+            conn.Execute("PRAGMA foreign_keys=ON;");
+            conn.Execute("PRAGMA busy_timeout=5000;");
+            return conn;
+        }
+        catch
+        {
+            conn.Dispose();
+            throw;
+        }
+    }
 
+    internal SqliteConnection OpenNoFk()
+    {
+        var conn = OpenRawConnection();
+        conn.Execute("PRAGMA busy_timeout=5000;");
         return conn;
     }
 
@@ -40,9 +55,9 @@ public sealed class Db
         var cs = new SqliteConnectionStringBuilder
         {
             DataSource = DbPath,
-            ForeignKeys = true,
             Mode = SqliteOpenMode.ReadWriteCreate,
-            Cache = SqliteCacheMode.Shared
+            Cache = SqliteCacheMode.Shared,
+            Pooling = true,
         }.ToString();
 
         var conn = new SqliteConnection(cs);

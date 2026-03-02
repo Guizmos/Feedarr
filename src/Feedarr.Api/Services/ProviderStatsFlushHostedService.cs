@@ -34,8 +34,7 @@ public sealed class ProviderStatsFlushHostedService : BackgroundService
         {
             while (await timer.WaitForNextTickAsync(stoppingToken))
             {
-                await FlushOnceAsync(stoppingToken);
-            }
+                await FlushOnceAsync(stoppingToken).ConfigureAwait(false);            }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
@@ -44,22 +43,19 @@ public sealed class ProviderStatsFlushHostedService : BackgroundService
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
-        await base.StopAsync(cancellationToken);
-
+        await base.StopAsync(cancellationToken).ConfigureAwait(false);
         if (!_options.EnableFlush)
             return;
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
-        await FlushOnceAsync(timeoutCts.Token);
-    }
+        await FlushOnceAsync(timeoutCts.Token).ConfigureAwait(false);    }
 
     private async Task FlushOnceAsync(CancellationToken ct)
     {
         try
         {
-            await _stats.FlushAsync(ct);
-            Volatile.Write(ref _lastFailureLogTicks, 0);
+            await _stats.FlushAsync(ct).ConfigureAwait(false);            Volatile.Write(ref _lastFailureLogTicks, 0);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

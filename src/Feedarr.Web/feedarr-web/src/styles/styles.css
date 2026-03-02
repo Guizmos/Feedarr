@@ -1755,6 +1755,8 @@ html.display-mode-standalone body {
 .top24-subbar-content{
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   width: 100%;
 }
 

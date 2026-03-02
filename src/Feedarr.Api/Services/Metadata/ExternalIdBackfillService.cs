@@ -48,8 +48,7 @@ public sealed class ExternalIdBackfillService
 
             if (!tmdbByTvdb.TryGetValue(tvdbId, out var tmdbId))
             {
-                tmdbId = await TryResolveTmdbFromTvdbAsync(tvdbId, ct);
-                tmdbByTvdb[tvdbId] = tmdbId;
+                tmdbId = await TryResolveTmdbFromTvdbAsync(tvdbId, ct).ConfigureAwait(false);                tmdbByTvdb[tvdbId] = tmdbId;
             }
 
             if (tmdbId.HasValue && tmdbId.Value > 0)
@@ -68,8 +67,7 @@ public sealed class ExternalIdBackfillService
 
             if (!tvdbByTmdb.TryGetValue(tmdbId, out var tvdbId))
             {
-                tvdbId = await TryResolveTvdbFromTmdbAsync(tmdbId, ct);
-                tvdbByTmdb[tmdbId] = tvdbId;
+                tvdbId = await TryResolveTvdbFromTmdbAsync(tmdbId, ct).ConfigureAwait(false);                tvdbByTmdb[tmdbId] = tvdbId;
             }
 
             if (tvdbId.HasValue && tvdbId.Value > 0)
@@ -92,8 +90,7 @@ public sealed class ExternalIdBackfillService
     {
         try
         {
-            return await _tmdb.GetTvTmdbIdByTvdbIdAsync(tvdbId, ct);
-        }
+            return await _tmdb.GetTvTmdbIdByTvdbIdAsync(tvdbId, ct).ConfigureAwait(false);        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Series external-id backfill failed tvdb->tmdb for tvdbId={TvdbId}", tvdbId);
@@ -105,8 +102,7 @@ public sealed class ExternalIdBackfillService
     {
         try
         {
-            return await _tmdb.GetTvdbIdAsync(tmdbId, ct);
-        }
+            return await _tmdb.GetTvdbIdAsync(tmdbId, ct).ConfigureAwait(false);        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Series external-id backfill failed tmdb->tvdb for tmdbId={TmdbId}", tmdbId);

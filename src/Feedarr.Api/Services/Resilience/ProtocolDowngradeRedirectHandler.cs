@@ -25,8 +25,7 @@ internal sealed class ProtocolDowngradeRedirectHandler : DelegatingHandler
         HttpRequestMessage request, CancellationToken ct)
     {
         var currentRequest = request;
-        var response = await base.SendAsync(currentRequest, ct);
-
+        var response = await base.SendAsync(currentRequest, ct).ConfigureAwait(false);
         for (var i = 0; i < MaxRedirects; i++)
         {
             var sc = (int)response.StatusCode;
@@ -56,15 +55,13 @@ internal sealed class ProtocolDowngradeRedirectHandler : DelegatingHandler
                 return response;
             }
 
-            var redirectRequest = await BuildRedirectRequestAsync(currentRequest, redirectUri, ct);
-
+            var redirectRequest = await BuildRedirectRequestAsync(currentRequest, redirectUri, ct).ConfigureAwait(false);
             response.Dispose();
             if (!ReferenceEquals(currentRequest, request))
                 currentRequest.Dispose();
 
             currentRequest = redirectRequest;
-            response = await base.SendAsync(currentRequest, ct);
-        }
+            response = await base.SendAsync(currentRequest, ct).ConfigureAwait(false);        }
 
         return response;
     }
@@ -113,8 +110,7 @@ internal sealed class ProtocolDowngradeRedirectHandler : DelegatingHandler
 
         if (source.Content is not null)
         {
-            var contentBytes = await source.Content.ReadAsByteArrayAsync(ct);
-            var content = new ByteArrayContent(contentBytes);
+            var contentBytes = await source.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);            var content = new ByteArrayContent(contentBytes);
             foreach (var header in source.Content.Headers)
             {
                 content.Headers.TryAddWithoutValidation(header.Key, header.Value);

@@ -137,8 +137,7 @@ public sealed class ArrLibraryCacheService : IDisposable
 
             try
             {
-                var series = await _sonarr.GetAllSeriesAsync(app.BaseUrl, app.ApiKeyEncrypted, ct);
-                var expiresAt = DateTimeOffset.UtcNow.Add(CacheTtl);
+                var series = await _sonarr.GetAllSeriesAsync(app.BaseUrl, app.ApiKeyEncrypted, ct).ConfigureAwait(false);                var expiresAt = DateTimeOffset.UtcNow.Add(CacheTtl);
 
                 // Evict all title entries before repopulating to avoid stale keys
                 _sonarrTitleCache.Compact(1.0);
@@ -197,8 +196,7 @@ public sealed class ArrLibraryCacheService : IDisposable
 
             try
             {
-                var movies = await _radarr.GetAllMoviesAsync(app.BaseUrl, app.ApiKeyEncrypted, ct);
-                var expiresAt = DateTimeOffset.UtcNow.Add(CacheTtl);
+                var movies = await _radarr.GetAllMoviesAsync(app.BaseUrl, app.ApiKeyEncrypted, ct).ConfigureAwait(false);                var expiresAt = DateTimeOffset.UtcNow.Add(CacheTtl);
 
                 _radarrTitleCache.Compact(1.0);
 
@@ -325,8 +323,7 @@ public sealed class ArrLibraryCacheService : IDisposable
 
         if (IsSonarrCacheStale())
         {
-            await RefreshSonarrCacheAsync(ct);
-            return CheckSonarrExists(tvdbId);
+            await RefreshSonarrCacheAsync(ct).ConfigureAwait(false);            return CheckSonarrExists(tvdbId);
         }
 
         return (false, null, null);
@@ -340,8 +337,7 @@ public sealed class ArrLibraryCacheService : IDisposable
 
         if (IsRadarrCacheStale())
         {
-            await RefreshRadarrCacheAsync(ct);
-            return CheckRadarrExists(tmdbId);
+            await RefreshRadarrCacheAsync(ct).ConfigureAwait(false);            return CheckRadarrExists(tmdbId);
         }
 
         return (false, null, null);
@@ -350,14 +346,12 @@ public sealed class ArrLibraryCacheService : IDisposable
     public async Task EnsureSonarrCacheFreshAsync(CancellationToken ct)
     {
         if (IsSonarrCacheStale())
-            await RefreshSonarrCacheAsync(ct);
-    }
+            await RefreshSonarrCacheAsync(ct).ConfigureAwait(false);    }
 
     public async Task EnsureRadarrCacheFreshAsync(CancellationToken ct)
     {
         if (IsRadarrCacheStale())
-            await RefreshRadarrCacheAsync(ct);
-    }
+            await RefreshRadarrCacheAsync(ct).ConfigureAwait(false);    }
 
     public void AddToSonarrCache(int tvdbId, int seriesId, string titleSlug, string baseUrl)
     {

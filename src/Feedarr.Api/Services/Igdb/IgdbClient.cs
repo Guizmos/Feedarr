@@ -71,8 +71,7 @@ public sealed class IgdbClient
         if (!string.IsNullOrWhiteSpace(cachedToken) && _tokenExpiresAt > DateTimeOffset.UtcNow.AddMinutes(2))
             return cachedToken;
 
-        await _tokenSemaphore.WaitAsync(ct);
-        try
+        await _tokenSemaphore.WaitAsync(ct).ConfigureAwait(false);        try
         {
             // Double-check after acquiring semaphore
             if (!string.IsNullOrWhiteSpace(_token) && _tokenExpiresAt > DateTimeOffset.UtcNow.AddMinutes(2))
@@ -93,15 +92,13 @@ public sealed class IgdbClient
 
             try
             {
-                using var resp = await _http.PostAsync(tokenUrl, tokenForm, ct);
-                var ok = resp.IsSuccessStatusCode;
+                using var resp = await _http.PostAsync(tokenUrl, tokenForm, ct).ConfigureAwait(false);                var ok = resp.IsSuccessStatusCode;
                 _stats.RecordIgdb(ok, sw.ElapsedMilliseconds);
                 recorded = true;
                 if (!ok) return null;
 
                 await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-                var data = await JsonSerializer.DeserializeAsync<TokenResponse>(stream, JsonOpts, ct);
-                if (data is null || string.IsNullOrWhiteSpace(data.AccessToken)) return null;
+                var data = await JsonSerializer.DeserializeAsync<TokenResponse>(stream, JsonOpts, ct).ConfigureAwait(false);                if (data is null || string.IsNullOrWhiteSpace(data.AccessToken)) return null;
 
                 _token = data.AccessToken;
                 _tokenExpiresAt = DateTimeOffset.UtcNow.AddSeconds(Math.Max(60, data.ExpiresIn));
@@ -123,8 +120,7 @@ public sealed class IgdbClient
 
     public async Task<bool> TestCredsAsync(CancellationToken ct)
     {
-        var token = await GetTokenAsync(ct);
-        return !string.IsNullOrWhiteSpace(token);
+        var token = await GetTokenAsync(ct).ConfigureAwait(false);        return !string.IsNullOrWhiteSpace(token);
     }
 
     public async Task<(int igdbId, string coverUrl)?> SearchGameCoverAsync(string title, int? year, CancellationToken ct)
@@ -132,8 +128,7 @@ public sealed class IgdbClient
         var creds = GetCreds();
         if (creds is null) return null;
 
-        var token = await GetTokenAsync(ct);
-        if (string.IsNullOrWhiteSpace(token)) return null;
+        var token = await GetTokenAsync(ct).ConfigureAwait(false);        if (string.IsNullOrWhiteSpace(token)) return null;
 
         title = CleanQuery(title);
         if (string.IsNullOrWhiteSpace(title)) return null;
@@ -156,14 +151,12 @@ public sealed class IgdbClient
         req.Headers.Add("Authorization", $"Bearer {token}");
 
         var sw = Stopwatch.StartNew();
-        using var resp = await _http.SendAsync(req, ct);
-        var ok = resp.IsSuccessStatusCode;
+        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);        var ok = resp.IsSuccessStatusCode;
         _stats.RecordIgdb(ok, sw.ElapsedMilliseconds);
         if (!ok) { ThrowIfRateLimited(resp); return null; }
 
         await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-        var data = await JsonSerializer.DeserializeAsync<List<GameItem>>(stream, JsonOpts, ct);
-        var best = data?.FirstOrDefault(x => x.Id > 0 && !string.IsNullOrWhiteSpace(x.Cover?.Url));
+        var data = await JsonSerializer.DeserializeAsync<List<GameItem>>(stream, JsonOpts, ct).ConfigureAwait(false);        var best = data?.FirstOrDefault(x => x.Id > 0 && !string.IsNullOrWhiteSpace(x.Cover?.Url));
         if (best is null) return null;
 
         var url = NormalizeCoverUrl(best.Cover!.Url!);
@@ -180,8 +173,7 @@ public sealed class IgdbClient
         var creds = GetCreds();
         if (creds is null) return new List<(int, string, int?, string)>();
 
-        var token = await GetTokenAsync(ct);
-        if (string.IsNullOrWhiteSpace(token)) return new List<(int, string, int?, string)>();
+        var token = await GetTokenAsync(ct).ConfigureAwait(false);        if (string.IsNullOrWhiteSpace(token)) return new List<(int, string, int?, string)>();
 
         title = CleanQuery(title);
         if (string.IsNullOrWhiteSpace(title)) return new List<(int, string, int?, string)>();
@@ -204,14 +196,12 @@ public sealed class IgdbClient
         req.Headers.Add("Authorization", $"Bearer {token}");
 
         var sw = Stopwatch.StartNew();
-        using var resp = await _http.SendAsync(req, ct);
-        var ok = resp.IsSuccessStatusCode;
+        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);        var ok = resp.IsSuccessStatusCode;
         _stats.RecordIgdb(ok, sw.ElapsedMilliseconds);
         if (!ok) return new List<(int, string, int?, string)>();
 
         await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-        var data = await JsonSerializer.DeserializeAsync<List<GameItem>>(stream, JsonOpts, ct);
-        if (data is null || data.Count == 0) return new List<(int, string, int?, string)>();
+        var data = await JsonSerializer.DeserializeAsync<List<GameItem>>(stream, JsonOpts, ct).ConfigureAwait(false);        if (data is null || data.Count == 0) return new List<(int, string, int?, string)>();
 
         var results = new List<(int, string, int?, string)>();
         foreach (var item in data)
@@ -241,8 +231,7 @@ public sealed class IgdbClient
         if (creds is null) return null;
         if (igdbId <= 0) return null;
 
-        var token = await GetTokenAsync(ct);
-        if (string.IsNullOrWhiteSpace(token)) return null;
+        var token = await GetTokenAsync(ct).ConfigureAwait(false);        if (string.IsNullOrWhiteSpace(token)) return null;
 
         var body = $"fields id,name,summary,first_release_date,genres.name,total_rating,total_rating_count,url; where id = {igdbId}; limit 1;";
 
@@ -254,14 +243,12 @@ public sealed class IgdbClient
         req.Headers.Add("Authorization", $"Bearer {token}");
 
         var sw = Stopwatch.StartNew();
-        using var resp = await _http.SendAsync(req, ct);
-        var ok = resp.IsSuccessStatusCode;
+        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);        var ok = resp.IsSuccessStatusCode;
         _stats.RecordIgdb(ok, sw.ElapsedMilliseconds);
         if (!ok) { ThrowIfRateLimited(resp); return null; }
 
         await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-        var data = await JsonSerializer.DeserializeAsync<List<GameDetailsItem>>(stream, JsonOpts, ct);
-        var best = data?.FirstOrDefault(x => x.Id == igdbId);
+        var data = await JsonSerializer.DeserializeAsync<List<GameDetailsItem>>(stream, JsonOpts, ct).ConfigureAwait(false);        var best = data?.FirstOrDefault(x => x.Id == igdbId);
         if (best is null) return null;
 
         string? releaseDate = null;
@@ -295,13 +282,11 @@ public sealed class IgdbClient
 
         try
         {
-            using var resp = await _http.GetAsync(norm, ct);
-            var ok = resp.IsSuccessStatusCode;
+            using var resp = await _http.GetAsync(norm, ct).ConfigureAwait(false);            var ok = resp.IsSuccessStatusCode;
             _stats.RecordIgdb(ok, sw.ElapsedMilliseconds);
             recorded = true;
             if (!ok) resp.EnsureSuccessStatusCode();
-            return await resp.Content.ReadAsByteArrayAsync(ct);
-        }
+            return await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);        }
         catch
         {
             if (!recorded)

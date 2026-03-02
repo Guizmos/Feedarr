@@ -53,14 +53,12 @@ public sealed class FanartClient
 
         try
         {
-            using var resp = await _http.GetAsync(relativeUrl, ct);
-            var ok = resp.IsSuccessStatusCode;
+            using var resp = await _http.GetAsync(relativeUrl, ct).ConfigureAwait(false);            var ok = resp.IsSuccessStatusCode;
             _stats.RecordFanart(ok, sw.ElapsedMilliseconds);
             recorded = true;
             if (!ok) return default;
             await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-            return await JsonSerializer.DeserializeAsync<T>(stream, JsonOpts, ct);
-        }
+            return await JsonSerializer.DeserializeAsync<T>(stream, JsonOpts, ct).ConfigureAwait(false);        }
         catch
         {
             if (!recorded)
@@ -80,8 +78,7 @@ public sealed class FanartClient
 
         try
         {
-            using var resp = await _http.GetAsync(url, ct);
-            var ok = resp.IsSuccessStatusCode;
+            using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);            var ok = resp.IsSuccessStatusCode;
             _stats.RecordFanart(ok, sw.ElapsedMilliseconds);
             recorded = true;
             return ok;
@@ -106,8 +103,7 @@ public sealed class FanartClient
         if (string.IsNullOrWhiteSpace(key) || tmdbId <= 0) return null;
 
         var url = $"movies/{tmdbId}?api_key={Uri.EscapeDataString(key)}";
-        var data = await GetJsonAsync<MovieResponse>(url, ct);
-        var posters = data?.MoviePoster;
+        var data = await GetJsonAsync<MovieResponse>(url, ct).ConfigureAwait(false);        var posters = data?.MoviePoster;
         return PickPosterUrl(posters, GetPosterLanguagePriority(), originalLanguage);
     }
 
@@ -117,8 +113,7 @@ public sealed class FanartClient
         if (string.IsNullOrWhiteSpace(key) || tmdbId <= 0) return null;
 
         var url = $"movies/{tmdbId}?api_key={Uri.EscapeDataString(key)}";
-        var data = await GetJsonAsync<MovieResponse>(url, ct);
-        var banners = data?.MovieBanner;
+        var data = await GetJsonAsync<MovieResponse>(url, ct).ConfigureAwait(false);        var banners = data?.MovieBanner;
         return PickPosterUrl(banners, GetPosterLanguagePriority());
     }
 
@@ -128,8 +123,7 @@ public sealed class FanartClient
         if (string.IsNullOrWhiteSpace(key) || tvdbId <= 0) return null;
 
         var url = $"tv/{tvdbId}?api_key={Uri.EscapeDataString(key)}";
-        var data = await GetJsonAsync<TvResponse>(url, ct);
-        var posters = data?.TvPoster;
+        var data = await GetJsonAsync<TvResponse>(url, ct).ConfigureAwait(false);        var posters = data?.TvPoster;
         return PickPosterUrl(posters, GetPosterLanguagePriority(), originalLanguage);
     }
 
@@ -139,8 +133,7 @@ public sealed class FanartClient
         if (string.IsNullOrWhiteSpace(key) || tvdbId <= 0) return null;
 
         var url = $"tv/{tvdbId}?api_key={Uri.EscapeDataString(key)}";
-        var data = await GetJsonAsync<TvResponse>(url, ct);
-        var banners = data?.TvBanner;
+        var data = await GetJsonAsync<TvResponse>(url, ct).ConfigureAwait(false);        var banners = data?.TvBanner;
         return PickPosterUrl(banners, GetPosterLanguagePriority());
     }
 
@@ -154,13 +147,11 @@ public sealed class FanartClient
 
         try
         {
-            using var resp = await _http.GetAsync(u, ct);
-            var ok = resp.IsSuccessStatusCode;
+            using var resp = await _http.GetAsync(u, ct).ConfigureAwait(false);            var ok = resp.IsSuccessStatusCode;
             _stats.RecordFanart(ok, sw.ElapsedMilliseconds);
             recorded = true;
             if (!ok) resp.EnsureSuccessStatusCode();
-            return await resp.Content.ReadAsByteArrayAsync(ct);
-        }
+            return await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);        }
         catch
         {
             if (!recorded)

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { memo } from "react";
 import { resolveApiUrl } from "../../../api/client.js";
 import { formatSeasonEpisode, getSizeLabel, getMediaTypeLabel } from "../utils/formatters.js";
 import { getIndexerClass } from "../utils/helpers.js";
@@ -7,7 +7,7 @@ import { buildIndexerPillStyle } from "../../../utils/sourceColors.js";
 /**
  * Vue banner de la bibliothèque
  */
-export default function LibraryBanner({
+function LibraryBanner({
   items,
   selectionMode,
   selectedIds,
@@ -149,3 +149,5 @@ export default function LibraryBanner({
     </div>
   );
 }
+
+export default memo(LibraryBanner);

@@ -1,28 +1,19 @@
 using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Models;
+using Feedarr.Api.Options;
 using Feedarr.Api.Services.Categories;
+using Microsoft.Extensions.Options;
 
 namespace Feedarr.Api.Services.Posters;
 
 public sealed class PosterFetchWorker : BackgroundService
 {
-    private const int MaxAttempts = 3;
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan RefreshTtl = TimeSpan.FromDays(30);
-    private static readonly TimeSpan MinInterval = TimeSpan.FromMilliseconds(250);
-    private static readonly TimeSpan MaxItemDuration = TimeSpan.FromMinutes(1);
-    private static readonly TimeSpan[] RetryDelays =
-    [
-        TimeSpan.FromSeconds(2),
-        TimeSpan.FromSeconds(5),
-        TimeSpan.FromSeconds(15)
-    ];
-
     private readonly ILogger<PosterFetchWorker> _log;
     private readonly IPosterFetchQueue _queue;
     private readonly PosterFetchService _posters;
     private readonly ReleaseRepository _releases;
     private readonly RetroFetchLogService _retroLogs;
+    private readonly PosterFetchOptions _opt;
     private DateTimeOffset _nextAllowed = DateTimeOffset.MinValue;
 
     public PosterFetchWorker(
@@ -30,13 +21,15 @@ public sealed class PosterFetchWorker : BackgroundService
         IPosterFetchQueue queue,
         PosterFetchService posters,
         ReleaseRepository releases,
-        RetroFetchLogService retroLogs)
+        RetroFetchLogService retroLogs,
+        IOptions<PosterFetchOptions> opt)
     {
         _log = log;
         _queue = queue;
         _posters = posters;
         _releases = releases;
         _retroLogs = retroLogs;
+        _opt = opt.Value;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -46,14 +39,14 @@ public sealed class PosterFetchWorker : BackgroundService
             PosterFetchJob job;
             try
             {
-                job = await _queue.DequeueAsync(stoppingToken);
+                job = await _queue.DequeueAsync(stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }
 
-            await ProcessJobAsync(job, stoppingToken);
+            await ProcessJobAsync(job, stoppingToken).ConfigureAwait(false);
         }
     }
 
@@ -75,6 +68,10 @@ public sealed class PosterFetchWorker : BackgroundService
             return;
         }
 
+        var maxAttempts = Math.Max(1, _opt.MaxAttempts);
+        var requestTimeout = TimeSpan.FromSeconds(Math.Max(1, _opt.RequestTimeoutSeconds));
+        var maxItemDuration = TimeSpan.FromSeconds(Math.Max(1, _opt.MaxItemDurationSeconds));
+
         if (!job.ForceRefresh && ShouldSkipByTtl(release))
         {
             _log.LogInformation("Poster job skipped by TTL {ItemId}", job.ItemId);
@@ -83,23 +80,23 @@ public sealed class PosterFetchWorker : BackgroundService
 
         var attempt = job.AttemptCount;
         var startedAt = DateTimeOffset.UtcNow;
-        while (attempt < MaxAttempts)
+        while (attempt < maxAttempts)
         {
             attempt++;
             string? lastFailureOverride = null;
 
-            await ApplyRateLimitAsync(stoppingToken);
+            await ApplyRateLimitAsync(stoppingToken).ConfigureAwait(false);
 
             try
             {
-                using var timeoutCts = new CancellationTokenSource(RequestTimeout);
+                using var timeoutCts = new CancellationTokenSource(requestTimeout);
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, timeoutCts.Token);
 
                 var res = await _posters.FetchPosterAsync(
                     job.ItemId,
                     linkedCts.Token,
                     logSingle: false,
-                    skipIfExists: !job.ForceRefresh);
+                    skipIfExists: !job.ForceRefresh).ConfigureAwait(false);
 
                 if (res.Ok)
                 {
@@ -141,14 +138,14 @@ public sealed class PosterFetchWorker : BackgroundService
                 lastFailureOverride = error;
             }
 
-            if (attempt >= MaxAttempts)
+            if (attempt >= maxAttempts)
             {
                 _log.LogError("Poster job failed after retries {ItemId}", job.ItemId);
                 LogRetroFailure(job, lastFailureOverride);
                 return;
             }
 
-            if (DateTimeOffset.UtcNow - startedAt >= MaxItemDuration)
+            if (DateTimeOffset.UtcNow - startedAt >= maxItemDuration)
             {
                 _log.LogWarning("Poster job time budget exceeded {ItemId}", job.ItemId);
                 PosterAudit.UpdateAttemptFailure(_releases, job.ItemId, null, null, null, null, "time budget exceeded");
@@ -163,7 +160,7 @@ public sealed class PosterFetchWorker : BackgroundService
                 attempt + 1,
                 delay.TotalMilliseconds);
 
-            await Task.Delay(delay, stoppingToken);
+            await Task.Delay(delay, stoppingToken).ConfigureAwait(false);
         }
     }
 
@@ -214,10 +211,10 @@ public sealed class PosterFetchWorker : BackgroundService
         {
             var delay = _nextAllowed - now;
             _log.LogInformation("Poster fetch rate limited; delaying {DelayMs}ms", delay.TotalMilliseconds);
-            await Task.Delay(delay, ct);
+            await Task.Delay(delay, ct).ConfigureAwait(false);
         }
 
-        _nextAllowed = DateTimeOffset.UtcNow + MinInterval;
+        _nextAllowed = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(Math.Max(0, _opt.MinIntervalMs));
     }
 
     private bool ShouldSkipByTtl(ReleaseForPoster release)
@@ -229,7 +226,8 @@ public sealed class PosterFetchWorker : BackgroundService
 
         var lastAttemptTs = release.PosterLastAttemptTs.Value;
         var lastAttemptAt = DateTimeOffset.FromUnixTimeSeconds(lastAttemptTs);
-        var threshold = DateTimeOffset.UtcNow - RefreshTtl;
+        var refreshTtl = TimeSpan.FromDays(Math.Max(1, _opt.RefreshTtlDays));
+        var threshold = DateTimeOffset.UtcNow - refreshTtl;
         if (lastAttemptAt >= threshold) return false;
 
         var posterPath = Path.Combine(_posters.PostersDirPath, posterFile);
@@ -243,10 +241,14 @@ public sealed class PosterFetchWorker : BackgroundService
         return false;
     }
 
-    private static TimeSpan GetBackoffDelay(int attempt)
+    private TimeSpan GetBackoffDelay(int attempt)
     {
-        var index = Math.Clamp(attempt - 1, 0, RetryDelays.Length - 1);
+        var delays = _opt.RetryDelaysSeconds;
+        if (delays is null || delays.Length == 0)
+            delays = [2, 5, 15];
+        var index = Math.Clamp(attempt - 1, 0, delays.Length - 1);
+        var baseSeconds = Math.Max(1, delays[index]);
         var jitterMs = Random.Shared.Next(200, 800);
-        return RetryDelays[index] + TimeSpan.FromMilliseconds(jitterMs);
+        return TimeSpan.FromSeconds(baseSeconds) + TimeSpan.FromMilliseconds(jitterMs);
     }
 }

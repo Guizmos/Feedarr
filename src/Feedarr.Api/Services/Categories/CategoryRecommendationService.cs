@@ -80,8 +80,7 @@ public sealed class CategoryRecommendationService
         }
         else
         {
-            var rawCaps = await GetCapsCategoriesAsync(torznabUrl, authMode, apiKey, sourceId, warnings, ct);
-            capsById = BuildCapsDictionary(rawCaps);
+            var rawCaps = await GetCapsCategoriesAsync(torznabUrl, authMode, apiKey, sourceId, warnings, ct).ConfigureAwait(false);            capsById = BuildCapsDictionary(rawCaps);
             supportedIds = capsById.Keys.ToHashSet();
 
             if (supportedIds.Count == 0)
@@ -265,8 +264,7 @@ public sealed class CategoryRecommendationService
                 }
             }
 
-            var cats = await _torznab.FetchCapsAsync(torznabUrl, authMode, apiKey, ct);
-            var raw = cats
+            var cats = await _torznab.FetchCapsAsync(torznabUrl, authMode, apiKey, ct).ConfigureAwait(false);            var raw = cats
                 .Where(c => c.id > 0)
                 .Select(c => new RawCategory(c.id, c.name))
                 .ToList();

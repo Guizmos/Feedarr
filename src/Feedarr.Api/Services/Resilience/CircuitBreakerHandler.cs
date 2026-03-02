@@ -49,8 +49,7 @@ internal abstract class CircuitBreakerHandler : DelegatingHandler
 
         try
         {
-            var response = await base.SendAsync(request, cancellationToken);
-            var status   = (int)response.StatusCode;
+            var response = await base.SendAsync(request, cancellationToken).ConfigureAwait(false);            var status   = (int)response.StatusCode;
 
             if (status >= 500)
                 TryOpen(_state.RecordFailure(_threshold, _breakDurationSeconds));

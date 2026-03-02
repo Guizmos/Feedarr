@@ -1,4 +1,4 @@
-import React from "react";
+import React, { memo } from "react";
 import { fmtSizeGo, formatSeasonEpisode } from "../utils/formatters.js";
 import { isSeriesItem, getIndexerClass, getResolutionClass } from "../utils/helpers.js";
 import AppIcon from "../../../ui/AppIcon.jsx";
@@ -7,7 +7,7 @@ import { buildIndexerPillStyle } from "../../../utils/sourceColors.js";
 /**
  * Vue liste de la bibliothèque (tableau)
  */
-export default function LibraryList({
+function LibraryList({
   items,
   selectionMode,
   selectedIds,
@@ -193,3 +193,5 @@ export default function LibraryList({
     </div>
   );
 }
+
+export default memo(LibraryList);

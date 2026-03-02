@@ -34,8 +34,7 @@ public sealed class RssSyncHostedService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // petite pause au démarrage (évite de spam dès le boot)
-        await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken);
-
+        await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken).ConfigureAwait(false);
         while (!stoppingToken.IsCancellationRequested)
         {
             var started = DateTimeOffset.UtcNow;
@@ -51,8 +50,7 @@ public sealed class RssSyncHostedService : BackgroundService
                     }
                     else
                     {
-                        var hadFailure = await RunOnce(stoppingToken);
-                        using var scope = _scopeFactory.CreateScope();
+                        var hadFailure = await RunOnce(stoppingToken).ConfigureAwait(false);                        using var scope = _scopeFactory.CreateScope();
                         var providerStats = scope.ServiceProvider.GetRequiredService<ProviderStatsService>();
                         providerStats.RecordSyncJob(!hadFailure);
                     }
@@ -87,8 +85,7 @@ public sealed class RssSyncHostedService : BackgroundService
             var sleep = TimeSpan.FromMinutes(intervalMin) - elapsed;
             if (sleep < TimeSpan.FromSeconds(1)) sleep = TimeSpan.FromSeconds(1);
 
-            await Task.Delay(sleep, stoppingToken);
-        }
+            await Task.Delay(sleep, stoppingToken).ConfigureAwait(false);        }
     }
 
     private int GetIntervalMinutesFromDbOrOpts(CancellationToken ct)
@@ -262,8 +259,7 @@ public sealed class RssSyncHostedService : BackgroundService
                 bool usedAggregated = false;
                 var rssOnly = _opts.RssOnlySync;
                 _log.LogInformation("RSS fetch start [{Name}] url={Url} limit={Limit}", name, SensitiveUrlSanitizer.Sanitize(url), perCatLimit);
-                var rssRes = await torznab.FetchLatestAsync(url, mode, apiKey, perCatLimit, ct, allowSearch: false);
-                var rssItems = rssRes.items;
+                var rssRes = await torznab.FetchLatestAsync(url, mode, apiKey, perCatLimit, ct, allowSearch: false).ConfigureAwait(false);                var rssItems = rssRes.items;
                 usedMode = rssRes.usedMode;
                 _log.LogInformation(
                     "RSS fetch done [{Name}] mode={Mode} itemsCount={Count} cats={Cats} unifiedKeys={UnifiedKeys}",
@@ -293,8 +289,7 @@ public sealed class RssSyncHostedService : BackgroundService
                                 "Torznab fallback start [{Name}] catIds={CatIds}",
                                 name,
                                 string.Join(",", fallbackCats.OrderBy(x => x)));
-                            var fallback = await torznab.FetchLatestByCategoriesAsync(url, mode, apiKey, perCatLimit, fallbackCats, ct);
-                            fallbackMode = fallback.usedMode;
+                            var fallback = await torznab.FetchLatestByCategoriesAsync(url, mode, apiKey, perCatLimit, fallbackCats, ct).ConfigureAwait(false);                            fallbackMode = fallback.usedMode;
                             usedAggregated = fallback.usedAggregated;
                             _log.LogInformation(
                                 "Torznab fallback done [{Name}] itemsCount={Count} cats={Cats}",

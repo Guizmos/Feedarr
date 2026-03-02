@@ -65,15 +65,13 @@ public sealed class BasicAuthMiddleware
                 "Request rejected by setup lock for {Method} {Path}",
                 context.Request.Method,
                 context.Request.Path.Value ?? "/");
-            await HandleSetupLockRejection(context);
-            return;
+            await HandleSetupLockRejection(context).ConfigureAwait(false);            return;
         }
 
         if (IsPublicStaticAssetRequest(context.Request))
         {
             context.Items[AuthPassedKey] = true;
-            await _next(context);
-            return;
+            await _next(context).ConfigureAwait(false);            return;
         }
 
         var security = cache.GetOrCreate(SecuritySettingsCache.CacheKey, entry =>
@@ -89,8 +87,7 @@ public sealed class BasicAuthMiddleware
                 SmartAuthPolicy.HasValidBootstrapSecretHeader(context, bootstrapSecret))
             {
                 context.Items[AuthPassedKey] = true;
-                await _next(context);
-                return;
+                await _next(context).ConfigureAwait(false);                return;
             }
 
             var hasBootstrapHeader =
@@ -102,8 +99,7 @@ public sealed class BasicAuthMiddleware
                 context.Request.Path.Value ?? "/",
                 context.Connection.RemoteIpAddress?.ToString() ?? "",
                 hasBootstrapHeader);
-            await RejectBootstrapTokenDenied(context);
-            return;
+            await RejectBootstrapTokenDenied(context).ConfigureAwait(false);            return;
         }
 
         var authRequired = SmartAuthPolicy.IsAuthRequired(context, security);
@@ -113,8 +109,7 @@ public sealed class BasicAuthMiddleware
         if (!authRequired)
         {
             context.Items[AuthPassedKey] = true;
-            await _next(context);
-            return;
+            await _next(context).ConfigureAwait(false);            return;
         }
 
         if (!authConfigured)
@@ -130,8 +125,7 @@ public sealed class BasicAuthMiddleware
                     {
                         context.Items[AuthPassedKey] = true;
                         context.Items[BootstrapTokenActiveKey] = true;
-                        await _next(context);
-                        return;
+                        await _next(context).ConfigureAwait(false);                        return;
                     }
 
                     if (bootstrapTokens.GetStatus(issuedToken) == BootstrapTokenService.TokenStatus.Used)
@@ -159,15 +153,13 @@ public sealed class BasicAuthMiddleware
                     "Bootstrap token presented for out-of-scope path {Method} {Path} — rejected",
                     context.Request.Method,
                     context.Request.Path.Value ?? "/");
-                await RejectBootstrapTokenOutOfScope(context);
-                return;
+                await RejectBootstrapTokenOutOfScope(context).ConfigureAwait(false);                return;
             }
 
             if (IsAllowedDuringSecuritySetup(context.Request))
             {
                 context.Items[AuthPassedKey] = true;
-                await _next(context);
-                return;
+                await _next(context).ConfigureAwait(false);                return;
             }
 
             log.LogWarning(
@@ -175,15 +167,13 @@ public sealed class BasicAuthMiddleware
                 context.Request.Method,
                 context.Request.Path.Value ?? "/",
                 authMode);
-            await RejectSecuritySetupRequired(context);
-            return;
+            await RejectSecuritySetupRequired(context).ConfigureAwait(false);            return;
         }
 
         if (SmartAuthPolicy.HasValidBootstrapSecretHeader(context, bootstrapSecret))
         {
             context.Items[AuthPassedKey] = true;
-            await _next(context);
-            return;
+            await _next(context).ConfigureAwait(false);            return;
         }
 
         if (!TryGetBasicCredentials(context, out var user, out var pass))
@@ -195,8 +185,7 @@ public sealed class BasicAuthMiddleware
         var remoteIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         if (authThrottle.TryGetRetryAfter(remoteIp, user, out var retryAfter))
         {
-            await RejectThrottledAsync(context, retryAfter);
-            return;
+            await RejectThrottledAsync(context, retryAfter).ConfigureAwait(false);            return;
         }
 
         if (!Validate(user, pass, security))
@@ -208,8 +197,7 @@ public sealed class BasicAuthMiddleware
 
         authThrottle.RegisterSuccess(remoteIp, user);
         context.Items[AuthPassedKey] = true;
-        await _next(context);
-    }
+        await _next(context).ConfigureAwait(false);    }
 
     private static void Challenge(HttpContext context)
     {
