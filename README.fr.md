@@ -5,25 +5,28 @@
 <h1 align="center">Feedarr</h1>
 
 <p align="center">
-  Tableau de bord intelligent pour Torznab, Jackett et Prowlarr.
+  <strong>Feedarr v2 — Architecture Monolithique</strong><br/>
+  Feedarr fonctionne désormais en conteneur unique.<br/>
+  L’ancienne architecture séparée (<code>feedarr-api</code> + <code>feedarr-web</code>) est obsolète.
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> | Français
+  Tableau intelligent de suivi des releases Torznab, Jackett et Prowlarr.
 </p>
 
 <p align="center">
-  <a href="https://github.com/Guizmos/Feedarr/actions/workflows/docker-publish.yml">
-    <img src="https://github.com/Guizmos/Feedarr/actions/workflows/docker-publish.yml/badge.svg" alt="Statut Build" />
+  <a href="README.md">English</a> | Français (par défaut)
+</p>
+
+<p align="center">
+  <a href="https://github.com/Guizmos/Feedarr/actions/workflows/docker-release.yml">
+    <img src="https://github.com/Guizmos/Feedarr/actions/workflows/docker-release.yml/badge.svg" alt="Statut Build" />
   </a>
   <a href="https://github.com/Guizmos/Feedarr/releases">
     <img src="https://img.shields.io/github/v/release/Guizmos/Feedarr" alt="Dernière Release" />
   </a>
-  <a href="https://hub.docker.com/r/guizmos/feedarr-api">
-    <img src="https://img.shields.io/docker/pulls/guizmos/feedarr-api?label=feedarr-api&logo=docker" alt="Docker Pulls API" />
-  </a>
-  <a href="https://hub.docker.com/r/guizmos/feedarr-web">
-    <img src="https://img.shields.io/docker/pulls/guizmos/feedarr-web?label=feedarr-web&logo=docker" alt="Docker Pulls Web" />
+  <a href="https://hub.docker.com/r/guizmos/feedarr">
+    <img src="https://img.shields.io/docker/pulls/guizmos/feedarr?logo=docker" alt="Téléchargements Docker" />
   </a>
   <a href="LICENSE">
     <img src="https://img.shields.io/github/license/Guizmos/Feedarr" alt="Licence" />
@@ -31,60 +34,48 @@
 </p>
 
 <p align="center">
-  <a href="#fonctionnalites">Fonctionnalités</a> |
-  <a href="#captures-decran">Captures d'écran</a> |
+  <a href="#fonctionnalités">Fonctionnalités</a> |
   <a href="#installation">Installation</a> |
   <a href="#configuration">Configuration</a> |
-  <a href="#developpement">Développement</a> |
+  <a href="#développement">Développement</a> |
+  <a href="#sécurité">Sécurité</a> |
+  <a href="#captures-décran">Captures d’écran</a> |
   <a href="#support">Support</a> |
   <a href="#licence">Licence</a>
 </p>
 
+---
+
 ## Fonctionnalités
 
-- Agrégation des flux Torznab depuis Jackett et Prowlarr.
-- Parsing des titres et enrichissement via TMDB, TVmaze, Fanart et IGDB.
-- Affichage bibliothèque orienté posters avec filtres et détails.
-- Gestion des providers, indexeurs et catégories depuis l'UI.
-- Outils de maintenance, sauvegarde et restauration intégrés.
-- Intégration Sonarr/Radarr pour les workflows bibliothèque et statut.
-- Setup Wizard au premier lancement.
+- Agrégation de flux Torznab via Jackett et Prowlarr
+- Enrichissement des releases avec TMDB, TVmaze, Fanart, IGDB, etc.
+- Affichage en bibliothèque avec posters et filtres avancés
+- Gestion des providers, indexers et catégories depuis l’interface
+- Intégration Sonarr / Radarr
+- Système intégré de sauvegarde et restauration
+- Assistant de configuration au premier lancement
+- Stockage sécurisé des clés API (chiffrement au repos)
+- SQLite optimisé avec pooling des connexions
 
-## Captures d'écran
-
-<table>
-  <tr>
-    <td><img src="docs/screenshots/light_details.png" alt="Light - Détails" width="320" /></td>
-    <td><img src="docs/screenshots/light_stat.png" alt="Light - Statistiques" width="320" /></td>
-    <td><img src="docs/screenshots/light_radarr.png" alt="Light - Radarr" width="320" /></td>
-  </tr>
-  <tr>
-    <td><img src="docs/screenshots/dark_application.png" alt="Dark - Applications" width="320" /></td>
-    <td><img src="docs/screenshots/dark_providers.png" alt="Dark - Providers" width="320" /></td>
-    <td><img src="docs/screenshots/dark_indexeurs.png" alt="Dark - Indexeurs" width="320" /></td>
-  </tr>
-  <tr>
-    <td><img src="docs/screenshots/dark_library.png" alt="Dark - Bibliothèque" width="320" /></td>
-    <td><img src="docs/screenshots/dark_fournisseur.png" alt="Dark - Fournisseurs" width="320" /></td>
-    <td><img src="docs/screenshots/dark_top.png" alt="Dark - Top Releases" width="320" /></td>
-  </tr>
-</table>
+---
 
 ## Installation
 
-### Docker Compose
+### Docker Compose (Monolithique)
 
-Prérequis:
+Prérequis :
+
 - Docker
-- Docker Compose (ou Portainer Stack)
+- Docker Compose ou Portainer
 
 ```yaml
 version: "3.9"
 
 services:
-  api:
-    container_name: FEEDARR-API
-    image: guizmos/feedarr-api:latest
+  feedarr:
+    container_name: FEEDARR
+    image: guizmos/feedarr:latest
     restart: unless-stopped
     environment:
       ASPNETCORE_URLS: http://+:8080
@@ -92,190 +83,139 @@ services:
     volumes:
       - /volume1/Docker/Feedarr/data:/app/data
     ports:
-      - "9999:8080"
-
-  web:
-    container_name: FEEDARR-WEB
-    image: guizmos/feedarr-web:latest
-    restart: unless-stopped
-    depends_on:
-      - api
-    ports:
-      - "8888:80"
+      - "8888:8080"
 ```
 
-Démarrage:
+Démarrage :
 
 ```bash
 docker compose up -d
 ```
 
-Endpoints par défaut:
-- Web: `http://localhost:8888`
-- API: `http://localhost:9999`
+Points d’accès par défaut :
 
-Réseau externe optionnel (si nécessaire dans ton infra):
+- Interface Web : `http://localhost:8888`
+- API : `http://localhost:8888/api`
+- Santé : `http://localhost:8888/health`
 
-```yaml
-services:
-  api:
-    networks:
-      - docker_net
-  web:
-    networks:
-      - docker_net
+---
 
-networks:
-  docker_net:
-    external: true
-```
+## Reverse Proxy
 
-### Configuration Runtime
+Feedarr fonctionne comme un service unique.
 
-Variables d'environnement API les plus utiles:
-- `ASPNETCORE_URLS`
-- `App__DataDir`
-- `App__DbFileName`
-- `App__SyncIntervalMinutes`
-- `App__RssLimit`
-- `App__RssLimitPerCategory`
-- `App__RssLimitGlobalPerSource`
-- `App__Security__EnforceHttps`
-- `App__Security__EmitSecurityHeaders`
-- `App__RateLimit__Stats__PermitLimit`
-- `App__RateLimit__Stats__WindowSeconds`
-- `App__ReverseProxy__TrustedProxies__0`
-- `App__ReverseProxy__TrustedNetworks__0`
-- `App__Updates__Enabled`
-- `App__Updates__RepoOwner`
-- `App__Updates__RepoName`
-- `App__Updates__CheckIntervalHours`
-- `App__Updates__TimeoutSeconds`
-- `App__Updates__AllowPrerelease`
-- `App__Updates__GitHubApiBaseUrl`
-- `App__Updates__GitHubToken`
+Configurer votre reverse proxy vers :
+
+- `http://feedarr:8080`
+- ou `http://<ip-hôte>:8888`
+
+Le routage séparé `/api` n’est plus nécessaire.
+
+La gestion HTTPS doit être assurée par le reverse proxy.
+
+---
 
 ## Configuration
 
-Feedarr inclut un Setup Wizard en 6 étapes (`/setup`) pour la configuration initiale.
+Au premier lancement, Feedarr reste verrouillé jusqu’à la fin de l’assistant (`/setup`).
 
-- Pages de configuration directes (Web UI):
-  - Wizard: `http://localhost:8888/setup`
-  - Réglages (général): `http://localhost:8888/settings`
-  - Interface (UI): `http://localhost:8888/settings/ui`
-  - Providers metadata: `http://localhost:8888/settings/providers`
-  - Services externes: `http://localhost:8888/settings/externals`
-  - Applications (Sonarr/Radarr): `http://localhost:8888/settings/applications`
-  - Utilisateurs & auth: `http://localhost:8888/settings/users`
-  - Maintenance: `http://localhost:8888/settings/maintenance`
-  - Sauvegarde/restauration: `http://localhost:8888/settings/backup`
-  - A propos / updates: `http://localhost:8888/system/updates`
-  - Indexeurs: `http://localhost:8888/indexers`
+Pour un déploiement WAN :
 
-- Guide complet en français (par défaut):
-  - [Français (par défaut)](docs/configuration-wizard.fr.md)
-- Version anglaise:
-  - [English](docs/configuration-wizard.md)
+- Activer l’authentification
+- Utiliser un reverse proxy TLS
 
-Le guide couvre:
-- les actions à réaliser à chaque étape,
-- les impacts concrets de chaque étape,
-- la création/récupération des clés API pour TMDB, Fanart, IGDB, TVmaze, Jackett, Prowlarr, Sonarr et Radarr.
+Pages principales :
+
+- Setup : `/setup`
+- Paramètres généraux : `/settings`
+- Providers : `/settings/providers`
+- Services externes : `/settings/externals`
+- Applications : `/settings/applications`
+- Utilisateurs : `/settings/users`
+- Sauvegarde / restauration : `/settings/backup`
+- Indexers : `/indexers`
+
+Guides détaillés :
+
+- Français : `docs/configuration-wizard.fr.md`
+- English : `docs/configuration-wizard.md`
+
+---
 
 ## Développement
 
-### Pré-requis
+### Prérequis
 
 - .NET SDK 8.x
-- Node.js 18+
 
-### Lancer en local
+### Lancement local (Monolithique)
 
-Backend:
+```bash
+dotnet run --project src/Feedarr.Api/Feedarr.Api.csproj -p:BuildWeb=true
+```
+
+Backend uniquement :
 
 ```bash
 dotnet run --project src/Feedarr.Api/Feedarr.Api.csproj
 ```
 
-Frontend:
+---
 
-```bash
-cd src/Feedarr.Web/feedarr-web
-npm install
-npm run dev
-```
+## Migration depuis l’ancienne version (API + Web séparés)
 
-### Valider les changements
+1. Arrêter les anciens conteneurs
+2. Supprimer les services `feedarr-api` et `feedarr-web`
+3. Remplacer par le service unique `feedarr`
+4. Conserver le volume `/app/data`
+5. Redémarrer
 
-Backend:
+Aucune migration de données requise.
 
-```bash
-dotnet test src/Feedarr.Api.Tests/Feedarr.Api.Tests.csproj -c Release
-```
+---
 
-Frontend:
+## Sécurité
 
-```bash
-cd src/Feedarr.Web/feedarr-web
-npm run lint
-npm run test
-npm run build
-```
+- Toutes les clés API externes sont chiffrées au repos
+- Sources, Providers et applications ARR utilisent un chiffrement unifié
+- Les sauvegardes anciennes et nouvelles sont compatibles
+- Les credentials en clair sont automatiquement normalisés lors de la restauration
+- Clés étrangères SQLite activées
+- Limitation de débit sur endpoints sensibles
+- Conçu pour être utilisé derrière un reverse proxy TLS
 
-## Releases et updates
+---
 
-### Créer/mettre à jour une GitHub Release
+## Performance
 
-Script PowerShell (Windows PowerShell 5.1+ et PowerShell 7):
+- Pooling des connexions SQLite activé
+- Optimisation des chemins asynchrones critiques
+- Réduction des index redondants
+- Amélioration de la stabilité des migrations et restaurations
 
-```powershell
-$env:GITHUB_TOKEN="ghp_xxx"
-pwsh ./scripts/release.ps1 `
-  -Version 5.4.0 `
-  -RepoOwner Guizmos `
-  -RepoName Feedarr `
-  -GenerateNotes $true
-```
+---
 
-Notes:
-- Le tag est au format `vX.Y.Z` (créé localement si absent, puis poussé).
-- Le script crée ou met à jour la GitHub Release liée au tag.
-- Si `gh` est installé, il est utilisé en priorité, sinon fallback REST API GitHub.
-- `-DryRun` permet de valider le flux sans écrire côté GitHub.
+## Captures d’écran
 
-### Vérification de mise à jour dans Feedarr
+<table>
+  <tr>
+    <td><img src="docs/screenshots/library.png" width="320" /></td>
+    <td><img src="docs/screenshots/details_modal.png" width="320" /></td>
+    <td><img src="docs/screenshots/providers.png" width="320" /></td>
+  </tr>
+</table>
 
-- Endpoint backend: `GET /api/updates/latest` (rafraîchissement manuel: `?force=true`).
-- Comparaison SemVer entre version courante du build et dernier tag GitHub.
-- Les prereleases sont ignorées par défaut (`App:Updates:AllowPrerelease=false`).
-- UI: `Système -> A propos`.
-- Le badge rouge “update dispo” reste affiché jusqu’à l’ouverture/acknowledge du changelog (stocké en localStorage par tag).
-
-## Notes sécurité
-
-- Les clés API sont stockées avec chiffrement via Data Protection.
-- Une authentification Basic est disponible dans l'UI.
-- Les endpoints statistiques lourds sont rate-limités.
-- Pour une exposition WAN, utiliser un reverse proxy TLS et activer l'auth.
+---
 
 ## Support
 
-- Documentation: `README.md`, `README.fr.md`, `docs/configuration-wizard.md`, `docs/configuration-wizard.fr.md`
-- Bugs / demandes: `https://github.com/Guizmos/Feedarr/issues`
-- Releases: `https://github.com/Guizmos/Feedarr/releases`
+- Issues : https://github.com/Guizmos/Feedarr/issues
+- Releases : https://github.com/Guizmos/Feedarr/releases
+- Documentation : `docs/`
 
-## Contribution
-
-- Ouvre une issue avant un changement fonctionnel important.
-- Préfère des PR petites et testées.
-- Lance les checks backend/frontend avant soumission.
+---
 
 ## Licence
 
-Licence:
-- GNU GPL v3
-
-Copyright:
-- Copyright 2026 Feedarr contributors
-
+GNU GPL v3  
 Voir `LICENSE` pour le texte complet.
