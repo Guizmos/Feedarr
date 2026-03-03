@@ -7,6 +7,7 @@ import AppIcon from "../../../ui/AppIcon.jsx";
 
 function PosterViewCard({
   item,
+  itemIndex = 0,
   onOpen,
   selectionMode,
   selected,
@@ -25,13 +26,20 @@ function PosterViewCard({
     [item.titleClean, item.title]
   );
 
-  const basePosterUrl = item.posterUrl || (item.id ? `/api/posters/release/${item.id}` : "");
+  const thumbBase = item.id ? `/api/posters/release/${item.id}/thumb` : "";
+  const basePosterUrl = item.posterUrl
+    ? thumbBase ? `${thumbBase}/500` : item.posterUrl
+    : thumbBase ? `${thumbBase}/500` : "";
   const {
     posterSrc,
     imgError,
     handleImageError,
     handleImageLoad,
   } = usePosterRetryOn404(item.id, basePosterUrl);
+
+  const thumbSrcset = thumbBase
+    ? `${thumbBase}/342 342w, ${thumbBase}/500 500w, ${thumbBase}/780 780w`
+    : undefined;
 
   const indexer = String(indexerLabel || "").trim();
   const showIndexer = showIndexerPill && indexer;
@@ -81,15 +89,19 @@ function PosterViewCard({
       {hasPoster ? (
         <img
           src={posterSrc}
+          srcSet={thumbSrcset}
+          sizes="180px"
           alt={displayTitle || ""}
-          loading="lazy"
+          loading={itemIndex < 12 ? "eager" : "lazy"}
+          fetchPriority={itemIndex < 12 ? "high" : "auto"}
+          decoding="async"
           onError={handleImageError}
           onLoad={handleImageLoad}
         />
       ) : (
         <div className="posterFallback">
           {isPending ? (
-            <div className="posterLoader" />
+            <div className="posterSkeleton" />
           ) : isFailed ? (
             <ImageOff className="posterFallback__icon" />
           ) : isEmpty ? (
@@ -210,10 +222,11 @@ function LibraryPoster({
 
   return (
     <div className="grid grid--poster" style={gridStyle}>
-      {items.map((it) => (
+      {items.map((it, index) => (
         <PosterViewCard
           key={it.id}
           item={it}
+          itemIndex={index}
           onOpen={onOpen}
           selectionMode={selectionMode}
           selected={selectedIds.has(it.id)}

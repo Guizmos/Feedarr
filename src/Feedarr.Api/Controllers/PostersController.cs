@@ -37,6 +37,7 @@ public sealed class PostersController : ControllerBase
     private readonly RawgClient _rawg;
     private readonly ComicVineClient _comicVine;
     private readonly MusicBrainzClient _musicBrainz;
+    private readonly PosterThumbService _thumbService;
     private readonly ILogger<PostersController> _log;
 
     public PostersController(
@@ -56,7 +57,8 @@ public sealed class PostersController : ControllerBase
         RawgClient rawg,
         ComicVineClient comicVine,
         MusicBrainzClient musicBrainz,
-        ILogger<PostersController> log)
+        ILogger<PostersController> log,
+        PosterThumbService? thumbService = null)
     {
         _releases = releases;
         _mediaEntities = mediaEntities;
@@ -74,6 +76,7 @@ public sealed class PostersController : ControllerBase
         _rawg = rawg;
         _comicVine = comicVine;
         _musicBrainz = musicBrainz;
+        _thumbService = thumbService ?? new PosterThumbService(Microsoft.Extensions.Logging.Abstractions.NullLogger<PosterThumbService>.Instance);
         _log = log;
     }
 
@@ -101,6 +104,34 @@ public sealed class PostersController : ControllerBase
         return BuildPosterFileResult(file, $"entity:{entityId}");
     }
 
+    // GET /api/posters/release/{id}/thumb/{w}
+    [HttpGet("release/{id:long}/thumb/{w:int}")]
+    public async Task<IActionResult> GetReleasePosterThumb([FromRoute] long id, [FromRoute] int w, CancellationToken ct)
+    {
+        var r = _releases.GetForPoster(id);
+        if (r is null) return NotFound();
+        return await BuildThumbResultAsync(
+            storeDir: r.PosterStoreDir,
+            posterFile: r.PosterFile,
+            w: w,
+            logContext: $"release-thumb:{id}",
+            ct: ct);
+    }
+
+    // GET /api/posters/entity/{entityId}/thumb/{w}
+    [HttpGet("entity/{entityId:long}/thumb/{w:int}")]
+    public async Task<IActionResult> GetEntityPosterThumb([FromRoute] long entityId, [FromRoute] int w, CancellationToken ct)
+    {
+        var entity = _mediaEntities.GetPoster(entityId);
+        if (entity is null) return NotFound();
+        return await BuildThumbResultAsync(
+            storeDir: entity.PosterStoreDir,
+            posterFile: entity.PosterFile,
+            w: w,
+            logContext: $"entity-thumb:{entityId}",
+            ct: ct);
+    }
+
     // GET /api/posters/banner/{id}
     [HttpGet("banner/{id:long}")]
     public async Task<IActionResult> GetBanner([FromRoute] long id, CancellationToken ct)
@@ -115,7 +146,7 @@ public sealed class PostersController : ControllerBase
             return NotFound();
 
         if (System.IO.File.Exists(full))
-            return BuildPosterFileResult(file, $"banner-cache:{id}");
+            return BuildPosterFileResult(file, $"banner-cache:{id}", "public, max-age=3600");
 
         try
         {
@@ -170,7 +201,7 @@ public sealed class PostersController : ControllerBase
             var posterFile = (string?)r.PosterFile;
             if (!string.IsNullOrWhiteSpace(posterFile))
             {
-                var fallbackResult = BuildPosterFileResult(posterFile, $"banner-fallback:{id}");
+                var fallbackResult = BuildPosterFileResult(posterFile, $"banner-fallback:{id}", "public, max-age=3600");
                 if (fallbackResult is PhysicalFileResult or ObjectResult)
                     return fallbackResult;
             }
@@ -192,33 +223,47 @@ public sealed class PostersController : ControllerBase
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "poster file unavailable" });
         }
 
+        Response.Headers.CacheControl = "public, max-age=3600";
+        Response.Headers.Vary = "Accept-Encoding";
         return PhysicalFile(full, "image/jpeg");
     }
 
     // POST /api/posters/release/{id}/fetch
     [HttpPost("release/{id:long}/fetch")]
-    public IActionResult FetchPoster([FromRoute] long id)
+    public async Task<IActionResult> FetchPoster([FromRoute] long id, CancellationToken ct)
     {
         var job = _jobFactory.Create(id, forceRefresh: false);
         if (job is null) return NotFound(new { error = "release not found" });
 
-        if (!_queue.TryEnqueue(job))
-            return StatusCode(503, new { error = "poster queue full" });
+        var enqueue = await _queue.EnqueueAsync(job, ct, PosterFetchQueue.DefaultEnqueueTimeout).ConfigureAwait(false);
+        if (enqueue.IsTimedOut)
+            return StatusCode(503, new { error = "poster queue saturated", timedOut = true });
+        if (enqueue.IsRejected)
+            return BadRequest(new { error = "invalid poster job" });
 
-        return Accepted(new { ok = true, enqueued = true });
+        return Accepted(new { ok = true, enqueued = enqueue.IsEnqueued, coalesced = enqueue.IsCoalesced });
     }
 
     // POST /api/posters/{itemId}/refresh
     [HttpPost("{itemId:long}/refresh")]
-    public IActionResult RefreshPoster([FromRoute] long itemId)
+    public async Task<IActionResult> RefreshPoster([FromRoute] long itemId, CancellationToken ct)
     {
         var job = _jobFactory.Create(itemId, forceRefresh: true);
         if (job is null) return NotFound(new { error = "release not found" });
 
-        if (!_queue.TryEnqueue(job))
-            return StatusCode(503, new { error = "poster queue full" });
+        var enqueue = await _queue.EnqueueAsync(job, ct, PosterFetchQueue.DefaultEnqueueTimeout).ConfigureAwait(false);
+        if (enqueue.IsTimedOut)
+            return StatusCode(503, new { error = "poster queue saturated", timedOut = true });
+        if (enqueue.IsRejected)
+            return BadRequest(new { error = "invalid poster job" });
 
-        return Accepted(new { ok = true, enqueued = true, forceRefresh = true });
+        return Accepted(new
+        {
+            ok = true,
+            enqueued = enqueue.IsEnqueued,
+            coalesced = enqueue.IsCoalesced,
+            forceRefresh = true
+        });
     }
 
     public sealed class ManualPosterDto
@@ -603,22 +648,22 @@ public sealed class PostersController : ControllerBase
     }
 
     [HttpPost("releases/fetch")]
-    public IActionResult FetchBulk([FromBody] BulkDto dto)
+    public Task<IActionResult> FetchBulk([FromBody] BulkDto dto, CancellationToken ct)
     {
         if (dto?.Ids is null || dto.Ids.Count == 0)
-            return BadRequest(new { error = "ids missing" });
+            return Task.FromResult<IActionResult>(BadRequest(new { error = "ids missing" }));
 
-        return EnqueueBulk(dto.Ids, forceRefresh: false);
+        return EnqueueBulk(dto.Ids, forceRefresh: false, ct);
     }
 
     // POST /api/posters/refresh-bulk
     [HttpPost("refresh-bulk")]
-    public IActionResult RefreshBulk([FromBody] BulkDto dto)
+    public Task<IActionResult> RefreshBulk([FromBody] BulkDto dto, CancellationToken ct)
     {
         if (dto?.Ids is null || dto.Ids.Count == 0)
-            return BadRequest(new { error = "ids missing" });
+            return Task.FromResult<IActionResult>(BadRequest(new { error = "ids missing" }));
 
-        return EnqueueBulk(dto.Ids, forceRefresh: true);
+        return EnqueueBulk(dto.Ids, forceRefresh: true, ct);
     }
 
     // POST /api/posters/releases/state
@@ -647,7 +692,7 @@ public sealed class PostersController : ControllerBase
 
     // POST /api/posters/retro-fetch
     [HttpPost("retro-fetch")]
-    public IActionResult RetroFetch([FromBody] RetroFetchDto? dto)
+    public async Task<IActionResult> RetroFetch([FromBody] RetroFetchDto? dto, CancellationToken ct)
     {
         var limit = Math.Clamp(dto?.Limit ?? 200, 1, 1000);
         var startedAtTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -669,10 +714,15 @@ public sealed class PostersController : ControllerBase
             logFile = null;
         }
 
-        var (result, enqueued, missing, failed, total) = EnqueueBulkInternal(ids, forceRefresh: false, total: ids.Count, retroLogFile: logFile);
+        var (result, enqueued, coalesced, missing, timedOut, total) = await EnqueueBulkInternal(
+            ids,
+            forceRefresh: false,
+            ct,
+            total: ids.Count,
+            retroLogFile: logFile).ConfigureAwait(false);
         _activity.Add(null, "info", "poster_fetch", "Retro fetch enqueued",
-            dataJson: $"{{\"total\":{total},\"enqueued\":{enqueued},\"missing\":{missing},\"failed\":{failed},\"logFile\":\"{logFile ?? ""}\"}}");
-        return Accepted(new { ok = true, total, enqueued, missing, failed, ids, startedAtTs, logFile });
+            dataJson: $"{{\"total\":{total},\"enqueued\":{enqueued},\"coalesced\":{coalesced},\"missing\":{missing},\"timedOut\":{timedOut},\"failed\":{timedOut},\"logFile\":\"{logFile ?? ""}\"}}");
+        return Accepted(new { ok = true, total, enqueued, coalesced, missing, timedOut, failed = timedOut, ids, startedAtTs, logFile });
     }
 
     // POST /api/posters/retro-fetch/progress
@@ -737,9 +787,32 @@ public sealed class PostersController : ControllerBase
     [HttpGet("queue/status")]
     public IActionResult GetQueueStatus()
     {
-        var queueSize = _queue.Count;
-        var isProcessing = queueSize > 0;
-        return Ok(new { queueSize, isProcessing });
+        var snapshot = _queue.GetSnapshot();
+        return Ok(new
+        {
+            pendingCount = snapshot.PendingCount,
+            queueSize = snapshot.PendingCount,
+            inFlightCount = snapshot.InFlightCount,
+            isProcessing = snapshot.IsProcessing,
+            oldestQueuedAgeMs = snapshot.OldestQueuedAgeMs,
+            lastJobStartedAtTs = snapshot.LastJobStartedAtTs,
+            lastJobEndedAtTs = snapshot.LastJobEndedAtTs,
+            currentJob = snapshot.CurrentJob is null
+                ? null
+                : new
+                {
+                    itemId = snapshot.CurrentJob.ItemId,
+                    forceRefresh = snapshot.CurrentJob.ForceRefresh,
+                    startedAtTs = snapshot.CurrentJob.StartedAtTs
+                },
+            jobsEnqueued = snapshot.JobsEnqueued,
+            jobsCoalesced = snapshot.JobsCoalesced,
+            jobsTimedOut = snapshot.JobsTimedOut,
+            jobsProcessed = snapshot.JobsProcessed,
+            jobsSucceeded = snapshot.JobsSucceeded,
+            jobsFailed = snapshot.JobsFailed,
+            jobsRetried = snapshot.JobsRetried
+        });
     }
 
     // POST /api/posters/cache/clear
@@ -752,18 +825,20 @@ public sealed class PostersController : ControllerBase
         return Ok(new { ok = true, cleared });
     }
 
-    private IActionResult EnqueueBulk(IEnumerable<long> ids, bool forceRefresh, int? total = null)
-        => EnqueueBulkInternal(ids, forceRefresh, total).result;
+    private async Task<IActionResult> EnqueueBulk(IEnumerable<long> ids, bool forceRefresh, CancellationToken ct, int? total = null)
+        => (await EnqueueBulkInternal(ids, forceRefresh, ct, total).ConfigureAwait(false)).result;
 
-    private (IActionResult result, int enqueued, int missing, int failed, int total) EnqueueBulkInternal(
+    private async Task<(IActionResult result, int enqueued, int coalesced, int missing, int timedOut, int total)> EnqueueBulkInternal(
         IEnumerable<long> ids,
         bool forceRefresh,
+        CancellationToken ct,
         int? total = null,
         string? retroLogFile = null)
     {
         var enqueued = 0;
+        var coalesced = 0;
         var missing = 0;
-        var failed = 0;
+        var timedOut = 0;
 
         foreach (var id in ids.Distinct())
         {
@@ -774,10 +849,13 @@ public sealed class PostersController : ControllerBase
                 continue;
             }
 
-            if (_queue.TryEnqueue(job))
+            var enqueue = await _queue.EnqueueAsync(job, ct, PosterFetchQueue.DefaultEnqueueTimeout).ConfigureAwait(false);
+            if (enqueue.IsEnqueued)
                 enqueued++;
-            else
-                failed++;
+            else if (enqueue.IsCoalesced)
+                coalesced++;
+            else if (enqueue.IsTimedOut)
+                timedOut++;
         }
 
         var totalCount = total ?? ids.Count();
@@ -786,12 +864,14 @@ public sealed class PostersController : ControllerBase
             ok = true,
             total = totalCount,
             enqueued,
+            coalesced,
             missing,
-            failed,
+            timedOut,
+            failed = timedOut,
             forceRefresh
         });
 
-        return (result, enqueued, missing, failed, totalCount);
+        return (result, enqueued, coalesced, missing, timedOut, totalCount);
     }
 
     // GET /api/posters/retro-fetch/log/{file}
@@ -917,6 +997,83 @@ public sealed class PostersController : ControllerBase
     private PosterPathResolver CreatePosterPathResolver()
         => new(_posterFetch.PostersDirPath);
 
+    private PosterStorePathResolver CreateStoreResolver()
+        => new(_posterFetch.PosterStoreDirPath);
+
+    /// <summary>
+    /// Resolves and serves a poster thumbnail with the following fallback chain:
+    /// 1. store/{storeDir}/w{w}.webp (pre-generated WebP thumb)
+    /// 2. store/{storeDir}/original.* (full-size original from store — re-generates thumb on the fly)
+    /// 3. legacy flat poster_file
+    /// 4. 404
+    /// All served paths get <c>Cache-Control: public, max-age=31536000, immutable</c>.
+    /// </summary>
+    private async Task<IActionResult> BuildThumbResultAsync(
+        string? storeDir, string? posterFile, int w, string logContext, CancellationToken ct)
+    {
+        // Clamp to supported widths (serve nearest available if requested width not exact)
+        var effectiveWidth = PosterThumbService.SupportedWidths.Contains(w)
+            ? w
+            : PosterThumbService.SupportedWidths.OrderBy(sw => Math.Abs(sw - w)).First();
+
+        var storeResolver = CreateStoreResolver();
+
+        // 1. Try pre-generated WebP thumb from store
+        if (!string.IsNullOrWhiteSpace(storeDir) &&
+            storeResolver.TryResolvePosterFile(storeDir, $"w{effectiveWidth}.webp", out var thumbFull) &&
+            System.IO.File.Exists(thumbFull))
+        {
+            Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+            Response.Headers.Vary = "Accept-Encoding";
+            return PhysicalFile(thumbFull, "image/webp");
+        }
+
+        // 2. Try original from store → generate thumb on-the-fly
+        if (!string.IsNullOrWhiteSpace(storeDir) &&
+            storeResolver.TryResolveStoreDir(storeDir, out var storeDirFull) &&
+            Directory.Exists(storeDirFull))
+        {
+            var origFiles = Directory.GetFiles(storeDirFull, "original.*");
+            var origFile = origFiles.FirstOrDefault();
+            if (origFile is not null && System.IO.File.Exists(origFile))
+            {
+                // Attempt on-the-fly thumb generation (best-effort, non-blocking)
+                try
+                {
+                    var thumbBytes = await _thumbService.GenerateSingleThumbAsync(origFile, effectiveWidth, ct).ConfigureAwait(false);
+                    if (thumbBytes is not null && thumbBytes.Length > 0)
+                    {
+                        // Write for next hit
+                        var writePath = Path.Combine(storeDirFull, $"w{effectiveWidth}.webp");
+                        var tmpPath = writePath + ".tmp";
+                        await System.IO.File.WriteAllBytesAsync(tmpPath, thumbBytes, ct).ConfigureAwait(false);
+                        System.IO.File.Move(tmpPath, writePath, overwrite: true);
+
+                        Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+                        Response.Headers.Vary = "Accept-Encoding";
+                        return PhysicalFile(writePath, "image/webp");
+                    }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "On-the-fly thumb generation failed for {Context}", logContext);
+                }
+
+                // Serve original as fallback
+                Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+                Response.Headers.Vary = "Accept-Encoding";
+                return PhysicalFile(origFile, GetContentTypeForPoster(origFile));
+            }
+        }
+
+        // 3. Legacy flat poster_file fallback
+        if (!string.IsNullOrWhiteSpace(posterFile))
+            return BuildPosterFileResult(posterFile, logContext);
+
+        return NotFound();
+    }
+
     private bool TryResolveStoredPosterPath(string file, out string fullPath)
     {
         var resolver = CreatePosterPathResolver();
@@ -929,7 +1086,7 @@ public sealed class PostersController : ControllerBase
         return resolved;
     }
 
-    private IActionResult BuildPosterFileResult(string storedFile, string logContext)
+    private IActionResult BuildPosterFileResult(string storedFile, string logContext, string cacheControl = "public, max-age=31536000, immutable")
     {
         if (!TryResolveStoredPosterPath(storedFile, out var fullPath))
             return NotFound();
@@ -942,6 +1099,8 @@ public sealed class PostersController : ControllerBase
                 FileAccess.Read,
                 FileShare.ReadWrite | FileShare.Delete);
 
+            Response.Headers.CacheControl = cacheControl;
+            Response.Headers.Vary = "Accept-Encoding";
             return PhysicalFile(fullPath, GetContentTypeForPoster(fullPath));
         }
         catch (FileNotFoundException)

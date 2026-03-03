@@ -541,10 +541,156 @@ public sealed class MaintenanceController : ControllerBase
                 }
             }
 
-            _activity.Add(null, "info", "maintenance", "Orphaned posters cleaned",
-                dataJson: $"{{\"scanned\":{scanned},\"orphaned\":{orphaned},\"deleted\":{deleted},\"freedBytes\":{freedBytes}}}");
+            // ── Phase 2: also purge orphaned store directories ───────────────
+            var storeDirsDeleted = 0;
+            long storeFreedBytes = 0;
 
-            return Ok(new { ok = true, scanned, orphaned, deleted, freedBytes });
+            var storeRoot = _posterFetch.PosterStoreDirPath;
+            if (Directory.Exists(storeRoot))
+            {
+                var canonicalStore = Path.GetFullPath(storeRoot);
+                if (!canonicalStore.EndsWith(Path.DirectorySeparatorChar))
+                    canonicalStore += Path.DirectorySeparatorChar;
+
+                var storeDirNames = Directory.GetDirectories(storeRoot, "*", SearchOption.TopDirectoryOnly)
+                    .Select(d => Path.GetFileName(d))
+                    .Where(n => !string.IsNullOrWhiteSpace(n))
+                    .Select(n => n!)
+                    .ToList();
+
+                var orphanedStoreDirs = _releases.GetOrphanedStoreDirs(storeDirNames);
+                foreach (var dirName in orphanedStoreDirs)
+                {
+                    var full = Path.GetFullPath(Path.Combine(storeRoot, dirName));
+                    if (!full.StartsWith(canonicalStore, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    try
+                    {
+                        var dirSize = Directory.EnumerateFiles(full, "*", SearchOption.AllDirectories)
+                            .Sum(f => { try { return new FileInfo(f).Length; } catch { return 0L; } });
+
+                        Directory.Delete(full, recursive: true);
+                        if (!Directory.Exists(full))
+                        {
+                            storeFreedBytes += dirSize;
+                            storeDirsDeleted++;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.LogWarning(ex, "Failed to delete orphaned store dir: {Dir}", dirName);
+                    }
+                }
+            }
+
+            _activity.Add(null, "info", "maintenance", "Orphaned posters cleaned",
+                dataJson: $"{{\"scanned\":{scanned},\"orphaned\":{orphaned},\"deleted\":{deleted},\"freedBytes\":{freedBytes},\"storeDirsDeleted\":{storeDirsDeleted},\"storeFreedBytes\":{storeFreedBytes}}}");
+
+            return Ok(new { ok = true, scanned, orphaned, deleted, freedBytes, storeDirsDeleted, storeFreedBytes });
+        }
+        finally
+        {
+            _maintenanceLock.Release();
+        }
+    }
+
+    // POST /api/maintenance/migrate-poster-store
+    // Migrates releases that have a legacy flat poster_file but no poster_store_dir yet.
+    // For each release, moves the flat file into posters/store/{storeDir}/original.{ext}
+    // and generates WebP thumbs.  The flat file is kept as-is for backward compat.
+    [HttpPost("migrate-poster-store")]
+    public async Task<IActionResult> MigratePosterStore(
+        [FromQuery] int limit = 100,
+        [FromQuery] int offset = 0,
+        [FromQuery] bool dryRun = false,
+        CancellationToken ct = default)
+    {
+        if (!_maintenanceLock.TryEnter())
+        {
+            _log.LogWarning("MigratePosterStore rejected – a maintenance operation is already running");
+            return Conflict(new { error = "a maintenance operation is already running" });
+        }
+
+        try
+        {
+            var postersDir = _posterFetch.PostersDirPath;
+            var storeRoot = _posterFetch.PosterStoreDirPath;
+            var storeResolver = new PosterStorePathResolver(storeRoot);
+            var thumbService = new PosterThumbService(Microsoft.Extensions.Logging.Abstractions.NullLogger<PosterThumbService>.Instance);
+
+            var candidates = _releases.GetReleasesWithLegacyPosters(limit, offset);
+            var migrated = 0;
+            var skipped = 0;
+            var failed = 0;
+
+            foreach (var row in candidates)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                if (string.IsNullOrWhiteSpace(row.PosterProvider) || string.IsNullOrWhiteSpace(row.PosterProviderId))
+                {
+                    skipped++;
+                    continue;
+                }
+
+                var rawStoreDir = $"{row.PosterProvider.ToLowerInvariant()}-{PosterStorePathResolver.SanitizeStoreDir(row.PosterProviderId)}";
+                var posterKey = $"{row.PosterProvider.ToLowerInvariant()}:{row.PosterProviderId}";
+
+                if (!storeResolver.TryResolveStoreDir(rawStoreDir, out var storeDirFull))
+                {
+                    skipped++;
+                    continue;
+                }
+
+                var sourcePath = Path.Combine(postersDir, row.PosterFile);
+                if (!System.IO.File.Exists(sourcePath))
+                {
+                    skipped++;
+                    continue;
+                }
+
+                if (dryRun)
+                {
+                    migrated++;
+                    continue;
+                }
+
+                try
+                {
+                    Directory.CreateDirectory(storeDirFull);
+                    var ext = Path.GetExtension(row.PosterFile);
+                    if (string.IsNullOrWhiteSpace(ext)) ext = ".jpg";
+
+                    if (!storeResolver.TryResolveFile(storeDirFull, $"original{ext}", out var origFull))
+                    {
+                        skipped++;
+                        continue;
+                    }
+
+                    if (!System.IO.File.Exists(origFull))
+                    {
+                        System.IO.File.Copy(sourcePath, origFull, overwrite: false);
+                    }
+
+                    var bytes = await System.IO.File.ReadAllBytesAsync(origFull, ct).ConfigureAwait(false);
+                    await thumbService.GenerateThumbsAsync(bytes, storeDirFull, ct).ConfigureAwait(false);
+
+                    _releases.SavePosterWithStore(row.Id, null, null, row.PosterFile, posterKey, rawStoreDir);
+                    migrated++;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "MigratePosterStore failed for release {Id}", row.Id);
+                    failed++;
+                }
+            }
+
+            _activity.Add(null, "info", "maintenance", "Poster store migration",
+                dataJson: $"{{\"migrated\":{migrated},\"skipped\":{skipped},\"failed\":{failed},\"dryRun\":{(dryRun ? "true" : "false")}}}");
+
+            return Ok(new { ok = true, migrated, skipped, failed, dryRun });
         }
         finally
         {

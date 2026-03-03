@@ -20,5 +20,6 @@ public sealed record PosterFetchRoutingContext(
     string Fingerprint,
     PosterMatchIds KnownIds,
     bool TvmazeEnabled,
+    bool ForceRefresh,
     bool LogSingle,
     long? SourceId);

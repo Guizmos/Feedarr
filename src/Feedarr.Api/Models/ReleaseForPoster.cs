@@ -30,6 +30,8 @@ public sealed class ReleaseForPoster
     public string? PosterFile { get; set; }
     public string? PosterProvider { get; set; }
     public string? PosterProviderId { get; set; }
+    public string? PosterKey { get; set; }
+    public string? PosterStoreDir { get; set; }
     public string? PosterLang { get; set; }
     public string? PosterSize { get; set; }
     public string? PosterHash { get; set; }

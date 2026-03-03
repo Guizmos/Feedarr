@@ -33,10 +33,12 @@ function LibraryGrid({
 
   return (
     <div className="grid" style={gridStyle}>
-      {items.map((it) => (
+      {items.map((it, index) => (
         <PosterCard
           key={it.id}
           item={it}
+          itemIndex={index}
+          cardSize={cardSize}
           onDownload={onDownload}
           onOpen={onOpen}
           selectionMode={selectionMode}
