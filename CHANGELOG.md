@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.3.0](https://github.com/Guizmos/Feedarr/compare/v2.2.1...v2.3.0) (2026-03-03)
+
+
+### Features
+
+* **posters:** add webp thumbs + canonical store + refcount GC ([53ea261](https://github.com/Guizmos/Feedarr/commit/53ea2611b79ae77e0f3603fdad74d9111f817d89))
+* **posters:** implement canonical store + webp thumbnails + refcount GC ([10e001b](https://github.com/Guizmos/Feedarr/commit/10e001b749e1a843766de94b9406e477a4760c14))
+
+
+### Bug Fixes
+
+* CI Action error ([1acb1fc](https://github.com/Guizmos/Feedarr/commit/1acb1fca6d1af20edfca8ffbffe6800d37caedc1))
+* **password:** show point if pawssord set in settings ([f6d1bd9](https://github.com/Guizmos/Feedarr/commit/f6d1bd9e6960fc13fe09d81a8baa758d1a83abf0))
+* **posters:** materialize store during worker fetch ([76c1882](https://github.com/Guizmos/Feedarr/commit/76c188247505da073bd9144043d7ef9d35d92406))
+* update readme ([116ac5f](https://github.com/Guizmos/Feedarr/commit/116ac5f2b5d30cc51528c3377c9d280581927386))
+* update readme FR ([49bb02e](https://github.com/Guizmos/Feedarr/commit/49bb02ec03d756bddb0683f59454deb1abba3b7b))
+* update readme FR ([060b130](https://github.com/Guizmos/Feedarr/commit/060b130848c8e5c9c43ce7d60f48b4025717dc24))
+
+
+### Performance Improvements
+
+* **library:** cache posters + skeleton + priority loading ([711b930](https://github.com/Guizmos/Feedarr/commit/711b9300928a150cb1ce65a13ec5282eaa513e3c))
+* **posters:** reliable queue + inflight dedupe + truthful status ([2a41a53](https://github.com/Guizmos/Feedarr/commit/2a41a5397364e3ae060400a705048bf0d149ce47))
+* **sync:** batch sqlite upsert with prepared statement ([c9fe03b](https://github.com/Guizmos/Feedarr/commit/c9fe03b58be4451126603a9c5f46d9f4b7695c46))
+
 ## [2.2.1](https://github.com/Guizmos/Feedarr/compare/v2.2.0...v2.2.1) (2026-03-02)
 
 
