@@ -272,10 +272,15 @@ public sealed class PostersControllerThumbTests
 
     private sealed class NoOpQueue2 : IPosterFetchQueue
     {
-        public bool TryEnqueue(PosterFetchJob job) => true;
+        public ValueTask<PosterFetchEnqueueResult> EnqueueAsync(PosterFetchJob job, CancellationToken ct, TimeSpan timeout)
+            => ValueTask.FromResult(new PosterFetchEnqueueResult(PosterFetchEnqueueStatus.Enqueued));
         public ValueTask<PosterFetchJob> DequeueAsync(CancellationToken ct) => ValueTask.FromCanceled<PosterFetchJob>(ct);
+        public void RecordRetry() { }
+        public PosterFetchJob? Complete(PosterFetchJob job, PosterFetchProcessResult result) => null;
         public int ClearPending() => 0;
         public int Count => 0;
+        public PosterFetchQueueSnapshot GetSnapshot()
+            => new(0, 0, false, null, null, null, null, 0, 0, 0, 0, 0, 0, 0);
     }
 
     private sealed class PassthroughProtectionService2 : IApiKeyProtectionService

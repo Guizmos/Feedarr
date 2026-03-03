@@ -32,6 +32,7 @@ public sealed class SchedulerController : ControllerBase
     private readonly RequestTmdbBackfillService _requestTmdbBackfill;
     private readonly BackupExecutionCoordinator _backupCoordinator;
     private readonly AppOptions _opts;
+    private readonly ILogger<SchedulerController> _log;
 
     public SchedulerController(
         SourceRepository sources,
@@ -46,7 +47,8 @@ public sealed class SchedulerController : ControllerBase
         ExternalIdBackfillService externalIdBackfill,
         RequestTmdbBackfillService requestTmdbBackfill,
         BackupExecutionCoordinator backupCoordinator,
-        IOptions<AppOptions> opts)
+        IOptions<AppOptions> opts,
+        ILogger<SchedulerController> log)
     {
         _sources = sources;
         _releases = releases;
@@ -61,6 +63,7 @@ public sealed class SchedulerController : ControllerBase
         _requestTmdbBackfill = requestTmdbBackfill;
         _backupCoordinator = backupCoordinator;
         _opts = opts.Value;
+        _log = log;
     }
 
     [HttpPost("run")]
@@ -149,12 +152,35 @@ public sealed class SchedulerController : ControllerBase
 
                 var lastSyncAt = Convert.ToInt64(full.LastSyncAt);
                 var newIds = _releases.GetNewIdsWithoutPoster((long)full.Id, lastSyncAt);
+                var posterRequested = 0;
+                var posterEnqueued = 0;
+                var posterCoalesced = 0;
+                var posterTimedOut = 0;
                 foreach (var rid in newIds)
                 {
                     var job = _posterJobs.Create(rid, forceRefresh: false);
                     if (job is null) continue;
-                    _posterQueue.TryEnqueue(job);
+                    posterRequested++;
+                    var enqueue = await _posterQueue.EnqueueAsync(job, ct, PosterFetchQueue.DefaultEnqueueTimeout).ConfigureAwait(false);
+                    if (enqueue.IsEnqueued)
+                        posterEnqueued++;
+                    else if (enqueue.IsCoalesced)
+                        posterCoalesced++;
+                    else if (enqueue.IsTimedOut)
+                        posterTimedOut++;
                 }
+
+                _log.LogInformation(
+                    "Scheduler posterJobs [{Name}] requested={Requested} enqueued={Enqueued} coalesced={Coalesced} timedOut={TimedOut}",
+                    name,
+                    posterRequested,
+                    posterEnqueued,
+                    posterCoalesced,
+                    posterTimedOut);
+
+                _activity.Add((long)full.Id, "info", "poster_fetch",
+                    $"Poster queue summary ({posterRequested} requested)",
+                    dataJson: $"{{\"requested\":{posterRequested},\"enqueued\":{posterEnqueued},\"coalesced\":{posterCoalesced},\"timedOut\":{posterTimedOut}}}");
                 _sources.UpdateLastSync((long)full.Id, "ok", null);
 
                 _activity.Add((long)full.Id, "info", "sync", $"Manual Run OK ({items.Count} items, mode={usedMode})",

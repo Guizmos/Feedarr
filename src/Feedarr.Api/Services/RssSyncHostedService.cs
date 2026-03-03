@@ -494,12 +494,31 @@ public sealed class RssSyncHostedService : BackgroundService
 
                 var lastSyncAt = src.LastSyncAt ?? 0;
                 var seeds = releases.GetNewPosterJobSeeds(id, lastSyncAt);
+                var posterRequested = 0;
+                var posterEnqueued = 0;
+                var posterCoalesced = 0;
+                var posterTimedOut = 0;
                 foreach (var seed in seeds)
                 {
                     var job = posterJobs.CreateFromSeed(seed, forceRefresh: false);
                     if (job is null) continue;
-                    posterQueue.TryEnqueue(job);
+                    posterRequested++;
+                    var enqueue = await posterQueue.EnqueueAsync(job, ct, PosterFetchQueue.DefaultEnqueueTimeout).ConfigureAwait(false);
+                    if (enqueue.IsEnqueued)
+                        posterEnqueued++;
+                    else if (enqueue.IsCoalesced)
+                        posterCoalesced++;
+                    else if (enqueue.IsTimedOut)
+                        posterTimedOut++;
                 }
+
+                _log.LogInformation(
+                    "AutoSync posterJobs [{Name}] requested={Requested} enqueued={Enqueued} coalesced={Coalesced} timedOut={TimedOut}",
+                    name,
+                    posterRequested,
+                    posterEnqueued,
+                    posterCoalesced,
+                    posterTimedOut);
 
                 _log.LogInformation(
                     "AutoSync RETENTION [{Name}] insertedNew={InsertedNew} totalBeforeRetention={TotalBefore} perKeyBefore={PerKeyBefore} perKeyAfter={PerKeyAfter} purgedByPerCat={PurgedPerCat} purgedByGlobal={PurgedGlobal} postersPurged={PostersPurged}",

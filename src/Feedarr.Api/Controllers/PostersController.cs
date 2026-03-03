@@ -230,28 +230,40 @@ public sealed class PostersController : ControllerBase
 
     // POST /api/posters/release/{id}/fetch
     [HttpPost("release/{id:long}/fetch")]
-    public IActionResult FetchPoster([FromRoute] long id)
+    public async Task<IActionResult> FetchPoster([FromRoute] long id, CancellationToken ct)
     {
         var job = _jobFactory.Create(id, forceRefresh: false);
         if (job is null) return NotFound(new { error = "release not found" });
 
-        if (!_queue.TryEnqueue(job))
-            return StatusCode(503, new { error = "poster queue full" });
+        var enqueue = await _queue.EnqueueAsync(job, ct, PosterFetchQueue.DefaultEnqueueTimeout).ConfigureAwait(false);
+        if (enqueue.IsTimedOut)
+            return StatusCode(503, new { error = "poster queue saturated", timedOut = true });
+        if (enqueue.IsRejected)
+            return BadRequest(new { error = "invalid poster job" });
 
-        return Accepted(new { ok = true, enqueued = true });
+        return Accepted(new { ok = true, enqueued = enqueue.IsEnqueued, coalesced = enqueue.IsCoalesced });
     }
 
     // POST /api/posters/{itemId}/refresh
     [HttpPost("{itemId:long}/refresh")]
-    public IActionResult RefreshPoster([FromRoute] long itemId)
+    public async Task<IActionResult> RefreshPoster([FromRoute] long itemId, CancellationToken ct)
     {
         var job = _jobFactory.Create(itemId, forceRefresh: true);
         if (job is null) return NotFound(new { error = "release not found" });
 
-        if (!_queue.TryEnqueue(job))
-            return StatusCode(503, new { error = "poster queue full" });
+        var enqueue = await _queue.EnqueueAsync(job, ct, PosterFetchQueue.DefaultEnqueueTimeout).ConfigureAwait(false);
+        if (enqueue.IsTimedOut)
+            return StatusCode(503, new { error = "poster queue saturated", timedOut = true });
+        if (enqueue.IsRejected)
+            return BadRequest(new { error = "invalid poster job" });
 
-        return Accepted(new { ok = true, enqueued = true, forceRefresh = true });
+        return Accepted(new
+        {
+            ok = true,
+            enqueued = enqueue.IsEnqueued,
+            coalesced = enqueue.IsCoalesced,
+            forceRefresh = true
+        });
     }
 
     public sealed class ManualPosterDto
@@ -636,22 +648,22 @@ public sealed class PostersController : ControllerBase
     }
 
     [HttpPost("releases/fetch")]
-    public IActionResult FetchBulk([FromBody] BulkDto dto)
+    public Task<IActionResult> FetchBulk([FromBody] BulkDto dto, CancellationToken ct)
     {
         if (dto?.Ids is null || dto.Ids.Count == 0)
-            return BadRequest(new { error = "ids missing" });
+            return Task.FromResult<IActionResult>(BadRequest(new { error = "ids missing" }));
 
-        return EnqueueBulk(dto.Ids, forceRefresh: false);
+        return EnqueueBulk(dto.Ids, forceRefresh: false, ct);
     }
 
     // POST /api/posters/refresh-bulk
     [HttpPost("refresh-bulk")]
-    public IActionResult RefreshBulk([FromBody] BulkDto dto)
+    public Task<IActionResult> RefreshBulk([FromBody] BulkDto dto, CancellationToken ct)
     {
         if (dto?.Ids is null || dto.Ids.Count == 0)
-            return BadRequest(new { error = "ids missing" });
+            return Task.FromResult<IActionResult>(BadRequest(new { error = "ids missing" }));
 
-        return EnqueueBulk(dto.Ids, forceRefresh: true);
+        return EnqueueBulk(dto.Ids, forceRefresh: true, ct);
     }
 
     // POST /api/posters/releases/state
@@ -680,7 +692,7 @@ public sealed class PostersController : ControllerBase
 
     // POST /api/posters/retro-fetch
     [HttpPost("retro-fetch")]
-    public IActionResult RetroFetch([FromBody] RetroFetchDto? dto)
+    public async Task<IActionResult> RetroFetch([FromBody] RetroFetchDto? dto, CancellationToken ct)
     {
         var limit = Math.Clamp(dto?.Limit ?? 200, 1, 1000);
         var startedAtTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -702,10 +714,15 @@ public sealed class PostersController : ControllerBase
             logFile = null;
         }
 
-        var (result, enqueued, missing, failed, total) = EnqueueBulkInternal(ids, forceRefresh: false, total: ids.Count, retroLogFile: logFile);
+        var (result, enqueued, coalesced, missing, timedOut, total) = await EnqueueBulkInternal(
+            ids,
+            forceRefresh: false,
+            ct,
+            total: ids.Count,
+            retroLogFile: logFile).ConfigureAwait(false);
         _activity.Add(null, "info", "poster_fetch", "Retro fetch enqueued",
-            dataJson: $"{{\"total\":{total},\"enqueued\":{enqueued},\"missing\":{missing},\"failed\":{failed},\"logFile\":\"{logFile ?? ""}\"}}");
-        return Accepted(new { ok = true, total, enqueued, missing, failed, ids, startedAtTs, logFile });
+            dataJson: $"{{\"total\":{total},\"enqueued\":{enqueued},\"coalesced\":{coalesced},\"missing\":{missing},\"timedOut\":{timedOut},\"failed\":{timedOut},\"logFile\":\"{logFile ?? ""}\"}}");
+        return Accepted(new { ok = true, total, enqueued, coalesced, missing, timedOut, failed = timedOut, ids, startedAtTs, logFile });
     }
 
     // POST /api/posters/retro-fetch/progress
@@ -770,9 +787,32 @@ public sealed class PostersController : ControllerBase
     [HttpGet("queue/status")]
     public IActionResult GetQueueStatus()
     {
-        var queueSize = _queue.Count;
-        var isProcessing = queueSize > 0;
-        return Ok(new { queueSize, isProcessing });
+        var snapshot = _queue.GetSnapshot();
+        return Ok(new
+        {
+            pendingCount = snapshot.PendingCount,
+            queueSize = snapshot.PendingCount,
+            inFlightCount = snapshot.InFlightCount,
+            isProcessing = snapshot.IsProcessing,
+            oldestQueuedAgeMs = snapshot.OldestQueuedAgeMs,
+            lastJobStartedAtTs = snapshot.LastJobStartedAtTs,
+            lastJobEndedAtTs = snapshot.LastJobEndedAtTs,
+            currentJob = snapshot.CurrentJob is null
+                ? null
+                : new
+                {
+                    itemId = snapshot.CurrentJob.ItemId,
+                    forceRefresh = snapshot.CurrentJob.ForceRefresh,
+                    startedAtTs = snapshot.CurrentJob.StartedAtTs
+                },
+            jobsEnqueued = snapshot.JobsEnqueued,
+            jobsCoalesced = snapshot.JobsCoalesced,
+            jobsTimedOut = snapshot.JobsTimedOut,
+            jobsProcessed = snapshot.JobsProcessed,
+            jobsSucceeded = snapshot.JobsSucceeded,
+            jobsFailed = snapshot.JobsFailed,
+            jobsRetried = snapshot.JobsRetried
+        });
     }
 
     // POST /api/posters/cache/clear
@@ -785,18 +825,20 @@ public sealed class PostersController : ControllerBase
         return Ok(new { ok = true, cleared });
     }
 
-    private IActionResult EnqueueBulk(IEnumerable<long> ids, bool forceRefresh, int? total = null)
-        => EnqueueBulkInternal(ids, forceRefresh, total).result;
+    private async Task<IActionResult> EnqueueBulk(IEnumerable<long> ids, bool forceRefresh, CancellationToken ct, int? total = null)
+        => (await EnqueueBulkInternal(ids, forceRefresh, ct, total).ConfigureAwait(false)).result;
 
-    private (IActionResult result, int enqueued, int missing, int failed, int total) EnqueueBulkInternal(
+    private async Task<(IActionResult result, int enqueued, int coalesced, int missing, int timedOut, int total)> EnqueueBulkInternal(
         IEnumerable<long> ids,
         bool forceRefresh,
+        CancellationToken ct,
         int? total = null,
         string? retroLogFile = null)
     {
         var enqueued = 0;
+        var coalesced = 0;
         var missing = 0;
-        var failed = 0;
+        var timedOut = 0;
 
         foreach (var id in ids.Distinct())
         {
@@ -807,10 +849,13 @@ public sealed class PostersController : ControllerBase
                 continue;
             }
 
-            if (_queue.TryEnqueue(job))
+            var enqueue = await _queue.EnqueueAsync(job, ct, PosterFetchQueue.DefaultEnqueueTimeout).ConfigureAwait(false);
+            if (enqueue.IsEnqueued)
                 enqueued++;
-            else
-                failed++;
+            else if (enqueue.IsCoalesced)
+                coalesced++;
+            else if (enqueue.IsTimedOut)
+                timedOut++;
         }
 
         var totalCount = total ?? ids.Count();
@@ -819,12 +864,14 @@ public sealed class PostersController : ControllerBase
             ok = true,
             total = totalCount,
             enqueued,
+            coalesced,
             missing,
-            failed,
+            timedOut,
+            failed = timedOut,
             forceRefresh
         });
 
-        return (result, enqueued, missing, failed, totalCount);
+        return (result, enqueued, coalesced, missing, timedOut, totalCount);
     }
 
     // GET /api/posters/retro-fetch/log/{file}

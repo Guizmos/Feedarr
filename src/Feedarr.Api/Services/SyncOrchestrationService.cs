@@ -437,12 +437,31 @@ public sealed class SyncOrchestrationService
 
             var lastSyncAt = src.LastSyncAt ?? 0;
             var newIds = _releases.GetNewIdsWithoutPoster(id, lastSyncAt);
+            var posterRequested = 0;
+            var posterEnqueued = 0;
+            var posterCoalesced = 0;
+            var posterTimedOut = 0;
             foreach (var releaseId in newIds)
             {
                 var job = _posterJobs.Create(releaseId, forceRefresh: false);
                 if (job is null) continue;
-                _posterQueue.TryEnqueue(job);
+                posterRequested++;
+                var enqueue = await _posterQueue.EnqueueAsync(job, syncCt, PosterFetchQueue.DefaultEnqueueTimeout).ConfigureAwait(false);
+                if (enqueue.IsEnqueued)
+                    posterEnqueued++;
+                else if (enqueue.IsCoalesced)
+                    posterCoalesced++;
+                else if (enqueue.IsTimedOut)
+                    posterTimedOut++;
             }
+
+            _log.LogInformation(
+                "ManualSync posterJobs [{Name}] requested={Requested} enqueued={Enqueued} coalesced={Coalesced} timedOut={TimedOut}",
+                name,
+                posterRequested,
+                posterEnqueued,
+                posterCoalesced,
+                posterTimedOut);
 
             _sources.UpdateLastSync(id, "ok", null);
 

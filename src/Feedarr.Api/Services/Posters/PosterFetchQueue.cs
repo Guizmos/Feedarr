@@ -1,94 +1,304 @@
-using System.Threading.Channels;
 using System.Collections.Concurrent;
+using System.Threading.Channels;
 
 namespace Feedarr.Api.Services.Posters;
 
 public sealed class PosterFetchQueue : IPosterFetchQueue
 {
-    // 2 000 slots: each PosterFetchJob is a lightweight record (a few fields).
-    // At ~200 bytes/job this is ~400 KB worst case — well within acceptable bounds.
-    // Chosen rationale:
-    //   - A typical library scan queues at most a few hundred new items at once.
-    //   - 2 000 gives ample headroom for large libraries without unbounded growth.
-    //   - DropWrite policy: new arrivals are silently dropped when full; the
-    //     deduplication set (_pendingByItemId) prevents re-queuing until the
-    //     existing job is consumed, so progress is never blocked.
     private const int Capacity = 2000;
+    public static readonly TimeSpan DefaultEnqueueTimeout = TimeSpan.FromSeconds(1);
 
-    private readonly Channel<PosterFetchJob> _channel;
-    private readonly ConcurrentDictionary<long, byte> _pendingByItemId = new();
+    private readonly Channel<long> _channel;
+    private readonly ConcurrentDictionary<long, QueueEntry> _entries = new();
     private readonly ILogger<PosterFetchQueue> _log;
-    // Guards the TryAdd-then-TryWrite pair so that two concurrent callers
-    // for the same ItemId cannot both observe "not pending" before either
-    // has written to the channel, which would cause one to return true
-    // incorrectly while the job gets dropped.
-    private readonly object _enqueueLock = new();
+    private readonly object _gate = new();
+
+    private long _jobsEnqueued;
+    private long _jobsCoalesced;
+    private long _jobsTimedOut;
+    private long _jobsProcessed;
+    private long _jobsSucceeded;
+    private long _jobsFailed;
+    private long _jobsRetried;
+    private long _inFlightCount;
+    private long? _lastJobStartedAtTs;
+    private long? _lastJobEndedAtTs;
+    private PosterFetchCurrentJobSnapshot? _currentJob;
 
     public PosterFetchQueue(ILogger<PosterFetchQueue> log)
     {
         _log = log;
-        var options = new BoundedChannelOptions(Capacity)
+        _channel = Channel.CreateBounded<long>(new BoundedChannelOptions(Capacity)
         {
             SingleReader = true,
             SingleWriter = false,
             AllowSynchronousContinuations = false,
-            // DropWrite: prefer dropping new arrivals over blocking the producer.
-            // The poster worker will eventually drain the queue and re-trigger
-            // on the next sync cycle for any dropped items.
-            FullMode = BoundedChannelFullMode.DropWrite,
-        };
-        _channel = Channel.CreateBounded<PosterFetchJob>(options);
+            FullMode = BoundedChannelFullMode.Wait,
+        });
     }
 
-    /// <summary>Current number of jobs pending in the queue.</summary>
-    public int Count => (int)(_channel.Reader.Count);
+    public int Count => (int)_channel.Reader.Count;
 
-    public bool TryEnqueue(PosterFetchJob job)
+    public async ValueTask<PosterFetchEnqueueResult> EnqueueAsync(PosterFetchJob job, CancellationToken ct, TimeSpan timeout)
     {
         if (job.ItemId <= 0)
-            return false;
+            return new PosterFetchEnqueueResult(PosterFetchEnqueueStatus.Rejected);
 
-        // The lock makes the ContainsKey check and TryWrite atomic so that
-        // two concurrent callers for the same ItemId cannot both pass the
-        // "not yet pending" guard before either has written to the channel.
-        lock (_enqueueLock)
+        var hasTimeout = timeout > TimeSpan.Zero;
+        var deadlineUtc = hasTimeout ? DateTimeOffset.UtcNow + timeout : DateTimeOffset.UtcNow;
+
+        while (true)
         {
-            // Deduplicate: if already tracked (in channel), accept without re-adding.
-            if (_pendingByItemId.ContainsKey(job.ItemId))
-                return true;
+            ct.ThrowIfCancellationRequested();
 
-            if (!_channel.Writer.TryWrite(job))
+            lock (_gate)
             {
-                _log.LogWarning(
-                    "PosterFetchQueue is full (capacity={Capacity}). Dropped job for ItemId={ItemId}. " +
-                    "The item will be retried on the next sync cycle.",
-                    Capacity, job.ItemId);
-                return false;
+                if (TryCoalesceLocked(job, out var coalesced))
+                    return coalesced;
+
+                if (_channel.Writer.TryWrite(job.ItemId))
+                {
+                    _entries[job.ItemId] = new QueueEntry(job, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+                    {
+                        Pending = true
+                    };
+                    Interlocked.Increment(ref _jobsEnqueued);
+                    return new PosterFetchEnqueueResult(PosterFetchEnqueueStatus.Enqueued);
+                }
             }
 
-            _pendingByItemId.TryAdd(job.ItemId, 0);
-            return true;
+            if (!hasTimeout || DateTimeOffset.UtcNow >= deadlineUtc)
+            {
+                Interlocked.Increment(ref _jobsTimedOut);
+                return new PosterFetchEnqueueResult(PosterFetchEnqueueStatus.TimedOut);
+            }
+
+            var remaining = deadlineUtc - DateTimeOffset.UtcNow;
+            if (remaining <= TimeSpan.Zero)
+            {
+                Interlocked.Increment(ref _jobsTimedOut);
+                return new PosterFetchEnqueueResult(PosterFetchEnqueueStatus.TimedOut);
+            }
+
+            using var timeoutCts = new CancellationTokenSource(remaining);
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+            try
+            {
+                var canWrite = await _channel.Writer.WaitToWriteAsync(linkedCts.Token).ConfigureAwait(false);
+                if (!canWrite)
+                {
+                    Interlocked.Increment(ref _jobsTimedOut);
+                    return new PosterFetchEnqueueResult(PosterFetchEnqueueStatus.TimedOut);
+                }
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                Interlocked.Increment(ref _jobsTimedOut);
+                return new PosterFetchEnqueueResult(PosterFetchEnqueueStatus.TimedOut);
+            }
         }
     }
 
     public async ValueTask<PosterFetchJob> DequeueAsync(CancellationToken ct)
     {
-        var job = await _channel.Reader.ReadAsync(ct).ConfigureAwait(false);        _pendingByItemId.TryRemove(job.ItemId, out _);
-        return job;
+        while (true)
+        {
+            var itemId = await _channel.Reader.ReadAsync(ct).ConfigureAwait(false);
+            lock (_gate)
+            {
+                if (!_entries.TryGetValue(itemId, out var entry) || !entry.Pending)
+                    continue;
+
+                entry.Pending = false;
+                entry.InFlight = true;
+
+                var startedAtTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                _lastJobStartedAtTs = startedAtTs;
+                _currentJob = new PosterFetchCurrentJobSnapshot(entry.Job.ItemId, entry.Job.ForceRefresh, startedAtTs);
+                Interlocked.Exchange(ref _inFlightCount, 1);
+                return entry.Job;
+            }
+        }
+    }
+
+    public void RecordRetry()
+        => Interlocked.Increment(ref _jobsRetried);
+
+    public PosterFetchJob? Complete(PosterFetchJob job, PosterFetchProcessResult result)
+    {
+        lock (_gate)
+        {
+            var endedAtTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            _lastJobEndedAtTs = endedAtTs;
+            Interlocked.Increment(ref _jobsProcessed);
+            if (result.Succeeded)
+                Interlocked.Increment(ref _jobsSucceeded);
+            else
+                Interlocked.Increment(ref _jobsFailed);
+
+            if (!_entries.TryGetValue(job.ItemId, out var entry))
+            {
+                _currentJob = null;
+                Interlocked.Exchange(ref _inFlightCount, 0);
+                return null;
+            }
+
+            if (entry.FollowUpJob is not null)
+            {
+                var followUp = entry.FollowUpJob with { AttemptCount = 0 };
+                entry.FollowUpJob = null;
+                entry.Job = followUp;
+                entry.InFlight = true;
+
+                var startedAtTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                _lastJobStartedAtTs = startedAtTs;
+                _currentJob = new PosterFetchCurrentJobSnapshot(followUp.ItemId, followUp.ForceRefresh, startedAtTs);
+                Interlocked.Exchange(ref _inFlightCount, 1);
+                return followUp;
+            }
+
+            _entries.TryRemove(job.ItemId, out _);
+            _currentJob = null;
+            Interlocked.Exchange(ref _inFlightCount, 0);
+            return null;
+        }
     }
 
     public int ClearPending()
     {
         var cleared = 0;
-        while (_channel.Reader.TryRead(out var job))
+        while (_channel.Reader.TryRead(out var itemId))
         {
-            cleared++;
-            _pendingByItemId.TryRemove(job.ItemId, out _);
+            lock (_gate)
+            {
+                if (_entries.TryGetValue(itemId, out var entry) && entry.Pending)
+                {
+                    _entries.TryRemove(itemId, out _);
+                    cleared++;
+                }
+            }
         }
 
         if (cleared > 0)
             _log.LogInformation("PosterFetchQueue cleared {Cleared} pending jobs", cleared);
 
         return cleared;
+    }
+
+    public PosterFetchQueueSnapshot GetSnapshot()
+    {
+        long? oldestQueuedAgeMs = null;
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        PosterFetchCurrentJobSnapshot? currentJob;
+        long? lastJobStartedAtTs;
+        long? lastJobEndedAtTs;
+
+        lock (_gate)
+        {
+            foreach (var entry in _entries.Values)
+            {
+                if (!entry.Pending)
+                    continue;
+
+                var age = Math.Max(0, nowMs - entry.EnqueuedAtMs);
+                if (!oldestQueuedAgeMs.HasValue || age > oldestQueuedAgeMs.Value)
+                    oldestQueuedAgeMs = age;
+            }
+
+            currentJob = _currentJob;
+            lastJobStartedAtTs = _lastJobStartedAtTs;
+            lastJobEndedAtTs = _lastJobEndedAtTs;
+        }
+
+        var pendingCount = Count;
+        var inFlightCount = (int)Interlocked.Read(ref _inFlightCount);
+        return new PosterFetchQueueSnapshot(
+            PendingCount: pendingCount,
+            InFlightCount: inFlightCount,
+            IsProcessing: pendingCount > 0 || inFlightCount > 0,
+            OldestQueuedAgeMs: oldestQueuedAgeMs,
+            LastJobStartedAtTs: lastJobStartedAtTs,
+            LastJobEndedAtTs: lastJobEndedAtTs,
+            CurrentJob: currentJob,
+            JobsEnqueued: Interlocked.Read(ref _jobsEnqueued),
+            JobsCoalesced: Interlocked.Read(ref _jobsCoalesced),
+            JobsTimedOut: Interlocked.Read(ref _jobsTimedOut),
+            JobsProcessed: Interlocked.Read(ref _jobsProcessed),
+            JobsSucceeded: Interlocked.Read(ref _jobsSucceeded),
+            JobsFailed: Interlocked.Read(ref _jobsFailed),
+            JobsRetried: Interlocked.Read(ref _jobsRetried));
+    }
+
+    private bool TryCoalesceLocked(PosterFetchJob job, out PosterFetchEnqueueResult result)
+    {
+        result = default;
+
+        if (!_entries.TryGetValue(job.ItemId, out var entry))
+            return false;
+
+        if (entry.Pending)
+        {
+            entry.Job = MergePendingJob(entry.Job, job);
+            Interlocked.Increment(ref _jobsCoalesced);
+            result = new PosterFetchEnqueueResult(PosterFetchEnqueueStatus.Coalesced);
+            return true;
+        }
+
+        if (entry.InFlight)
+        {
+            if (job.ForceRefresh && !entry.Job.ForceRefresh)
+                entry.FollowUpJob = MergeFollowUpJob(entry.FollowUpJob, entry.Job, job);
+
+            Interlocked.Increment(ref _jobsCoalesced);
+            result = new PosterFetchEnqueueResult(PosterFetchEnqueueStatus.Coalesced);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static PosterFetchJob MergePendingJob(PosterFetchJob existing, PosterFetchJob incoming)
+    {
+        var forceRefresh = existing.ForceRefresh || incoming.ForceRefresh;
+        var retroLogFile = !string.IsNullOrWhiteSpace(incoming.RetroLogFile)
+            ? incoming.RetroLogFile
+            : existing.RetroLogFile;
+
+        if (forceRefresh == existing.ForceRefresh && retroLogFile == existing.RetroLogFile)
+            return existing;
+
+        return existing with
+        {
+            ForceRefresh = forceRefresh,
+            RetroLogFile = retroLogFile
+        };
+    }
+
+    private static PosterFetchJob MergeFollowUpJob(PosterFetchJob? existingFollowUp, PosterFetchJob inFlight, PosterFetchJob incoming)
+    {
+        var baseJob = existingFollowUp ?? inFlight;
+        return baseJob with
+        {
+            ForceRefresh = true,
+            AttemptCount = 0,
+            RetroLogFile = !string.IsNullOrWhiteSpace(incoming.RetroLogFile)
+                ? incoming.RetroLogFile
+                : baseJob.RetroLogFile
+        };
+    }
+
+    private sealed class QueueEntry
+    {
+        public QueueEntry(PosterFetchJob job, long enqueuedAtMs)
+        {
+            Job = job;
+            EnqueuedAtMs = enqueuedAtMs;
+        }
+
+        public PosterFetchJob Job { get; set; }
+        public long EnqueuedAtMs { get; }
+        public bool Pending { get; set; }
+        public bool InFlight { get; set; }
+        public PosterFetchJob? FollowUpJob { get; set; }
     }
 }
