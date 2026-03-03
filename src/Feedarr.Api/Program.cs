@@ -179,6 +179,7 @@ builder.Services.AddSingleton<AnimeMatchingStrategy>();
 builder.Services.AddSingleton<AudioMatchingStrategy>();
 builder.Services.AddSingleton<GenericMatchingStrategy>();
 builder.Services.AddSingleton<PosterMatchingOrchestrator>();
+builder.Services.AddSingleton<PosterThumbService>();
 builder.Services.AddSingleton<PosterFetchService>();
 builder.Services.AddSingleton<IPosterFileStore, PosterFileStore>();
 builder.Services.AddSingleton<PosterMatchCacheService>();

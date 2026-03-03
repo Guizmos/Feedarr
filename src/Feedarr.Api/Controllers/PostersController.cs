@@ -37,6 +37,7 @@ public sealed class PostersController : ControllerBase
     private readonly RawgClient _rawg;
     private readonly ComicVineClient _comicVine;
     private readonly MusicBrainzClient _musicBrainz;
+    private readonly PosterThumbService _thumbService;
     private readonly ILogger<PostersController> _log;
 
     public PostersController(
@@ -56,7 +57,8 @@ public sealed class PostersController : ControllerBase
         RawgClient rawg,
         ComicVineClient comicVine,
         MusicBrainzClient musicBrainz,
-        ILogger<PostersController> log)
+        ILogger<PostersController> log,
+        PosterThumbService? thumbService = null)
     {
         _releases = releases;
         _mediaEntities = mediaEntities;
@@ -74,6 +76,7 @@ public sealed class PostersController : ControllerBase
         _rawg = rawg;
         _comicVine = comicVine;
         _musicBrainz = musicBrainz;
+        _thumbService = thumbService ?? new PosterThumbService(Microsoft.Extensions.Logging.Abstractions.NullLogger<PosterThumbService>.Instance);
         _log = log;
     }
 
@@ -99,6 +102,34 @@ public sealed class PostersController : ControllerBase
         var file = entity.PosterFile;
         if (string.IsNullOrWhiteSpace(file)) return NotFound();
         return BuildPosterFileResult(file, $"entity:{entityId}");
+    }
+
+    // GET /api/posters/release/{id}/thumb/{w}
+    [HttpGet("release/{id:long}/thumb/{w:int}")]
+    public async Task<IActionResult> GetReleasePosterThumb([FromRoute] long id, [FromRoute] int w, CancellationToken ct)
+    {
+        var r = _releases.GetForPoster(id);
+        if (r is null) return NotFound();
+        return await BuildThumbResultAsync(
+            storeDir: r.PosterStoreDir,
+            posterFile: r.PosterFile,
+            w: w,
+            logContext: $"release-thumb:{id}",
+            ct: ct);
+    }
+
+    // GET /api/posters/entity/{entityId}/thumb/{w}
+    [HttpGet("entity/{entityId:long}/thumb/{w:int}")]
+    public async Task<IActionResult> GetEntityPosterThumb([FromRoute] long entityId, [FromRoute] int w, CancellationToken ct)
+    {
+        var entity = _mediaEntities.GetPoster(entityId);
+        if (entity is null) return NotFound();
+        return await BuildThumbResultAsync(
+            storeDir: entity.PosterStoreDir,
+            posterFile: entity.PosterFile,
+            w: w,
+            logContext: $"entity-thumb:{entityId}",
+            ct: ct);
     }
 
     // GET /api/posters/banner/{id}
@@ -918,6 +949,83 @@ public sealed class PostersController : ControllerBase
 
     private PosterPathResolver CreatePosterPathResolver()
         => new(_posterFetch.PostersDirPath);
+
+    private PosterStorePathResolver CreateStoreResolver()
+        => new(_posterFetch.PosterStoreDirPath);
+
+    /// <summary>
+    /// Resolves and serves a poster thumbnail with the following fallback chain:
+    /// 1. store/{storeDir}/w{w}.webp (pre-generated WebP thumb)
+    /// 2. store/{storeDir}/original.* (full-size original from store — re-generates thumb on the fly)
+    /// 3. legacy flat poster_file
+    /// 4. 404
+    /// All served paths get <c>Cache-Control: public, max-age=31536000, immutable</c>.
+    /// </summary>
+    private async Task<IActionResult> BuildThumbResultAsync(
+        string? storeDir, string? posterFile, int w, string logContext, CancellationToken ct)
+    {
+        // Clamp to supported widths (serve nearest available if requested width not exact)
+        var effectiveWidth = PosterThumbService.SupportedWidths.Contains(w)
+            ? w
+            : PosterThumbService.SupportedWidths.OrderBy(sw => Math.Abs(sw - w)).First();
+
+        var storeResolver = CreateStoreResolver();
+
+        // 1. Try pre-generated WebP thumb from store
+        if (!string.IsNullOrWhiteSpace(storeDir) &&
+            storeResolver.TryResolvePosterFile(storeDir, $"w{effectiveWidth}.webp", out var thumbFull) &&
+            System.IO.File.Exists(thumbFull))
+        {
+            Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+            Response.Headers.Vary = "Accept-Encoding";
+            return PhysicalFile(thumbFull, "image/webp");
+        }
+
+        // 2. Try original from store → generate thumb on-the-fly
+        if (!string.IsNullOrWhiteSpace(storeDir) &&
+            storeResolver.TryResolveStoreDir(storeDir, out var storeDirFull) &&
+            Directory.Exists(storeDirFull))
+        {
+            var origFiles = Directory.GetFiles(storeDirFull, "original.*");
+            var origFile = origFiles.FirstOrDefault();
+            if (origFile is not null && System.IO.File.Exists(origFile))
+            {
+                // Attempt on-the-fly thumb generation (best-effort, non-blocking)
+                try
+                {
+                    var thumbBytes = await _thumbService.GenerateSingleThumbAsync(origFile, effectiveWidth, ct).ConfigureAwait(false);
+                    if (thumbBytes is not null && thumbBytes.Length > 0)
+                    {
+                        // Write for next hit
+                        var writePath = Path.Combine(storeDirFull, $"w{effectiveWidth}.webp");
+                        var tmpPath = writePath + ".tmp";
+                        await System.IO.File.WriteAllBytesAsync(tmpPath, thumbBytes, ct).ConfigureAwait(false);
+                        System.IO.File.Move(tmpPath, writePath, overwrite: true);
+
+                        Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+                        Response.Headers.Vary = "Accept-Encoding";
+                        return PhysicalFile(writePath, "image/webp");
+                    }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "On-the-fly thumb generation failed for {Context}", logContext);
+                }
+
+                // Serve original as fallback
+                Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+                Response.Headers.Vary = "Accept-Encoding";
+                return PhysicalFile(origFile, GetContentTypeForPoster(origFile));
+            }
+        }
+
+        // 3. Legacy flat poster_file fallback
+        if (!string.IsNullOrWhiteSpace(posterFile))
+            return BuildPosterFileResult(posterFile, logContext);
+
+        return NotFound();
+    }
 
     private bool TryResolveStoredPosterPath(string file, out string fullPath)
     {

@@ -1021,6 +1021,8 @@ public sealed class ReleaseRepository
                 COALESCE(releases.poster_file, me.poster_file) as PosterFile,
                 poster_provider as PosterProvider,
                 poster_provider_id as PosterProviderId,
+                releases.poster_key as PosterKey,
+                COALESCE(releases.poster_store_dir, me.poster_store_dir) as PosterStoreDir,
                 poster_lang as PosterLang,
                 poster_size as PosterSize,
                 poster_hash as PosterHash,
@@ -2313,6 +2315,154 @@ LEFT JOIN media_entities me
         return rows.ToList();
     }
 
+    // ── Poster store (Phase 2) ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Same as <see cref="SavePoster"/> but also persists the canonical store columns
+    /// (<c>poster_key</c>, <c>poster_store_dir</c>) and upserts <c>poster_store_refs</c>.
+    /// </summary>
+    public void SavePosterWithStore(
+        long id, int? tmdbId, string? posterPath, string posterFile,
+        string posterKey, string storeDir)
+    {
+        if (string.IsNullOrWhiteSpace(posterFile))
+            throw new ArgumentException("posterFile cannot be null or empty", nameof(posterFile));
+        if (string.IsNullOrWhiteSpace(posterKey))
+            throw new ArgumentException("posterKey cannot be null or empty", nameof(posterKey));
+        if (string.IsNullOrWhiteSpace(storeDir))
+            throw new ArgumentException("storeDir cannot be null or empty", nameof(storeDir));
+
+        using var conn = _db.Open();
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        var entityId = conn.ExecuteScalar<long?>(
+            "SELECT entity_id FROM releases WHERE id = @id",
+            new { id }
+        );
+
+        using var tx = conn.BeginTransaction();
+        try
+        {
+            if (entityId.HasValue && entityId.Value > 0)
+            {
+                conn.Execute(
+                    """
+                    UPDATE media_entities
+                    SET tmdb_id = COALESCE(@tmdbId, tmdb_id),
+                        poster_file = @posterFile,
+                        poster_key = @posterKey,
+                        poster_store_dir = @storeDir,
+                        poster_updated_at_ts = @ts,
+                        updated_at_ts = @ts
+                    WHERE id = @entityId;
+                    """,
+                    new { entityId, tmdbId, posterFile, posterKey, storeDir, ts = now },
+                    tx
+                );
+            }
+
+            conn.Execute(
+                """
+                UPDATE releases
+                SET tmdb_id = COALESCE(@tmdbId, tmdb_id),
+                    poster_path = COALESCE(@posterPath, poster_path),
+                    poster_file = @posterFile,
+                    poster_key = @posterKey,
+                    poster_store_dir = @storeDir,
+                    poster_updated_at_ts = @ts
+                WHERE id = @id;
+                """,
+                new { id, tmdbId, posterPath, posterFile, posterKey, storeDir, ts = now },
+                tx
+            );
+
+            conn.Execute(
+                """
+                INSERT OR IGNORE INTO poster_store_refs(store_dir, release_id, created_at_ts)
+                VALUES (@storeDir, @id, @ts);
+                """,
+                new { storeDir, id, ts = now },
+                tx
+            );
+
+            tx.Commit();
+        }
+        catch
+        {
+            tx.Rollback();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Returns storeDirs that have no row in <c>poster_store_refs</c> —
+    /// used by the GC to identify orphaned store directories.
+    /// </summary>
+    public IReadOnlyList<string> GetOrphanedStoreDirs(IEnumerable<string> candidateDirs)
+    {
+        var dirs = candidateDirs
+            .Where(d => !string.IsNullOrWhiteSpace(d))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (dirs.Count == 0) return [];
+
+        using var conn = _db.Open();
+        const int chunkSize = 400;
+        var orphaned = new List<string>();
+
+        for (var i = 0; i < dirs.Count; i += chunkSize)
+        {
+            var chunk = dirs.Skip(i).Take(chunkSize).ToArray();
+            var referenced = conn.Query<string>(
+                "SELECT DISTINCT store_dir FROM poster_store_refs WHERE store_dir IN @chunk",
+                new { chunk }
+            ).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var dir in chunk)
+            {
+                if (!referenced.Contains(dir))
+                    orphaned.Add(dir);
+            }
+        }
+
+        return orphaned;
+    }
+
+    /// <summary>
+    /// Returns releases that have a legacy flat <c>poster_file</c> but no
+    /// <c>poster_store_dir</c> yet — used by the migration endpoint.
+    /// </summary>
+    public IReadOnlyList<LegacyPosterRow> GetReleasesWithLegacyPosters(int limit, int offset)
+    {
+        var safeLimit = Math.Clamp(limit <= 0 ? 100 : limit, 1, 500);
+        var safeOffset = Math.Max(0, offset);
+
+        using var conn = _db.Open();
+        return conn.Query<LegacyPosterRow>(
+            """
+            SELECT id AS Id,
+                   poster_file AS PosterFile,
+                   poster_provider AS PosterProvider,
+                   poster_provider_id AS PosterProviderId
+            FROM releases
+            WHERE poster_file IS NOT NULL
+              AND poster_file <> ''
+              AND (poster_store_dir IS NULL OR poster_store_dir = '')
+            ORDER BY id ASC
+            LIMIT @limit OFFSET @offset;
+            """,
+            new { limit = safeLimit, offset = safeOffset }
+        ).AsList();
+    }
+}
+
+public sealed class LegacyPosterRow
+{
+    public long Id { get; set; }
+    public string PosterFile { get; set; } = "";
+    public string? PosterProvider { get; set; }
+    public string? PosterProviderId { get; set; }
 }
 
 public sealed class ReleaseArrStatusRow

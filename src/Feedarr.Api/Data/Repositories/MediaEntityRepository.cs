@@ -42,6 +42,7 @@ public sealed class MediaEntityRepository
             SELECT
               id as Id,
               poster_file as PosterFile,
+              poster_store_dir as PosterStoreDir,
               poster_updated_at_ts as PosterUpdatedAtTs
             FROM media_entities
             WHERE id = @id;
@@ -65,5 +66,6 @@ public sealed class MediaEntityPoster
 {
     public long Id { get; set; }
     public string? PosterFile { get; set; }
+    public string? PosterStoreDir { get; set; }
     public long? PosterUpdatedAtTs { get; set; }
 }

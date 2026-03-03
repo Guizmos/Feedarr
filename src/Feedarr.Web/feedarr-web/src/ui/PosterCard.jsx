@@ -30,13 +30,21 @@ function PosterCard({
     [item.titleClean, item.title]
   );
 
-  const basePosterUrl = item.posterUrl || (item.id ? `/api/posters/release/${item.id}` : "");
+  const thumbBase = item.id ? `/api/posters/release/${item.id}/thumb` : "";
+  const basePosterUrl = item.posterUrl
+    ? thumbBase ? `${thumbBase}/500` : item.posterUrl
+    : thumbBase ? `${thumbBase}/500` : "";
   const {
     posterSrc,
     imgError,
     handleImageError,
     handleImageLoad,
   } = usePosterRetryOn404(item.id, basePosterUrl);
+
+  const thumbSrcset = thumbBase
+    ? `${thumbBase}/342 342w, ${thumbBase}/500 500w, ${thumbBase}/780 780w`
+    : undefined;
+  const thumbSizes = cardSize ? `${Math.round(cardSize)}px` : "180px";
   const indexer = String(indexerLabel || "").trim();
   const showIndexer = showIndexerPill && indexer;
   const indexerClass = getIndexerClass(indexer);
@@ -65,6 +73,8 @@ function PosterCard({
         {hasPoster ? (
           <img
             src={posterSrc}
+            srcSet={thumbSrcset}
+            sizes={thumbSizes}
             alt={displayTitle || ""}
             loading={itemIndex < 12 ? "eager" : "lazy"}
             fetchPriority={itemIndex < 12 ? "high" : "auto"}

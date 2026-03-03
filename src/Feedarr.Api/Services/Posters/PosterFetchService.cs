@@ -53,6 +53,7 @@ public sealed class PosterFetchService
     private readonly ComicVineClient _comicVine;
     private readonly MusicBrainzClient _musicBrainz;
     private readonly PosterMatchCacheService _matchCache;
+    private readonly PosterThumbService _thumbService;
     private readonly AppOptions _opt;
     private readonly IWebHostEnvironment _env;
     private readonly PosterMatchingOrchestrator _matchingOrchestrator;
@@ -60,6 +61,11 @@ public sealed class PosterFetchService
     private readonly ILogger<PosterFetchService> _logger;
     private readonly string _dataDirAbs;
     private readonly string _postersDirAbs;
+    private readonly string _posterStoreDirAbs;
+    private PosterStorePathResolver? _storeResolver;
+    // Per-storeDir semaphores to prevent concurrent races writing the same store directory.
+    private readonly Dictionary<string, SemaphoreSlim> _storeLocks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _storeLocksGate = new();
 
     public PosterFetchService(
         ReleaseRepository releases,
@@ -80,7 +86,8 @@ public sealed class PosterFetchService
         IWebHostEnvironment env,
         PosterMatchingOrchestrator matchingOrchestrator,
         ActiveExternalProviderConfigResolver activeConfigResolver,
-        ILogger<PosterFetchService> logger)
+        ILogger<PosterFetchService> logger,
+        PosterThumbService? thumbService = null)
     {
         _releases = releases;
         _activity = activity;
@@ -96,6 +103,7 @@ public sealed class PosterFetchService
         _comicVine = comicVine;
         _musicBrainz = musicBrainz;
         _matchCache = matchCache;
+        _thumbService = thumbService ?? new PosterThumbService(Microsoft.Extensions.Logging.Abstractions.NullLogger<PosterThumbService>.Instance);
         _opt = opt.Value;
         _env = env;
         _matchingOrchestrator = matchingOrchestrator;
@@ -107,12 +115,110 @@ public sealed class PosterFetchService
             ? opt.Value.DataDir
             : Path.GetFullPath(Path.Combine(env.ContentRootPath, opt.Value.DataDir));
         _postersDirAbs = Path.Combine(_dataDirAbs, "posters");
+        _posterStoreDirAbs = Path.Combine(_postersDirAbs, "store");
     }
 
     private string DataDirAbs => _dataDirAbs;
     private string PostersDirAbs => _postersDirAbs;
+    public string PosterStoreDirPath => _posterStoreDirAbs;
 
     public string PostersDirPath => PostersDirAbs;
+
+    private PosterStorePathResolver GetStoreResolver()
+    {
+        if (_storeResolver is not null) return _storeResolver;
+        lock (_storeLocksGate)
+        {
+            _storeResolver ??= new PosterStorePathResolver(_posterStoreDirAbs);
+        }
+        return _storeResolver;
+    }
+
+    private SemaphoreSlim GetStoreLock(string storeDir)
+    {
+        lock (_storeLocksGate)
+        {
+            if (!_storeLocks.TryGetValue(storeDir, out var sem))
+            {
+                sem = new SemaphoreSlim(1, 1);
+                _storeLocks[storeDir] = sem;
+            }
+            return sem;
+        }
+    }
+
+    /// <summary>
+    /// Writes the canonical store entry for a poster: creates
+    /// <c>posters/store/{storeDir}/original.{ext}</c>, generates WebP thumbs, and
+    /// updates <c>poster_key</c>/<c>poster_store_dir</c> on the release + upserts
+    /// <c>poster_store_refs</c>.  Never throws — errors are logged and swallowed so
+    /// the caller's main flat-file path is never disrupted.
+    /// </summary>
+    private async Task TrySaveToStoreAsync(
+        long releaseId,
+        string provider,
+        string providerId,
+        string ext,
+        byte[] bytes,
+        string posterFile,
+        int? tmdbId,
+        string? posterPath,
+        CancellationToken ct)
+    {
+        if (bytes is null || bytes.Length == 0) return;
+        if (string.IsNullOrWhiteSpace(provider) || string.IsNullOrWhiteSpace(providerId)) return;
+
+        var rawStoreDir = $"{provider.ToLowerInvariant()}-{PosterStorePathResolver.SanitizeStoreDir(providerId)}";
+        var posterKey = $"{provider.ToLowerInvariant()}:{providerId}";
+
+        var resolver = GetStoreResolver();
+        if (!resolver.TryResolveStoreDir(rawStoreDir, out var storeDirFull))
+        {
+            _logger.LogWarning("TrySaveToStore: invalid storeDir '{Dir}' for release {Id}", rawStoreDir, releaseId);
+            return;
+        }
+
+        var sem = GetStoreLock(rawStoreDir);
+        await sem.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            Directory.CreateDirectory(storeDirFull);
+
+            // Write original image (atomic)
+            var safeExt = string.IsNullOrWhiteSpace(ext) ? ".jpg" : ext;
+            var origFileName = $"original{safeExt}";
+            if (!resolver.TryResolveFile(storeDirFull, origFileName, out var origFull))
+            {
+                _logger.LogWarning("TrySaveToStore: invalid origFileName '{File}' for release {Id}", origFileName, releaseId);
+                return;
+            }
+
+            if (!System.IO.File.Exists(origFull))
+            {
+                var tmpPath = origFull + ".tmp";
+                await System.IO.File.WriteAllBytesAsync(tmpPath, bytes, ct).ConfigureAwait(false);
+                System.IO.File.Move(tmpPath, origFull, overwrite: true);
+            }
+
+            // Generate thumbs (best-effort)
+            await _thumbService.GenerateThumbsAsync(bytes, storeDirFull, ct).ConfigureAwait(false);
+
+            // Persist store columns + upsert ref
+            _releases.SavePosterWithStore(releaseId, tmdbId, posterPath, posterFile, posterKey, rawStoreDir);
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal cancellation — do not log as error
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "TrySaveToStore failed for release {Id} storeDir '{Dir}'", releaseId, rawStoreDir);
+        }
+        finally
+        {
+            sem.Release();
+        }
+    }
 
     public int GetLocalPosterCount()
     {
@@ -176,6 +282,7 @@ public sealed class PosterFetchService
         var full = Path.Combine(PostersDirAbs, file);
         await System.IO.File.WriteAllBytesAsync(full, bytesTmdb, ct).ConfigureAwait(false);
         _releases.SavePoster(id, tmdbId, posterPath, file);
+        await TrySaveToStoreAsync(id, "tmdb", tmdbId.ToString(CultureInfo.InvariantCulture), ext, bytesTmdb, file, tmdbId, posterPath, ct).ConfigureAwait(false);
         var mediaType = (string?)_releases.GetForPoster(id)?.MediaType ?? "";
         await UpdateExternalDetailsFromTmdbAsync(id, tmdbId, mediaType, ct).ConfigureAwait(false);        var hash = ComputeSha256Hex(bytesTmdb);
         PosterAudit.UpdateAttemptSuccess(_releases, id, "tmdb", tmdbId.ToString(CultureInfo.InvariantCulture), null, "w500", hash);
@@ -206,6 +313,7 @@ public sealed class PosterFetchService
         var full = Path.Combine(PostersDirAbs, file);
         await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, igdbId, coverUrl, file);
+        await TrySaveToStoreAsync(id, "igdb", igdbId.ToString(CultureInfo.InvariantCulture), ".jpg", bytes, file, null, null, ct).ConfigureAwait(false);
         await UpdateExternalDetailsFromIgdbAsync(id, igdbId, ct).ConfigureAwait(false);        var size = InferIgdbSize(coverUrl);
         var hash = ComputeSha256Hex(bytes);
         PosterAudit.UpdateAttemptSuccess(_releases, id, "igdb", igdbId.ToString(CultureInfo.InvariantCulture), null, size, hash);
@@ -236,6 +344,7 @@ public sealed class PosterFetchService
         var full = Path.Combine(PostersDirAbs, file);
         await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, null, coverUrl, file);
+        await TrySaveToStoreAsync(id, "rawg", rawgId.ToString(CultureInfo.InvariantCulture), ".jpg", bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(id, ExternalProviderKeys.Rawg, rawgId.ToString(CultureInfo.InvariantCulture),
             null, null, null, null, null, null, null, null, null, null, null);
         var hash = ComputeSha256Hex(bytes);
@@ -263,6 +372,7 @@ public sealed class PosterFetchService
         var full = Path.Combine(PostersDirAbs, file);
         await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, null, posterUrl, file);
+        await TrySaveToStoreAsync(id, ExternalProviderKeys.TheAudioDb, normalizedProviderId, ext, bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(
             id,
             ExternalProviderKeys.TheAudioDb,
@@ -319,6 +429,7 @@ public sealed class PosterFetchService
         var full = Path.Combine(PostersDirAbs, file);
         await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, null, posterUrl, file);
+        await TrySaveToStoreAsync(id, ExternalProviderKeys.GoogleBooks, normalizedProviderId, ext, bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(
             id,
             ExternalProviderKeys.GoogleBooks,
@@ -358,6 +469,7 @@ public sealed class PosterFetchService
         var full = Path.Combine(PostersDirAbs, file);
         await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, null, posterUrl, file);
+        await TrySaveToStoreAsync(id, ExternalProviderKeys.OpenLibrary, normalizedProviderId, ".jpg", bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(
             id,
             ExternalProviderKeys.OpenLibrary,
@@ -398,6 +510,7 @@ public sealed class PosterFetchService
         var full = Path.Combine(PostersDirAbs, file);
         await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, null, posterUrl, file);
+        await TrySaveToStoreAsync(id, ExternalProviderKeys.ComicVine, normalizedProviderId, ext, bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(
             id,
             ExternalProviderKeys.ComicVine,
@@ -439,6 +552,7 @@ public sealed class PosterFetchService
         var full = Path.Combine(PostersDirAbs, file);
         await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, null, posterUrl, file);
+        await TrySaveToStoreAsync(id, ExternalProviderKeys.MusicBrainz, normalizedProviderId, ext, bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(
             id,
             ExternalProviderKeys.MusicBrainz,
