@@ -7,6 +7,7 @@ import { getAppLabel, normalizeRequestMode } from "../utils/appTypes.js";
 
 function PosterCard({
   item,
+  itemIndex = 0,
   onOpen,
   selectionMode = false,
   selected = false,
@@ -65,14 +66,16 @@ function PosterCard({
           <img
             src={posterSrc}
             alt={displayTitle || ""}
-            loading="lazy"
+            loading={itemIndex < 12 ? "eager" : "lazy"}
+            fetchPriority={itemIndex < 12 ? "high" : "auto"}
+            decoding="async"
             onError={handleImageError}
             onLoad={handleImageLoad}
           />
         ) : (
           <div className="posterFallback">
             {isPending ? (
-              <div className="posterLoader" />
+              <div className="posterSkeleton" />
             ) : isFailed ? (
               <ImageOff className="posterFallback__icon" />
             ) : isEmpty ? (

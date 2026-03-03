@@ -7,6 +7,7 @@ import AppIcon from "../../../ui/AppIcon.jsx";
 
 function PosterViewCard({
   item,
+  itemIndex = 0,
   onOpen,
   selectionMode,
   selected,
@@ -82,14 +83,16 @@ function PosterViewCard({
         <img
           src={posterSrc}
           alt={displayTitle || ""}
-          loading="lazy"
+          loading={itemIndex < 12 ? "eager" : "lazy"}
+          fetchPriority={itemIndex < 12 ? "high" : "auto"}
+          decoding="async"
           onError={handleImageError}
           onLoad={handleImageLoad}
         />
       ) : (
         <div className="posterFallback">
           {isPending ? (
-            <div className="posterLoader" />
+            <div className="posterSkeleton" />
           ) : isFailed ? (
             <ImageOff className="posterFallback__icon" />
           ) : isEmpty ? (
@@ -210,10 +213,11 @@ function LibraryPoster({
 
   return (
     <div className="grid grid--poster" style={gridStyle}>
-      {items.map((it) => (
+      {items.map((it, index) => (
         <PosterViewCard
           key={it.id}
           item={it}
+          itemIndex={index}
           onOpen={onOpen}
           selectionMode={selectionMode}
           selected={selectedIds.has(it.id)}

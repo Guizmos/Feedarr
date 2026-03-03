@@ -115,7 +115,7 @@ public sealed class PostersController : ControllerBase
             return NotFound();
 
         if (System.IO.File.Exists(full))
-            return BuildPosterFileResult(file, $"banner-cache:{id}");
+            return BuildPosterFileResult(file, $"banner-cache:{id}", "public, max-age=3600");
 
         try
         {
@@ -170,7 +170,7 @@ public sealed class PostersController : ControllerBase
             var posterFile = (string?)r.PosterFile;
             if (!string.IsNullOrWhiteSpace(posterFile))
             {
-                var fallbackResult = BuildPosterFileResult(posterFile, $"banner-fallback:{id}");
+                var fallbackResult = BuildPosterFileResult(posterFile, $"banner-fallback:{id}", "public, max-age=3600");
                 if (fallbackResult is PhysicalFileResult or ObjectResult)
                     return fallbackResult;
             }
@@ -192,6 +192,8 @@ public sealed class PostersController : ControllerBase
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "poster file unavailable" });
         }
 
+        Response.Headers.CacheControl = "public, max-age=3600";
+        Response.Headers.Vary = "Accept-Encoding";
         return PhysicalFile(full, "image/jpeg");
     }
 
@@ -929,7 +931,7 @@ public sealed class PostersController : ControllerBase
         return resolved;
     }
 
-    private IActionResult BuildPosterFileResult(string storedFile, string logContext)
+    private IActionResult BuildPosterFileResult(string storedFile, string logContext, string cacheControl = "public, max-age=31536000, immutable")
     {
         if (!TryResolveStoredPosterPath(storedFile, out var fullPath))
             return NotFound();
@@ -942,6 +944,8 @@ public sealed class PostersController : ControllerBase
                 FileAccess.Read,
                 FileShare.ReadWrite | FileShare.Delete);
 
+            Response.Headers.CacheControl = cacheControl;
+            Response.Headers.Vary = "Accept-Encoding";
             return PhysicalFile(fullPath, GetContentTypeForPoster(fullPath));
         }
         catch (FileNotFoundException)

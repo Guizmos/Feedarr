@@ -24,6 +24,7 @@ using Feedarr.Api.Services.TheAudioDb;
 using Feedarr.Api.Services.Titles;
 using Feedarr.Api.Services.Tmdb;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.FileProviders;
@@ -257,7 +258,7 @@ public sealed class PostersControllerSecurityAndSearchTests
 
         public PostersController CreateController(TmdbClient? tmdb = null)
         {
-            return new PostersController(
+            var controller = new PostersController(
                 Releases,
                 MediaEntities,
                 Activity,
@@ -275,6 +276,8 @@ public sealed class PostersControllerSecurityAndSearchTests
                 null!,
                 null!,
                 NullLogger<PostersController>.Instance);
+            controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+            return controller;
         }
 
         public long CreateRelease(string? posterFile = null, int tmdbId = 0, int tvdbId = 0)
