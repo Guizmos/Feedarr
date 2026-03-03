@@ -184,6 +184,8 @@ builder.Services.AddSingleton<PosterFetchService>();
 builder.Services.AddSingleton<IPosterFileStore, PosterFileStore>();
 builder.Services.AddSingleton<PosterMatchCacheService>();
 builder.Services.AddSingleton<PosterFetchJobFactory>();
+builder.Services.AddSingleton<Feedarr.Api.Services.Sync.ISyncPlanBuilder, Feedarr.Api.Services.Sync.SyncPlanBuilder>();
+builder.Services.AddSingleton<Feedarr.Api.Services.Sync.ISyncExecutor, Feedarr.Api.Services.Sync.SyncExecutor>();
 builder.Services.AddSingleton<SyncOrchestrationService>();
 builder.Services.AddSingleton<RetroFetchLogService>();
 builder.Services.AddSingleton<IPosterFetchQueue, PosterFetchQueue>();
