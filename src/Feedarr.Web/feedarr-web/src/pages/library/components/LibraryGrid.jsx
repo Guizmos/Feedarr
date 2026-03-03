@@ -38,6 +38,7 @@ function LibraryGrid({
           key={it.id}
           item={it}
           itemIndex={index}
+          cardSize={cardSize}
           onDownload={onDownload}
           onOpen={onOpen}
           selectionMode={selectionMode}

@@ -8,6 +8,7 @@ import { getAppLabel, normalizeRequestMode } from "../utils/appTypes.js";
 function PosterCard({
   item,
   itemIndex = 0,
+  cardSize = 180,
   onOpen,
   selectionMode = false,
   selected = false,
