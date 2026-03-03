@@ -5,6 +5,9 @@ using Feedarr.Api.Models;
 using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services.Torznab;
 using Feedarr.Api.Services.Titles;
+using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Data;
 using PosterServices = Feedarr.Api.Services.Posters;
 
@@ -15,6 +18,7 @@ public sealed class ReleaseRepository
     private readonly Db _db;
     private readonly TitleParser _parser;
     private readonly UnifiedCategoryResolver _resolver;
+    private readonly ILogger<ReleaseRepository> _logger;
 
     private static readonly string[] RetentionUnifiedCategories =
     {
@@ -30,11 +34,16 @@ public sealed class ReleaseRepository
         nameof(UnifiedCategory.Comic)
     };
 
-    public ReleaseRepository(Db db, TitleParser parser, UnifiedCategoryResolver resolver)
+    public ReleaseRepository(
+        Db db,
+        TitleParser parser,
+        UnifiedCategoryResolver resolver,
+        ILogger<ReleaseRepository>? logger = null)
     {
         _db = db;
         _parser = parser;
         _resolver = resolver;
+        _logger = logger ?? NullLogger<ReleaseRepository>.Instance;
     }
 
     public int UpsertMany(
@@ -45,6 +54,7 @@ public sealed class ReleaseRepository
         int defaultSeen = 0,
         Dictionary<int, (string key, string label)>? categoryMap = null)
     {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         using var conn = _db.Open();
         using var tx = conn.BeginTransaction();
 
@@ -149,41 +159,41 @@ public sealed class ReleaseRepository
                 var parsed = _parser.Parse(it.Title, unifiedCategory);
                 var stableGuid = BuildStableGuid(it, parsed.TitleClean);
 
-                return new
+                return new UpsertRow
                 {
-                    sourceId,
-                    guid = stableGuid,
-                    title = it.Title,
-                    link = it.Link,
-                    pub = it.PublishedAtTs,
-                    size = it.SizeBytes,
-                    seed = it.Seeders,
-                    leech = it.Leechers,
-                    grabs = it.Grabs,
-                    hash = it.InfoHash,
-                    dl = it.DownloadUrl,
-                    cat = primaryCategoryId,
-                    stdCat = stdCategoryId,
-                    specCat = specCategoryId,
-                    unifiedCat = unifiedCategory.ToString(),
-                    catIds = distinctIds.Count > 0 ? string.Join(",", distinctIds) : null,
-                    now,
+                    sourceId = sourceId,
+                    Guid = stableGuid,
+                    Title = it.Title,
+                    Link = it.Link,
+                    PublishedAtTs = it.PublishedAtTs,
+                    SizeBytes = it.SizeBytes,
+                    Seeders = it.Seeders,
+                    Leechers = it.Leechers,
+                    Grabs = it.Grabs,
+                    InfoHash = it.InfoHash,
+                    DownloadUrl = it.DownloadUrl,
+                    CategoryId = primaryCategoryId,
+                    StdCategoryId = stdCategoryId,
+                    SpecCategoryId = specCategoryId,
+                    UnifiedCategory = unifiedCategory.ToString(),
+                    CategoryIds = distinctIds.Count > 0 ? string.Join(",", distinctIds) : null,
+                    now = now,
 
-                    titleClean = parsed.TitleClean,
-                    year = parsed.Year,
-                    season = parsed.Season,
-                    episode = parsed.Episode,
-                    resolution = parsed.Resolution,
-                    source = parsed.Source,
-                    codec = parsed.Codec,
-                    group = parsed.ReleaseGroup,
-                    mediaType = parsed.MediaType
+                    TitleClean = parsed.TitleClean,
+                    Year = parsed.Year,
+                    Season = parsed.Season,
+                    Episode = parsed.Episode,
+                    Resolution = parsed.Resolution,
+                    Source = parsed.Source,
+                    Codec = parsed.Codec,
+                    ReleaseGroup = parsed.ReleaseGroup,
+                    MediaType = parsed.MediaType
                 };
             })
             .ToList();
 
         var guidList = rowsPayload
-            .Select(r => r.guid)
+            .Select(r => r.Guid)
             .Where(g => !string.IsNullOrWhiteSpace(g))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -201,12 +211,149 @@ public sealed class ReleaseRepository
 
         var insertedNew = guidList.Count - existing.Count;
 
-        conn.Execute(sql, rowsPayload, tx);
+        ExecuteUpsertPrepared(conn, tx, sql, rowsPayload);
 
         EnsureMediaEntitiesForReleases(conn, tx, sourceId, guidList, now);
 
         tx.Commit();
+        stopwatch.Stop();
+
+        var rowsCount = rowsPayload.Count;
+        var msPerRow = rowsCount > 0
+            ? stopwatch.Elapsed.TotalMilliseconds / rowsCount
+            : 0d;
+        _logger.LogInformation(
+            "method=UpsertMany sourceId={SourceId} rowsCount={RowsCount} existingCount={ExistingCount} insertedNew={InsertedNew} elapsedMs={ElapsedMs} msPerRow={MsPerRow}",
+            sourceId,
+            rowsCount,
+            existing.Count,
+            insertedNew,
+            stopwatch.ElapsedMilliseconds,
+            msPerRow);
+
         return insertedNew;
+    }
+
+    private static void ExecuteUpsertPrepared(
+        IDbConnection conn,
+        IDbTransaction tx,
+        string sql,
+        IReadOnlyList<UpsertRow> rows)
+    {
+        if (rows.Count == 0)
+            return;
+
+        if (conn is not SqliteConnection sqliteConn)
+            throw new InvalidOperationException("UpsertMany prepared execution requires SqliteConnection.");
+        if (tx is not SqliteTransaction sqliteTx)
+            throw new InvalidOperationException("UpsertMany prepared execution requires SqliteTransaction.");
+
+        using var cmd = sqliteConn.CreateCommand();
+        cmd.Transaction = sqliteTx;
+        cmd.CommandText = sql;
+
+        AddParameter(cmd, "@sourceId", SqliteType.Integer);
+        AddParameter(cmd, "@guid", SqliteType.Text);
+        AddParameter(cmd, "@title", SqliteType.Text);
+        AddParameter(cmd, "@link", SqliteType.Text);
+        AddParameter(cmd, "@pub", SqliteType.Integer);
+        AddParameter(cmd, "@size", SqliteType.Integer);
+        AddParameter(cmd, "@seed", SqliteType.Integer);
+        AddParameter(cmd, "@leech", SqliteType.Integer);
+        AddParameter(cmd, "@grabs", SqliteType.Integer);
+        AddParameter(cmd, "@hash", SqliteType.Text);
+        AddParameter(cmd, "@dl", SqliteType.Text);
+        AddParameter(cmd, "@cat", SqliteType.Integer);
+        AddParameter(cmd, "@stdCat", SqliteType.Integer);
+        AddParameter(cmd, "@specCat", SqliteType.Integer);
+        AddParameter(cmd, "@unifiedCat", SqliteType.Text);
+        AddParameter(cmd, "@catIds", SqliteType.Text);
+        AddParameter(cmd, "@now", SqliteType.Integer);
+        AddParameter(cmd, "@titleClean", SqliteType.Text);
+        AddParameter(cmd, "@year", SqliteType.Integer);
+        AddParameter(cmd, "@season", SqliteType.Integer);
+        AddParameter(cmd, "@episode", SqliteType.Integer);
+        AddParameter(cmd, "@resolution", SqliteType.Text);
+        AddParameter(cmd, "@source", SqliteType.Text);
+        AddParameter(cmd, "@codec", SqliteType.Text);
+        AddParameter(cmd, "@group", SqliteType.Text);
+        AddParameter(cmd, "@mediaType", SqliteType.Text);
+
+        cmd.Prepare();
+
+        foreach (var row in rows)
+        {
+            SetParameterValue(cmd, "@sourceId", row.sourceId);
+            SetParameterValue(cmd, "@guid", row.Guid);
+            SetParameterValue(cmd, "@title", row.Title);
+            SetParameterValue(cmd, "@link", row.Link);
+            SetParameterValue(cmd, "@pub", row.PublishedAtTs);
+            SetParameterValue(cmd, "@size", row.SizeBytes);
+            SetParameterValue(cmd, "@seed", row.Seeders);
+            SetParameterValue(cmd, "@leech", row.Leechers);
+            SetParameterValue(cmd, "@grabs", row.Grabs);
+            SetParameterValue(cmd, "@hash", row.InfoHash);
+            SetParameterValue(cmd, "@dl", row.DownloadUrl);
+            SetParameterValue(cmd, "@cat", row.CategoryId);
+            SetParameterValue(cmd, "@stdCat", row.StdCategoryId);
+            SetParameterValue(cmd, "@specCat", row.SpecCategoryId);
+            SetParameterValue(cmd, "@unifiedCat", row.UnifiedCategory);
+            SetParameterValue(cmd, "@catIds", row.CategoryIds);
+            SetParameterValue(cmd, "@now", row.now);
+            SetParameterValue(cmd, "@titleClean", row.TitleClean);
+            SetParameterValue(cmd, "@year", row.Year);
+            SetParameterValue(cmd, "@season", row.Season);
+            SetParameterValue(cmd, "@episode", row.Episode);
+            SetParameterValue(cmd, "@resolution", row.Resolution);
+            SetParameterValue(cmd, "@source", row.Source);
+            SetParameterValue(cmd, "@codec", row.Codec);
+            SetParameterValue(cmd, "@group", row.ReleaseGroup);
+            SetParameterValue(cmd, "@mediaType", row.MediaType);
+
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    private static void AddParameter(SqliteCommand cmd, string name, SqliteType type)
+    {
+        var parameter = cmd.CreateParameter();
+        parameter.ParameterName = name;
+        parameter.SqliteType = type;
+        parameter.Value = DBNull.Value;
+        cmd.Parameters.Add(parameter);
+    }
+
+    private static void SetParameterValue(SqliteCommand cmd, string name, object? value)
+        => cmd.Parameters[name].Value = value ?? DBNull.Value;
+
+    private sealed class UpsertRow
+    {
+        public long sourceId { get; init; }
+        public string Guid { get; init; } = "";
+        public string? Title { get; init; }
+        public string? Link { get; init; }
+        public long? PublishedAtTs { get; init; }
+        public long? SizeBytes { get; init; }
+        public int? Seeders { get; init; }
+        public int? Leechers { get; init; }
+        public int? Grabs { get; init; }
+        public string? InfoHash { get; init; }
+        public string? DownloadUrl { get; init; }
+        public int? CategoryId { get; init; }
+        public int? StdCategoryId { get; init; }
+        public int? SpecCategoryId { get; init; }
+        public string UnifiedCategory { get; init; } = "";
+        public string? CategoryIds { get; init; }
+        public long now { get; init; }
+        public string? TitleClean { get; init; }
+        public int? Year { get; init; }
+        public int? Season { get; init; }
+        public int? Episode { get; init; }
+        public string? Resolution { get; init; }
+        public string? Source { get; init; }
+        public string? Codec { get; init; }
+        public string? ReleaseGroup { get; init; }
+        public string? MediaType { get; init; }
     }
 
     private static UnifiedCategory ResolveUnifiedCategoryFromMap(
