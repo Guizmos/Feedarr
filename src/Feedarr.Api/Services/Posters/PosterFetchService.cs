@@ -67,6 +67,20 @@ public sealed class PosterFetchService
     private readonly Dictionary<string, SemaphoreSlim> _storeLocks = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _storeLocksGate = new();
 
+    private enum StoreMaterializationStatus
+    {
+        Ok,
+        Skip,
+        Fail
+    }
+
+    private sealed record StoreMaterializationResult(
+        StoreMaterializationStatus Status,
+        string? StoreDir,
+        string Reason,
+        IReadOnlyList<int>? GeneratedWidths = null,
+        IReadOnlyList<int>? MissingWidths = null);
+
     public PosterFetchService(
         ReleaseRepository releases,
         ActivityRepository activity,
@@ -147,14 +161,7 @@ public sealed class PosterFetchService
         }
     }
 
-    /// <summary>
-    /// Writes the canonical store entry for a poster: creates
-    /// <c>posters/store/{storeDir}/original.{ext}</c>, generates WebP thumbs, and
-    /// updates <c>poster_key</c>/<c>poster_store_dir</c> on the release + upserts
-    /// <c>poster_store_refs</c>.  Never throws — errors are logged and swallowed so
-    /// the caller's main flat-file path is never disrupted.
-    /// </summary>
-    private async Task TrySaveToStoreAsync(
+    private async Task<StoreMaterializationResult> TrySaveToStoreAsync(
         long releaseId,
         string provider,
         string providerId,
@@ -165,59 +172,251 @@ public sealed class PosterFetchService
         string? posterPath,
         CancellationToken ct)
     {
-        if (bytes is null || bytes.Length == 0) return;
-        if (string.IsNullOrWhiteSpace(provider) || string.IsNullOrWhiteSpace(providerId)) return;
+        return await TryMaterializeStoreForReleaseAsync(
+            releaseId,
+            provider,
+            providerId,
+            posterFile,
+            bytes,
+            null,
+            forceRefresh: false,
+            tmdbId,
+            posterPath,
+            ext,
+            existingPosterKey: null,
+            ct).ConfigureAwait(false);
+    }
 
-        var rawStoreDir = $"{provider.ToLowerInvariant()}-{PosterStorePathResolver.SanitizeStoreDir(providerId)}";
-        var posterKey = $"{provider.ToLowerInvariant()}:{providerId}";
+    private async Task<StoreMaterializationResult> TryMaterializeStoreForReleaseAsync(
+        long releaseId,
+        string? provider,
+        string? providerId,
+        string legacyPosterFile,
+        byte[]? sourceBytes,
+        string? legacyPosterPath,
+        bool forceRefresh,
+        int? tmdbId,
+        string? posterPath,
+        string? preferredOriginalExtension,
+        string? existingPosterKey,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(legacyPosterFile))
+            return new StoreMaterializationResult(StoreMaterializationStatus.Skip, null, "missing_legacy_poster_file");
+
+        if (!TryResolveStoreIdentity(provider, providerId, existingPosterKey, out var normalizedProvider, out var normalizedProviderId, out var posterKey, out var storeDir))
+            return new StoreMaterializationResult(StoreMaterializationStatus.Skip, null, "missing_store_identity");
 
         var resolver = GetStoreResolver();
-        if (!resolver.TryResolveStoreDir(rawStoreDir, out var storeDirFull))
+        if (!resolver.TryResolveStoreDir(storeDir, out var storeDirFull))
         {
-            _logger.LogWarning("TrySaveToStore: invalid storeDir '{Dir}' for release {Id}", rawStoreDir, releaseId);
-            return;
+            _logger.LogWarning("[POSTER_STORE] materialize fail storeDir={StoreDir} releaseId={ReleaseId} reason=invalid_store_dir", storeDir, releaseId);
+            return new StoreMaterializationResult(StoreMaterializationStatus.Fail, storeDir, "invalid_store_dir");
         }
 
-        var sem = GetStoreLock(rawStoreDir);
+        var sem = GetStoreLock(storeDir);
         await sem.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            _logger.LogInformation(
+                "[POSTER_STORE] materialize start storeDir={StoreDir} releaseId={ReleaseId} provider={Provider} providerId={ProviderId}",
+                storeDir,
+                releaseId,
+                normalizedProvider,
+                normalizedProviderId);
+
             Directory.CreateDirectory(storeDirFull);
 
-            // Write original image (atomic)
-            var safeExt = string.IsNullOrWhiteSpace(ext) ? ".jpg" : ext;
-            var origFileName = $"original{safeExt}";
-            if (!resolver.TryResolveFile(storeDirFull, origFileName, out var origFull))
+            var originalPath = Directory.EnumerateFiles(storeDirFull, "original.*", SearchOption.TopDirectoryOnly).FirstOrDefault();
+            var existingThumbs = PosterThumbService.SupportedWidths
+                .Where(width => System.IO.File.Exists(Path.Combine(storeDirFull, $"w{width}.webp")))
+                .ToArray();
+
+            if (!forceRefresh && originalPath is not null && existingThumbs.Length == PosterThumbService.SupportedWidths.Length)
             {
-                _logger.LogWarning("TrySaveToStore: invalid origFileName '{File}' for release {Id}", origFileName, releaseId);
-                return;
+                _releases.SavePosterWithStore(releaseId, tmdbId, posterPath, legacyPosterFile, posterKey, storeDir);
+                _logger.LogInformation(
+                    "[POSTER_STORE] materialize skip storeDir={StoreDir} releaseId={ReleaseId} reason=already_up_to_date",
+                    storeDir,
+                    releaseId);
+                return new StoreMaterializationResult(StoreMaterializationStatus.Skip, storeDir, "already_up_to_date", [], []);
             }
 
-            if (!System.IO.File.Exists(origFull))
+            var effectiveLegacyPath = string.IsNullOrWhiteSpace(legacyPosterPath)
+                ? Path.Combine(PostersDirAbs, legacyPosterFile)
+                : legacyPosterPath;
+
+            var safeExt = !string.IsNullOrWhiteSpace(preferredOriginalExtension)
+                ? preferredOriginalExtension
+                : Path.GetExtension(!string.IsNullOrWhiteSpace(effectiveLegacyPath) ? effectiveLegacyPath : legacyPosterFile);
+            if (string.IsNullOrWhiteSpace(safeExt))
+                safeExt = ".jpg";
+
+            if (!resolver.TryResolveFile(storeDirFull, $"original{safeExt}", out var defaultOriginalPath))
             {
-                var tmpPath = origFull + ".tmp";
-                await System.IO.File.WriteAllBytesAsync(tmpPath, bytes, ct).ConfigureAwait(false);
-                System.IO.File.Move(tmpPath, origFull, overwrite: true);
+                _logger.LogWarning("[POSTER_STORE] materialize fail storeDir={StoreDir} releaseId={ReleaseId} reason=invalid_original_name", storeDir, releaseId);
+                return new StoreMaterializationResult(StoreMaterializationStatus.Fail, storeDir, "invalid_original_name");
             }
 
-            // Generate thumbs (best-effort)
-            await _thumbService.GenerateThumbsAsync(bytes, storeDirFull, ct).ConfigureAwait(false);
+            originalPath ??= defaultOriginalPath;
 
-            // Persist store columns + upsert ref
-            _releases.SavePosterWithStore(releaseId, tmdbId, posterPath, posterFile, posterKey, rawStoreDir);
+            if (forceRefresh)
+            {
+                foreach (var width in PosterThumbService.SupportedWidths)
+                {
+                    var thumbPath = Path.Combine(storeDirFull, $"w{width}.webp");
+                    if (System.IO.File.Exists(thumbPath))
+                    {
+                        try { System.IO.File.Delete(thumbPath); } catch { }
+                    }
+                }
+            }
+
+            if (forceRefresh || !System.IO.File.Exists(originalPath))
+            {
+                if (sourceBytes is not null && sourceBytes.Length > 0)
+                {
+                    await WriteAtomicAsync(originalPath, sourceBytes, ct).ConfigureAwait(false);
+                }
+                else if (!string.IsNullOrWhiteSpace(effectiveLegacyPath) && System.IO.File.Exists(effectiveLegacyPath))
+                {
+                    await CopyAtomicAsync(effectiveLegacyPath, originalPath, ct).ConfigureAwait(false);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "[POSTER_STORE] materialize fail storeDir={StoreDir} releaseId={ReleaseId} reason=missing_source",
+                        storeDir,
+                        releaseId);
+                    return new StoreMaterializationResult(StoreMaterializationStatus.Fail, storeDir, "missing_source");
+                }
+            }
+
+            if ((sourceBytes is null || sourceBytes.Length == 0) && System.IO.File.Exists(originalPath))
+                sourceBytes = await System.IO.File.ReadAllBytesAsync(originalPath, ct).ConfigureAwait(false);
+
+            IReadOnlyList<int> generated = [];
+            if (sourceBytes is not null && sourceBytes.Length > 0)
+                generated = await _thumbService.GenerateThumbsAsync(sourceBytes, storeDirFull, ct).ConfigureAwait(false);
+
+            var missing = PosterThumbService.SupportedWidths
+                .Where(width => !System.IO.File.Exists(Path.Combine(storeDirFull, $"w{width}.webp")))
+                .ToArray();
+
+            _releases.SavePosterWithStore(releaseId, tmdbId, posterPath, legacyPosterFile, posterKey, storeDir);
+
+            _logger.LogInformation(
+                "[POSTER_STORE] materialize ok storeDir={StoreDir} releaseId={ReleaseId} generated={Generated} missing={Missing}",
+                storeDir,
+                releaseId,
+                generated.Count == 0 ? "none" : string.Join(",", generated),
+                missing.Length == 0 ? "none" : string.Join(",", missing));
+
+            return new StoreMaterializationResult(StoreMaterializationStatus.Ok, storeDir, "materialized", generated, missing);
         }
         catch (OperationCanceledException)
         {
-            // Normal cancellation — do not log as error
+            throw;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "TrySaveToStore failed for release {Id} storeDir '{Dir}'", releaseId, rawStoreDir);
+            _logger.LogWarning(ex, "[POSTER_STORE] materialize fail storeDir={StoreDir} releaseId={ReleaseId}", storeDir, releaseId);
+            return new StoreMaterializationResult(StoreMaterializationStatus.Fail, storeDir, "exception");
         }
         finally
         {
             sem.Release();
         }
+    }
+
+    private void LogStoreOutcome(string fetchPath, long releaseId, string legacyPosterFile, StoreMaterializationResult result)
+    {
+        var status = result.Status switch
+        {
+            StoreMaterializationStatus.Ok => "ok",
+            StoreMaterializationStatus.Fail => "fail",
+            _ => "skip"
+        };
+
+        _logger.LogInformation(
+            "[POSTER_STORE] fetch path={FetchPath} releaseId={ReleaseId} posterFile={PosterFile} store={StoreStatus} storeDir={StoreDir} reason={Reason}",
+            fetchPath,
+            releaseId,
+            legacyPosterFile,
+            status,
+            result.StoreDir ?? "none",
+            result.Reason);
+    }
+
+    private static bool TryResolveStoreIdentity(
+        string? provider,
+        string? providerId,
+        string? posterKey,
+        out string normalizedProvider,
+        out string normalizedProviderId,
+        out string resolvedPosterKey,
+        out string storeDir)
+    {
+        normalizedProvider = (provider ?? string.Empty).Trim().ToLowerInvariant();
+        normalizedProviderId = (providerId ?? string.Empty).Trim();
+
+        if ((string.IsNullOrWhiteSpace(normalizedProvider) || string.IsNullOrWhiteSpace(normalizedProviderId)) &&
+            !string.IsNullOrWhiteSpace(posterKey))
+        {
+            var idx = posterKey.IndexOf(':');
+            if (idx > 0 && idx < posterKey.Length - 1)
+            {
+                normalizedProvider = posterKey[..idx].Trim().ToLowerInvariant();
+                normalizedProviderId = posterKey[(idx + 1)..].Trim();
+            }
+        }
+
+        var sanitizedProviderId = PosterStorePathResolver.SanitizeStoreDir(normalizedProviderId);
+        if (string.IsNullOrWhiteSpace(normalizedProvider) || string.IsNullOrWhiteSpace(normalizedProviderId) || string.IsNullOrWhiteSpace(sanitizedProviderId))
+        {
+            resolvedPosterKey = string.Empty;
+            storeDir = string.Empty;
+            return false;
+        }
+
+        resolvedPosterKey = $"{normalizedProvider}:{normalizedProviderId}";
+        storeDir = $"{normalizedProvider}-{sanitizedProviderId}";
+        return true;
+    }
+
+    private static async Task WriteAtomicAsync(string targetPath, byte[] bytes, CancellationToken ct)
+    {
+        var tmpPath = targetPath + ".tmp";
+        try
+        {
+            await System.IO.File.WriteAllBytesAsync(tmpPath, bytes, ct).ConfigureAwait(false);
+            System.IO.File.Move(tmpPath, targetPath, overwrite: true);
+        }
+        catch
+        {
+            try { System.IO.File.Delete(tmpPath); } catch { }
+            throw;
+        }
+    }
+
+    private static Task CopyAtomicAsync(string sourcePath, string targetPath, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var tmpPath = targetPath + ".tmp";
+        try
+        {
+            System.IO.File.Copy(sourcePath, tmpPath, overwrite: true);
+            ct.ThrowIfCancellationRequested();
+            System.IO.File.Move(tmpPath, targetPath, overwrite: true);
+        }
+        catch
+        {
+            try { System.IO.File.Delete(tmpPath); } catch { }
+            throw;
+        }
+
+        return Task.CompletedTask;
     }
 
     public int GetLocalPosterCount()
@@ -612,6 +811,7 @@ public sealed class PosterFetchService
     public async Task<PosterFetchResult> FetchPosterAsync(long id, CancellationToken ct, bool logSingle, bool skipIfExists = true)
     {
         Directory.CreateDirectory(PostersDirAbs);
+        var forceRefresh = !skipIfExists;
 
         var r = _releases.GetForPoster(id);
         if (r is null)
@@ -638,6 +838,20 @@ public sealed class PosterFetchService
             {
                 var existingProvider = (string?)r.PosterProvider;
                 var existingProviderId = (string?)r.PosterProviderId;
+                var storeResult = await TryMaterializeStoreForReleaseAsync(
+                    id,
+                    existingProvider,
+                    existingProviderId,
+                    existingFile,
+                    sourceBytes: null,
+                    legacyPosterPath: path,
+                    forceRefresh: false,
+                    tmdbId: tmdbIdStored,
+                    posterPath: (string?)r.PosterPath,
+                    preferredOriginalExtension: null,
+                    existingPosterKey: (string?)r.PosterKey,
+                    ct).ConfigureAwait(false);
+                LogStoreOutcome("skipIfExists", id, existingFile, storeResult);
                 var existingLang = (string?)r.PosterLang;
                 var existingSize = (string?)r.PosterSize;
                 var existingHash = (string?)r.PosterHash;
@@ -707,6 +921,7 @@ public sealed class PosterFetchService
             ambiguity,
             knownIds,
             tvmazeEnabled,
+            forceRefresh,
             ct,
             logSingle,
             sourceId);
@@ -762,7 +977,22 @@ public sealed class PosterFetchService
                             var reuseExtWriters = (string?)reuse.ExtWriters;
                             var reuseExtCast = (string?)reuse.ExtCast;
                             if (string.IsNullOrWhiteSpace(reuseHash))
-                                reuseHash = ComputeSha256Hex(await System.IO.File.ReadAllBytesAsync(reusePath, ct).ConfigureAwait(false));                            _releases.SavePoster(id, reuseTmdbId, reusePosterPath, reuseFile);
+                                reuseHash = ComputeSha256Hex(await System.IO.File.ReadAllBytesAsync(reusePath, ct).ConfigureAwait(false));
+                            _releases.SavePoster(id, reuseTmdbId, reusePosterPath, reuseFile);
+                            var reuseStoreResult = await TryMaterializeStoreForReleaseAsync(
+                                id,
+                                reuseProvider,
+                                reuseProviderId,
+                                reuseFile,
+                                sourceBytes: null,
+                                legacyPosterPath: reusePath,
+                                forceRefresh,
+                                reuseTmdbId,
+                                reusePosterPath,
+                                preferredOriginalExtension: null,
+                                existingPosterKey: null,
+                                ct).ConfigureAwait(false);
+                            LogStoreOutcome("reuse", id, reuseFile, reuseStoreResult);
                             if (!string.IsNullOrWhiteSpace(reuseExtOverview))
                             {
                                 _releases.UpdateExternalDetails(
@@ -848,6 +1078,7 @@ public sealed class PosterFetchService
             fingerprint,
             knownIds,
             tvmazeEnabled,
+            forceRefresh,
             logSingle,
             sourceId);
 
@@ -889,6 +1120,7 @@ public sealed class PosterFetchService
         var fingerprint = context.Fingerprint;
         var knownIds = context.KnownIds;
         var tvmazeEnabled = context.TvmazeEnabled;
+        var forceRefresh = context.ForceRefresh;
         var logSingle = context.LogSingle;
         var sourceId = context.SourceId;
         // Utilise la catégorie + le mediaType parsé + indices dans le titre brut
@@ -917,8 +1149,24 @@ public sealed class PosterFetchService
                     {
                         var file = $"igdb-{igdbMatch.Value.igdbId}-cover.jpg";
                         var full = Path.Combine(PostersDirAbs, file);
-                        await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);                        _releases.SavePoster(id, igdbMatch.Value.igdbId, igdbMatch.Value.coverUrl, file);
-                        await UpdateExternalDetailsFromIgdbAsync(id, igdbMatch.Value.igdbId, ct).ConfigureAwait(false);                        var hash = ComputeSha256Hex(bytes);
+                        await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
+                        _releases.SavePoster(id, igdbMatch.Value.igdbId, igdbMatch.Value.coverUrl, file);
+                        var igdbStoreResult = await TryMaterializeStoreForReleaseAsync(
+                            id,
+                            "igdb",
+                            igdbMatch.Value.igdbId.ToString(CultureInfo.InvariantCulture),
+                            file,
+                            bytes,
+                            legacyPosterPath: full,
+                            forceRefresh,
+                            tmdbId: igdbMatch.Value.igdbId,
+                            posterPath: igdbMatch.Value.coverUrl,
+                            preferredOriginalExtension: ".jpg",
+                            existingPosterKey: null,
+                            ct).ConfigureAwait(false);
+                        LogStoreOutcome("download", id, file, igdbStoreResult);
+                        await UpdateExternalDetailsFromIgdbAsync(id, igdbMatch.Value.igdbId, ct).ConfigureAwait(false);
+                        var hash = ComputeSha256Hex(bytes);
                         var size = InferIgdbSize(igdbMatch.Value.coverUrl);
                         PosterAudit.UpdateAttemptSuccess(_releases, id, "igdb", igdbMatch.Value.igdbId.ToString(CultureInfo.InvariantCulture), null, size, hash);
                         var igdbIds = new PosterMatchIds(null, null, null, igdbMatch.Value.igdbId, null);
@@ -952,7 +1200,8 @@ public sealed class PosterFetchService
             }
 
             // ── RAWG (fallback or primary) ────────────────────────────────
-            var rawgResult = await TryFetchFromRawgAsync(id, igdbQuery, year, fingerprint, mediaType, normalizedTitle, season, episode, sourceId, logSingle, ct).ConfigureAwait(false);            if (rawgResult is not null) return rawgResult;
+            var rawgResult = await TryFetchFromRawgAsync(id, igdbQuery, year, fingerprint, mediaType, normalizedTitle, season, episode, sourceId, logSingle, forceRefresh, ct).ConfigureAwait(false);
+            if (rawgResult is not null) return rawgResult;
 
             if (logSingle)
                 LogActivity(sourceId, "warn", "poster_fetch", "Poster fetch failed: no RAWG match", new { releaseId = id, title, year, categoryName });
@@ -975,6 +1224,7 @@ public sealed class PosterFetchService
                 knownIds,
                 titleKey,
                 fingerprint,
+                forceRefresh,
                 ct,
                 logSingle,
                 sourceId);
@@ -1080,8 +1330,24 @@ public sealed class PosterFetchService
             {
                 var file = $"tmdb-{tmdbMatch.Candidate.TmdbId}-w500.jpg";
                 var full = Path.Combine(PostersDirAbs, file);
-                await System.IO.File.WriteAllBytesAsync(full, bytesTmdb, ct).ConfigureAwait(false);                _releases.SavePoster(id, tmdbMatch.Candidate.TmdbId, selectedPosterPath, file);
-                await UpdateExternalDetailsFromTmdbAsync(id, tmdbMatch.Candidate.TmdbId, mediaType, ct).ConfigureAwait(false);                var hash = ComputeSha256Hex(bytesTmdb);
+                await System.IO.File.WriteAllBytesAsync(full, bytesTmdb, ct).ConfigureAwait(false);
+                _releases.SavePoster(id, tmdbMatch.Candidate.TmdbId, selectedPosterPath, file);
+                var tmdbStoreResult = await TryMaterializeStoreForReleaseAsync(
+                    id,
+                    "tmdb",
+                    tmdbMatch.Candidate.TmdbId.ToString(CultureInfo.InvariantCulture),
+                    file,
+                    bytesTmdb,
+                    legacyPosterPath: full,
+                    forceRefresh,
+                    tmdbMatch.Candidate.TmdbId,
+                    selectedPosterPath,
+                    preferredOriginalExtension: ".jpg",
+                    existingPosterKey: null,
+                    ct).ConfigureAwait(false);
+                LogStoreOutcome("download", id, file, tmdbStoreResult);
+                await UpdateExternalDetailsFromTmdbAsync(id, tmdbMatch.Candidate.TmdbId, mediaType, ct).ConfigureAwait(false);
+                var hash = ComputeSha256Hex(bytesTmdb);
                 PosterAudit.UpdateAttemptSuccess(_releases, id, "tmdb", tmdbMatch.Candidate.TmdbId.ToString(CultureInfo.InvariantCulture), null, "w500", hash);
                 posterFileFinal = file;
             }
@@ -1246,9 +1512,24 @@ public sealed class PosterFetchService
 
         await System.IO.File.WriteAllBytesAsync(fanartFull, fanartBytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, tmdbIdForFanart.Value, fanartUrl, fanartFile);
-        await UpdateExternalDetailsFromTmdbAsync(id, tmdbIdForFanart.Value, mediaType, ct).ConfigureAwait(false);        var fanartProviderId = mediaType == "series" && tvdbIdForFanart.HasValue
+        var fanartProviderId = mediaType == "series" && tvdbIdForFanart.HasValue
             ? tvdbIdForFanart.Value.ToString(CultureInfo.InvariantCulture)
             : tmdbIdForFanart.Value.ToString(CultureInfo.InvariantCulture);
+        var fanartStoreResult = await TryMaterializeStoreForReleaseAsync(
+            id,
+            "fanart",
+            fanartProviderId,
+            fanartFile,
+            fanartBytes,
+            legacyPosterPath: fanartFull,
+            forceRefresh,
+            tmdbIdForFanart.Value,
+            fanartUrl,
+            preferredOriginalExtension: ext,
+            existingPosterKey: null,
+            ct).ConfigureAwait(false);
+        LogStoreOutcome("download", id, fanartFile, fanartStoreResult);
+        await UpdateExternalDetailsFromTmdbAsync(id, tmdbIdForFanart.Value, mediaType, ct).ConfigureAwait(false);
         var fanartHash = ComputeSha256Hex(fanartBytes);
         PosterAudit.UpdateAttemptSuccess(_releases, id, "fanart", fanartProviderId, null, "original", fanartHash);
         var fanartIds = new PosterMatchIds(tmdbIdForFanart.Value, tvdbIdForFanart, null, null, null);
@@ -1334,6 +1615,20 @@ public sealed class PosterFetchService
         var file = $"jikan-{match.MalId}{ext}";
         await SavePosterFileAsync(file, bytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, null, match.ImageUrl, file);
+        var jikanStoreResult = await TryMaterializeStoreForReleaseAsync(
+            id,
+            ExternalProviderKeys.Jikan,
+            match.MalId.ToString(CultureInfo.InvariantCulture),
+            file,
+            bytes,
+            legacyPosterPath: Path.Combine(PostersDirAbs, file),
+            forceRefresh: context.ForceRefresh,
+            tmdbId: null,
+            posterPath: match.ImageUrl,
+            preferredOriginalExtension: ext,
+            existingPosterKey: null,
+            ct).ConfigureAwait(false);
+        LogStoreOutcome("download", id, file, jikanStoreResult);
         _releases.UpdateExternalDetails(
             id,
             ExternalProviderKeys.Jikan,
@@ -1421,6 +1716,20 @@ public sealed class PosterFetchService
                     var mbFile = $"musicbrainz-{mbMatch.Mbid}{mbExt}";
                     await SavePosterFileAsync(mbFile, mbBytes, ct).ConfigureAwait(false);
                     _releases.SavePoster(id, null, mbMatch.CoverUrl, mbFile);
+                    var musicBrainzStoreResult = await TryMaterializeStoreForReleaseAsync(
+                        id,
+                        ExternalProviderKeys.MusicBrainz,
+                        mbMatch.Mbid,
+                        mbFile,
+                        mbBytes,
+                        legacyPosterPath: Path.Combine(PostersDirAbs, mbFile),
+                        forceRefresh: context.ForceRefresh,
+                        tmdbId: null,
+                        posterPath: mbMatch.CoverUrl,
+                        preferredOriginalExtension: mbExt,
+                        existingPosterKey: null,
+                        ct).ConfigureAwait(false);
+                    LogStoreOutcome("download", id, mbFile, musicBrainzStoreResult);
                     _releases.UpdateExternalDetails(
                         id,
                         ExternalProviderKeys.MusicBrainz,
@@ -1493,6 +1802,20 @@ public sealed class PosterFetchService
         var file = $"theaudiodb-{match.ProviderId}{ext}";
         await SavePosterFileAsync(file, bytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, null, match.PosterUrl, file);
+        var theAudioDbStoreResult = await TryMaterializeStoreForReleaseAsync(
+            id,
+            ExternalProviderKeys.TheAudioDb,
+            match.ProviderId,
+            file,
+            bytes,
+            legacyPosterPath: Path.Combine(PostersDirAbs, file),
+            forceRefresh: context.ForceRefresh,
+            tmdbId: null,
+            posterPath: match.PosterUrl,
+            preferredOriginalExtension: ext,
+            existingPosterKey: null,
+            ct).ConfigureAwait(false);
+        LogStoreOutcome("download", id, file, theAudioDbStoreResult);
         _releases.UpdateExternalDetails(
             id,
             ExternalProviderKeys.TheAudioDb,
@@ -1602,6 +1925,20 @@ public sealed class PosterFetchService
         var file = $"googlebooks-{SanitizeForFile(match.VolumeId)}{ext}";
         await SavePosterFileAsync(file, bytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, null, match.ThumbnailUrl, file);
+        var googleBooksStoreResult = await TryMaterializeStoreForReleaseAsync(
+            id,
+            ExternalProviderKeys.GoogleBooks,
+            match.VolumeId,
+            file,
+            bytes,
+            legacyPosterPath: Path.Combine(PostersDirAbs, file),
+            forceRefresh: context.ForceRefresh,
+            tmdbId: null,
+            posterPath: match.ThumbnailUrl,
+            preferredOriginalExtension: ext,
+            existingPosterKey: null,
+            ct).ConfigureAwait(false);
+        LogStoreOutcome("download", id, file, googleBooksStoreResult);
         _releases.UpdateExternalDetails(
             id,
             ExternalProviderKeys.GoogleBooks,
@@ -1665,6 +2002,20 @@ public sealed class PosterFetchService
         var olFile = $"openlibrary-{SanitizeForFile(olMatch.WorkId)}.jpg";
         await SavePosterFileAsync(olFile, olBytes, ct).ConfigureAwait(false);
         _releases.SavePoster(context.ReleaseId, null, olMatch.CoverUrl, olFile);
+        var openLibraryStoreResult = await TryMaterializeStoreForReleaseAsync(
+            context.ReleaseId,
+            ExternalProviderKeys.OpenLibrary,
+            olMatch.WorkId,
+            olFile,
+            olBytes,
+            legacyPosterPath: Path.Combine(PostersDirAbs, olFile),
+            forceRefresh: context.ForceRefresh,
+            tmdbId: null,
+            posterPath: olMatch.CoverUrl,
+            preferredOriginalExtension: ".jpg",
+            existingPosterKey: null,
+            ct).ConfigureAwait(false);
+        LogStoreOutcome("download", context.ReleaseId, olFile, openLibraryStoreResult);
         _releases.UpdateExternalDetails(
             context.ReleaseId,
             ExternalProviderKeys.OpenLibrary,
@@ -1719,6 +2070,7 @@ public sealed class PosterFetchService
         int? episode,
         long? sourceId,
         bool logSingle,
+        bool forceRefresh,
         CancellationToken ct)
     {
         LogProviderAttempted(sourceId, logSingle, ExternalProviderKeys.Rawg, new { releaseId = id, query, year });
@@ -1738,6 +2090,20 @@ public sealed class PosterFetchService
         var full = Path.Combine(PostersDirAbs, file);
         await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, null, rawgMatch.Value.coverUrl, file);
+        var rawgStoreResult = await TryMaterializeStoreForReleaseAsync(
+            id,
+            ExternalProviderKeys.Rawg,
+            rawgMatch.Value.rawgId.ToString(CultureInfo.InvariantCulture),
+            file,
+            bytes,
+            legacyPosterPath: full,
+            forceRefresh,
+            tmdbId: null,
+            posterPath: rawgMatch.Value.coverUrl,
+            preferredOriginalExtension: ".jpg",
+            existingPosterKey: null,
+            ct).ConfigureAwait(false);
+        LogStoreOutcome("download", id, file, rawgStoreResult);
         _releases.UpdateExternalDetails(id, ExternalProviderKeys.Rawg,
             rawgMatch.Value.rawgId.ToString(CultureInfo.InvariantCulture),
             rawgMatch.Value.title, null, null, null,
@@ -1801,6 +2167,20 @@ public sealed class PosterFetchService
         var file = $"comicvine-{match.ProviderId}{ext}";
         await SavePosterFileAsync(file, bytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, null, match.CoverUrl, file);
+        var comicVineStoreResult = await TryMaterializeStoreForReleaseAsync(
+            id,
+            ExternalProviderKeys.ComicVine,
+            match.ProviderId,
+            file,
+            bytes,
+            legacyPosterPath: Path.Combine(PostersDirAbs, file),
+            forceRefresh: context.ForceRefresh,
+            tmdbId: null,
+            posterPath: match.CoverUrl,
+            preferredOriginalExtension: ext,
+            existingPosterKey: null,
+            ct).ConfigureAwait(false);
+        LogStoreOutcome("download", id, file, comicVineStoreResult);
         _releases.UpdateExternalDetails(
             id,
             ExternalProviderKeys.ComicVine,
@@ -1860,6 +2240,7 @@ public sealed class PosterFetchService
         TitleAmbiguityResult ambiguity,
         PosterMatchIds knownIds,
         bool tvmazeEnabled,
+        bool forceRefresh,
         CancellationToken ct,
         bool logSingle,
         long? sourceId)
@@ -1895,6 +2276,20 @@ public sealed class PosterFetchService
                 if (!tmdbIdResolved.HasValue && cachedIds?.TvdbId is int cachedTvdbId)
                     tmdbIdResolved = await TryResolveTmdbFromTvdbAsync(cachedTvdbId, ct).ConfigureAwait(false);
                 _releases.SavePoster(id, tmdbIdResolved, null, cached.PosterFile);
+                var cachedStoreResult = await TryMaterializeStoreForReleaseAsync(
+                    id,
+                    cached.PosterProvider ?? cached.MatchSource,
+                    cached.PosterProviderId,
+                    cached.PosterFile,
+                    sourceBytes: null,
+                    legacyPosterPath: cachedPath,
+                    forceRefresh,
+                    tmdbIdResolved,
+                    posterPath: null,
+                    preferredOriginalExtension: null,
+                    existingPosterKey: null,
+                    ct).ConfigureAwait(false);
+                LogStoreOutcome("cache", id, cached.PosterFile, cachedStoreResult);
                 if (tmdbIdResolved.HasValue)
                     _releases.SaveTmdbId(id, tmdbIdResolved.Value);
                 if (cachedIds?.TvdbId is not null)
@@ -1950,6 +2345,20 @@ public sealed class PosterFetchService
                 _releases.SaveTmdbId(id, tmdbIdResolved.Value);
 
             _releases.SavePoster(id, tmdbIdResolved, imageUrl, file);
+            var tvmazeCachedStoreResult = await TryMaterializeStoreForReleaseAsync(
+                id,
+                "tvmaze",
+                show.Id.ToString(CultureInfo.InvariantCulture),
+                file,
+                bytes,
+                legacyPosterPath: full,
+                forceRefresh,
+                tmdbIdResolved,
+                imageUrl,
+                preferredOriginalExtension: ext,
+                existingPosterKey: null,
+                ct).ConfigureAwait(false);
+            LogStoreOutcome("download", id, file, tvmazeCachedStoreResult);
 
             var hash = ComputeSha256Hex(bytes);
             PosterAudit.UpdateAttemptSuccess(_releases, id, "tvmaze", show.Id.ToString(CultureInfo.InvariantCulture), null, size, hash);
@@ -2016,6 +2425,7 @@ public sealed class PosterFetchService
         PosterMatchIds knownIds,
         PosterTitleKey titleKey,
         string fingerprint,
+        bool forceRefresh,
         CancellationToken ct,
         bool logSingle,
         long? sourceId)
@@ -2069,6 +2479,20 @@ public sealed class PosterFetchService
             _releases.SaveTmdbId(id, tmdbIdResolved.Value);
 
         _releases.SavePoster(id, tmdbIdResolved, imageUrl, file);
+        var tvmazeStoreResult = await TryMaterializeStoreForReleaseAsync(
+            id,
+            "tvmaze",
+            best.Candidate.Id.ToString(CultureInfo.InvariantCulture),
+            file,
+            bytes,
+            legacyPosterPath: full,
+            forceRefresh,
+            tmdbIdResolved,
+            imageUrl,
+            preferredOriginalExtension: ext,
+            existingPosterKey: null,
+            ct).ConfigureAwait(false);
+        LogStoreOutcome("download", id, file, tvmazeStoreResult);
 
         var hash = ComputeSha256Hex(bytes);
         PosterAudit.UpdateAttemptSuccess(_releases, id, "tvmaze", best.Candidate.Id.ToString(CultureInfo.InvariantCulture), null, size, hash);
