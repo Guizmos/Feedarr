@@ -5928,6 +5928,11 @@ input.is-valid{
   outline: none !important;
   box-shadow: none !important;
 }
+.fieldWrap > input[data-masked-placeholder="true"]::placeholder{
+  letter-spacing: .18em;
+  font-size: 1.02em;
+  color: rgba(71,85,105,.72);
+}
 .fieldWrap > select{
   border: none !important;
   background: transparent !important;

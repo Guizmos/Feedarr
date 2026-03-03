@@ -30,6 +30,7 @@ export default function SettingsUsers({
   });
   const pulseTimerRef = useRef(null);
   const [pulseKeys, setPulseKeys] = useState(() => new Set());
+  const maskedPasswordPlaceholder = String.fromCharCode(8226).repeat(8);
 
   useEffect(() => {
     return () => {
@@ -119,6 +120,11 @@ export default function SettingsUsers({
     notices.push({ key: "info-existing", variant: "info", message: EXISTING_CREDENTIALS_MESSAGE });
   }
 
+  const showSavedPasswordMask =
+    showExistingCredentialsHint &&
+    !String(security.password || "").length &&
+    !String(security.passwordConfirmation || "").length;
+
   return (
     <div className="settings-card" id="security">
       <div className="settings-card__title">{t("settings.security.title")}</div>
@@ -205,7 +211,11 @@ export default function SettingsUsers({
                       value={security.password}
                       onChange={(e) => setSecurity((s) => ({ ...s, password: e.target.value }))}
                       required={passwordRequired}
-                      placeholder={security.hasPassword
+                      data-masked-placeholder={showSavedPasswordMask ? "true" : undefined}
+                      title={showSavedPasswordMask ? t("settings.security.password.placeholderKeepCurrent") : undefined}
+                      placeholder={showSavedPasswordMask
+                        ? maskedPasswordPlaceholder
+                        : security.hasPassword
                         ? t("settings.security.password.placeholderKeepCurrent")
                         : t("settings.security.password.placeholderEnter")}
                     />
@@ -224,7 +234,11 @@ export default function SettingsUsers({
                       value={security.passwordConfirmation}
                       onChange={(e) => setSecurity((s) => ({ ...s, passwordConfirmation: e.target.value }))}
                       required={confirmRequired}
-                      placeholder={t("settings.security.confirm.placeholder")}
+                      data-masked-placeholder={showSavedPasswordMask ? "true" : undefined}
+                      title={showSavedPasswordMask ? t("settings.security.password.placeholderKeepCurrent") : undefined}
+                      placeholder={showSavedPasswordMask
+                        ? maskedPasswordPlaceholder
+                        : t("settings.security.confirm.placeholder")}
                     />
                   </div>
                 </div>
