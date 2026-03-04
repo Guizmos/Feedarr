@@ -145,9 +145,9 @@ public sealed class PosterFetchWorkerPoolTests
     {
         private readonly bool _failFirstJob;
         private readonly TaskCompletionSource<bool> _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private readonly TaskCompletionSource<bool> _processed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource<bool> _attempted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly CountdownEvent _concurrentStart = new(2);
+        private readonly CountdownEvent _processed = new(2);
         private int _inFlight;
         private int _processedCount;
         private int _maxInFlight;
@@ -183,8 +183,7 @@ public sealed class PosterFetchWorkerPoolTests
             if (_failFirstJob && Interlocked.CompareExchange(ref _hasFailed, 1, 0) == 0)
             {
                 Interlocked.Increment(ref _processedCount);
-                if (Volatile.Read(ref _processedCount) >= 2)
-                    _processed.TrySetResult(true);
+                _processed.Signal();
                 throw new InvalidOperationException("boom");
             }
 
@@ -203,8 +202,7 @@ public sealed class PosterFetchWorkerPoolTests
                     SuccessfulItemIds.Add(job.ItemId);
 
                 Interlocked.Increment(ref _processedCount);
-                if (Volatile.Read(ref _processedCount) >= 2)
-                    _processed.TrySetResult(true);
+                _processed.Signal();
             }
 
             return new PosterFetchProcessResult(true);
@@ -237,7 +235,10 @@ public sealed class PosterFetchWorkerPoolTests
             if (Volatile.Read(ref _processedCount) >= expected)
                 return Task.CompletedTask;
 
-            return _processed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            if (_processed.Wait(TimeSpan.FromSeconds(30)))
+                return Task.CompletedTask;
+
+            return Task.FromException(new TimeoutException("Timed out waiting for worker jobs to complete."));
         }
 
         private void UpdateMax(int candidate)
