@@ -504,7 +504,6 @@ public sealed class BackupService
             {
                 DataSource = DbPathAbs,
                 Mode = SqliteOpenMode.ReadWrite,
-                Cache = SqliteCacheMode.Shared,
                 Pooling = false
             }.ToString();
 

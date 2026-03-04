@@ -686,7 +686,8 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 // DB migrations on boot
-app.Services.GetRequiredService<Db>().EnsureWalMode();
+var db = app.Services.GetRequiredService<Db>();
+db.EnsureWalMode();
 app.Services.GetRequiredService<MigrationsRunner>().Run();
 
 // Migrate existing API keys to encrypted format
@@ -700,6 +701,21 @@ var _startupLog = app.Services.GetRequiredService<ILoggerFactory>()
 var _asm = typeof(Feedarr.Api.Controllers.CategoriesController).Assembly;
 var _buildTs = System.IO.File.GetLastWriteTimeUtc(_asm.Location).ToString("yyyy-MM-dd HH:mm:ss UTC");
 _startupLog.LogInformation("[BUILD] Feedarr.Api built={T} — CATS_STANDARDONLY_V2", _buildTs);
+
+try
+{
+    var sqliteOptions = db.GetOptionsSnapshot();
+    _startupLog.LogInformation(
+        "SQLite options: Pooling={Pooling}, Cache={Cache}, Mode={Mode}, JournalMode={JournalMode}",
+        sqliteOptions.Pooling,
+        sqliteOptions.Cache,
+        sqliteOptions.Mode,
+        sqliteOptions.JournalMode ?? "unknown");
+}
+catch (Exception ex)
+{
+    _startupLog.LogWarning(ex, "Failed to read SQLite startup options");
+}
 
 if (allowInvalidCerts)
 {

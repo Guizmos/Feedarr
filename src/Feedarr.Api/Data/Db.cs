@@ -48,20 +48,43 @@ public sealed class Db
         conn.Execute("PRAGMA journal_mode=WAL;");
     }
 
+    internal SqliteOptionsSnapshot GetOptionsSnapshot()
+    {
+        var builder = CreateConnectionStringBuilder();
+        using var conn = OpenRawConnection();
+        var journalMode = conn.ExecuteScalar<string>("PRAGMA journal_mode;");
+
+        return new SqliteOptionsSnapshot(
+            builder.Pooling,
+            SqliteCacheMode.Default,
+            builder.Mode,
+            journalMode);
+    }
+
     private SqliteConnection OpenRawConnection()
     {
         Directory.CreateDirectory(_opt.DataDir);
 
-        var cs = new SqliteConnectionStringBuilder
-        {
-            DataSource = DbPath,
-            Mode = SqliteOpenMode.ReadWriteCreate,
-            Cache = SqliteCacheMode.Shared,
-            Pooling = true,
-        }.ToString();
+        var cs = CreateConnectionStringBuilder().ToString();
 
         var conn = new SqliteConnection(cs);
         conn.Open();
         return conn;
     }
+
+    private SqliteConnectionStringBuilder CreateConnectionStringBuilder()
+    {
+        return new SqliteConnectionStringBuilder
+        {
+            DataSource = DbPath,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+            Pooling = true,
+        };
+    }
 }
+
+internal sealed record SqliteOptionsSnapshot(
+    bool Pooling,
+    SqliteCacheMode Cache,
+    SqliteOpenMode Mode,
+    string? JournalMode);
