@@ -13,7 +13,7 @@ namespace Feedarr.Api.Tests;
 
 public sealed class PosterFetchWorkerPoolTests
 {
-    [Fact]
+    [Fact(Timeout = 30000)]
     public async Task WorkerPool_WithTwoWorkers_ProcessesTwoJobsConcurrently()
     {
         using var ctx = new WorkerPoolContext(posterWorkers: 2);
@@ -147,7 +147,7 @@ public sealed class PosterFetchWorkerPoolTests
         private readonly TaskCompletionSource<bool> _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource<bool> _processed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource<bool> _attempted = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private readonly TaskCompletionSource<bool> _concurrentStart = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly CountdownEvent _concurrentStart = new(2);
         private int _inFlight;
         private int _processedCount;
         private int _maxInFlight;
@@ -190,8 +190,7 @@ public sealed class PosterFetchWorkerPoolTests
 
             var current = Interlocked.Increment(ref _inFlight);
             UpdateMax(current);
-            if (current >= 2)
-                _concurrentStart.TrySetResult(true);
+            _concurrentStart.Signal();
 
             try
             {
@@ -227,7 +226,10 @@ public sealed class PosterFetchWorkerPoolTests
             if (Volatile.Read(ref _maxInFlight) >= 2)
                 return Task.CompletedTask;
 
-            return _concurrentStart.Task.WaitAsync(timeout);
+            if (_concurrentStart.Wait(timeout))
+                return Task.CompletedTask;
+
+            return Task.FromException(new TimeoutException("Timed out waiting for both worker jobs to start."));
         }
 
         public Task WaitForProcessedAsync(int expected)
