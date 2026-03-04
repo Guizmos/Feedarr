@@ -7,6 +7,29 @@ function reportDownloadError(onError, message, error) {
   }
 }
 
+function navigateCurrentTab(url) {
+  if (typeof document !== "undefined" && document.body) {
+    const link = document.createElement("a");
+    link.href = url;
+    link.rel = "noopener noreferrer";
+    link.style.display = "none";
+    document.body.appendChild(link);
+    try {
+      link.click();
+    } finally {
+      document.body.removeChild(link);
+    }
+    return true;
+  }
+
+  if (typeof window !== "undefined") {
+    window.location.assign(url);
+    return true;
+  }
+
+  return false;
+}
+
 export function openDownloadPath(downloadPath, options = {}) {
   const { onError } = options;
 
@@ -35,8 +58,7 @@ export function openDownloadPath(downloadPath, options = {}) {
 
     const popup = window.open(url.toString(), "_blank", "noopener,noreferrer");
     if (!popup) {
-      reportDownloadError(onError, "Le telechargement a ete bloque par le navigateur.", null);
-      return false;
+      return navigateCurrentTab(url.toString());
     }
 
     popup.opener = null;
