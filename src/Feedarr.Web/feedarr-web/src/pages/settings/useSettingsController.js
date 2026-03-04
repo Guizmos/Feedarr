@@ -1,14 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet } from "../../api/client.js";
-import { applyTheme } from "../../app/theme.js";
 import { sleep } from "./settingsUtils.js";
 
 // Specialized hooks
-import useUiSettings from "./hooks/useUiSettings.js";
 import useExternalProviderInstances from "./hooks/useExternalProviderInstances.js";
 import useArrApplications from "./hooks/useArrApplications.js";
 import useMaintenanceActions from "./hooks/useMaintenanceActions.js";
-import useSecuritySettings from "./hooks/useSecuritySettings.js";
 import useMaintenanceSettings from "./hooks/useMaintenanceSettings.js";
 
 const settingsTitleBySection = {
@@ -23,10 +20,10 @@ const settingsTitleBySection = {
 
 export default function useSettingsController(section = "general") {
   const showGeneral = section === "general";
-  const showUi = section === "ui";
+  const showUi = false;
   const showExternals = section === "externals";
   const showApplications = section === "applications";
-  const showUsers = section === "users";
+  const showUsers = false;
   const showMaintenance = section === "maintenance";
   const showBackup = section === "backup";
   const settingsTitle = settingsTitleBySection[section] || "Paramètres";
@@ -38,25 +35,18 @@ export default function useSettingsController(section = "general") {
   const [hostPort, setHostPort] = useState("");
   const [initialHostPort, setInitialHostPort] = useState("");
   const [urlBase] = useState("");
-  const [securityDowngradeModalOpen, setSecurityDowngradeModalOpen] = useState(false);
 
   // Compose specialized hooks
-  const uiSettings = useUiSettings();
   const providers = useExternalProviderInstances();
   const applications = useArrApplications();
   const maintenance = useMaintenanceActions();
-  const security = useSecuritySettings();
   const maintenanceSettings = useMaintenanceSettings();
 
   // Extract stable function refs to avoid infinite loops
-  const loadUiSettingsRef = useRef(uiSettings.loadUiSettings);
-  const saveUiSettingsRef = useRef(uiSettings.saveUiSettings);
   const loadExternalFlagsRef = useRef(providers.loadExternalFlags);
   const loadProviderStatsRef = useRef(providers.loadProviderStats);
   const saveExternalKeysRef = useRef(providers.saveExternalKeys);
   const setReleasesCountRef = useRef(providers.setReleasesCount);
-  const loadSecuritySettingsRef = useRef(security.loadSecuritySettings);
-  const saveSecuritySettingsRef = useRef(security.saveSecuritySettings);
   const loadBackupsRef = useRef(maintenance.loadBackups);
   const loadBackupStateRef = useRef(maintenance.loadBackupState);
   const loadMaintenanceSettingsRef = useRef(maintenanceSettings.loadMaintenanceSettings);
@@ -90,14 +80,10 @@ export default function useSettingsController(section = "general") {
 
   // Sync all refs in a single render-phase update (refs don't trigger re-renders)
   // This replaces 23 individual useEffect hooks with direct assignment
-  loadUiSettingsRef.current = uiSettings.loadUiSettings;
-  saveUiSettingsRef.current = uiSettings.saveUiSettings;
   loadExternalFlagsRef.current = providers.loadExternalFlags;
   loadProviderStatsRef.current = providers.loadProviderStats;
   saveExternalKeysRef.current = providers.saveExternalKeys;
   setReleasesCountRef.current = providers.setReleasesCount;
-  loadSecuritySettingsRef.current = security.loadSecuritySettings;
-  saveSecuritySettingsRef.current = security.saveSecuritySettings;
   loadBackupsRef.current = maintenance.loadBackups;
   loadBackupStateRef.current = maintenance.loadBackupState;
   loadMaintenanceSettingsRef.current = maintenanceSettings.loadMaintenanceSettings;
@@ -129,11 +115,9 @@ export default function useSettingsController(section = "general") {
 
   // Calculate isDirty with safe property access
   const isDirty =
-    uiSettings.isDirty ||
-    security.isDirty ||
     applications.isRequestModeDirty ||
     maintenanceSettings.isDirty;
-  const isSaveBlocked = showUsers && !security.canSave;
+  const isSaveBlocked = false;
   const canSave = isDirty && !isSaveBlocked;
 
   // Load all settings
@@ -147,10 +131,8 @@ export default function useSettingsController(section = "general") {
 
       // Load all settings in parallel
       await Promise.all([
-        loadUiSettingsRef.current(),
         loadExternalFlagsRef.current(),
         loadProviderStatsRef.current(),
-        loadSecuritySettingsRef.current(),
       ]);
     } catch (e) {
       setErr(e?.message || "Erreur chargement settings");
@@ -160,7 +142,7 @@ export default function useSettingsController(section = "general") {
   }, []);
 
   // Handle save
-  const performSave = useCallback(async (securityOptions = {}) => {
+  const performSave = useCallback(async () => {
     setErr("");
     const startedAt = Date.now();
     let ok = false;
@@ -168,9 +150,7 @@ export default function useSettingsController(section = "general") {
 
     try {
       // Save all settings
-      await saveUiSettingsRef.current();
       await saveExternalKeysRef.current();
-      await saveSecuritySettingsRef.current(securityOptions);
       await saveArrRequestModeDraftRef.current();
       await saveMaintenanceSettingsRef.current();
 
@@ -188,7 +168,7 @@ export default function useSettingsController(section = "general") {
 
       ok = true;
     } catch (e) {
-      if (!e?.isSecuritySettingsError && !e?.isMaintenanceSettingsError) {
+      if (!e?.isMaintenanceSettingsError) {
         setErr(e?.message || "Erreur sauvegarde settings");
       }
     } finally {
@@ -203,21 +183,8 @@ export default function useSettingsController(section = "general") {
 
   const handleSave = useCallback(async () => {
     if (!canSave) return;
-    if (showUsers && security.requiresDowngradeConfirmation) {
-      setSecurityDowngradeModalOpen(true);
-      return;
-    }
     await performSave();
-  }, [canSave, showUsers, security.requiresDowngradeConfirmation, performSave]);
-
-  const closeSecurityDowngradeModal = useCallback(() => {
-    setSecurityDowngradeModalOpen(false);
-  }, []);
-
-  const confirmSecurityDowngradeSave = useCallback(async () => {
-    setSecurityDowngradeModalOpen(false);
-    await performSave({ allowDowngradeToOpen: true });
-  }, [performSave]);
+  }, [canSave, performSave]);
 
   // Handle refresh
   const handleRefresh = useCallback(() => {
@@ -303,12 +270,6 @@ export default function useSettingsController(section = "general") {
     if (!hostPort) setHostPort(currentPort);
     if (!initialHostPort) setInitialHostPort(currentPort);
   }, [hostPort, initialHostPort]);
-
-  // Apply theme on load
-  useEffect(() => {
-    if (loading) return;
-    applyTheme(uiSettings.ui?.theme);
-  }, [uiSettings.ui?.theme, loading]);
 
   // Wrap maintenance handlers with error handling
   const handleClearCache = useCallback(async () => {
@@ -488,9 +449,6 @@ export default function useSettingsController(section = "general") {
     handleRefresh,
     handleSave,
     saveState,
-    securityDowngradeModalOpen,
-    closeSecurityDowngradeModal,
-    confirmSecurityDowngradeSave,
     isDirty,
     isSaveBlocked,
     canSave,
@@ -505,12 +463,7 @@ export default function useSettingsController(section = "general") {
       hostPort,
       urlBase,
     },
-    ui: {
-      ui: uiSettings.ui,
-      setUi: uiSettings.setUi,
-      pulseKeys: uiSettings.pulseKeys,
-      handleThemeChange: uiSettings.handleThemeChange,
-    },
+    ui: null,
     providers: {
       ...providers,
       confirmExternalDelete,
@@ -684,21 +637,6 @@ export default function useSettingsController(section = "general") {
       closeBackupDelete: maintenance.closeBackupDelete,
       handleBackupDelete,
     },
-    users: {
-      security: security.security,
-      setSecurity: security.setSecurity,
-      securityErrors: security.securityErrors,
-      securityMessage: security.securityMessage,
-      passwordMessage: security.passwordMessage,
-      showExistingCredentialsHint: security.showExistingCredentialsHint,
-      credentialsRequiredForMode: security.credentialsRequiredForMode,
-      effectiveAuthRequired: security.effectiveAuthRequired,
-      usernameRequired: security.usernameRequired,
-      passwordRequired: security.passwordRequired,
-      confirmRequired: security.confirmRequired,
-      usernameFieldState: security.usernameFieldState,
-      passwordFieldState: security.passwordFieldState,
-      confirmFieldState: security.confirmFieldState,
-    },
+    users: null,
   };
 }

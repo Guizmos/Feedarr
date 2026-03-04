@@ -1,17 +1,22 @@
 using Microsoft.AspNetCore.Mvc;
 using Feedarr.Api.Data.Repositories;
+using Feedarr.Api.Data;
 using Feedarr.Api.Models.Settings;
 using Feedarr.Api.Options;
 using Feedarr.Api.Services.Fanart;
 using Feedarr.Api.Services.Igdb;
 using Feedarr.Api.Services.Tmdb;
 using Feedarr.Api.Services.TvMaze;
+using Feedarr.Api.Services.Categories;
+using Feedarr.Api.Models;
 using Feedarr.Api.Services.ExternalProviders;
 using Feedarr.Api.Services.Security;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Caching.Memory;
 using System.Security.Cryptography;
+using System.Globalization;
+using Dapper;
 
 namespace Feedarr.Api.Controllers;
 
@@ -26,6 +31,7 @@ public sealed class SettingsController : ControllerBase
     private readonly IgdbClient _igdb;
     private readonly TvMazeClient _tvmaze;
     private readonly ExternalProviderInstanceRepository? _externalProviderInstances;
+    private readonly Db? _db;
     private readonly IMemoryCache _cache;
     private readonly IConfiguration _config;
     private readonly BootstrapTokenService _bootstrapTokens;
@@ -42,7 +48,8 @@ public sealed class SettingsController : ControllerBase
         IConfiguration config,
         BootstrapTokenService bootstrapTokens,
         ILogger<SettingsController> log,
-        ExternalProviderInstanceRepository? externalProviderInstances = null)
+        ExternalProviderInstanceRepository? externalProviderInstances = null,
+        Db? db = null)
     {
         _repo = repo;
         _app = app.Value;
@@ -51,6 +58,7 @@ public sealed class SettingsController : ControllerBase
         _igdb = igdb;
         _tvmaze = tvmaze;
         _externalProviderInstances = externalProviderInstances;
+        _db = db;
         _cache = cache;
         _config = config;
         _bootstrapTokens = bootstrapTokens;
@@ -134,80 +142,29 @@ public sealed class SettingsController : ControllerBase
     [HttpGet("ui")]
     public IActionResult GetUi()
     {
-        var defaults = new UiSettings();
-        return Ok(_repo.GetUi(defaults));
+        var loaded = _repo.GetUiSettings(UiSettings.BuildDefaults());
+        return Ok(BuildUiResponse(loaded));
     }
 
     [HttpPut("ui")]
     public IActionResult PutUi([FromBody] UiSettings dto)
     {
-        var uiLanguage = UiLanguageCatalog.NormalizeUiLanguage(dto.UiLanguage);
-        var mediaInfoLanguage = UiLanguageCatalog.NormalizeMediaInfoLanguage(dto.MediaInfoLanguage);
+        if (dto is null) return Problem(title: "body missing", statusCode: StatusCodes.Status400BadRequest);
 
-        var view = (dto.DefaultView ?? "grid").Trim().ToLowerInvariant();
-        if (view is not ("grid" or "list" or "banner" or "poster")) view = "grid";
-
-        var sort = (dto.DefaultSort ?? "date").Trim().ToLowerInvariant();
-        if (sort is not ("date" or "seeders" or "downloads")) sort = "date";
-
-        var maxAge = (dto.DefaultMaxAgeDays ?? "").Trim();
-        if (maxAge is not ("" or "1" or "2" or "3" or "7" or "15" or "30")) maxAge = "";
-
-        var limit = dto.DefaultLimit;
-        if (limit != 0 && limit != 50 && limit != 100 && limit != 200 && limit != 500) limit = 100;
-
-        var filterSeen = (dto.DefaultFilterSeen ?? "").Trim();
-        if (filterSeen is not ("" or "1" or "0")) filterSeen = "";
-
-        var filterApp = (dto.DefaultFilterApplication ?? "").Trim();
-        if (string.IsNullOrWhiteSpace(filterApp))
+        var errors = ValidateUiSettings(dto);
+        if (errors.Count > 0)
         {
-            filterApp = "";
-        }
-        else if (!string.Equals(filterApp, "__hide_apps__", StringComparison.Ordinal) &&
-                 !long.TryParse(filterApp, out _))
-        {
-            filterApp = "";
+            return BadRequest(new ValidationProblemDetails(errors)
+            {
+                Title = "Paramètres UI invalides",
+                Detail = "Un ou plusieurs paramètres UI sont invalides.",
+                Status = StatusCodes.Status400BadRequest,
+            });
         }
 
-        var filterSource = (dto.DefaultFilterSourceId ?? "").Trim();
-        if (!string.IsNullOrWhiteSpace(filterSource) && !long.TryParse(filterSource, out _))
-            filterSource = "";
-
-        var filterCategory = (dto.DefaultFilterCategoryId ?? "").Trim().ToLowerInvariant();
-        var filterQuality = (dto.DefaultFilterQuality ?? "").Trim();
-        if (filterQuality.Length > 64) filterQuality = filterQuality[..64];
-
-        var theme = (dto.Theme ?? "light").Trim().ToLowerInvariant();
-        if (theme is not ("light" or "dark" or "system")) theme = "light";
-
-        var saved = new UiSettings
-        {
-            UiLanguage = uiLanguage,
-            MediaInfoLanguage = mediaInfoLanguage,
-            HideSeenByDefault = dto.HideSeenByDefault,
-            ShowCategories = dto.ShowCategories,
-            ShowTop24DedupeControl = dto.ShowTop24DedupeControl,
-            EnableMissingPosterView = dto.EnableMissingPosterView,
-            DefaultView = view,
-            DefaultSort = sort,
-            DefaultMaxAgeDays = maxAge,
-            DefaultLimit = limit,
-            DefaultFilterSeen = filterSeen,
-            DefaultFilterApplication = filterApp,
-            DefaultFilterSourceId = filterSource,
-            DefaultFilterCategoryId = filterCategory,
-            DefaultFilterQuality = filterQuality,
-            BadgeInfo = dto.BadgeInfo,
-            BadgeWarn = dto.BadgeWarn,
-            BadgeError = dto.BadgeError,
-            Theme = theme,
-            AnimationsEnabled = dto.AnimationsEnabled,
-            OnboardingDone = dto.OnboardingDone
-        };
-
-        _repo.SaveUi(saved);
-        return Ok(saved);
+        var saved = NormalizeUiSettings(dto);
+        _repo.PutUiSettings(saved);
+        return Ok(BuildUiResponse(saved));
     }
 
     // --------------------
@@ -393,8 +350,7 @@ public sealed class SettingsController : ControllerBase
     [HttpGet("security")]
     public IActionResult GetSecurity()
     {
-        var defaults = new SecuritySettings();
-        var sec = _repo.GetSecurity(defaults);
+        var sec = _repo.GetSecuritySettings(BuildSecurityDefaults());
         var authMode = SmartAuthPolicy.NormalizeAuthMode(sec);
         var bootstrapSecret = SmartAuthPolicy.GetBootstrapSecret(_config);
         var authConfigured = SmartAuthPolicy.IsAuthConfigured(sec, bootstrapSecret);
@@ -436,7 +392,7 @@ public sealed class SettingsController : ControllerBase
     {
         if (dto is null) return Problem(title: "body missing", statusCode: StatusCodes.Status400BadRequest);
 
-        var current = _repo.GetSecurity(new SecuritySettings());
+        var current = _repo.GetSecuritySettings(BuildSecurityDefaults());
 
         var legacyAuth = Normalize(dto.Authentication, current.Authentication, new[] { "none", "basic" });
         var legacyRequired = Normalize(dto.AuthenticationRequired, current.AuthenticationRequired, new[] { "local", "all" });
@@ -536,7 +492,7 @@ public sealed class SettingsController : ControllerBase
             }
         }
 
-        _repo.SaveSecurity(next);
+        _repo.PutSecuritySettings(next);
         _cache.Remove(SecuritySettingsCache.CacheKey);
 
         // Invalidate all outstanding bootstrap tokens — security is now configured,
@@ -626,6 +582,9 @@ public sealed class SettingsController : ControllerBase
         return true;
     }
 
+    private static SecuritySettings BuildSecurityDefaults()
+        => SecuritySettings.BuildDefaults();
+
     private MaintenanceSettings BuildMaintenanceDefaults()
     {
         return new MaintenanceSettings
@@ -708,5 +667,237 @@ public sealed class SettingsController : ControllerBase
             .Distinct(StringComparer.Ordinal)
             .OrderBy(key => key, StringComparer.Ordinal)
             .ToList();
+    }
+
+    private static Dictionary<string, string[]> ValidateUiSettings(UiSettings dto)
+    {
+        var errors = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+
+        var rawUiLanguage = (dto.UiLanguage ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(rawUiLanguage) ||
+            !string.Equals(UiLanguageCatalog.NormalizeUiLanguage(rawUiLanguage), rawUiLanguage, StringComparison.OrdinalIgnoreCase))
+        {
+            errors["uiLanguage"] = ["La langue UI doit être 'fr-FR' ou 'en-US'."];
+        }
+
+        var rawMediaInfoLanguage = (dto.MediaInfoLanguage ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(rawMediaInfoLanguage) ||
+            !string.Equals(UiLanguageCatalog.NormalizeMediaInfoLanguage(rawMediaInfoLanguage), rawMediaInfoLanguage, StringComparison.OrdinalIgnoreCase))
+        {
+            errors["mediaInfoLanguage"] = ["La langue des métadonnées doit être 'fr-FR' ou 'en-US'."];
+        }
+
+        var view = (dto.DefaultView ?? "").Trim().ToLowerInvariant();
+        if (view is not ("grid" or "list" or "banner" or "poster"))
+            errors["defaultView"] = ["La vue par défaut doit être 'grid', 'list', 'banner' ou 'poster'."];
+
+        var sort = (dto.DefaultSort ?? "").Trim().ToLowerInvariant();
+        if (sort is not ("date" or "seeders" or "downloads"))
+            errors["defaultSort"] = ["Le tri par défaut doit être 'date', 'seeders' ou 'downloads'."];
+
+        var maxAge = (dto.DefaultMaxAgeDays ?? "").Trim();
+        if (maxAge is not ("" or "1" or "2" or "3" or "7" or "15" or "30"))
+            errors["defaultMaxAgeDays"] = ["La fenêtre de date doit être vide ou valoir 1, 2, 3, 7, 15 ou 30 jours."];
+
+        var limit = dto.DefaultLimit;
+        if (limit is not (0 or 50 or 100 or 200 or 500))
+            errors["defaultLimit"] = ["La limite doit être 0, 50, 100, 200 ou 500."];
+
+        var filterSeen = (dto.DefaultFilterSeen ?? "").Trim();
+        if (filterSeen is not ("" or "1" or "0"))
+            errors["defaultFilterSeen"] = ["Le filtre Vu doit être vide, '1' ou '0'."];
+
+        var filterApp = (dto.DefaultFilterApplication ?? "").Trim();
+        if (!string.IsNullOrWhiteSpace(filterApp) &&
+            !string.Equals(filterApp, "__hide_apps__", StringComparison.Ordinal) &&
+            !long.TryParse(filterApp, out _))
+        {
+            errors["defaultFilterApplication"] = ["Le filtre Application doit être vide, '__hide_apps__' ou un identifiant numérique."];
+        }
+
+        var filterSource = (dto.DefaultFilterSourceId ?? "").Trim();
+        if (!string.IsNullOrWhiteSpace(filterSource) && !long.TryParse(filterSource, out _))
+            errors["defaultFilterSourceId"] = ["Le filtre Source doit être vide ou un identifiant numérique."];
+
+        var filterCategory = (dto.DefaultFilterCategoryId ?? "").Trim();
+        if (!string.IsNullOrWhiteSpace(filterCategory) &&
+            !CategoryGroupCatalog.TryNormalizeKey(filterCategory, out _))
+        {
+            errors["defaultFilterCategoryId"] = ["La catégorie par défaut doit correspondre à une catégorie Feedarr connue."];
+        }
+
+        var filterQuality = (dto.DefaultFilterQuality ?? "").Trim();
+        if (filterQuality.Length > 64)
+            errors["defaultFilterQuality"] = ["La qualité par défaut ne doit pas dépasser 64 caractères."];
+
+        var theme = (dto.Theme ?? "").Trim().ToLowerInvariant();
+        if (theme is not ("light" or "dark" or "system"))
+            errors["theme"] = ["Le thème doit être 'light', 'dark' ou 'system'."];
+
+        return errors;
+    }
+
+    private static UiSettings NormalizeUiSettings(UiSettings dto)
+    {
+        var filterCategory = (dto.DefaultFilterCategoryId ?? "").Trim();
+        var normalizedCategory = CategoryGroupCatalog.TryNormalizeKey(filterCategory, out var canonicalCategory)
+            ? canonicalCategory
+            : "";
+
+        return new UiSettings
+        {
+            UiLanguage = UiLanguageCatalog.NormalizeUiLanguage(dto.UiLanguage),
+            MediaInfoLanguage = UiLanguageCatalog.NormalizeMediaInfoLanguage(dto.MediaInfoLanguage),
+            HideSeenByDefault = dto.HideSeenByDefault,
+            ShowCategories = dto.ShowCategories,
+            ShowTop24DedupeControl = dto.ShowTop24DedupeControl,
+            EnableMissingPosterView = dto.EnableMissingPosterView,
+            DefaultView = (dto.DefaultView ?? "grid").Trim().ToLowerInvariant(),
+            DefaultSort = (dto.DefaultSort ?? "date").Trim().ToLowerInvariant(),
+            DefaultMaxAgeDays = (dto.DefaultMaxAgeDays ?? "").Trim(),
+            DefaultLimit = dto.DefaultLimit,
+            DefaultFilterSeen = (dto.DefaultFilterSeen ?? "").Trim(),
+            DefaultFilterApplication = (dto.DefaultFilterApplication ?? "").Trim(),
+            DefaultFilterSourceId = (dto.DefaultFilterSourceId ?? "").Trim(),
+            DefaultFilterCategoryId = normalizedCategory,
+            DefaultFilterQuality = TrimToMaxLength(dto.DefaultFilterQuality, 64),
+            BadgeInfo = dto.BadgeInfo,
+            BadgeWarn = dto.BadgeWarn,
+            BadgeError = dto.BadgeError,
+            Theme = (dto.Theme ?? "light").Trim().ToLowerInvariant(),
+            AnimationsEnabled = dto.AnimationsEnabled,
+            OnboardingDone = dto.OnboardingDone
+        };
+    }
+
+    private UiSettingsResponse BuildUiResponse(UiSettings settings)
+    {
+        return new UiSettingsResponse(settings)
+        {
+            SourceOptions = BuildUiSourceOptions(),
+            AppOptions = BuildUiAppOptions(),
+            CategoryOptions = BuildUiCategoryOptions(),
+        };
+    }
+
+    private IReadOnlyList<UiSettingsOptionItem> BuildUiSourceOptions()
+    {
+        if (_db is null)
+            return [];
+
+        using var conn = _db.Open();
+        var rows = conn.Query<(long Id, string Name)>(
+            """
+            SELECT id AS Id, name AS Name
+            FROM sources
+            WHERE enabled = 1
+            ORDER BY name COLLATE NOCASE ASC, id ASC;
+            """
+        );
+
+        return rows
+            .Where(row => row.Id > 0 && !string.IsNullOrWhiteSpace(row.Name))
+            .Select(row => new UiSettingsOptionItem
+            {
+                Value = row.Id.ToString(CultureInfo.InvariantCulture),
+                Label = row.Name.Trim(),
+            })
+            .ToList();
+    }
+
+    private IReadOnlyList<UiSettingsOptionItem> BuildUiAppOptions()
+    {
+        if (_db is null)
+            return [];
+
+        using var conn = _db.Open();
+        var rows = conn.Query<(long Id, string? Type, string? Name)>(
+            """
+            SELECT id AS Id, type AS Type, name AS Name
+            FROM arr_applications
+            WHERE is_enabled = 1
+              AND api_key_encrypted IS NOT NULL
+              AND TRIM(api_key_encrypted) <> ''
+            ORDER BY COALESCE(NULLIF(name, ''), type) COLLATE NOCASE ASC, id ASC;
+            """
+        );
+
+        return rows
+            .Where(row => row.Id > 0)
+            .Select(row =>
+            {
+                var type = (row.Type ?? "App").Trim().ToLowerInvariant();
+                var label = string.IsNullOrWhiteSpace(row.Name)
+                    ? $"{type} {row.Id}"
+                    : row.Name.Trim();
+
+                return new UiSettingsOptionItem
+                {
+                    Value = row.Id.ToString(CultureInfo.InvariantCulture),
+                    Label = label,
+                };
+            })
+            .ToList();
+    }
+
+    private IReadOnlyList<UiSettingsCategoryOptionItem> BuildUiCategoryOptions()
+    {
+        if (_db is null)
+            return [];
+
+        using var conn = _db.Open();
+        var rows = conn.Query<(string? UnifiedCategory, int Count)>(
+            """
+            SELECT unified_category AS UnifiedCategory, COUNT(1) AS Count
+            FROM releases
+            WHERE unified_category IS NOT NULL
+              AND unified_category <> ''
+              AND unified_category <> 'Autre'
+            GROUP BY unified_category
+            ORDER BY Count DESC;
+            """
+        );
+
+        var counts = new Dictionary<string, UiSettingsCategoryOptionItem>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows)
+        {
+            if (!UnifiedCategoryMappings.TryParse(row.UnifiedCategory, out var category) ||
+                category == UnifiedCategory.Autre)
+            {
+                continue;
+            }
+
+            var key = UnifiedCategoryMappings.ToKey(category);
+            var label = UnifiedCategoryMappings.ToLabel(category);
+            if (counts.TryGetValue(key, out var current))
+            {
+                counts[key] = new UiSettingsCategoryOptionItem
+                {
+                    Value = current.Value,
+                    Label = current.Label,
+                    Count = current.Count + row.Count,
+                };
+            }
+            else
+            {
+                counts[key] = new UiSettingsCategoryOptionItem
+                {
+                    Value = key,
+                    Label = label,
+                    Count = row.Count,
+                };
+            }
+        }
+
+        return counts.Values
+            .OrderByDescending(option => option.Count)
+            .ThenBy(option => option.Label, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static string TrimToMaxLength(string? value, int maxLength)
+    {
+        var trimmed = (value ?? "").Trim();
+        return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
     }
 }

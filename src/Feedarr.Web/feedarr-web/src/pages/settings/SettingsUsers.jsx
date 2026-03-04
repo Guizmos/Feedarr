@@ -6,8 +6,10 @@ export default function SettingsUsers({
   security,
   setSecurity,
   securityErrors,
+  securityFieldErrors,
   securityMessage,
   passwordMessage,
+  securityPulseKinds,
   showExistingCredentialsHint,
   credentialsRequiredForMode,
   effectiveAuthRequired,
@@ -89,6 +91,11 @@ export default function SettingsUsers({
     return classes;
   };
 
+  const rowPulseClassName = (key) => {
+    const kind = securityPulseKinds?.[key];
+    return kind === "err" ? " pulse-err" : kind === "ok" ? " pulse-ok" : "";
+  };
+
   const normalizedSecurityMessage = String(passwordMessage || securityMessage || "").trim();
   const normalizedSecurityMessageLower = normalizedSecurityMessage.toLowerCase();
   const credentialsWarningInline = credentialsRequiredForMode && !security.authConfigured;
@@ -129,7 +136,7 @@ export default function SettingsUsers({
     <div className="settings-card" id="security">
       <div className="settings-card__title">{t("settings.security.title")}</div>
       <div className="indexer-list">
-        <div className="indexer-card">
+        <div className={`indexer-card${rowPulseClassName("security.authMode")}`}>
           <div className="indexer-row indexer-row--settings">
             <span className="indexer-title">{t("settings.security.authMode")}</span>
             <div className="indexer-actions">
@@ -148,7 +155,7 @@ export default function SettingsUsers({
           </div>
         </div>
 
-        <div className="indexer-card">
+        <div className={`indexer-card${rowPulseClassName("security.publicBaseUrl")}`}>
           <div className="indexer-row indexer-row--settings">
             <span className="indexer-title">{t("settings.security.publicBaseUrl")}</span>
             <div className="indexer-actions">
@@ -160,6 +167,11 @@ export default function SettingsUsers({
               />
             </div>
           </div>
+          {securityFieldErrors?.publicBaseUrl && (
+            <div className="settings-help" style={{ color: "var(--danger, #ef4444)" }}>
+              {securityFieldErrors.publicBaseUrl}
+            </div>
+          )}
         </div>
 
         {security.authMode !== "open" && (
@@ -182,7 +194,7 @@ export default function SettingsUsers({
               </div>
             </div>
 
-            <div className="indexer-card">
+            <div className={`indexer-card${rowPulseClassName("security.username")}`}>
               <div className="indexer-row indexer-row--settings">
                 <span className="indexer-title">{t("settings.security.username")}</span>
                 <div className="indexer-actions">
@@ -198,9 +210,14 @@ export default function SettingsUsers({
                   </div>
                 </div>
               </div>
+              {securityFieldErrors?.username && (
+                <div className="settings-help" style={{ color: "var(--danger, #ef4444)" }}>
+                  {securityFieldErrors.username}
+                </div>
+              )}
             </div>
 
-            <div className="indexer-card">
+            <div className={`indexer-card${rowPulseClassName("security.password")}`}>
               <div className="indexer-row indexer-row--settings">
                 <span className="indexer-title">{t("settings.security.password")}</span>
                 <div className="indexer-actions">
@@ -222,9 +239,14 @@ export default function SettingsUsers({
                   </div>
                 </div>
               </div>
+              {securityFieldErrors?.password && (
+                <div className="settings-help" style={{ color: "var(--danger, #ef4444)" }}>
+                  {securityFieldErrors.password}
+                </div>
+              )}
             </div>
 
-            <div className="indexer-card">
+            <div className={`indexer-card${rowPulseClassName("security.passwordConfirmation")}`}>
               <div className="indexer-row indexer-row--settings">
                 <span className="indexer-title">{t("settings.security.confirm")}</span>
                 <div className="indexer-actions">
@@ -243,6 +265,11 @@ export default function SettingsUsers({
                   </div>
                 </div>
               </div>
+              {securityFieldErrors?.passwordConfirmation && (
+                <div className="settings-help" style={{ color: "var(--danger, #ef4444)" }}>
+                  {securityFieldErrors.passwordConfirmation}
+                </div>
+              )}
             </div>
           </>
         )}

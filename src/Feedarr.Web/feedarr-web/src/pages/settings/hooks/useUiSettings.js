@@ -3,14 +3,14 @@ import { apiGet, apiPut } from "../../../api/client.js";
 import { applyTheme, getStoredTheme } from "../../../app/theme.js";
 import {
   applyUiLanguage,
-  DEFAULT_UI_LANGUAGE,
   DEFAULT_MEDIA_INFO_LANGUAGE,
+  DEFAULT_UI_LANGUAGE,
   getStoredUiLanguage,
   normalizeMediaInfoLanguage,
   normalizeUiLanguage,
 } from "../../../app/locale.js";
 
-const defaultUi = {
+export const defaultUi = {
   uiLanguage: DEFAULT_UI_LANGUAGE,
   mediaInfoLanguage: DEFAULT_MEDIA_INFO_LANGUAGE,
   hideSeenByDefault: false,
@@ -34,8 +34,8 @@ const defaultUi = {
   onboardingDone: false,
 };
 
-export function buildUiPayload(source, overrides = {}) {
-  const merged = { ...source, ...overrides };
+function normalizeUiModel(source, overrides = {}) {
+  const merged = { ...defaultUi, ...source, ...overrides };
   return {
     uiLanguage: normalizeUiLanguage(merged.uiLanguage),
     mediaInfoLanguage: normalizeMediaInfoLanguage(merged.mediaInfoLanguage),
@@ -61,88 +61,203 @@ export function buildUiPayload(source, overrides = {}) {
   };
 }
 
+export function buildUiPayload(source, overrides = {}) {
+  return normalizeUiModel(source, overrides);
+}
+
+function normalizeOptionItem(item) {
+  const value = String(item?.value ?? "").trim();
+  const label = String(item?.label ?? "").trim();
+  if (!value || !label) return null;
+  return { value, label };
+}
+
+function normalizeCategoryOptionItem(item) {
+  const option = normalizeOptionItem(item);
+  if (!option) return null;
+  return {
+    ...option,
+    count: Math.max(0, Math.trunc(Number(item?.count || 0))),
+  };
+}
+
+export function normalizeUiResponse(source) {
+  return {
+    ui: normalizeUiModel(source),
+    sourceOptions: (Array.isArray(source?.sourceOptions) ? source.sourceOptions : [])
+      .map(normalizeOptionItem)
+      .filter(Boolean),
+    appOptions: (Array.isArray(source?.appOptions) ? source.appOptions : [])
+      .map(normalizeOptionItem)
+      .filter(Boolean),
+    categoryOptions: (Array.isArray(source?.categoryOptions) ? source.categoryOptions : [])
+      .map(normalizeCategoryOptionItem)
+      .filter(Boolean),
+  };
+}
+
+export function collectChangedUiKeys(current, initial) {
+  const changed = new Set();
+
+  if (current.uiLanguage !== initial.uiLanguage) changed.add("ui.uiLanguage");
+  if (current.mediaInfoLanguage !== initial.mediaInfoLanguage) changed.add("ui.mediaInfoLanguage");
+  if (current.hideSeenByDefault !== initial.hideSeenByDefault) changed.add("ui.hideSeen");
+  if (current.showCategories !== initial.showCategories) changed.add("ui.showCategories");
+  if (current.showTop24DedupeControl !== initial.showTop24DedupeControl) changed.add("ui.top24DedupeControl");
+  if (current.enableMissingPosterView !== initial.enableMissingPosterView) changed.add("ui.missingPosterView");
+  if (current.defaultView !== initial.defaultView) changed.add("ui.defaultView");
+  if (current.defaultSort !== initial.defaultSort) changed.add("ui.defaultSort");
+  if (current.defaultMaxAgeDays !== initial.defaultMaxAgeDays) changed.add("ui.defaultMaxAgeDays");
+  if (Number(current.defaultLimit) !== Number(initial.defaultLimit)) changed.add("ui.defaultLimit");
+  if (current.defaultFilterSeen !== initial.defaultFilterSeen) changed.add("ui.defaultFilterSeen");
+  if (current.defaultFilterApplication !== initial.defaultFilterApplication) changed.add("ui.defaultFilterApplication");
+  if (current.defaultFilterSourceId !== initial.defaultFilterSourceId) changed.add("ui.defaultFilterSourceId");
+  if (current.defaultFilterCategoryId !== initial.defaultFilterCategoryId) changed.add("ui.defaultFilterCategoryId");
+  if (current.defaultFilterQuality !== initial.defaultFilterQuality) changed.add("ui.defaultFilterQuality");
+  if (current.badgeInfo !== initial.badgeInfo) changed.add("ui.badgeInfo");
+  if (current.badgeWarn !== initial.badgeWarn) changed.add("ui.badgeWarn");
+  if (current.badgeError !== initial.badgeError) changed.add("ui.badgeError");
+  if (current.theme !== initial.theme) changed.add("ui.theme");
+  if (current.animationsEnabled !== initial.animationsEnabled) changed.add("ui.animations");
+  if (current.onboardingDone !== initial.onboardingDone) changed.add("ui.onboardingDone");
+
+  return changed;
+}
+
+export function normalizeUiValidationErrors(error) {
+  const raw = error?.extensions?.errors || error?.payload?.errors || {};
+  const normalized = {};
+  Object.entries(raw).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      normalized[key] = value[0] || "";
+    } else if (typeof value === "string") {
+      normalized[key] = value;
+    }
+  });
+  return normalized;
+}
+
+export async function loadUiSettingsData(request = apiGet) {
+  const response = await request("/api/settings/ui");
+  return normalizeUiResponse(response || defaultUi);
+}
+
+export async function saveUiSettingsData(ui, request = apiPut) {
+  const response = await request("/api/settings/ui", buildUiPayload(ui));
+  return normalizeUiResponse(response || buildUiPayload(ui));
+}
+
+function markUiSettingsError(error) {
+  if (error && typeof error === "object") {
+    error.isUiSettingsError = true;
+    return error;
+  }
+
+  const wrapped = new Error(String(error || "UI settings error"));
+  wrapped.isUiSettingsError = true;
+  return wrapped;
+}
+
 export default function useUiSettings() {
   const storedTheme = getStoredTheme();
   const storedUiLanguage = getStoredUiLanguage();
-  const [ui, setUi] = useState({ ...defaultUi, theme: storedTheme, uiLanguage: storedUiLanguage });
-  const [initialUi, setInitialUi] = useState({ ...defaultUi, theme: storedTheme, uiLanguage: storedUiLanguage });
-  const [pulseKeys, setPulseKeys] = useState(() => new Set());
+  const initialState = normalizeUiModel(defaultUi, {
+    theme: storedTheme,
+    uiLanguage: storedUiLanguage,
+  });
+
+  const [ui, setUi] = useState(initialState);
+  const [initialUi, setInitialUi] = useState(initialState);
+  const [sourceOptions, setSourceOptions] = useState([]);
+  const [appOptions, setAppOptions] = useState([]);
+  const [categoryOptions, setCategoryOptions] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [saveError, setSaveError] = useState("");
+  const [pulseKinds, setPulseKinds] = useState({});
   const pulseTimerRef = useRef(null);
 
-  const isDirty = JSON.stringify(ui) !== JSON.stringify(initialUi);
+  const isDirty =
+    JSON.stringify(buildUiPayload(ui)) !==
+    JSON.stringify(buildUiPayload(initialUi));
+
+  const applyPulse = useCallback((keys, kind) => {
+    if (pulseTimerRef.current) clearTimeout(pulseTimerRef.current);
+
+    const next = {};
+    [...keys].forEach((key) => {
+      next[key] = kind;
+    });
+    setPulseKinds(next);
+
+    pulseTimerRef.current = setTimeout(() => {
+      setPulseKinds({});
+    }, 1200);
+  }, []);
 
   const loadUiSettings = useCallback(async () => {
+    setLoading(true);
+    setLoadError("");
     try {
-      const u = await apiGet("/api/settings/ui");
-      if (u) {
-        const normalizedUi = {
-          ...u,
-          uiLanguage: normalizeUiLanguage(u.uiLanguage),
-          mediaInfoLanguage: normalizeMediaInfoLanguage(u.mediaInfoLanguage),
-          defaultSort: u.defaultSort || "date",
-          defaultMaxAgeDays: u.defaultMaxAgeDays ?? "",
-          defaultLimit: u.defaultLimit ?? 100,
-          defaultFilterSeen: u.defaultFilterSeen ?? "",
-          defaultFilterApplication: u.defaultFilterApplication ?? "",
-          defaultFilterSourceId: u.defaultFilterSourceId ?? "",
-          defaultFilterCategoryId: u.defaultFilterCategoryId ?? "",
-          defaultFilterQuality: u.defaultFilterQuality ?? "",
-          theme: u.theme || "light",
-          showTop24DedupeControl: !!u.showTop24DedupeControl,
-          enableMissingPosterView: !!u.enableMissingPosterView,
-          animationsEnabled: u.animationsEnabled !== false,
-          onboardingDone: !!u.onboardingDone,
-        };
-        setUi(normalizedUi);
-        setInitialUi(normalizedUi);
-      }
-    } catch {
-      // Ignore load errors
+      const loaded = await loadUiSettingsData();
+      setUi(loaded.ui);
+      setInitialUi(loaded.ui);
+      setSourceOptions(loaded.sourceOptions);
+      setAppOptions(loaded.appOptions);
+      setCategoryOptions(loaded.categoryOptions);
+      setFieldErrors({});
+      setSaveError("");
+      return loaded;
+    } catch (error) {
+      setLoadError(error?.message || "Erreur chargement paramètres UI");
+      throw error;
+    } finally {
+      setLoading(false);
     }
   }, []);
 
   const saveUiSettings = useCallback(async () => {
-    const changed = new Set();
-    if (ui.uiLanguage !== initialUi.uiLanguage) changed.add("ui.uiLanguage");
-    if (ui.mediaInfoLanguage !== initialUi.mediaInfoLanguage) changed.add("ui.mediaInfoLanguage");
-    if (ui.hideSeenByDefault !== initialUi.hideSeenByDefault) changed.add("ui.hideSeen");
-    if (ui.showCategories !== initialUi.showCategories) changed.add("ui.showCategories");
-    if (ui.showTop24DedupeControl !== initialUi.showTop24DedupeControl) changed.add("ui.top24DedupeControl");
-    if (ui.defaultView !== initialUi.defaultView) changed.add("ui.defaultView");
-    if (ui.defaultSort !== initialUi.defaultSort) changed.add("ui.defaultSort");
-    if (ui.defaultMaxAgeDays !== initialUi.defaultMaxAgeDays) changed.add("ui.defaultMaxAgeDays");
-    if (ui.defaultLimit !== initialUi.defaultLimit) changed.add("ui.defaultLimit");
-    if (ui.defaultFilterSeen !== initialUi.defaultFilterSeen) changed.add("ui.defaultFilterSeen");
-    if (ui.defaultFilterApplication !== initialUi.defaultFilterApplication) changed.add("ui.defaultFilterApplication");
-    if (ui.defaultFilterSourceId !== initialUi.defaultFilterSourceId) changed.add("ui.defaultFilterSourceId");
-    if (ui.defaultFilterCategoryId !== initialUi.defaultFilterCategoryId) changed.add("ui.defaultFilterCategoryId");
-    if (ui.defaultFilterQuality !== initialUi.defaultFilterQuality) changed.add("ui.defaultFilterQuality");
-    if (ui.theme !== initialUi.theme) changed.add("ui.theme");
-    if (ui.enableMissingPosterView !== initialUi.enableMissingPosterView) changed.add("ui.missingPosterView");
-    if (ui.animationsEnabled !== initialUi.animationsEnabled) changed.add("ui.animations");
+    const changed = collectChangedUiKeys(buildUiPayload(ui), buildUiPayload(initialUi));
+    if (changed.size === 0) return changed;
 
-    await apiPut("/api/settings/ui", buildUiPayload(ui));
-    setInitialUi(buildUiPayload(ui));
-    applyTheme(ui.theme, true);
-    applyUiLanguage(ui.uiLanguage, true);
+    setFieldErrors({});
+    setSaveError("");
 
-    // Pulse effect for changed fields
-    if (changed.size > 0) {
-      if (pulseTimerRef.current) clearTimeout(pulseTimerRef.current);
-      setPulseKeys(new Set(changed));
-      pulseTimerRef.current = setTimeout(() => {
-        setPulseKeys(new Set());
-      }, 1200);
+    try {
+      const saved = await saveUiSettingsData(ui);
+      setUi(saved.ui);
+      setInitialUi(saved.ui);
+      setSourceOptions(saved.sourceOptions);
+      setAppOptions(saved.appOptions);
+      setCategoryOptions(saved.categoryOptions);
+      applyTheme(saved.ui.theme, true);
+      applyUiLanguage(saved.ui.uiLanguage, true);
+      applyPulse(changed, "ok");
+      return changed;
+    } catch (error) {
+      const normalizedErrors = normalizeUiValidationErrors(error);
+      setFieldErrors(normalizedErrors);
+      setSaveError(error?.message || "Erreur sauvegarde paramètres UI");
+      applyPulse(changed.size > 0 ? changed : new Set(Object.keys(normalizedErrors).map((key) => `ui.${key}`)), "err");
+      throw markUiSettingsError(error);
     }
+  }, [applyPulse, initialUi, ui]);
 
-    return changed;
-  }, [ui, initialUi]);
-
-  const handleThemeChange = useCallback((nextTheme) => {
-    setUi((u) => ({ ...u, theme: nextTheme }));
+  const setUiField = useCallback((field, value) => {
+    setUi((current) => ({ ...current, [field]: value }));
+    setFieldErrors((current) => {
+      if (!Object.prototype.hasOwnProperty.call(current, field)) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
   }, []);
 
-  // Apply theme changes in real-time (preview)
+  const handleThemeChange = useCallback((nextTheme) => {
+    setUiField("theme", nextTheme);
+  }, [setUiField]);
+
   useEffect(() => {
     applyTheme(ui?.theme);
   }, [ui?.theme]);
@@ -157,12 +272,26 @@ export default function useUiSettings() {
     root.setAttribute("data-motion", ui?.animationsEnabled === false ? "off" : "on");
   }, [ui?.animationsEnabled]);
 
+  useEffect(() => {
+    return () => {
+      if (pulseTimerRef.current) clearTimeout(pulseTimerRef.current);
+    };
+  }, []);
+
   return {
     ui,
     setUi,
+    setUiField,
     initialUi,
+    sourceOptions,
+    appOptions,
+    categoryOptions,
+    loading,
+    loadError,
     isDirty,
-    pulseKeys,
+    fieldErrors,
+    saveError,
+    pulseKinds,
     loadUiSettings,
     saveUiSettings,
     handleThemeChange,

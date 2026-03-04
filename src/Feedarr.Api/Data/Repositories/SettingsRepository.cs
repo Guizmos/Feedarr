@@ -153,6 +153,15 @@ public sealed class SettingsRepository
     public void SaveUi(UiSettings settings)
         => Upsert("ui", JsonSerializer.Serialize(settings, JsonOpts));
 
+    public UiSettings GetUiSettings(UiSettings? defaults = null)
+        => GetUi(defaults ?? UiSettings.BuildDefaults());
+
+    public UiSettings PutUiSettings(UiSettings settings)
+    {
+        SaveUi(settings);
+        return settings;
+    }
+
     // --------------------
     // MAINTENANCE
     // --------------------
@@ -264,6 +273,15 @@ public sealed class SettingsRepository
 
     public void SaveSecurity(SecuritySettings settings)
         => Upsert("security", JsonSerializer.Serialize(settings, JsonOpts));
+
+    public SecuritySettings GetSecuritySettings(SecuritySettings? defaults = null)
+        => GetSecurity(defaults ?? SecuritySettings.BuildDefaults());
+
+    public SecuritySettings PutSecuritySettings(SecuritySettings settings)
+    {
+        SaveSecurity(settings);
+        return settings;
+    }
 
     // --------------------
     // EXTERNAL (TMDB / TVMAZE / FANART / IGDB)

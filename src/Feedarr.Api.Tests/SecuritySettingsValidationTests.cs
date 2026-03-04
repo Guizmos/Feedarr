@@ -15,6 +15,24 @@ namespace Feedarr.Api.Tests;
 public sealed class SecuritySettingsValidationTests
 {
     [Fact]
+    public void GetSecurity_UsesDefaultsWhenNoPersistedValueExists()
+    {
+        using var fixture = new ControllerFixture();
+        var controller = fixture.CreateController();
+
+        var ok = Assert.IsType<OkObjectResult>(controller.GetSecurity());
+        var payload = SerializeToElement(ok.Value);
+
+        Assert.Equal("smart", payload.GetProperty("authMode").GetString());
+        Assert.Equal("basic", payload.GetProperty("authentication").GetString());
+        Assert.Equal("local", payload.GetProperty("authenticationRequired").GetString());
+        Assert.Equal("", payload.GetProperty("publicBaseUrl").GetString());
+        Assert.Equal("", payload.GetProperty("username").GetString());
+        Assert.False(payload.GetProperty("hasPassword").GetBoolean());
+        Assert.False(payload.GetProperty("authConfigured").GetBoolean());
+    }
+
+    [Fact]
     public void SavingSmartExposedWithoutCreds_Returns400()
     {
         using var fixture = new ControllerFixture();
