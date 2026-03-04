@@ -9,6 +9,7 @@ import useExternalProviderInstances from "./hooks/useExternalProviderInstances.j
 import useArrApplications from "./hooks/useArrApplications.js";
 import useMaintenanceActions from "./hooks/useMaintenanceActions.js";
 import useSecuritySettings from "./hooks/useSecuritySettings.js";
+import useMaintenanceSettings from "./hooks/useMaintenanceSettings.js";
 
 const settingsTitleBySection = {
   general: "Paramètres",
@@ -45,6 +46,7 @@ export default function useSettingsController(section = "general") {
   const applications = useArrApplications();
   const maintenance = useMaintenanceActions();
   const security = useSecuritySettings();
+  const maintenanceSettings = useMaintenanceSettings();
 
   // Extract stable function refs to avoid infinite loops
   const loadUiSettingsRef = useRef(uiSettings.loadUiSettings);
@@ -57,6 +59,7 @@ export default function useSettingsController(section = "general") {
   const saveSecuritySettingsRef = useRef(security.saveSecuritySettings);
   const loadBackupsRef = useRef(maintenance.loadBackups);
   const loadBackupStateRef = useRef(maintenance.loadBackupState);
+  const loadMaintenanceSettingsRef = useRef(maintenanceSettings.loadMaintenanceSettings);
   const loadArrAppsRef = useRef(applications.loadArrApps);
   const loadArrSyncSettingsRef = useRef(applications.loadArrSyncSettings);
   const loadArrSyncStatusRef = useRef(applications.loadArrSyncStatus);
@@ -78,6 +81,7 @@ export default function useSettingsController(section = "general") {
   const handlePurgeDuplicatesRef = useRef(maintenance.handlePurgeDuplicates);
   const triggerArrSyncRef = useRef(applications.triggerArrSync);
   const saveArrSyncSettingsRef = useRef(applications.saveArrSyncSettings);
+  const saveMaintenanceSettingsRef = useRef(maintenanceSettings.saveMaintenanceSettings);
   const saveArrRequestModeDraftRef = useRef(applications.saveArrRequestModeDraft);
   const confirmArrDeleteRef = useRef(applications.confirmArrDelete);
   const toggleArrEnabledRef = useRef(applications.toggleArrEnabled);
@@ -96,6 +100,7 @@ export default function useSettingsController(section = "general") {
   saveSecuritySettingsRef.current = security.saveSecuritySettings;
   loadBackupsRef.current = maintenance.loadBackups;
   loadBackupStateRef.current = maintenance.loadBackupState;
+  loadMaintenanceSettingsRef.current = maintenanceSettings.loadMaintenanceSettings;
   loadArrAppsRef.current = applications.loadArrApps;
   loadArrSyncSettingsRef.current = applications.loadArrSyncSettings;
   loadArrSyncStatusRef.current = applications.loadArrSyncStatus;
@@ -115,6 +120,7 @@ export default function useSettingsController(section = "general") {
   handlePurgeDuplicatesRef.current = maintenance.handlePurgeDuplicates;
   triggerArrSyncRef.current = applications.triggerArrSync;
   saveArrSyncSettingsRef.current = applications.saveArrSyncSettings;
+  saveMaintenanceSettingsRef.current = maintenanceSettings.saveMaintenanceSettings;
   saveArrRequestModeDraftRef.current = applications.saveArrRequestModeDraft;
   confirmArrDeleteRef.current = applications.confirmArrDelete;
   toggleArrEnabledRef.current = applications.toggleArrEnabled;
@@ -125,8 +131,10 @@ export default function useSettingsController(section = "general") {
   const isDirty =
     uiSettings.isDirty ||
     security.isDirty ||
-    applications.isRequestModeDirty;
+    applications.isRequestModeDirty ||
+    maintenanceSettings.isDirty;
   const isSaveBlocked = showUsers && !security.canSave;
+  const canSave = isDirty && !isSaveBlocked;
 
   // Load all settings
   const load = useCallback(async () => {
@@ -164,6 +172,7 @@ export default function useSettingsController(section = "general") {
       await saveExternalKeysRef.current();
       await saveSecuritySettingsRef.current(securityOptions);
       await saveArrRequestModeDraftRef.current();
+      await saveMaintenanceSettingsRef.current();
 
       // Handle port change redirect
       if (typeof window !== "undefined") {
@@ -179,7 +188,7 @@ export default function useSettingsController(section = "general") {
 
       ok = true;
     } catch (e) {
-      if (!e?.isSecuritySettingsError) {
+      if (!e?.isSecuritySettingsError && !e?.isMaintenanceSettingsError) {
         setErr(e?.message || "Erreur sauvegarde settings");
       }
     } finally {
@@ -193,12 +202,13 @@ export default function useSettingsController(section = "general") {
   }, [hostPort, initialHostPort]);
 
   const handleSave = useCallback(async () => {
+    if (!canSave) return;
     if (showUsers && security.requiresDowngradeConfirmation) {
       setSecurityDowngradeModalOpen(true);
       return;
     }
     await performSave();
-  }, [showUsers, security.requiresDowngradeConfirmation, performSave]);
+  }, [canSave, showUsers, security.requiresDowngradeConfirmation, performSave]);
 
   const closeSecurityDowngradeModal = useCallback(() => {
     setSecurityDowngradeModalOpen(false);
@@ -223,6 +233,7 @@ export default function useSettingsController(section = "general") {
     }
     if (showMaintenance) {
       loadStatsRef.current();
+      loadMaintenanceSettingsRef.current();
     }
   }, [load, showApplications, showBackup, showMaintenance]);
 
@@ -267,6 +278,7 @@ export default function useSettingsController(section = "general") {
     if (maintenanceLoadedRef.current) return;
     maintenanceLoadedRef.current = true;
     loadStatsRef.current();
+    loadMaintenanceSettingsRef.current();
   }, [showMaintenance]);
 
   // Load applications data when section is active
@@ -481,6 +493,7 @@ export default function useSettingsController(section = "general") {
     confirmSecurityDowngradeSave,
     isDirty,
     isSaveBlocked,
+    canSave,
     openArrModalAdd: applications.openArrModalAdd,
     canAddArrApp: applications.availableAddTypes.length > 0,
     openExternalModalAdd: providers.openExternalModalAdd,
@@ -633,6 +646,15 @@ export default function useSettingsController(section = "general") {
       setDuplicatesPurgeOpen: maintenance.setDuplicatesPurgeOpen,
       duplicatesPurgeLoading: maintenance.duplicatesPurgeLoading,
       handlePurgeDuplicates,
+      maintenanceSettings: maintenanceSettings.maintenanceSettings,
+      setMaintenanceSettings: maintenanceSettings.setMaintenanceSettings,
+      initialMaintenanceSettings: maintenanceSettings.initialMaintenanceSettings,
+      maintenanceFieldErrors: maintenanceSettings.fieldErrors,
+      maintenanceSaveError: maintenanceSettings.saveError,
+      maintenancePulseKinds: maintenanceSettings.pulseKinds,
+      maintenanceSettingsDirty: maintenanceSettings.isDirty,
+      restoreRecommendedDefaults: maintenanceSettings.restoreRecommendedDefaults,
+      toggleAdvancedOptions: maintenanceSettings.toggleAdvancedOptions,
     },
     backup: {
       backupCreateOpen: maintenance.backupCreateOpen,

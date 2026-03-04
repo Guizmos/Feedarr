@@ -443,7 +443,26 @@ public sealed class SyncOrchestrationService
     }
 
     private int ResolveSourcesMaxConcurrency()
-        => Math.Clamp(_opts.SyncSourcesMaxConcurrency <= 0 ? 2 : _opts.SyncSourcesMaxConcurrency, 1, 4);
+    {
+        var defaultConcurrency = Math.Clamp(_opts.SyncSourcesMaxConcurrency <= 0 ? 2 : _opts.SyncSourcesMaxConcurrency, 1, 4);
+
+        try
+        {
+            var maintenance = _settings.GetMaintenance(new MaintenanceSettings
+            {
+                SyncSourcesMaxConcurrency = defaultConcurrency
+            });
+            return Math.Clamp(
+                maintenance.SyncSourcesMaxConcurrency <= 0 ? defaultConcurrency : maintenance.SyncSourcesMaxConcurrency,
+                1,
+                4);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to read maintenance sync concurrency setting, using app default");
+            return defaultConcurrency;
+        }
+    }
 
     private int SafeGetPosterQueuePendingCount()
     {

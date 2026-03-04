@@ -41,6 +41,7 @@ export default function Settings() {
     confirmSecurityDowngradeSave,
     isDirty,
     isSaveBlocked,
+    canSave,
     openArrModalAdd,
     canAddArrApp,
     openExternalModalAdd,
@@ -89,6 +90,46 @@ export default function Settings() {
         subbarClassName={showApplications ? "subbar--settings-apps-sync" : ""}
       >
         <SubAction icon="refresh" label="Rafraîchir" onClick={handleRefresh} />
+        {showMaintenance && (
+          <>
+            <SubAction
+              icon={
+                saveState === "loading"
+                  ? "progress_activity"
+                  : saveState === "success"
+                  ? "check_circle"
+                  : saveState === "error"
+                  ? "cancel"
+                  : "save"
+              }
+              label="Enregistrer"
+              onClick={() => handleSaveRef.current?.()}
+              disabled={saveState === "loading" || !canSave}
+              className={
+                saveState === "loading"
+                  ? "is-loading"
+                  : saveState === "success"
+                  ? "is-success"
+                  : saveState === "error"
+                  ? "is-error"
+                  : ""
+              }
+            />
+            <div className="subspacer" />
+            <SubAction
+              icon="settings"
+              label="Options avancées"
+              onClick={maintenance.toggleAdvancedOptions}
+              active={!!maintenance.maintenanceSettings?.maintenanceAdvancedOptionsEnabled}
+              className="subaction--maintenance-advanced"
+              title={
+                maintenance.maintenanceSettings?.maintenanceAdvancedOptionsEnabled
+                  ? "Options avancées activées"
+                  : "Afficher les options avancées"
+              }
+            />
+          </>
+        )}
         {showApplications && (
           <>
             <SubAction
@@ -123,7 +164,7 @@ export default function Settings() {
             }
             label="Enregistrer"
             onClick={() => handleSaveRef.current?.()}
-            disabled={saveState === "loading" || !isDirty || isSaveBlocked}
+            disabled={saveState === "loading" || !canSave}
             className={
               saveState === "loading"
                 ? "is-loading"
@@ -192,6 +233,8 @@ export default function Settings() {
     backupLockedTitle,
     tSecurity,
     showUsers,
+    maintenance.toggleAdvancedOptions,
+    maintenance.maintenanceSettings?.maintenanceAdvancedOptionsEnabled,
   ]);
 
   return (

@@ -3,6 +3,7 @@ using System.Text;
 using Feedarr.Api.Data;
 using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Models;
+using Feedarr.Api.Models.Settings;
 using Feedarr.Api.Options;
 using Feedarr.Api.Services;
 using Feedarr.Api.Services.Categories;
@@ -81,7 +82,42 @@ public sealed class SyncOrchestrationServiceConcurrencyTests
         Assert.Equal(expectedSucceededIds, succeededIds);
     }
 
-    private static TestContext CreateContext(ISyncExecutor executor, int maxConcurrency, int sourceCount)
+    [Fact]
+    public async Task ExecuteSourcesDetailedAsync_UsesPersistedMaintenanceConcurrencyOverride()
+    {
+        using var context = CreateContext(
+            new BlockingSyncExecutor(threshold: 1),
+            maxConcurrency: 4,
+            sourceCount: 3,
+            maintenanceSettings: new MaintenanceSettings
+            {
+                SyncSourcesMaxConcurrency = 1
+            });
+        var executor = (BlockingSyncExecutor)context.Executor;
+
+        var runTask = context.Service.ExecuteSourcesDetailedAsync(
+            context.Sources,
+            new AutoSyncPolicy(),
+            rssOnly: false,
+            CancellationToken.None);
+
+        await executor.ThresholdReached.WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Delay(150);
+
+        Assert.Equal(1, executor.StartedCount);
+        Assert.Equal(1, executor.MaxInFlight);
+
+        executor.ReleaseAll();
+
+        var result = await runTask;
+        Assert.Equal(1, result.MaxConcurrency);
+    }
+
+    private static TestContext CreateContext(
+        ISyncExecutor executor,
+        int maxConcurrency,
+        int sourceCount,
+        MaintenanceSettings? maintenanceSettings = null)
     {
         var workspace = new TestWorkspace();
         var options = OptionsFactory.Create(new AppOptions
@@ -101,6 +137,9 @@ public sealed class SyncOrchestrationServiceConcurrencyTests
         var activity = new ActivityRepository(db, new BadgeSignal());
         var providerStats = new ProviderStatsService(new StatsRepository(db, new MemoryCache(new MemoryCacheOptions())));
         var retention = new RetentionService(releases, null!, new PosterFileStore(), NullLogger<RetentionService>.Instance);
+
+        if (maintenanceSettings is not null)
+            settings.SaveMaintenance(maintenanceSettings);
 
         var createdSources = Enumerable.Range(1, sourceCount)
             .Select(index => sources.Get(sources.Create($"Source {index}", $"http://localhost:{9117 + index}/api", $"secret-{index}", "query"))!)

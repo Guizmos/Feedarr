@@ -154,6 +154,65 @@ public sealed class SettingsRepository
         => Upsert("ui", JsonSerializer.Serialize(settings, JsonOpts));
 
     // --------------------
+    // MAINTENANCE
+    // --------------------
+    public MaintenanceSettings GetMaintenance(MaintenanceSettings defaults)
+    {
+        var json = GetRaw("maintenance");
+        if (string.IsNullOrWhiteSpace(json)) return defaults;
+
+        try
+        {
+            var loaded = JsonSerializer.Deserialize<MaintenanceSettings>(json, JsonOpts);
+            if (loaded is null) return defaults;
+
+            if (json.Contains("maintenanceAdvancedOptionsEnabled", StringComparison.OrdinalIgnoreCase))
+                defaults.MaintenanceAdvancedOptionsEnabled = loaded.MaintenanceAdvancedOptionsEnabled;
+            if (json.Contains("syncSourcesMaxConcurrency", StringComparison.OrdinalIgnoreCase) &&
+                loaded.SyncSourcesMaxConcurrency > 0)
+            {
+                defaults.SyncSourcesMaxConcurrency = loaded.SyncSourcesMaxConcurrency;
+            }
+            if (json.Contains("posterWorkers", StringComparison.OrdinalIgnoreCase) &&
+                loaded.PosterWorkers > 0)
+            {
+                defaults.PosterWorkers = loaded.PosterWorkers;
+            }
+            if (json.Contains("providerRateLimitMode", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(loaded.ProviderRateLimitMode))
+            {
+                defaults.ProviderRateLimitMode = loaded.ProviderRateLimitMode;
+            }
+            if (json.Contains("providerConcurrencyManual", StringComparison.OrdinalIgnoreCase))
+            {
+                var manual = loaded.ProviderConcurrencyManual ?? new ProviderConcurrencyManualSettings();
+                defaults.ProviderConcurrencyManual = new ProviderConcurrencyManualSettings
+                {
+                    Tmdb = manual.Tmdb > 0 ? manual.Tmdb : defaults.ProviderConcurrencyManual.Tmdb,
+                    Igdb = manual.Igdb > 0 ? manual.Igdb : defaults.ProviderConcurrencyManual.Igdb,
+                    Fanart = manual.Fanart > 0 ? manual.Fanart : defaults.ProviderConcurrencyManual.Fanart,
+                    Tvmaze = manual.Tvmaze > 0 ? manual.Tvmaze : defaults.ProviderConcurrencyManual.Tvmaze,
+                    Others = manual.Others > 0 ? manual.Others : defaults.ProviderConcurrencyManual.Others,
+                };
+            }
+            if (json.Contains("syncRunTimeoutMinutes", StringComparison.OrdinalIgnoreCase) &&
+                loaded.SyncRunTimeoutMinutes > 0)
+            {
+                defaults.SyncRunTimeoutMinutes = loaded.SyncRunTimeoutMinutes;
+            }
+
+            return defaults;
+        }
+        catch
+        {
+            return defaults;
+        }
+    }
+
+    public void SaveMaintenance(MaintenanceSettings settings)
+        => Upsert("maintenance", JsonSerializer.Serialize(settings, JsonOpts));
+
+    // --------------------
     // SECURITY
     // --------------------
     public SecuritySettings GetSecurity(SecuritySettings defaults)

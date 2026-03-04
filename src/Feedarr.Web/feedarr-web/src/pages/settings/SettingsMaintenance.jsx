@@ -2,6 +2,7 @@ import React from "react";
 import Modal from "../../ui/Modal.jsx";
 import AppIcon from "../../ui/AppIcon.jsx";
 import { fmtBytes } from "./settingsUtils.js";
+import { getMaintenancePerformanceNotice, getVisibleMaintenanceProviderRows } from "./hooks/useMaintenanceSettings.js";
 
 function fmtUptime(seconds) {
   if (!seconds || seconds <= 0) return "0s";
@@ -37,6 +38,61 @@ function ActionRow({ label, description, buttonLabel, loadingLabel, loading, dis
   );
 }
 
+function AdvancedSelectRow({
+  title,
+  hint,
+  value,
+  onChange,
+  options,
+  dirty,
+  pulseClass,
+  error,
+  disabled,
+  suffix,
+}) {
+  return (
+    <div className={`indexer-card${pulseClass}${disabled ? " is-disabled" : ""}`}>
+      <div className="indexer-row indexer-row--settings">
+        <div>
+          <span className="indexer-title">
+            {title}
+            {suffix && <span className="maintenance-advanced__suffix">{suffix}</span>}
+          </span>
+          {hint && <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{hint}</div>}
+        </div>
+        <div className="indexer-actions">
+          {dirty && <span className="indexer-status">À sauvegarder</span>}
+          <select value={String(value)} onChange={onChange} disabled={disabled}>
+            {options.map((option) => (
+              <option key={option.value} value={String(option.value)}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      {error && <div className="settings-help" style={{ color: "var(--danger, #ef4444)" }}>{error}</div>}
+    </div>
+  );
+}
+
+function AdvancedNotice({ notice }) {
+  return (
+    <div className={`maintenance-advanced__notice maintenance-advanced__notice--${notice.tone}`}>
+      <div className="maintenance-advanced__noticeTitle">{notice.title}</div>
+      <div className="maintenance-advanced__noticeMessage">{notice.message}</div>
+    </div>
+  );
+}
+
+const MANUAL_PROVIDER_ROWS = [
+  { key: "tmdb", title: "TMDB", max: 3, errorKey: "providerConcurrencyManual.tmdb" },
+  { key: "igdb", title: "IGDB", max: 2, errorKey: "providerConcurrencyManual.igdb" },
+  { key: "fanart", title: "Fanart", max: 2, errorKey: "providerConcurrencyManual.fanart" },
+  { key: "tvmaze", title: "TVMaze", max: 2, errorKey: "providerConcurrencyManual.tvmaze" },
+  { key: "others", title: "Autres", max: 2, errorKey: "providerConcurrencyManual.others", alwaysVisible: true },
+];
+
 export default function SettingsMaintenance({
   // Cache
   clearCacheOpen, clearCacheLoading, setClearCacheOpen, handleClearCache,
@@ -57,13 +113,179 @@ export default function SettingsMaintenance({
   // Duplicates
   duplicatesLoading, duplicatesResult, handleDetectDuplicates,
   duplicatesPurgeOpen, setDuplicatesPurgeOpen, duplicatesPurgeLoading, handlePurgeDuplicates,
+  // Advanced maintenance settings
+  maintenanceSettings,
+  setMaintenanceSettings,
+  initialMaintenanceSettings,
+  maintenanceFieldErrors,
+  maintenanceSaveError,
+  maintenancePulseKinds,
+  restoreRecommendedDefaults,
 }) {
   const anyLoading = clearCacheLoading || purgeSelectiveLoading || vacuumLoading
     || cleanupPostersLoading || testProvidersLoading || reparseLoading
     || duplicatesLoading || duplicatesPurgeLoading;
+  const notice = getMaintenancePerformanceNotice(maintenanceSettings);
+  const advancedEnabled = !!maintenanceSettings?.maintenanceAdvancedOptionsEnabled;
+  const manualRateLimits = maintenanceSettings?.providerRateLimitMode === "manual";
+  const configuredProviders = Array.isArray(maintenanceSettings?.configuredProviders)
+    ? maintenanceSettings.configuredProviders
+    : null;
+  const visibleManualProviders = getVisibleMaintenanceProviderRows(maintenanceSettings, MANUAL_PROVIDER_ROWS);
+  const showEmptyConfiguredProviders = configuredProviders != null && configuredProviders.length === 0;
+
+  const pulseClass = (key) => {
+    const kind = maintenancePulseKinds?.[key];
+    return kind === "err" ? " pulse-err" : kind === "ok" ? " pulse-ok" : "";
+  };
+
+  const isDirty = (key) => {
+    switch (key) {
+      case "maintenance.maintenanceAdvancedOptionsEnabled":
+        return !!maintenanceSettings?.maintenanceAdvancedOptionsEnabled !== !!initialMaintenanceSettings?.maintenanceAdvancedOptionsEnabled;
+      case "maintenance.syncSourcesMaxConcurrency":
+        return Number(maintenanceSettings?.syncSourcesMaxConcurrency) !== Number(initialMaintenanceSettings?.syncSourcesMaxConcurrency);
+      case "maintenance.posterWorkers":
+        return Number(maintenanceSettings?.posterWorkers) !== Number(initialMaintenanceSettings?.posterWorkers);
+      case "maintenance.providerRateLimitMode":
+        return String(maintenanceSettings?.providerRateLimitMode || "auto") !== String(initialMaintenanceSettings?.providerRateLimitMode || "auto");
+      case "maintenance.providerConcurrencyManual.tmdb":
+        return Number(maintenanceSettings?.providerConcurrencyManual?.tmdb) !== Number(initialMaintenanceSettings?.providerConcurrencyManual?.tmdb);
+      case "maintenance.providerConcurrencyManual.igdb":
+        return Number(maintenanceSettings?.providerConcurrencyManual?.igdb) !== Number(initialMaintenanceSettings?.providerConcurrencyManual?.igdb);
+      case "maintenance.providerConcurrencyManual.fanart":
+        return Number(maintenanceSettings?.providerConcurrencyManual?.fanart) !== Number(initialMaintenanceSettings?.providerConcurrencyManual?.fanart);
+      case "maintenance.providerConcurrencyManual.tvmaze":
+        return Number(maintenanceSettings?.providerConcurrencyManual?.tvmaze) !== Number(initialMaintenanceSettings?.providerConcurrencyManual?.tvmaze);
+      case "maintenance.providerConcurrencyManual.others":
+        return Number(maintenanceSettings?.providerConcurrencyManual?.others) !== Number(initialMaintenanceSettings?.providerConcurrencyManual?.others);
+      case "maintenance.syncRunTimeoutMinutes":
+        return Number(maintenanceSettings?.syncRunTimeoutMinutes) !== Number(initialMaintenanceSettings?.syncRunTimeoutMinutes);
+      default:
+        return false;
+    }
+  };
+
+  const setManualValue = (field, value) => {
+    setMaintenanceSettings((current) => ({
+      ...current,
+      providerConcurrencyManual: {
+        ...current.providerConcurrencyManual,
+        [field]: Number(value),
+      },
+    }));
+  };
 
   return (
     <>
+      {advancedEnabled && (
+        <div className="settings-card settings-card--full" id="maintenance-advanced">
+          <div className="settings-card__head">
+            <div>
+              <div className="settings-card__title">Performance &amp; Concurrence</div>
+              <div className="maintenance-advanced__intro">
+                <span className="maintenance-advanced__badge">Avancé</span>
+                <span className="maintenance-advanced__introText">Ajuste ces paramètres par petits pas. Des valeurs agressives peuvent augmenter la charge SQLite, réseau et disque.</span>
+              </div>
+            </div>
+            <div className="settings-card__actions">
+              <button className="btn" type="button" onClick={restoreRecommendedDefaults}>
+                Restaurer valeurs recommandées
+              </button>
+            </div>
+          </div>
+
+          {maintenanceSaveError && (
+            <div className="errorbox" style={{ marginBottom: 12 }}>
+              <div className="errorbox__title">Erreur</div>
+              <div className="muted">{maintenanceSaveError}</div>
+            </div>
+          )}
+
+          <div className="indexer-list">
+            <AdvancedSelectRow
+              title="Sync sources max concurrency"
+              hint="Pilote directement la sync parallèle des sources déjà active côté backend."
+              value={maintenanceSettings.syncSourcesMaxConcurrency}
+              onChange={(e) => setMaintenanceSettings((current) => ({ ...current, syncSourcesMaxConcurrency: Number(e.target.value) }))}
+              options={[1, 2, 3, 4].map((value) => ({ value, label: String(value) }))}
+              dirty={isDirty("maintenance.syncSourcesMaxConcurrency")}
+              pulseClass={pulseClass("maintenance.syncSourcesMaxConcurrency")}
+              error={maintenanceFieldErrors?.syncSourcesMaxConcurrency}
+            />
+
+            <AdvancedSelectRow
+              title="Poster workers"
+              hint="Valeur persistée pour les prochaines étapes, sans effet runtime pour l'instant."
+              value={maintenanceSettings.posterWorkers}
+              onChange={(e) => setMaintenanceSettings((current) => ({ ...current, posterWorkers: Number(e.target.value) }))}
+              options={[1, 2].map((value) => ({ value, label: String(value) }))}
+              dirty={isDirty("maintenance.posterWorkers")}
+              pulseClass={pulseClass("maintenance.posterWorkers")}
+              error={maintenanceFieldErrors?.posterWorkers}
+              suffix="Bientôt"
+            />
+
+            <AdvancedSelectRow
+              title="Rate-limit providers"
+              hint="Mode simple global pour préparer les limiteurs par provider."
+              value={maintenanceSettings.providerRateLimitMode}
+              onChange={(e) => setMaintenanceSettings((current) => ({ ...current, providerRateLimitMode: e.target.value }))}
+              options={[
+                { value: "auto", label: "Auto" },
+                { value: "manual", label: "Manuel" },
+              ]}
+              dirty={isDirty("maintenance.providerRateLimitMode")}
+              pulseClass={pulseClass("maintenance.providerRateLimitMode")}
+              error={maintenanceFieldErrors?.providerRateLimitMode}
+            />
+
+            {manualRateLimits && (
+              <>
+                {showEmptyConfiguredProviders ? (
+                  <div className="indexer-card">
+                    <div className="indexer-row indexer-row--settings">
+                      <div>
+                        <span className="indexer-title">Providers manuels</span>
+                        <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                          Aucun provider configuré. Ajoute un provider pour afficher ces options.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  visibleManualProviders.map((provider) => (
+                    <AdvancedSelectRow
+                      key={provider.key}
+                      title={provider.title}
+                      value={maintenanceSettings.providerConcurrencyManual[provider.key]}
+                      onChange={(e) => setManualValue(provider.key, e.target.value)}
+                      options={Array.from({ length: provider.max }, (_, index) => ({ value: index + 1, label: String(index + 1) }))}
+                      dirty={isDirty(`maintenance.providerConcurrencyManual.${provider.key}`)}
+                      pulseClass={pulseClass(`maintenance.providerConcurrencyManual.${provider.key}`)}
+                      error={maintenanceFieldErrors?.[provider.errorKey]}
+                    />
+                  ))
+                )}
+              </>
+            )}
+
+            <AdvancedSelectRow
+              title="Sync run timeout minutes"
+              hint="Préparation du budget global de sync. Persisté maintenant, appliqué plus tard."
+              value={maintenanceSettings.syncRunTimeoutMinutes}
+              onChange={(e) => setMaintenanceSettings((current) => ({ ...current, syncRunTimeoutMinutes: Number(e.target.value) }))}
+              options={[3, 5, 10, 15, 20, 25, 30].map((value) => ({ value, label: String(value) }))}
+              dirty={isDirty("maintenance.syncRunTimeoutMinutes")}
+              pulseClass={pulseClass("maintenance.syncRunTimeoutMinutes")}
+              error={maintenanceFieldErrors?.syncRunTimeoutMinutes}
+            />
+          </div>
+
+          <AdvancedNotice notice={notice} />
+        </div>
+      )}
+
       {/* MAINTENANCE ACTIONS CARD */}
       <div className="settings-card settings-card--full" id="maintenance">
         <div className="settings-card__title">Actions de maintenance</div>
@@ -78,18 +300,7 @@ export default function SettingsMaintenance({
           disabled={anyLoading || (stats && stats.posterCount === 0)}
         />
 
-        {/* 2. Purger logs (sélectif) */}
-        <ActionRow
-          label="Purger logs"
-          description="Supprime les logs d'activité (tous, historique ou logs uniquement)"
-          loading={purgeSelectiveLoading}
-          loadingLabel="Suppression..."
-          onClick={() => setPurgeSelectiveOpen(true)}
-          disabled={anyLoading || (stats && stats.activityCount === 0)}
-          result={purgeSelectiveResult?.deleted >= 0 ? `${purgeSelectiveResult.deleted} entrées supprimées` : null}
-        />
-
-        {/* 3. Optimiser DB */}
+        {/* 2. Optimiser DB */}
         <ActionRow
           label="Optimiser la base de données"
           description="Compacte la base SQLite (VACUUM) pour récupérer de l'espace"
@@ -100,89 +311,104 @@ export default function SettingsMaintenance({
           result={vacuumResult ? `${vacuumResult.dbSizeBefore} MB → ${vacuumResult.dbSizeAfter} MB (${vacuumResult.savedMB} MB récupérés)` : null}
         />
 
-        {/* 4. Nettoyer posters orphelins */}
-        <ActionRow
-          label="Nettoyer posters orphelins"
-          description="Supprime les fichiers de posters non référencés en base"
-          loading={cleanupPostersLoading}
-          loadingLabel="Nettoyage..."
-          onClick={() => setCleanupPostersOpen(true)}
-          disabled={anyLoading || (stats && stats.orphanedPosterCount === 0)}
-          result={cleanupPostersResult ? `${cleanupPostersResult.deleted} supprimés / ${cleanupPostersResult.scanned} scannés (${fmtBytes(cleanupPostersResult.freedBytes) || "0 B"} libérés)` : null}
-        />
+        {advancedEnabled && (
+          <>
+            {/* 3. Purger logs (sélectif) */}
+            <ActionRow
+              label="Purger logs"
+              description="Supprime les logs d'activité (tous, historique ou logs uniquement)"
+              loading={purgeSelectiveLoading}
+              loadingLabel="Suppression..."
+              onClick={() => setPurgeSelectiveOpen(true)}
+              disabled={anyLoading || (stats && stats.activityCount === 0)}
+              result={purgeSelectiveResult?.deleted >= 0 ? `${purgeSelectiveResult.deleted} entrées supprimées` : null}
+            />
 
-        {/* 5. Tester providers */}
-        <div className="indexer-card">
-          <div className="indexer-row indexer-row--settings">
-            <div>
-              <span className="indexer-title">Tester connectivité providers</span>
-              <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>Vérifie la connexion TMDB, TvMaze, Fanart, IGDB</div>
-              {testProvidersResults && (
-                <div style={{ marginTop: 6, display: "flex", gap: 12, flexWrap: "wrap" }}>
-                  {testProvidersResults.map((r) => (
-                    <span key={r.provider} style={{
-                      fontSize: 12,
-                      padding: "2px 8px",
-                      borderRadius: 4,
-                      background: r.ok ? "var(--success-bg, rgba(76,175,80,0.15))" : "var(--danger-bg, rgba(244,67,54,0.15))",
-                      color: r.ok ? "var(--success, #4caf50)" : "var(--danger, #f44336)",
-                    }}>
-                      {r.provider.toUpperCase()} {r.ok ? "OK" : "ERREUR"} ({r.elapsedMs}ms)
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="indexer-actions">
-              <button className="btn" type="button" onClick={handleTestProviders} disabled={testProvidersLoading || anyLoading}>
-                {testProvidersLoading && <BtnSpinner />}
-                {testProvidersLoading ? "Test..." : "Tester"}
-              </button>
-            </div>
-          </div>
-        </div>
+            {/* 4. Nettoyer posters orphelins */}
+            <ActionRow
+              label="Nettoyer posters orphelins"
+              description="Supprime les fichiers de posters non référencés en base"
+              loading={cleanupPostersLoading}
+              loadingLabel="Nettoyage..."
+              onClick={() => setCleanupPostersOpen(true)}
+              disabled={anyLoading || (stats && stats.orphanedPosterCount === 0)}
+              result={cleanupPostersResult ? `${cleanupPostersResult.deleted} supprimés / ${cleanupPostersResult.scanned} scannés (${fmtBytes(cleanupPostersResult.freedBytes) || "0 B"} libérés)` : null}
+            />
 
-        {/* 6. Re-parser les titres */}
-        <ActionRow
-          label="Re-parser les titres"
-          description="Recalcule les métadonnées de toutes les releases (titre, saison, résolution...)"
-          loading={reparseLoading}
-          loadingLabel="Re-parsing..."
-          onClick={() => setReparseOpen(true)}
-          disabled={anyLoading || (stats && stats.releasesCount === 0)}
-          result={reparseResult ? `${reparseResult.updated} / ${reparseResult.total} releases mises à jour` : null}
-        />
+            {/* 5. Tester providers */}
+            <div className="indexer-card">
+              <div className="indexer-row indexer-row--settings">
+                <div>
+                  <span className="indexer-title">Tester connectivité providers</span>
+                  <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>Vérifie la connexion TMDB, TvMaze, Fanart, IGDB</div>
+                  {testProvidersResults && (
+                    <div style={{ marginTop: 6, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                      {testProvidersResults.map((r) => (
+                        <span key={r.provider} style={{
+                          fontSize: 12,
+                          padding: "2px 8px",
+                          borderRadius: 4,
+                          background: r.ok ? "var(--success-bg, rgba(76,175,80,0.15))" : "var(--danger-bg, rgba(244,67,54,0.15))",
+                          color: r.ok ? "var(--success, #4caf50)" : "var(--danger, #f44336)",
+                        }}>
+                          {r.provider.toUpperCase()} {r.ok ? "OK" : "ERREUR"} ({r.elapsedMs}ms)
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="indexer-actions">
+                  <button className="btn" type="button" onClick={handleTestProviders} disabled={testProvidersLoading || anyLoading}>
+                    {testProvidersLoading && <BtnSpinner />}
+                    {testProvidersLoading ? "Test..." : "Tester"}
+                  </button>
+                </div>
+              </div>
+            </div>
 
-        {/* 7. Doublons */}
-        <div className="indexer-card">
-          <div className="indexer-row indexer-row--settings">
-            <div>
-              <span className="indexer-title">Détecter les doublons</span>
-              <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>Identifie et supprime les releases en double par source</div>
-              {duplicatesResult && !duplicatesResult.purged && (
-                <div className="muted" style={{ fontSize: 12, marginTop: 4, color: "var(--warning, #ff9800)" }}>
-                  {duplicatesResult.groupsFound} groupes, {duplicatesResult.duplicatesCount} doublons détectés
+            {/* 6. Re-parser les titres */}
+            <ActionRow
+              label="Re-parser les titres"
+              description="Recalcule les métadonnées de toutes les releases (titre, saison, résolution...)"
+              loading={reparseLoading}
+              loadingLabel="Re-parsing..."
+              onClick={() => setReparseOpen(true)}
+              disabled={anyLoading || (stats && stats.releasesCount === 0)}
+              result={reparseResult ? `${reparseResult.updated} / ${reparseResult.total} releases mises à jour` : null}
+            />
+
+            {/* 7. Doublons */}
+            <div className="indexer-card">
+              <div className="indexer-row indexer-row--settings">
+                <div>
+                  <span className="indexer-title">Détecter les doublons</span>
+                  <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>Identifie et supprime les releases en double par source</div>
+                  {duplicatesResult && !duplicatesResult.purged && (
+                    <div className="muted" style={{ fontSize: 12, marginTop: 4, color: "var(--warning, #ff9800)" }}>
+                      {duplicatesResult.groupsFound} groupes, {duplicatesResult.duplicatesCount} doublons détectés
+                    </div>
+                  )}
+                  {duplicatesResult?.purged && (
+                    <div className="muted" style={{ fontSize: 12, marginTop: 4, color: "var(--success, #4caf50)" }}>
+                      {duplicatesResult.deleted} doublons supprimés
+                    </div>
+                  )}
                 </div>
-              )}
-              {duplicatesResult?.purged && (
-                <div className="muted" style={{ fontSize: 12, marginTop: 4, color: "var(--success, #4caf50)" }}>
-                  {duplicatesResult.deleted} doublons supprimés
+                <div className="indexer-actions" style={{ display: "flex", gap: 6 }}>
+                  <button className="btn" type="button" onClick={handleDetectDuplicates} disabled={duplicatesLoading || anyLoading}>
+                    {duplicatesLoading && <BtnSpinner />}
+                    {duplicatesLoading ? "Analyse..." : "Analyser"}
+                  </button>
+                  {duplicatesResult && duplicatesResult.duplicatesCount > 0 && !duplicatesResult.purged && (
+                    <button className="btn btn-danger" type="button" onClick={() => setDuplicatesPurgeOpen(true)} disabled={duplicatesPurgeLoading || anyLoading}>
+                      Purger
+                    </button>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
-            <div className="indexer-actions" style={{ display: "flex", gap: 6 }}>
-              <button className="btn" type="button" onClick={handleDetectDuplicates} disabled={duplicatesLoading || anyLoading}>
-                {duplicatesLoading && <BtnSpinner />}
-                {duplicatesLoading ? "Analyse..." : "Analyser"}
-              </button>
-              {duplicatesResult && duplicatesResult.duplicatesCount > 0 && !duplicatesResult.purged && (
-                <button className="btn btn-danger" type="button" onClick={() => setDuplicatesPurgeOpen(true)} disabled={duplicatesPurgeLoading || anyLoading}>
-                  Purger
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+          </>
+        )}
       </div>
 
       {/* STATS CARD */}

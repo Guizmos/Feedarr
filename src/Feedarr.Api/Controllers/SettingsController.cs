@@ -211,6 +211,76 @@ public sealed class SettingsController : ControllerBase
     }
 
     // --------------------
+    // MAINTENANCE
+    // --------------------
+    [HttpGet("maintenance")]
+    public IActionResult GetMaintenance()
+    {
+        var loaded = _repo.GetMaintenance(BuildMaintenanceDefaults());
+        return Ok(BuildMaintenanceResponse(loaded));
+    }
+
+    [HttpPut("maintenance")]
+    public IActionResult PutMaintenance([FromBody] MaintenanceSettings dto)
+    {
+        if (dto is null) return Problem(title: "body missing", statusCode: StatusCodes.Status400BadRequest);
+
+        var providerRateLimitMode = NormalizeProviderRateLimitMode(dto.ProviderRateLimitMode);
+        var manual = dto.ProviderConcurrencyManual ?? new ProviderConcurrencyManualSettings();
+        var errors = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+
+        if (dto.SyncSourcesMaxConcurrency < 1 || dto.SyncSourcesMaxConcurrency > 4)
+            errors["syncSourcesMaxConcurrency"] = ["La concurrence des sources doit être comprise entre 1 et 4."];
+        if (dto.PosterWorkers < 1 || dto.PosterWorkers > 2)
+            errors["posterWorkers"] = ["Le nombre de workers posters doit être compris entre 1 et 2."];
+        if (!string.IsNullOrWhiteSpace(dto.ProviderRateLimitMode) &&
+            !string.Equals(providerRateLimitMode, dto.ProviderRateLimitMode.Trim(), StringComparison.OrdinalIgnoreCase))
+            errors["providerRateLimitMode"] = ["Le mode de rate-limit doit être 'auto' ou 'manual'."];
+        if (dto.SyncRunTimeoutMinutes < 3 || dto.SyncRunTimeoutMinutes > 30)
+            errors["syncRunTimeoutMinutes"] = ["Le timeout global de sync doit être compris entre 3 et 30 minutes."];
+        if (manual.Tmdb < 1 || manual.Tmdb > 3)
+            errors["providerConcurrencyManual.tmdb"] = ["TMDB doit être compris entre 1 et 3."];
+        if (manual.Igdb < 1 || manual.Igdb > 2)
+            errors["providerConcurrencyManual.igdb"] = ["IGDB doit être compris entre 1 et 2."];
+        if (manual.Fanart < 1 || manual.Fanart > 2)
+            errors["providerConcurrencyManual.fanart"] = ["Fanart doit être compris entre 1 et 2."];
+        if (manual.Tvmaze < 1 || manual.Tvmaze > 2)
+            errors["providerConcurrencyManual.tvmaze"] = ["TVMaze doit être compris entre 1 et 2."];
+        if (manual.Others < 1 || manual.Others > 2)
+            errors["providerConcurrencyManual.others"] = ["Autres doit être compris entre 1 et 2."];
+
+        if (errors.Count > 0)
+        {
+            return BadRequest(new ValidationProblemDetails(errors)
+            {
+                Title = "Paramètres invalides",
+                Detail = "Un ou plusieurs paramètres de maintenance sont invalides.",
+                Status = StatusCodes.Status400BadRequest,
+            });
+        }
+
+        var saved = new MaintenanceSettings
+        {
+            MaintenanceAdvancedOptionsEnabled = dto.MaintenanceAdvancedOptionsEnabled,
+            SyncSourcesMaxConcurrency = dto.SyncSourcesMaxConcurrency,
+            PosterWorkers = dto.PosterWorkers,
+            ProviderRateLimitMode = providerRateLimitMode,
+            ProviderConcurrencyManual = new ProviderConcurrencyManualSettings
+            {
+                Tmdb = manual.Tmdb,
+                Igdb = manual.Igdb,
+                Fanart = manual.Fanart,
+                Tvmaze = manual.Tvmaze,
+                Others = manual.Others,
+            },
+            SyncRunTimeoutMinutes = dto.SyncRunTimeoutMinutes,
+        };
+
+        _repo.SaveMaintenance(saved);
+        return Ok(BuildMaintenanceResponse(saved));
+    }
+
+    // --------------------
     // EXTERNAL (TMDB / FANART / IGDB)
     // --------------------
     [HttpGet("external")]
@@ -554,5 +624,89 @@ public sealed class SettingsController : ControllerBase
         }
 
         return true;
+    }
+
+    private MaintenanceSettings BuildMaintenanceDefaults()
+    {
+        return new MaintenanceSettings
+        {
+            MaintenanceAdvancedOptionsEnabled = false,
+            SyncSourcesMaxConcurrency = Math.Clamp(_app.SyncSourcesMaxConcurrency <= 0 ? 2 : _app.SyncSourcesMaxConcurrency, 1, 4),
+            PosterWorkers = 1,
+            ProviderRateLimitMode = "auto",
+            ProviderConcurrencyManual = new ProviderConcurrencyManualSettings(),
+            SyncRunTimeoutMinutes = 10,
+        };
+    }
+
+    private static string NormalizeProviderRateLimitMode(string? value)
+    {
+        var mode = (value ?? "auto").Trim().ToLowerInvariant();
+        return mode is "manual" ? "manual" : "auto";
+    }
+
+    private MaintenanceSettingsResponse BuildMaintenanceResponse(MaintenanceSettings loaded)
+    {
+        var manual = loaded.ProviderConcurrencyManual ?? new ProviderConcurrencyManualSettings();
+
+        return new MaintenanceSettingsResponse
+        {
+            MaintenanceAdvancedOptionsEnabled = loaded.MaintenanceAdvancedOptionsEnabled,
+            SyncSourcesMaxConcurrency = Math.Clamp(loaded.SyncSourcesMaxConcurrency, 1, 4),
+            PosterWorkers = Math.Clamp(loaded.PosterWorkers, 1, 2),
+            ProviderRateLimitMode = NormalizeProviderRateLimitMode(loaded.ProviderRateLimitMode),
+            ProviderConcurrencyManual = new ProviderConcurrencyManualSettings
+            {
+                Tmdb = Math.Clamp(manual.Tmdb, 1, 3),
+                Igdb = Math.Clamp(manual.Igdb, 1, 2),
+                Fanart = Math.Clamp(manual.Fanart, 1, 2),
+                Tvmaze = Math.Clamp(manual.Tvmaze, 1, 2),
+                Others = Math.Clamp(manual.Others, 1, 2),
+            },
+            SyncRunTimeoutMinutes = Math.Clamp(loaded.SyncRunTimeoutMinutes, 3, 30),
+            ConfiguredProviders = ResolveConfiguredProviders(),
+        };
+    }
+
+    private IReadOnlyList<string> ResolveConfiguredProviders()
+    {
+        try
+        {
+            if (_externalProviderInstances is not null)
+            {
+                return _externalProviderInstances.List()
+                    .Where(instance => instance.Enabled)
+                    .Select(instance => (instance.ProviderKey ?? "").Trim().ToLowerInvariant())
+                    .Where(key => key is not "")
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(key => key, StringComparer.Ordinal)
+                    .ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to resolve configured external provider instances for maintenance settings");
+        }
+
+        var ext = _repo.GetExternal(new ExternalSettings());
+        var providers = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(ext.TmdbApiKey) && ext.TmdbEnabled != false)
+            providers.Add("tmdb");
+        if (!string.IsNullOrWhiteSpace(ext.IgdbClientId) &&
+            !string.IsNullOrWhiteSpace(ext.IgdbClientSecret) &&
+            ext.IgdbEnabled != false)
+        {
+            providers.Add("igdb");
+        }
+        if (!string.IsNullOrWhiteSpace(ext.FanartApiKey) && ext.FanartEnabled != false)
+            providers.Add("fanart");
+        if (!string.IsNullOrWhiteSpace(ext.TvmazeApiKey) && ext.TvmazeEnabled != false)
+            providers.Add("tvmaze");
+
+        return providers
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(key => key, StringComparer.Ordinal)
+            .ToList();
     }
 }
