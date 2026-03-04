@@ -168,6 +168,37 @@ public sealed class SettingsController : ControllerBase
     }
 
     // --------------------
+    // ARR
+    // --------------------
+    [HttpGet("arr")]
+    public IActionResult GetArr()
+    {
+        var loaded = _repo.GetArrSettings(BuildArrDefaults());
+        return Ok(loaded);
+    }
+
+    [HttpPut("arr")]
+    public IActionResult PutArr([FromBody] ArrSettings dto)
+    {
+        if (dto is null) return Problem(title: "body missing", statusCode: StatusCodes.Status400BadRequest);
+
+        var errors = ValidateArrSettings(dto);
+        if (errors.Count > 0)
+        {
+            return BadRequest(new ValidationProblemDetails(errors)
+            {
+                Title = "Paramètres ARR invalides",
+                Detail = "Un ou plusieurs paramètres ARR sont invalides.",
+                Status = StatusCodes.Status400BadRequest,
+            });
+        }
+
+        var saved = NormalizeArrSettings(dto);
+        _repo.PutArrSettings(saved);
+        return Ok(saved);
+    }
+
+    // --------------------
     // MAINTENANCE
     // --------------------
     [HttpGet("maintenance")]
@@ -585,6 +616,9 @@ public sealed class SettingsController : ControllerBase
     private static SecuritySettings BuildSecurityDefaults()
         => SecuritySettings.BuildDefaults();
 
+    private static ArrSettings BuildArrDefaults()
+        => ArrSettings.BuildDefaults();
+
     private MaintenanceSettings BuildMaintenanceDefaults()
     {
         return new MaintenanceSettings
@@ -737,6 +771,24 @@ public sealed class SettingsController : ControllerBase
         return errors;
     }
 
+    private static Dictionary<string, string[]> ValidateArrSettings(ArrSettings dto)
+    {
+        var errors = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+
+        if (dto.ArrSyncIntervalMinutes < 1 || dto.ArrSyncIntervalMinutes > 1440)
+        {
+            errors["arrSyncIntervalMinutes"] = ["L'intervalle de sync ARR doit être compris entre 1 et 1440 minutes."];
+        }
+
+        var requestMode = (dto.RequestIntegrationMode ?? "").Trim().ToLowerInvariant();
+        if (requestMode is not ("arr" or "overseerr" or "jellyseerr" or "seer"))
+        {
+            errors["requestIntegrationMode"] = ["Le mode d'intégration doit être 'arr', 'overseerr', 'jellyseerr' ou 'seer'."];
+        }
+
+        return errors;
+    }
+
     private static UiSettings NormalizeUiSettings(UiSettings dto)
     {
         var filterCategory = (dto.DefaultFilterCategoryId ?? "").Trim();
@@ -767,6 +819,20 @@ public sealed class SettingsController : ControllerBase
             Theme = (dto.Theme ?? "light").Trim().ToLowerInvariant(),
             AnimationsEnabled = dto.AnimationsEnabled,
             OnboardingDone = dto.OnboardingDone
+        };
+    }
+
+    private static ArrSettings NormalizeArrSettings(ArrSettings dto)
+    {
+        var requestMode = (dto.RequestIntegrationMode ?? "arr").Trim().ToLowerInvariant();
+        if (requestMode is not ("arr" or "overseerr" or "jellyseerr" or "seer"))
+            requestMode = "arr";
+
+        return new ArrSettings
+        {
+            ArrSyncIntervalMinutes = Math.Clamp(dto.ArrSyncIntervalMinutes, 1, 1440),
+            ArrAutoSyncEnabled = dto.ArrAutoSyncEnabled,
+            RequestIntegrationMode = requestMode,
         };
     }
 

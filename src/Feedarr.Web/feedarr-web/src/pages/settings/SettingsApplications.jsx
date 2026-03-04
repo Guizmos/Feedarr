@@ -21,7 +21,10 @@ export default function SettingsApplications({
   arrSyncSaving,
   arrRequestModeDraft,
   arrPulseKeys,
+  arrPulseKinds,
   isRequestModeDirty,
+  arrFieldErrors,
+  arrSaveError,
   hasEnabledArrApps,
   syncArrApp,
   testArrApp,
@@ -117,7 +120,12 @@ export default function SettingsApplications({
 
   const isOptionsDirty = isRequestModeDirty || isSyncDirty;
 
-  const optionPulseClass = (key) => (optionPulseKeys.has(key) ? " pulse-ok" : "");
+  const optionPulseClass = (key) => {
+    if (optionPulseKeys.has(key)) return " pulse-ok";
+    if (arrPulseKinds?.[key] === "err") return " pulse-err";
+    if (arrPulseKinds?.[key] === "ok") return " pulse-ok";
+    return "";
+  };
 
   async function handleSaveOptionsModal() {
     if (!isOptionsDirty || arrSyncSaving) return;
@@ -251,6 +259,12 @@ export default function SettingsApplications({
             <div className="muted">Aucune application configurée.</div>
           ) : (
             <>
+              {arrSaveError && (
+                <div className="settings-help" style={{ color: "var(--danger, #ef4444)", marginBottom: 12 }}>
+                  {arrSaveError}
+                </div>
+              )}
+
               <div className="settings-card" id="request-integration">
                 <div className="settings-card__title">Mode d&apos;envoi</div>
                 <div className="indexer-list">
@@ -273,6 +287,11 @@ export default function SettingsApplications({
                         </select>
                       </div>
                     </div>
+                    {arrFieldErrors?.requestIntegrationMode && (
+                      <div className="settings-help" style={{ color: "var(--danger, #ef4444)" }}>
+                        {arrFieldErrors.requestIntegrationMode}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -299,6 +318,11 @@ export default function SettingsApplications({
                         />
                       </div>
                     </div>
+                    {arrFieldErrors?.arrAutoSyncEnabled && (
+                      <div className="settings-help" style={{ color: "var(--danger, #ef4444)" }}>
+                        {arrFieldErrors.arrAutoSyncEnabled}
+                      </div>
+                    )}
                   </div>
                   <div className={`indexer-card${optionPulseClass("arr.arrSyncIntervalMinutes")}${(!hasEnabledArrApps || !arrSyncSettings.arrAutoSyncEnabled) ? " is-disabled" : ""}`}>
                     <div className="indexer-row indexer-row--settings">
@@ -317,6 +341,11 @@ export default function SettingsApplications({
                         />
                       </div>
                     </div>
+                    {arrFieldErrors?.arrSyncIntervalMinutes && (
+                      <div className="settings-help" style={{ color: "var(--danger, #ef4444)" }}>
+                        {arrFieldErrors.arrSyncIntervalMinutes}
+                      </div>
+                    )}
                   </div>
                 </div>
 

@@ -4,7 +4,6 @@ import { sleep } from "./settingsUtils.js";
 
 // Specialized hooks
 import useExternalProviderInstances from "./hooks/useExternalProviderInstances.js";
-import useArrApplications from "./hooks/useArrApplications.js";
 import useMaintenanceActions from "./hooks/useMaintenanceActions.js";
 import useMaintenanceSettings from "./hooks/useMaintenanceSettings.js";
 
@@ -22,7 +21,7 @@ export default function useSettingsController(section = "general") {
   const showGeneral = section === "general";
   const showUi = false;
   const showExternals = section === "externals";
-  const showApplications = section === "applications";
+  const showApplications = false;
   const showUsers = false;
   const showMaintenance = section === "maintenance";
   const showBackup = section === "backup";
@@ -38,7 +37,6 @@ export default function useSettingsController(section = "general") {
 
   // Compose specialized hooks
   const providers = useExternalProviderInstances();
-  const applications = useArrApplications();
   const maintenance = useMaintenanceActions();
   const maintenanceSettings = useMaintenanceSettings();
 
@@ -50,9 +48,6 @@ export default function useSettingsController(section = "general") {
   const loadBackupsRef = useRef(maintenance.loadBackups);
   const loadBackupStateRef = useRef(maintenance.loadBackupState);
   const loadMaintenanceSettingsRef = useRef(maintenanceSettings.loadMaintenanceSettings);
-  const loadArrAppsRef = useRef(applications.loadArrApps);
-  const loadArrSyncSettingsRef = useRef(applications.loadArrSyncSettings);
-  const loadArrSyncStatusRef = useRef(applications.loadArrSyncStatus);
 
   // Additional refs for action handlers
   const handleClearCacheRef = useRef(maintenance.handleClearCache);
@@ -69,12 +64,7 @@ export default function useSettingsController(section = "general") {
   const handleReparseRef = useRef(maintenance.handleReparse);
   const handleDetectDuplicatesRef = useRef(maintenance.handleDetectDuplicates);
   const handlePurgeDuplicatesRef = useRef(maintenance.handlePurgeDuplicates);
-  const triggerArrSyncRef = useRef(applications.triggerArrSync);
-  const saveArrSyncSettingsRef = useRef(applications.saveArrSyncSettings);
   const saveMaintenanceSettingsRef = useRef(maintenanceSettings.saveMaintenanceSettings);
-  const saveArrRequestModeDraftRef = useRef(applications.saveArrRequestModeDraft);
-  const confirmArrDeleteRef = useRef(applications.confirmArrDelete);
-  const toggleArrEnabledRef = useRef(applications.toggleArrEnabled);
   const confirmExternalDeleteRef = useRef(providers.confirmExternalDelete);
   const confirmExternalToggleRef = useRef(providers.confirmExternalToggle);
 
@@ -87,9 +77,6 @@ export default function useSettingsController(section = "general") {
   loadBackupsRef.current = maintenance.loadBackups;
   loadBackupStateRef.current = maintenance.loadBackupState;
   loadMaintenanceSettingsRef.current = maintenanceSettings.loadMaintenanceSettings;
-  loadArrAppsRef.current = applications.loadArrApps;
-  loadArrSyncSettingsRef.current = applications.loadArrSyncSettings;
-  loadArrSyncStatusRef.current = applications.loadArrSyncStatus;
   handleClearCacheRef.current = maintenance.handleClearCache;
   handlePurgeLogsRef.current = maintenance.handlePurgeLogs;
   handleBackupCreateRef.current = maintenance.handleBackupCreate;
@@ -104,19 +91,12 @@ export default function useSettingsController(section = "general") {
   handleReparseRef.current = maintenance.handleReparse;
   handleDetectDuplicatesRef.current = maintenance.handleDetectDuplicates;
   handlePurgeDuplicatesRef.current = maintenance.handlePurgeDuplicates;
-  triggerArrSyncRef.current = applications.triggerArrSync;
-  saveArrSyncSettingsRef.current = applications.saveArrSyncSettings;
   saveMaintenanceSettingsRef.current = maintenanceSettings.saveMaintenanceSettings;
-  saveArrRequestModeDraftRef.current = applications.saveArrRequestModeDraft;
-  confirmArrDeleteRef.current = applications.confirmArrDelete;
-  toggleArrEnabledRef.current = applications.toggleArrEnabled;
   confirmExternalDeleteRef.current = providers.confirmExternalDelete;
   confirmExternalToggleRef.current = providers.confirmExternalToggle;
 
   // Calculate isDirty with safe property access
-  const isDirty =
-    applications.isRequestModeDirty ||
-    maintenanceSettings.isDirty;
+  const isDirty = maintenanceSettings.isDirty;
   const isSaveBlocked = false;
   const canSave = isDirty && !isSaveBlocked;
 
@@ -151,7 +131,6 @@ export default function useSettingsController(section = "general") {
     try {
       // Save all settings
       await saveExternalKeysRef.current();
-      await saveArrRequestModeDraftRef.current();
       await saveMaintenanceSettingsRef.current();
 
       // Handle port change redirect
@@ -189,11 +168,6 @@ export default function useSettingsController(section = "general") {
   // Handle refresh
   const handleRefresh = useCallback(() => {
     load();
-    if (showApplications) {
-      loadArrAppsRef.current();
-      loadArrSyncSettingsRef.current();
-      loadArrSyncStatusRef.current();
-    }
     if (showBackup) {
       loadBackupsRef.current();
       loadBackupStateRef.current();
@@ -202,7 +176,7 @@ export default function useSettingsController(section = "general") {
       loadStatsRef.current();
       loadMaintenanceSettingsRef.current();
     }
-  }, [load, showApplications, showBackup, showMaintenance]);
+  }, [load, showBackup, showMaintenance]);
 
   // Initial load - run only once
   const hasLoadedRef = useRef(false);
@@ -247,20 +221,6 @@ export default function useSettingsController(section = "general") {
     loadStatsRef.current();
     loadMaintenanceSettingsRef.current();
   }, [showMaintenance]);
-
-  // Load applications data when section is active
-  const applicationsLoadedRef = useRef(false);
-  useEffect(() => {
-    if (!showApplications) {
-      applicationsLoadedRef.current = false;
-      return;
-    }
-    if (applicationsLoadedRef.current) return;
-    applicationsLoadedRef.current = true;
-    loadArrAppsRef.current();
-    loadArrSyncSettingsRef.current();
-    loadArrSyncStatusRef.current();
-  }, [showApplications]);
 
   // Set initial host port
   useEffect(() => {
@@ -376,47 +336,6 @@ export default function useSettingsController(section = "general") {
     }
   }, []);
 
-  // Wrap application handlers with error handling
-  const triggerArrSync = useCallback(async () => {
-    try {
-      await triggerArrSyncRef.current();
-    } catch (e) {
-      setErr(e?.message || "Erreur");
-    }
-  }, []);
-
-  const saveArrSyncSettings = useCallback(async (settings) => {
-    try {
-      await saveArrSyncSettingsRef.current(settings);
-    } catch (e) {
-      setErr(e?.message || "Erreur");
-    }
-  }, []);
-
-  const saveArrRequestModeDraft = useCallback(async () => {
-    try {
-      await saveArrRequestModeDraftRef.current();
-    } catch (e) {
-      setErr(e?.message || "Erreur");
-    }
-  }, []);
-
-  const confirmArrDelete = useCallback(async () => {
-    try {
-      await confirmArrDeleteRef.current();
-    } catch (e) {
-      setErr(e?.message || "Erreur");
-    }
-  }, []);
-
-  const toggleArrEnabled = useCallback(async (app) => {
-    try {
-      await toggleArrEnabledRef.current(app);
-    } catch (e) {
-      setErr(e?.message || "Erreur");
-    }
-  }, []);
-
   // Wrap provider handlers with error handling
   const confirmExternalDelete = useCallback(async () => {
     try {
@@ -452,13 +371,13 @@ export default function useSettingsController(section = "general") {
     isDirty,
     isSaveBlocked,
     canSave,
-    openArrModalAdd: applications.openArrModalAdd,
-    canAddArrApp: applications.availableAddTypes.length > 0,
+    openArrModalAdd: null,
+    canAddArrApp: false,
     openExternalModalAdd: providers.openExternalModalAdd,
     canAddExternalProvider: providers.canAddExternalProvider,
-    triggerArrSync,
-    arrSyncing: applications.arrSyncing,
-    hasEnabledArrApps: applications.hasEnabledArrApps,
+    triggerArrSync: async () => undefined,
+    arrSyncing: false,
+    hasEnabledArrApps: false,
     general: {
       hostPort,
       urlBase,
@@ -469,81 +388,7 @@ export default function useSettingsController(section = "general") {
       confirmExternalDelete,
       confirmExternalToggle,
     },
-    applications: {
-      arrApps: applications.arrApps,
-      arrAppsLoading: applications.arrAppsLoading,
-      arrTestingId: applications.arrTestingId,
-      arrTestStatusById: applications.arrTestStatusById,
-      arrSyncingId: applications.arrSyncingId,
-      arrSyncStatusById: applications.arrSyncStatusById,
-      arrSyncing: applications.arrSyncing,
-      arrSyncSettings: applications.arrSyncSettings,
-      arrSyncStatus: applications.arrSyncStatus,
-      arrSyncSaving: applications.arrSyncSaving,
-      arrRequestModeDraft: applications.arrRequestModeDraft,
-      arrPulseKeys: applications.arrPulseKeys,
-      isRequestModeDirty: applications.isRequestModeDirty,
-      hasEnabledArrApps: applications.hasEnabledArrApps,
-      availableAddTypes: applications.availableAddTypes,
-      syncArrApp: applications.syncArrApp,
-      testArrApp: applications.testArrApp,
-      openArrModalEdit: applications.openArrModalEdit,
-      openArrDelete: applications.openArrDelete,
-      toggleArrEnabled,
-      setArrSyncSettings: applications.setArrSyncSettings,
-      setArrRequestModeDraft: applications.setArrRequestModeDraft,
-      saveArrSyncSettings,
-      saveArrRequestModeDraft,
-      arrModalOpen: applications.arrModalOpen,
-      arrModalMode: applications.arrModalMode,
-      arrModalApp: applications.arrModalApp,
-      arrModalType: applications.arrModalType,
-      arrModalName: applications.arrModalName,
-      arrModalBaseUrl: applications.arrModalBaseUrl,
-      arrModalApiKey: applications.arrModalApiKey,
-      arrModalTesting: applications.arrModalTesting,
-      arrModalTested: applications.arrModalTested,
-      arrModalError: applications.arrModalError,
-      arrModalSaving: applications.arrModalSaving,
-      arrModalAdvanced: applications.arrModalAdvanced,
-      arrModalConfig: applications.arrModalConfig,
-      arrModalConfigLoading: applications.arrModalConfigLoading,
-      arrModalAdvancedInitial: applications.arrModalAdvancedInitial,
-      arrModalRootFolder: applications.arrModalRootFolder,
-      arrModalQualityProfile: applications.arrModalQualityProfile,
-      arrModalSeriesType: applications.arrModalSeriesType,
-      arrModalSeasonFolder: applications.arrModalSeasonFolder,
-      arrModalMonitorMode: applications.arrModalMonitorMode,
-      arrModalSearchMissing: applications.arrModalSearchMissing,
-      arrModalSearchCutoff: applications.arrModalSearchCutoff,
-      arrModalMinAvail: applications.arrModalMinAvail,
-      arrModalSearchForMovie: applications.arrModalSearchForMovie,
-      setArrModalType: applications.setArrModalType,
-      setArrModalName: applications.setArrModalName,
-      setArrModalBaseUrl: applications.setArrModalBaseUrl,
-      setArrModalApiKey: applications.setArrModalApiKey,
-      setArrModalTested: applications.setArrModalTested,
-      setArrModalError: applications.setArrModalError,
-      setArrModalRootFolder: applications.setArrModalRootFolder,
-      setArrModalQualityProfile: applications.setArrModalQualityProfile,
-      setArrModalSeriesType: applications.setArrModalSeriesType,
-      setArrModalSeasonFolder: applications.setArrModalSeasonFolder,
-      setArrModalMonitorMode: applications.setArrModalMonitorMode,
-      setArrModalSearchMissing: applications.setArrModalSearchMissing,
-      setArrModalSearchCutoff: applications.setArrModalSearchCutoff,
-      setArrModalMinAvail: applications.setArrModalMinAvail,
-      setArrModalSearchForMovie: applications.setArrModalSearchForMovie,
-      setArrModalAdvanced: applications.setArrModalAdvanced,
-      setArrModalAdvancedInitial: applications.setArrModalAdvancedInitial,
-      closeArrModal: applications.closeArrModal,
-      testArrModal: applications.testArrModal,
-      saveArrModal: applications.saveArrModal,
-      arrDeleteOpen: applications.arrDeleteOpen,
-      arrDeleteApp: applications.arrDeleteApp,
-      arrDeleteLoading: applications.arrDeleteLoading,
-      confirmArrDelete,
-      closeArrDelete: applications.closeArrDelete,
-    },
+    applications: {},
     maintenance: {
       // Cache
       clearCacheLoading: maintenance.clearCacheLoading,

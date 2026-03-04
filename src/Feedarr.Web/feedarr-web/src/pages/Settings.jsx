@@ -7,11 +7,11 @@ import Loader from "../ui/Loader.jsx";
 import useSettingsController from "./settings/useSettingsController.js";
 import SettingsGeneral from "./settings/SettingsGeneral.jsx";
 import SettingsProviders from "./settings/SettingsProviders.jsx";
-import SettingsApplications from "./settings/SettingsApplications.jsx";
 import SettingsMaintenance from "./settings/SettingsMaintenance.jsx";
 import SettingsBackup from "./settings/SettingsBackup.jsx";
 import SettingsUiPage from "./settings/SettingsUiPage.jsx";
 import SettingsSecurityPage from "./settings/SettingsSecurityPage.jsx";
+import SettingsArrPage from "./settings/SettingsArrPage.jsx";
 
 export default function Settings() {
   const location = useLocation();
@@ -22,6 +22,9 @@ export default function Settings() {
   }
   if (section === "users") {
     return <SettingsSecurityPage />;
+  }
+  if (section === "applications") {
+    return <SettingsArrPage />;
   }
 
   return <SettingsStandardPage section={section} />;
@@ -37,23 +40,16 @@ function SettingsStandardPage({ section }) {
     err,
     showGeneral,
     showExternals,
-    showApplications,
     showMaintenance,
     showBackup,
     handleRefresh,
     handleSave,
     saveState,
     canSave,
-    openArrModalAdd,
-    canAddArrApp,
     openExternalModalAdd,
     canAddExternalProvider,
-    triggerArrSync,
-    arrSyncing,
-    hasEnabledArrApps,
     general,
     providers,
-    applications,
     maintenance,
     backup,
   } = controller;
@@ -61,32 +57,23 @@ function SettingsStandardPage({ section }) {
   // Refs for stable callback references in subbar - direct assignment (refs don't trigger re-renders)
   const openBackupCreateRef = useRef(null);
   const handleSaveRef = useRef(null);
-  const openArrModalAddRef = useRef(null);
   const openExternalModalAddRef = useRef(null);
 
   // Sync refs directly during render (safe because refs don't trigger re-renders)
   openBackupCreateRef.current = backup?.openBackupCreate;
   handleSaveRef.current = handleSave;
-  openArrModalAddRef.current = openArrModalAdd;
   openExternalModalAddRef.current = openExternalModalAdd;
   const [posterModalOpen, setPosterModalOpen] = useState(false);
-  const [applicationsOptionsOpen, setApplicationsOptionsOpen] = useState(false);
   const backupActionsLocked = !!backup?.backupState?.isBusy || !!backup?.backupState?.needsRestart;
   const backupLockedTitle = backup?.backupState?.needsRestart
     ? "Redemarrage requis apres restauration"
     : "Operation de sauvegarde en cours";
 
   useEffect(() => {
-    if (!showApplications) {
-      setApplicationsOptionsOpen(false);
-    }
-  }, [showApplications]);
-
-  useEffect(() => {
     setContent(
       <div
         className="settings-subbar-content"
-        subbarClassName={showApplications ? "subbar--settings-apps-sync" : ""}
+        subbarClassName=""
       >
         <SubAction icon="refresh" label="Rafraîchir" onClick={handleRefresh} />
         {showMaintenance && (
@@ -129,18 +116,6 @@ function SettingsStandardPage({ section }) {
             />
           </>
         )}
-        {showApplications && (
-          <>
-            <SubAction
-              icon="add_circle"
-              label="Ajouter"
-              onClick={() => openArrModalAddRef.current?.()}
-              disabled={!canAddArrApp}
-              title={!canAddArrApp ? "Toutes les applications sont déjà ajoutées" : "Ajouter"}
-            />
-            <SubAction icon="settings" label="Options" onClick={() => setApplicationsOptionsOpen(true)} />
-          </>
-        )}
         {showBackup && (
           <SubAction
             icon="add_circle"
@@ -150,7 +125,7 @@ function SettingsStandardPage({ section }) {
             title={backupActionsLocked ? backupLockedTitle : "Ajouter"}
           />
         )}
-        {!showMaintenance && !showBackup && !showExternals && !showApplications && (
+        {!showMaintenance && !showBackup && !showExternals && (
           <SubAction
             icon={
               saveState === "loading"
@@ -175,19 +150,6 @@ function SettingsStandardPage({ section }) {
             }
           />
         )}
-        {showApplications && (
-          <>
-            <div className="subspacer" />
-            <SubAction
-              icon={arrSyncing ? "progress_activity" : "sync"}
-              label="Sync all"
-              onClick={triggerArrSync}
-              disabled={!hasEnabledArrApps || arrSyncing}
-              title={!hasEnabledArrApps ? "Aucune application active" : "Sync all"}
-              className={arrSyncing ? "is-loading" : undefined}
-            />
-          </>
-        )}
         {showExternals && (
           <>
             <SubAction
@@ -206,16 +168,11 @@ function SettingsStandardPage({ section }) {
   }, [
     setContent,
     handleRefresh,
-    showApplications,
     showMaintenance,
     showBackup,
     showExternals,
     saveState,
     canSave,
-    canAddArrApp,
-    triggerArrSync,
-    arrSyncing,
-    hasEnabledArrApps,
     canAddExternalProvider,
     backupActionsLocked,
     backupLockedTitle,
@@ -246,13 +203,6 @@ function SettingsStandardPage({ section }) {
         <div className="settings-grid">
           {showGeneral && <SettingsGeneral {...general} />}
           {showExternals && <SettingsProviders controller={providers} posterModalOpen={posterModalOpen} closePosterModal={() => setPosterModalOpen(false)} />}
-          {showApplications && (
-            <SettingsApplications
-              {...applications}
-              optionsModalOpen={applicationsOptionsOpen}
-              closeOptionsModal={() => setApplicationsOptionsOpen(false)}
-            />
-          )}
           {showMaintenance && <SettingsMaintenance {...maintenance} />}
           {showBackup && <SettingsBackup {...backup} />}
         </div>

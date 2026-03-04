@@ -50,7 +50,8 @@ public sealed class SettingsRepository
     public GeneralSettings GetGeneral(GeneralSettings defaults)
     {
         var json = GetRaw("general");
-        if (string.IsNullOrWhiteSpace(json)) return defaults;
+        if (string.IsNullOrWhiteSpace(json))
+            return ApplyArrSettings(defaults, GetArr(ArrSettings.BuildDefaults()));
 
         try
         {
@@ -79,16 +80,19 @@ public sealed class SettingsRepository
                 var mode = (loaded.RequestIntegrationMode ?? "arr").Trim().ToLowerInvariant();
                 defaults.RequestIntegrationMode = mode is "overseerr" or "jellyseerr" or "seer" ? mode : "arr";
             }
-            return defaults;
+            return ApplyArrSettings(defaults, GetArr(ArrSettings.BuildDefaults()));
         }
         catch
         {
-            return defaults;
+            return ApplyArrSettings(defaults, GetArr(ArrSettings.BuildDefaults()));
         }
     }
 
     public void SaveGeneral(GeneralSettings settings)
-        => Upsert("general", JsonSerializer.Serialize(settings, JsonOpts));
+    {
+        Upsert("general", JsonSerializer.Serialize(settings, JsonOpts));
+        SaveArr(ProjectArrSettings(settings));
+    }
 
     // --------------------
     // UI
@@ -159,6 +163,58 @@ public sealed class SettingsRepository
     public UiSettings PutUiSettings(UiSettings settings)
     {
         SaveUi(settings);
+        return settings;
+    }
+
+    // --------------------
+    // ARR
+    // --------------------
+    public ArrSettings GetArr(ArrSettings defaults)
+    {
+        var json = GetRaw("arr");
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return ProjectArrSettingsFromGeneral(defaults);
+        }
+
+        try
+        {
+            var loaded = JsonSerializer.Deserialize<ArrSettings>(json, JsonOpts);
+            if (loaded is null)
+                return ProjectArrSettingsFromGeneral(defaults);
+
+            if (json.Contains("arrSyncIntervalMinutes", StringComparison.OrdinalIgnoreCase) &&
+                loaded.ArrSyncIntervalMinutes > 0)
+            {
+                defaults.ArrSyncIntervalMinutes = loaded.ArrSyncIntervalMinutes;
+            }
+
+            if (json.Contains("arrAutoSyncEnabled", StringComparison.OrdinalIgnoreCase))
+                defaults.ArrAutoSyncEnabled = loaded.ArrAutoSyncEnabled;
+
+            if (json.Contains("requestIntegrationMode", StringComparison.OrdinalIgnoreCase))
+            {
+                var mode = (loaded.RequestIntegrationMode ?? "arr").Trim().ToLowerInvariant();
+                defaults.RequestIntegrationMode = mode is "overseerr" or "jellyseerr" or "seer" ? mode : "arr";
+            }
+
+            return defaults;
+        }
+        catch
+        {
+            return ProjectArrSettingsFromGeneral(defaults);
+        }
+    }
+
+    public void SaveArr(ArrSettings settings)
+        => Upsert("arr", JsonSerializer.Serialize(settings, JsonOpts));
+
+    public ArrSettings GetArrSettings(ArrSettings? defaults = null)
+        => GetArr(defaults ?? ArrSettings.BuildDefaults());
+
+    public ArrSettings PutArrSettings(ArrSettings settings)
+    {
+        SaveArr(settings);
         return settings;
     }
 
@@ -553,6 +609,59 @@ public sealed class SettingsRepository
             "1" => true,
             "0" => false,
             _ => null
+        };
+    }
+
+    private GeneralSettings ApplyArrSettings(GeneralSettings general, ArrSettings arr)
+    {
+        general.ArrSyncIntervalMinutes = arr.ArrSyncIntervalMinutes;
+        general.ArrAutoSyncEnabled = arr.ArrAutoSyncEnabled;
+        general.RequestIntegrationMode = arr.RequestIntegrationMode;
+        return general;
+    }
+
+    private ArrSettings ProjectArrSettingsFromGeneral(ArrSettings defaults)
+    {
+        var general = GetRaw("general");
+        if (string.IsNullOrWhiteSpace(general))
+            return defaults;
+
+        try
+        {
+            var loaded = JsonSerializer.Deserialize<GeneralSettings>(general, JsonOpts);
+            if (loaded is null)
+                return defaults;
+
+            if (general.Contains("arrSyncIntervalMinutes", StringComparison.OrdinalIgnoreCase) &&
+                loaded.ArrSyncIntervalMinutes > 0)
+            {
+                defaults.ArrSyncIntervalMinutes = loaded.ArrSyncIntervalMinutes;
+            }
+
+            if (general.Contains("arrAutoSyncEnabled", StringComparison.OrdinalIgnoreCase))
+                defaults.ArrAutoSyncEnabled = loaded.ArrAutoSyncEnabled;
+
+            if (general.Contains("requestIntegrationMode", StringComparison.OrdinalIgnoreCase))
+            {
+                var mode = (loaded.RequestIntegrationMode ?? "arr").Trim().ToLowerInvariant();
+                defaults.RequestIntegrationMode = mode is "overseerr" or "jellyseerr" or "seer" ? mode : "arr";
+            }
+
+            return defaults;
+        }
+        catch
+        {
+            return defaults;
+        }
+    }
+
+    private static ArrSettings ProjectArrSettings(GeneralSettings settings)
+    {
+        return new ArrSettings
+        {
+            ArrSyncIntervalMinutes = settings.ArrSyncIntervalMinutes,
+            ArrAutoSyncEnabled = settings.ArrAutoSyncEnabled,
+            RequestIntegrationMode = settings.RequestIntegrationMode,
         };
     }
 
