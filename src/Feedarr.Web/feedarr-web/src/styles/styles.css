@@ -2023,6 +2023,22 @@ html.display-mode-standalone body {
   color: var(--accent, #2493b5);
 }
 
+.subaction.subaction--maintenance-advanced.is-active .subaction__label{
+  font-weight: 700;
+}
+
+.subaction.subaction--maintenance-advanced.is-active::after{
+  content: "";
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: .72;
+}
+
 @media (min-width: 769px){
   .subbar .subaction.subaction--system-verify{
     margin-left: auto;
@@ -6090,6 +6106,80 @@ input.is-valid{
 /* add spacing between helper text and following controls */
 .settings-help + .settings-row{
   margin-top: 6px;
+}
+
+.maintenance-advanced__intro{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.maintenance-advanced__introText{
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.maintenance-advanced__badge{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(245,158,11,.30);
+  background: rgba(245,158,11,.14);
+  color: #f59e0b;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.maintenance-advanced__suffix{
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.maintenance-advanced__notice{
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+}
+
+.maintenance-advanced__notice--ok{
+  background: rgba(34,197,94,.10);
+  border-color: rgba(34,197,94,.24);
+}
+
+.maintenance-advanced__notice--info{
+  background: rgba(59,130,246,.10);
+  border-color: rgba(59,130,246,.24);
+}
+
+.maintenance-advanced__notice--warning{
+  background: rgba(245,158,11,.11);
+  border-color: rgba(245,158,11,.26);
+}
+
+.maintenance-advanced__notice--danger{
+  background: rgba(239,68,68,.11);
+  border-color: rgba(239,68,68,.28);
+}
+
+.maintenance-advanced__noticeTitle{
+  font-size: 13px;
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+
+.maintenance-advanced__noticeMessage{
+  font-size: 12px;
+  color: var(--muted);
 }
 
 /* buttons (Sonarr-like) */

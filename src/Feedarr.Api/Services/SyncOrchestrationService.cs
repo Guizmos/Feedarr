@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Collections.Concurrent;
 using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Models;
 using Feedarr.Api.Models.Settings;
@@ -20,6 +21,24 @@ public sealed record SyncOrchestrationResult(
     int ItemsCount,
     int InsertedNew,
     string? Error);
+
+internal sealed record SourceSyncResult(
+    long SourceId,
+    string SourceName,
+    DateTimeOffset StartedAtUtc,
+    long DurationMs,
+    bool Success,
+    string? ErrorType,
+    string? ErrorMessage,
+    int PosterQueuePending);
+
+internal sealed record SyncSourcesRunResult(
+    int TotalSources,
+    int SuccessCount,
+    int FailureCount,
+    long DurationMs,
+    int MaxConcurrency,
+    IReadOnlyList<SourceSyncResult> Sources);
 
 public sealed class SyncOrchestrationService
 {
@@ -147,19 +166,81 @@ public sealed class SyncOrchestrationService
 
     public async Task<bool> ExecuteSourcesAsync(IEnumerable<Source> sources, SyncPolicy policy, bool rssOnly, CancellationToken ct)
     {
-        var hadFailure = false;
-        foreach (var src in sources)
-        {
-            ct.ThrowIfCancellationRequested();
-            if (policy.RequireEnabledSource && !src.Enabled)
-                continue;
+        var result = await ExecuteSourcesDetailedAsync(sources, policy, rssOnly, ct).ConfigureAwait(false);
+        return result.FailureCount > 0;
+    }
 
-            var result = await ExecuteSourceSyncAsync(src, policy, rssOnly, ct).ConfigureAwait(false);
-            if (!result.Ok)
-                hadFailure = true;
+    internal async Task<SyncSourcesRunResult> ExecuteSourcesDetailedAsync(
+        IEnumerable<Source> sources,
+        SyncPolicy policy,
+        bool rssOnly,
+        CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var runnableSources = sources
+            .Where(src => !policy.RequireEnabledSource || src.Enabled)
+            .ToList();
+        var totalSources = runnableSources.Count;
+        var maxConcurrency = ResolveSourcesMaxConcurrency();
+        var runStopwatch = Stopwatch.StartNew();
+        var results = new ConcurrentBag<SourceSyncResult>();
+
+        if (totalSources == 0)
+        {
+            _log.LogInformation(
+                "Source sync run completed policy={Policy} sources=0 concurrency={Concurrency} elapsedMs=0 ok=0 failed=0 posterQueuePending={PosterQueuePending}",
+                policy.Name,
+                maxConcurrency,
+                SafeGetPosterQueuePendingCount());
+            return new SyncSourcesRunResult(0, 0, 0, 0, maxConcurrency, []);
         }
 
-        return hadFailure;
+        using var concurrencyGate = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+        var tasks = runnableSources.Select(src => RunSourceSyncAsync(src, policy, rssOnly, concurrencyGate, results, ct)).ToList();
+
+        try
+        {
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            runStopwatch.Stop();
+            _log.LogWarning(
+                "Source sync run cancelled policy={Policy} sources={Sources} concurrency={Concurrency} elapsedMs={ElapsedMs}",
+                policy.Name,
+                totalSources,
+                maxConcurrency,
+                runStopwatch.ElapsedMilliseconds);
+            throw;
+        }
+
+        runStopwatch.Stop();
+
+        var orderedResults = results
+            .OrderBy(result => result.StartedAtUtc)
+            .ThenBy(result => result.SourceId)
+            .ToList();
+        var successCount = orderedResults.Count(result => result.Success);
+        var failureCount = orderedResults.Count - successCount;
+
+        _log.LogInformation(
+            "Source sync run completed policy={Policy} sources={Sources} concurrency={Concurrency} elapsedMs={ElapsedMs} ok={OkCount} failed={FailedCount} posterQueuePending={PosterQueuePending}",
+            policy.Name,
+            totalSources,
+            maxConcurrency,
+            runStopwatch.ElapsedMilliseconds,
+            successCount,
+            failureCount,
+            SafeGetPosterQueuePendingCount());
+
+        return new SyncSourcesRunResult(
+            totalSources,
+            successCount,
+            failureCount,
+            runStopwatch.ElapsedMilliseconds,
+            maxConcurrency,
+            orderedResults);
     }
 
     public async Task<SyncExecutionResult> ExecuteSourceSyncAsync(Source src, SyncPolicy policy, bool rssOnly, CancellationToken ct)
@@ -250,4 +331,163 @@ public sealed class SyncOrchestrationService
             EnableCategoryFallback: policy.EnableCategoryFallback,
             AllowSearchInitial: policy.AllowSearchInitial);
     }
+
+    private async Task RunSourceSyncAsync(
+        Source src,
+        SyncPolicy policy,
+        bool rssOnly,
+        SemaphoreSlim concurrencyGate,
+        ConcurrentBag<SourceSyncResult> results,
+        CancellationToken ct)
+    {
+        await concurrencyGate.WaitAsync(ct).ConfigureAwait(false);
+        var startedAt = DateTimeOffset.UtcNow;
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            var result = await ExecuteSourceSyncAsync(src, policy, rssOnly, ct).ConfigureAwait(false);
+            stopwatch.Stop();
+
+            if (!result.Ok && IsSqliteBusy(result.Error))
+            {
+                _log.LogWarning(
+                    "Source sync encountered SQLite contention sourceId={SourceId} name={SourceName} policy={Policy} elapsedMs={ElapsedMs} error={Error}",
+                    src.Id,
+                    src.Name ?? string.Empty,
+                    policy.Name,
+                    stopwatch.ElapsedMilliseconds,
+                    result.Error ?? string.Empty);
+            }
+
+            var sourceResult = new SourceSyncResult(
+                src.Id,
+                src.Name ?? string.Empty,
+                startedAt,
+                stopwatch.ElapsedMilliseconds,
+                result.Ok,
+                result.Ok ? null : "SyncExecutionFailed",
+                result.Error,
+                SafeGetPosterQueuePendingCount());
+            results.Add(sourceResult);
+
+            if (result.Ok)
+            {
+                _log.LogInformation(
+                    "Source sync completed sourceId={SourceId} name={SourceName} policy={Policy} elapsedMs={ElapsedMs} ok=true items={ItemsCount} insertedNew={InsertedNew} posterQueuePending={PosterQueuePending}",
+                    sourceResult.SourceId,
+                    sourceResult.SourceName,
+                    policy.Name,
+                    sourceResult.DurationMs,
+                    result.ItemsCount,
+                    result.InsertedNew,
+                    sourceResult.PosterQueuePending);
+            }
+            else
+            {
+                _log.LogWarning(
+                    "Source sync completed sourceId={SourceId} name={SourceName} policy={Policy} elapsedMs={ElapsedMs} ok=false errorType={ErrorType} error={Error} posterQueuePending={PosterQueuePending}",
+                    sourceResult.SourceId,
+                    sourceResult.SourceName,
+                    policy.Name,
+                    sourceResult.DurationMs,
+                    sourceResult.ErrorType ?? "unknown",
+                    sourceResult.ErrorMessage ?? string.Empty,
+                    sourceResult.PosterQueuePending);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            stopwatch.Stop();
+            throw;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+
+            if (IsSqliteBusy(ex))
+            {
+                _log.LogWarning(
+                    ex,
+                    "Source sync threw SQLite contention sourceId={SourceId} name={SourceName} policy={Policy} elapsedMs={ElapsedMs}",
+                    src.Id,
+                    src.Name ?? string.Empty,
+                    policy.Name,
+                    stopwatch.ElapsedMilliseconds);
+            }
+
+            var sourceResult = new SourceSyncResult(
+                src.Id,
+                src.Name ?? string.Empty,
+                startedAt,
+                stopwatch.ElapsedMilliseconds,
+                false,
+                ex.GetType().Name,
+                ErrorMessageSanitizer.ToOperationalMessage(ex, "sync failed"),
+                SafeGetPosterQueuePendingCount());
+            results.Add(sourceResult);
+
+            _log.LogError(
+                ex,
+                "Source sync threw sourceId={SourceId} name={SourceName} policy={Policy} elapsedMs={ElapsedMs} posterQueuePending={PosterQueuePending}",
+                sourceResult.SourceId,
+                sourceResult.SourceName,
+                policy.Name,
+                sourceResult.DurationMs,
+                sourceResult.PosterQueuePending);
+        }
+        finally
+        {
+            concurrencyGate.Release();
+        }
+    }
+
+    private int ResolveSourcesMaxConcurrency()
+    {
+        var defaultConcurrency = Math.Clamp(_opts.SyncSourcesMaxConcurrency <= 0 ? 2 : _opts.SyncSourcesMaxConcurrency, 1, 4);
+
+        try
+        {
+            var maintenance = _settings.GetMaintenance(new MaintenanceSettings
+            {
+                SyncSourcesMaxConcurrency = defaultConcurrency
+            });
+            return Math.Clamp(
+                maintenance.SyncSourcesMaxConcurrency <= 0 ? defaultConcurrency : maintenance.SyncSourcesMaxConcurrency,
+                1,
+                4);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to read maintenance sync concurrency setting, using app default");
+            return defaultConcurrency;
+        }
+    }
+
+    private int SafeGetPosterQueuePendingCount()
+    {
+        try
+        {
+            return _posterQueue.GetSnapshot().PendingCount;
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "Failed to read poster queue snapshot");
+            return -1;
+        }
+    }
+
+    private static bool IsSqliteBusy(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
+
+        return message.Contains("database is locked", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("database is busy", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("sqlite_busy", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("sql logic error", StringComparison.OrdinalIgnoreCase) && message.Contains("locked", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsSqliteBusy(Exception ex)
+        => IsSqliteBusy(ex.Message) || (ex.InnerException is not null && IsSqliteBusy(ex.InnerException));
 }

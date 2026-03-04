@@ -34,38 +34,10 @@ public sealed class PosterThumbService
         if (sourceBytes is null || sourceBytes.Length == 0) return [];
         if (!Directory.Exists(storeDir)) return [];
 
-        var generated = new List<int>();
-
         try
         {
             using var image = Image.Load(sourceBytes);
-            var originalWidth = image.Width;
-
-            foreach (var targetWidth in SupportedWidths)
-            {
-                ct.ThrowIfCancellationRequested();
-
-                var thumbPath = Path.Combine(storeDir, $"w{targetWidth}.webp");
-                if (File.Exists(thumbPath)) continue;
-
-                // Never upscale
-                var effectiveWidth = Math.Min(targetWidth, originalWidth);
-
-                try
-                {
-                    var thumbBytes = await ResizeToWebPAsync(image, effectiveWidth, ct).ConfigureAwait(false);
-                    await WriteAtomicAsync(thumbPath, thumbBytes, ct).ConfigureAwait(false);
-                    generated.Add(targetWidth);
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to generate thumb w{Width} in {Dir}", targetWidth, storeDir);
-                }
-            }
+            return await GenerateThumbsAsync(image, storeDir, SupportedWidths, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -76,7 +48,38 @@ public sealed class PosterThumbService
             _logger.LogWarning(ex, "Failed to load source image for thumb generation in {Dir}", storeDir);
         }
 
-        return generated;
+        return [];
+    }
+
+    /// <summary>
+    /// Generates thumbnail widths from an existing original file, writing WebP files into
+    /// <paramref name="storeDir"/>. Skips thumbnails that already exist on disk.
+    /// Returns the list of widths successfully generated.
+    /// </summary>
+    public async Task<IReadOnlyList<int>> GenerateThumbsAsync(
+        string sourceFile,
+        string storeDir,
+        IReadOnlyList<int>? targetWidths,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(sourceFile) || !File.Exists(sourceFile)) return [];
+        if (!Directory.Exists(storeDir)) return [];
+
+        try
+        {
+            await using var stream = File.OpenRead(sourceFile);
+            using var image = await Image.LoadAsync(stream, ct).ConfigureAwait(false);
+            return await GenerateThumbsAsync(image, storeDir, NormalizeWidths(targetWidths), ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load source image for thumb generation from {Source}", sourceFile);
+            return [];
+        }
     }
 
     /// <summary>
@@ -133,5 +136,54 @@ public sealed class PosterThumbService
             try { File.Delete(tmpPath); } catch { /* best-effort cleanup */ }
             throw;
         }
+    }
+
+    private async Task<IReadOnlyList<int>> GenerateThumbsAsync(
+        Image image,
+        string storeDir,
+        IReadOnlyList<int> targetWidths,
+        CancellationToken ct)
+    {
+        var generated = new List<int>();
+        var originalWidth = image.Width;
+
+        foreach (var targetWidth in targetWidths)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var thumbPath = Path.Combine(storeDir, $"w{targetWidth}.webp");
+            if (File.Exists(thumbPath)) continue;
+
+            var effectiveWidth = Math.Min(targetWidth, originalWidth);
+
+            try
+            {
+                var thumbBytes = await ResizeToWebPAsync(image, effectiveWidth, ct).ConfigureAwait(false);
+                await WriteAtomicAsync(thumbPath, thumbBytes, ct).ConfigureAwait(false);
+                generated.Add(targetWidth);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to generate thumb w{Width} in {Dir}", targetWidth, storeDir);
+            }
+        }
+
+        return generated;
+    }
+
+    private static IReadOnlyList<int> NormalizeWidths(IReadOnlyList<int>? widths)
+    {
+        if (widths is null || widths.Count == 0)
+            return SupportedWidths;
+
+        return widths
+            .Distinct()
+            .Where(width => SupportedWidths.Contains(width))
+            .OrderBy(width => width)
+            .ToArray();
     }
 }

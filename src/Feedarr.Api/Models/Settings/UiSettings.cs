@@ -1,6 +1,6 @@
 namespace Feedarr.Api.Models.Settings;
 
-public sealed class UiSettings
+public class UiSettings
 {
     // Interface locale (dates/sorting + future i18n): "fr-FR", "en-US", ...
     public string UiLanguage { get; set; } = UiLanguageCatalog.DefaultUiLanguage;
@@ -54,4 +54,6 @@ public sealed class UiSettings
 
     // Onboarding (first-run wizard)
     public bool OnboardingDone { get; set; } = false;
+
+    public static UiSettings BuildDefaults() => new();
 }

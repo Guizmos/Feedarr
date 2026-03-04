@@ -19,4 +19,6 @@ public sealed class SecuritySettings
     // Stored as base64
     public string PasswordHash { get; set; } = "";
     public string PasswordSalt { get; set; } = "";
+
+    public static SecuritySettings BuildDefaults() => new();
 }

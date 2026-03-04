@@ -1,6 +1,23 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiPut } from "../../../api/client.js";
 import { getSecurityText } from "../securityI18n.js";
+
+export const defaultSecurityState = {
+  authMode: "smart",
+  publicBaseUrl: "",
+  username: "",
+  password: "",
+  passwordConfirmation: "",
+  hasPassword: false,
+  authConfigured: false,
+  authRequired: false,
+};
+
+export const defaultInitialSecurityState = {
+  authMode: "smart",
+  publicBaseUrl: "",
+  username: "",
+};
 
 function isLocalHost(host) {
   if (!host) return false;
@@ -52,28 +69,141 @@ function markSecuritySettingsError(error) {
   return wrapped;
 }
 
-export default function useSecuritySettings() {
-  const [loaded, setLoaded] = useState(false);
-  const [security, setSecurityState] = useState({
-    authMode: "smart",
-    publicBaseUrl: "",
-    username: "",
+export function buildSecurityPayload(security, overrides = {}) {
+  const merged = { ...security, ...overrides };
+  const payload = {
+    authMode: String(merged.authMode || "smart"),
+    publicBaseUrl: String(merged.publicBaseUrl || ""),
+    username: String(merged.username || ""),
+  };
+
+  if (merged.allowDowngradeToOpen === true) {
+    payload.allowDowngradeToOpen = true;
+  }
+
+  if (payload.authMode !== "open" && (merged.password || merged.passwordConfirmation)) {
+    payload.password = String(merged.password || "");
+    payload.passwordConfirmation = String(merged.passwordConfirmation || "");
+  }
+
+  return payload;
+}
+
+export function normalizeSecurityResponse(source) {
+  return {
+    authMode: source?.authMode || "smart",
+    publicBaseUrl: source?.publicBaseUrl || "",
+    username: source?.username || "",
     password: "",
     passwordConfirmation: "",
-    hasPassword: false,
-    authConfigured: false,
-    authRequired: false,
+    hasPassword: !!source?.hasPassword,
+    authConfigured: !!source?.authConfigured,
+    authRequired: !!source?.authRequired,
+  };
+}
+
+export function collectChangedSecurityKeys(security, initialSecurity) {
+  const changed = new Set();
+  if (String(security.authMode || "") !== String(initialSecurity.authMode || "")) changed.add("security.authMode");
+  if (String(security.publicBaseUrl || "") !== String(initialSecurity.publicBaseUrl || "")) changed.add("security.publicBaseUrl");
+  if (String(security.username || "") !== String(initialSecurity.username || "")) changed.add("security.username");
+  if (String(security.password || "").trim()) changed.add("security.password");
+  if (String(security.passwordConfirmation || "").trim()) changed.add("security.passwordConfirmation");
+  return changed;
+}
+
+function buildFieldErrors(keys, message) {
+  const next = {};
+  keys.forEach((key) => {
+    next[key] = message;
   });
-  const [initialSecurity, setInitialSecurity] = useState({
-    authMode: "smart",
-    publicBaseUrl: "",
-    username: "",
-  });
+  return next;
+}
+
+function extractSecurityErrorsFromMessage(message, t) {
+  const text = String(message || "");
+  const lower = text.toLowerCase();
+  if (!text) {
+    return { securityErrors: [], securityFieldErrors: {}, securityMessage: "", passwordMessage: "" };
+  }
+
+  if (lower.includes("credentials_required") || lower.includes("credentials are required") || lower.includes("identifiants requis")) {
+    const translated = t("settings.security.notice.credsRequired");
+    const keys = ["username", "password", "passwordConfirmation"];
+    return {
+      securityErrors: keys,
+      securityFieldErrors: buildFieldErrors(keys, translated),
+      securityMessage: translated,
+      passwordMessage: "",
+    };
+  }
+
+  if (lower.includes("password and confirmation required")) {
+    const translated = t("settings.security.error.passwordAndConfirmationRequired");
+    const keys = ["password", "passwordConfirmation"];
+    return {
+      securityErrors: keys,
+      securityFieldErrors: buildFieldErrors(keys, translated),
+      securityMessage: translated,
+      passwordMessage: translated,
+    };
+  }
+
+  if (lower.includes("password confirmation mismatch")) {
+    const translated = t("settings.security.error.passwordConfirmationMismatch");
+    return {
+      securityErrors: ["password", "passwordConfirmation"],
+      securityFieldErrors: buildFieldErrors(["passwordConfirmation"], translated),
+      securityMessage: translated,
+      passwordMessage: translated,
+    };
+  }
+
+  if (lower.includes("downgrade_confirmation_required")) {
+    const translated = t("settings.security.warning.downgradeOpen");
+    return {
+      securityErrors: [],
+      securityFieldErrors: {},
+      securityMessage: translated,
+      passwordMessage: "",
+    };
+  }
+
+  const keys = [];
+  if (lower.includes("username")) keys.push("username");
+  if (lower.includes("password")) keys.push("password", "passwordConfirmation");
+  return {
+    securityErrors: keys,
+    securityFieldErrors: keys.length > 0 ? buildFieldErrors(keys, text) : {},
+    securityMessage: text,
+    passwordMessage: keys.some((key) => key.startsWith("password")) ? text : "",
+  };
+}
+
+export async function loadSecuritySettingsData(request = apiGet) {
+  const response = await request("/api/settings/security");
+  return normalizeSecurityResponse(response || defaultSecurityState);
+}
+
+export async function saveSecuritySettingsData(payload, request = apiPut) {
+  const response = await request("/api/settings/security", payload);
+  return normalizeSecurityResponse(response || payload);
+}
+
+export default function useSecuritySettings() {
+  const [loaded, setLoaded] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [security, setSecurityState] = useState(defaultSecurityState);
+  const [initialSecurity, setInitialSecurity] = useState(defaultInitialSecurityState);
   const [securityErrors, setSecurityErrors] = useState([]);
+  const [securityFieldErrors, setSecurityFieldErrors] = useState({});
   const [securityMessage, setSecurityMessage] = useState("");
   const [passwordMessage, setPasswordMessage] = useState("");
-
-  // ── Derived state ────────────────────────────────────────────────────────
+  const [saveError, setSaveError] = useState("");
+  const [pulseKinds, setPulseKinds] = useState({});
+  const pulseTimerRef = useRef(null);
+  const t = getSecurityText();
 
   const isDirty =
     JSON.stringify({
@@ -84,47 +214,26 @@ export default function useSecuritySettings() {
     !!security.password ||
     !!security.passwordConfirmation;
 
-  // Mode
   const isStrict = security.authMode === "strict";
   const isSmart = security.authMode === "smart";
   const isProtectedMode = isStrict || isSmart;
   const serverHasPassword = security.hasPassword;
-
-  // Trimmed values for comparison (avoids repeated calls)
   const usernameValue = String(security.username || "").trim();
   const passwordValue = String(security.password || "").trim();
   const confirmValue = String(security.passwordConfirmation || "").trim();
-
-  // Banner: existing logic for public-URL / proxy exposure warning (unrelated to field states)
   const isExposedConfig = isExposedPublicBaseUrl(security.publicBaseUrl);
   const effectiveAuthRequired = isStrict ? true : !!security.authRequired;
   const statusRequiresCredentials = isSmart && effectiveAuthRequired && !security.authConfigured;
   const credentialsRequiredForMode = isStrict || (isSmart && (isExposedConfig || statusRequiresCredentials));
-
-  // ── Validation ───────────────────────────────────────────────────────────
-  //
-  // strict: credentials always required.
-  // smart: credentials required only when exposed / authRequired.
-  // In non-required smart mode, editing password still activates full credential validation.
-
   const requiresCredsToSave = loaded && isProtectedMode && credentialsRequiredForMode && !security.authConfigured;
   const userIsEditingCreds = !!passwordValue || !!confirmValue;
   const credsRequired =
     loaded &&
     isProtectedMode &&
     (requiresCredsToSave || userIsEditingCreds || (credentialsRequiredForMode && !serverHasPassword));
-
   const usernameRequired = loaded && isProtectedMode && (credentialsRequiredForMode || credsRequired);
   const passwordRequired = credsRequired;
   const confirmRequired = credsRequired;
-
-  // ── Field visual states: "error" | "valid" | "" ──────────────────────────
-  //
-  // Gate: !loaded || open mode → always "" (no flash, nothing required).
-  //
-  // When already configured and idle → green on password fields.
-  // Username keeps live validation in protected modes.
-
   const isConfiguredIdle =
     loaded &&
     isProtectedMode &&
@@ -133,11 +242,9 @@ export default function useSecuritySettings() {
     !!usernameValue &&
     serverHasPassword &&
     !userIsEditingCreds;
-
   const usernameFieldState = usernameRequired
     ? (usernameValue ? "valid" : "error")
     : "";
-
   const passwordFieldState = !loaded || !isProtectedMode
     ? ""
     : isConfiguredIdle
@@ -145,7 +252,6 @@ export default function useSecuritySettings() {
     : passwordRequired
     ? (passwordValue ? "valid" : "error")
     : "";
-
   const confirmFieldState = !loaded || !isProtectedMode
     ? ""
     : isConfiguredIdle
@@ -153,25 +259,17 @@ export default function useSecuritySettings() {
     : confirmRequired
     ? (!confirmValue || security.password !== security.passwordConfirmation ? "error" : "valid")
     : "";
-
-  // ── Save blocking ─────────────────────────────────────────────────────────
-  //
   const usernameMissing = usernameRequired && !usernameValue;
   const passwordMissing = passwordRequired && !passwordValue;
   const confirmMissing =
     confirmRequired &&
     (!confirmValue || security.password !== security.passwordConfirmation);
-
   const credsMissing = usernameMissing || passwordMissing || confirmMissing;
-
   const requiresDowngradeConfirmation =
     loaded &&
     security.authMode === "open" &&
     (initialSecurity.authMode !== "open" || security.authConfigured);
-
-  // Save requires: data loaded + something changed + no validation errors
   const canSave = loaded && isDirty && !credsMissing;
-
   const showExistingCredentialsHint =
     loaded &&
     isProtectedMode &&
@@ -179,160 +277,177 @@ export default function useSecuritySettings() {
     serverHasPassword &&
     !userIsEditingCreds;
 
-  // ── Actions ──────────────────────────────────────────────────────────────
+  const applyPulse = useCallback((keys, kind) => {
+    if (pulseTimerRef.current) clearTimeout(pulseTimerRef.current);
+    const next = {};
+    [...keys].forEach((key) => {
+      next[key] = kind;
+    });
+    setPulseKinds(next);
+    pulseTimerRef.current = setTimeout(() => {
+      setPulseKinds({});
+    }, 1200);
+  }, []);
 
   const setSecurity = useCallback((updater) => {
     setSecurityMessage("");
     setSecurityErrors([]);
+    setSecurityFieldErrors({});
     setPasswordMessage("");
+    setSaveError("");
     setSecurityState(updater);
   }, []);
 
   const loadSecuritySettings = useCallback(async () => {
+    setLoading(true);
+    setLoadError("");
     try {
-      const sec = await apiGet("/api/settings/security");
-      if (sec) {
-        setSecurityState((prev) => ({
-          ...prev,
-          authMode: sec.authMode || "smart",
-          publicBaseUrl: sec.publicBaseUrl || "",
-          username: sec.username || "",
-          hasPassword: !!sec.hasPassword,
-          authConfigured: !!sec.authConfigured,
-          authRequired: !!sec.authRequired,
-          password: "",
-          passwordConfirmation: "",
-        }));
-        setInitialSecurity({
-          authMode: sec.authMode || "smart",
-          publicBaseUrl: sec.publicBaseUrl || "",
-          username: sec.username || "",
-        });
-        setSecurityErrors([]);
-        setSecurityMessage("");
-        setPasswordMessage("");
-      }
-    } catch {
-      // Ignore load errors — keep default state, show no red
+      const next = await loadSecuritySettingsData();
+      setSecurityState(next);
+      setInitialSecurity({
+        authMode: next.authMode,
+        publicBaseUrl: next.publicBaseUrl,
+        username: next.username,
+      });
+      setSecurityErrors([]);
+      setSecurityFieldErrors({});
+      setSecurityMessage("");
+      setPasswordMessage("");
+      setSaveError("");
+      return next;
+    } catch (error) {
+      setLoadError(error?.message || "Erreur chargement paramètres sécurité");
+      throw error;
     } finally {
-      // Always mark loaded so validation can activate
       setLoaded(true);
+      setLoading(false);
     }
   }, []);
 
   const saveSecuritySettings = useCallback(async (options = {}) => {
-    const t = getSecurityText();
     const credsWarning = t("settings.security.notice.credsRequired");
     const downgradeWarning = t("settings.security.warning.downgradeOpen");
+    const changed = collectChangedSecurityKeys(security, initialSecurity);
 
     setSecurityErrors([]);
+    setSecurityFieldErrors({});
     setSecurityMessage("");
     setPasswordMessage("");
+    setSaveError("");
 
-    // Defensive guard (mirrors canSave — should never fire when save button is properly disabled)
     if (credsMissing) {
-      const next = [];
-      if (usernameMissing) next.push("username");
-      if (passwordMissing || confirmMissing) next.push("password", "passwordConfirmation");
-      setSecurityErrors(next);
+      const nextErrors = [];
+      const nextFieldErrors = {};
+      if (usernameMissing) {
+        nextErrors.push("username");
+        nextFieldErrors.username = credsWarning;
+      }
+      if (passwordMissing) {
+        nextErrors.push("password");
+        nextFieldErrors.password = credsWarning;
+      }
+      if (confirmMissing) {
+        nextErrors.push("passwordConfirmation");
+        nextFieldErrors.passwordConfirmation = credsWarning;
+      }
+      setSecurityErrors(nextErrors);
+      setSecurityFieldErrors(nextFieldErrors);
       setSecurityMessage(credsWarning);
+      setSaveError(credsWarning);
+      applyPulse(changed.size > 0 ? changed : new Set(["security.username", "security.password", "security.passwordConfirmation"]), "err");
       throw markSecuritySettingsError(new Error(credsWarning));
     }
+
     const shouldAllowDowngrade = options?.allowDowngradeToOpen === true;
     if (requiresDowngradeConfirmation && !shouldAllowDowngrade) {
       setSecurityMessage(downgradeWarning);
+      setSaveError(downgradeWarning);
+      applyPulse(new Set(["security.authMode"]), "err");
       throw markSecuritySettingsError(new Error(downgradeWarning));
     }
 
-    const payload = {
-      authMode: security.authMode,
-      publicBaseUrl: security.publicBaseUrl,
-      username: security.username,
-    };
-    if (requiresDowngradeConfirmation && shouldAllowDowngrade) {
-      payload.allowDowngradeToOpen = true;
-    }
-
-    if (security.authMode !== "open" && (security.password || security.passwordConfirmation)) {
-      payload.password = security.password;
-      payload.passwordConfirmation = security.passwordConfirmation;
-    }
-
     try {
-      const saved = await apiPut("/api/settings/security", payload);
+      const saved = await saveSecuritySettingsData(
+        buildSecurityPayload(security, {
+          allowDowngradeToOpen: shouldAllowDowngrade,
+        }),
+      );
+
       setInitialSecurity({
-        authMode: saved?.authMode ?? security.authMode,
-        publicBaseUrl: saved?.publicBaseUrl ?? security.publicBaseUrl,
-        username: saved?.username ?? security.username,
+        authMode: saved.authMode,
+        publicBaseUrl: saved.publicBaseUrl,
+        username: saved.username,
       });
-      setSecurityState((prev) => ({
-        ...prev,
-        authMode: saved?.authMode ?? prev.authMode,
-        publicBaseUrl: saved?.publicBaseUrl ?? prev.publicBaseUrl,
-        username: saved?.username ?? prev.username,
-        hasPassword: !!saved?.hasPassword,
-        authConfigured: !!saved?.authConfigured,
-        authRequired: !!saved?.authRequired,
-        password: "",
-        passwordConfirmation: "",
-      }));
-      setSecurityMessage("");
-    } catch (e) {
-      if (isPasswordComplexityError(e)) {
-        const message = formatPasswordComplexityMessage(e);
+      setSecurityState(saved);
+      applyPulse(changed, "ok");
+      return changed;
+    } catch (error) {
+      if (isPasswordComplexityError(error)) {
+        const message = formatPasswordComplexityMessage(error);
         setSecurityErrors(["password", "passwordConfirmation"]);
+        setSecurityFieldErrors({
+          password: message,
+          passwordConfirmation: message,
+        });
         setPasswordMessage(message);
         setSecurityMessage(message);
-        if (e && typeof e === "object") e.message = message;
-        throw markSecuritySettingsError(e);
+        setSaveError(message);
+        applyPulse(changed.size > 0 ? changed : new Set(["security.password", "security.passwordConfirmation"]), "err");
+        if (error && typeof error === "object") error.message = message;
+        throw markSecuritySettingsError(error);
       }
-      if (String(e?.error || "").toLowerCase() === "downgrade_confirmation_required") {
+
+      if (String(error?.error || "").toLowerCase() === "downgrade_confirmation_required") {
         setSecurityMessage(downgradeWarning);
-        throw markSecuritySettingsError(e);
+        setSaveError(downgradeWarning);
+        applyPulse(changed.size > 0 ? changed : new Set(["security.authMode"]), "err");
+        throw markSecuritySettingsError(error);
       }
-      if (typeof e?.message === "string") {
-        const msgLower = e.message.toLowerCase();
-        const next = [];
-        if (
-          msgLower.includes("credentials_required") ||
-          msgLower.includes("credentials are required") ||
-          msgLower.includes("identifiants requis")
-        ) {
-          if (!usernameValue) next.push("username");
-          if (!passwordValue) next.push("password", "passwordConfirmation");
-          setSecurityMessage(credsWarning);
-        } else if (msgLower.includes("password and confirmation required")) {
-          setSecurityMessage(t("settings.security.error.passwordAndConfirmationRequired"));
-        } else if (msgLower.includes("password confirmation mismatch")) {
-          setSecurityMessage(t("settings.security.error.passwordConfirmationMismatch"));
-        } else {
-          if (msgLower.includes("username")) next.push("username");
-          if (msgLower.includes("password")) next.push("password", "passwordConfirmation");
-          if (next.length > 0) setSecurityMessage(e.message);
-        }
-        if (next.length > 0) setSecurityErrors(next);
-      }
-      throw markSecuritySettingsError(e);
+
+      const mapped = extractSecurityErrorsFromMessage(error?.message, t);
+      setSecurityErrors(mapped.securityErrors);
+      setSecurityFieldErrors(mapped.securityFieldErrors);
+      setSecurityMessage(mapped.securityMessage);
+      setPasswordMessage(mapped.passwordMessage);
+      setSaveError(mapped.securityMessage || error?.message || "Erreur sauvegarde sécurité");
+
+      const fallbackPulseKeys = new Set(
+        mapped.securityErrors.map((key) => `security.${key}`)
+      );
+      applyPulse(changed.size > 0 ? changed : fallbackPulseKeys, "err");
+      throw markSecuritySettingsError(error);
     }
   }, [
-    credsMissing,
-    usernameMissing,
-    passwordMissing,
+    applyPulse,
     confirmMissing,
+    credsMissing,
+    initialSecurity,
+    passwordMissing,
     requiresDowngradeConfirmation,
     security,
-    usernameValue,
-    passwordValue,
+    t,
+    usernameMissing,
   ]);
+
+  useEffect(() => {
+    return () => {
+      if (pulseTimerRef.current) clearTimeout(pulseTimerRef.current);
+    };
+  }, []);
 
   return {
     security,
     setSecurity,
     initialSecurity,
     loaded,
+    loading,
+    loadError,
     securityErrors,
+    securityFieldErrors,
     securityMessage,
     passwordMessage,
+    saveError,
+    pulseKinds,
     requiresDowngradeConfirmation,
     credentialsRequiredForMode,
     effectiveAuthRequired,

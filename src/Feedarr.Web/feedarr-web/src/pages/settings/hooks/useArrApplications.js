@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { apiDelete, apiGet, apiPost, apiPut } from "../../../api/client.js";
 import { sleep } from "../settingsUtils.js";
-import { normalizeRequestMode } from "../../../utils/appTypes.js";
+import useArrSettings from "./useArrSettings.js";
 
 const ALL_APP_TYPES = ["sonarr", "radarr", "overseerr", "jellyseerr", "seer"];
 
 export default function useArrApplications() {
+  const arrSettingsState = useArrSettings();
   const [arrApps, setArrApps] = useState([]);
   const [arrAppsLoading, setArrAppsLoading] = useState(false);
 
@@ -51,30 +52,30 @@ export default function useArrApplications() {
   const [arrSyncingId, setArrSyncingId] = useState(null);
   const [arrSyncStatusById, setArrSyncStatusById] = useState({});
 
-  // Sync settings
-  const [arrSyncSettings, setArrSyncSettings] = useState({
-    arrSyncIntervalMinutes: 60,
-    arrAutoSyncEnabled: true,
-    requestIntegrationMode: "arr",
-  });
   const [arrSyncStatus, setArrSyncStatus] = useState([]);
   const [arrSyncStatusLoading, setArrSyncStatusLoading] = useState(false);
-  const [arrSyncSaving, setArrSyncSaving] = useState(false);
   const [arrSyncing, setArrSyncing] = useState(false);
-  const [arrRequestModeDraft, setArrRequestModeDraft] = useState("arr");
-  const [arrPulseKeys, setArrPulseKeys] = useState(() => new Set());
-  const arrPulseTimerRef = useRef(null);
 
   const hasEnabledArrApps = arrApps.some((app) => app.isEnabled && app.hasApiKey);
   const existingTypes = new Set(arrApps.map((app) => String(app.type || "").toLowerCase()));
   const availableAddTypes = ALL_APP_TYPES.filter((type) => !existingTypes.has(type));
-  const isRequestModeDirty = arrRequestModeDraft !== normalizeRequestMode(arrSyncSettings?.requestIntegrationMode);
-
-  useEffect(() => {
-    return () => {
-      if (arrPulseTimerRef.current) clearTimeout(arrPulseTimerRef.current);
-    };
-  }, []);
+  const {
+    arrSettings,
+    setArrSettings,
+    requestModeDraft,
+    setRequestModeDraft,
+    loading: arrSettingsLoading,
+    loadError: arrSettingsLoadError,
+    fieldErrors: arrFieldErrors,
+    saveError: arrSaveError,
+    saving: arrSyncSaving,
+    pulseKeys: arrPulseKeys,
+    pulseKinds: arrPulseKinds,
+    isDirty: arrSettingsDirty,
+    isRequestModeDirty,
+    loadArrSettings,
+    saveArrSettings,
+  } = arrSettingsState;
 
   // Load functions
   const loadArrApps = useCallback(async () => {
@@ -90,25 +91,8 @@ export default function useArrApplications() {
   }, []);
 
   const loadArrSyncSettings = useCallback(async () => {
-    try {
-      const general = await apiGet("/api/settings/general");
-      const next = {
-        arrSyncIntervalMinutes: Number(general?.arrSyncIntervalMinutes ?? 60),
-        arrAutoSyncEnabled: general?.arrAutoSyncEnabled !== false,
-        requestIntegrationMode: normalizeRequestMode(general?.requestIntegrationMode),
-      };
-      setArrSyncSettings(next);
-      setArrRequestModeDraft(next.requestIntegrationMode);
-    } catch {
-      const fallback = {
-        arrSyncIntervalMinutes: 60,
-        arrAutoSyncEnabled: true,
-        requestIntegrationMode: "arr",
-      };
-      setArrSyncSettings(fallback);
-      setArrRequestModeDraft(fallback.requestIntegrationMode);
-    }
-  }, []);
+    await loadArrSettings();
+  }, [loadArrSettings]);
 
   const loadArrSyncStatus = useCallback(async () => {
     setArrSyncStatusLoading(true);
@@ -136,47 +120,16 @@ export default function useArrApplications() {
 
   // Save functions
   const saveArrSyncSettings = useCallback(async (settings) => {
-    setArrSyncSaving(true);
-    try {
-      const wasRequestModeDirty = arrRequestModeDraft !== normalizeRequestMode(arrSyncSettings?.requestIntegrationMode);
-      const current = await apiGet("/api/settings/general");
-      const payload = {
-        ...current,
-        arrSyncIntervalMinutes: settings.arrSyncIntervalMinutes,
-        arrAutoSyncEnabled: settings.arrAutoSyncEnabled,
-        requestIntegrationMode: normalizeRequestMode(settings.requestIntegrationMode),
-      };
-      const saved = await apiPut("/api/settings/general", payload);
-      const next = {
-        arrSyncIntervalMinutes: Number(saved?.arrSyncIntervalMinutes ?? 60),
-        arrAutoSyncEnabled: saved?.arrAutoSyncEnabled !== false,
-        requestIntegrationMode: normalizeRequestMode(saved?.requestIntegrationMode),
-      };
-      setArrSyncSettings(next);
-      if (!wasRequestModeDirty) {
-        setArrRequestModeDraft(next.requestIntegrationMode);
-      }
-    } catch (e) {
-      throw new Error(e?.message || "Erreur sauvegarde paramètres sync");
-    } finally {
-      setArrSyncSaving(false);
-    }
-  }, [arrRequestModeDraft, arrSyncSettings]);
+    await saveArrSettings(settings);
+  }, [saveArrSettings]);
 
   const saveArrRequestModeDraft = useCallback(async () => {
     if (!isRequestModeDirty) return;
-    const updated = {
-      ...arrSyncSettings,
-      requestIntegrationMode: arrRequestModeDraft,
-    };
-    await saveArrSyncSettings(updated);
-
-    if (arrPulseTimerRef.current) clearTimeout(arrPulseTimerRef.current);
-    setArrPulseKeys(new Set(["arr.requestIntegrationMode"]));
-    arrPulseTimerRef.current = setTimeout(() => {
-      setArrPulseKeys(new Set());
-    }, 1200);
-  }, [arrRequestModeDraft, arrSyncSettings, isRequestModeDirty, saveArrSyncSettings]);
+    await saveArrSettings({
+      ...arrSettings,
+      requestIntegrationMode: requestModeDraft,
+    });
+  }, [arrSettings, isRequestModeDirty, requestModeDraft, saveArrSettings]);
 
   const triggerArrSync = useCallback(async () => {
     if (!hasEnabledArrApps) return;
@@ -444,16 +397,22 @@ export default function useArrApplications() {
     availableAddTypes,
     loadArrApps,
     // Sync settings
-    arrSyncSettings,
+    arrSyncSettings: arrSettings,
     arrSyncStatus,
     arrSyncStatusLoading,
     arrSyncSaving,
     arrSyncing,
-    arrRequestModeDraft,
+    arrRequestModeDraft: requestModeDraft,
     arrPulseKeys,
+    arrPulseKinds,
     isRequestModeDirty,
-    setArrSyncSettings,
-    setArrRequestModeDraft,
+    arrSettingsDirty,
+    arrSettingsLoading,
+    arrSettingsLoadError,
+    arrFieldErrors,
+    arrSaveError,
+    setArrSyncSettings: setArrSettings,
+    setArrRequestModeDraft: setRequestModeDraft,
     loadArrSyncSettings,
     loadArrSyncStatus,
     saveArrSyncSettings,

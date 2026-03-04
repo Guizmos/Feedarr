@@ -167,6 +167,7 @@ builder.Services.AddSingleton<AuthThrottleService>();
 builder.Services.AddSingleton<CategoryRecommendationService>();
 builder.Services.AddSingleton<ExternalProviderRegistry>();
 builder.Services.AddSingleton<ActiveExternalProviderConfigResolver>();
+builder.Services.AddSingleton<IExternalProviderLimiter, ExternalProviderLimiter>();
 builder.Services.AddSingleton<ExternalProviderTestService>();
 builder.Services.AddHostedService<BasicAuthTransportSecurityStartupService>();
 builder.Services.AddHostedService<ExternalProvidersBootstrapService>();
@@ -184,12 +185,15 @@ builder.Services.AddSingleton<PosterFetchService>();
 builder.Services.AddSingleton<IPosterFileStore, PosterFileStore>();
 builder.Services.AddSingleton<PosterMatchCacheService>();
 builder.Services.AddSingleton<PosterFetchJobFactory>();
+builder.Services.AddSingleton<IPosterFetchJobProcessor, PosterFetchJobProcessor>();
 builder.Services.AddSingleton<Feedarr.Api.Services.Sync.ISyncPlanBuilder, Feedarr.Api.Services.Sync.SyncPlanBuilder>();
 builder.Services.AddSingleton<Feedarr.Api.Services.Sync.ISyncExecutor, Feedarr.Api.Services.Sync.SyncExecutor>();
 builder.Services.AddSingleton<SyncOrchestrationService>();
 builder.Services.AddSingleton<RetroFetchLogService>();
 builder.Services.AddSingleton<IPosterFetchQueue, PosterFetchQueue>();
-builder.Services.AddHostedService<PosterFetchWorker>();
+builder.Services.AddHostedService<PosterFetchWorkerPool>();
+builder.Services.AddSingleton<IPosterThumbQueue, PosterThumbQueue>();
+builder.Services.AddHostedService<PosterThumbWorker>();
 builder.Services.AddSingleton<MediaEntityArrStatusService>();
 builder.Services.AddSingleton<ExternalIdBackfillService>();
 builder.Services.AddSingleton<RequestTmdbResolverService>();
@@ -682,7 +686,8 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 // DB migrations on boot
-app.Services.GetRequiredService<Db>().EnsureWalMode();
+var db = app.Services.GetRequiredService<Db>();
+db.EnsureWalMode();
 app.Services.GetRequiredService<MigrationsRunner>().Run();
 
 // Migrate existing API keys to encrypted format
@@ -696,6 +701,21 @@ var _startupLog = app.Services.GetRequiredService<ILoggerFactory>()
 var _asm = typeof(Feedarr.Api.Controllers.CategoriesController).Assembly;
 var _buildTs = System.IO.File.GetLastWriteTimeUtc(_asm.Location).ToString("yyyy-MM-dd HH:mm:ss UTC");
 _startupLog.LogInformation("[BUILD] Feedarr.Api built={T} — CATS_STANDARDONLY_V2", _buildTs);
+
+try
+{
+    var sqliteOptions = db.GetOptionsSnapshot();
+    _startupLog.LogInformation(
+        "SQLite options: Pooling={Pooling}, Cache={Cache}, Mode={Mode}, JournalMode={JournalMode}",
+        sqliteOptions.Pooling,
+        sqliteOptions.Cache,
+        sqliteOptions.Mode,
+        sqliteOptions.JournalMode ?? "unknown");
+}
+catch (Exception ex)
+{
+    _startupLog.LogWarning(ex, "Failed to read SQLite startup options");
+}
 
 if (allowInvalidCerts)
 {
