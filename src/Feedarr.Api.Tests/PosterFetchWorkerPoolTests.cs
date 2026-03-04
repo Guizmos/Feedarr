@@ -24,9 +24,7 @@ public sealed class PosterFetchWorkerPoolTests
         await ctx.Pool.StartAsync(CancellationToken.None);
         try
         {
-            await WaitUntilAsync(
-                () => ctx.Processor.MaxInFlight >= 2,
-                TimeSpan.FromSeconds(15));
+            await ctx.Processor.WaitForConcurrentStartAsync(TimeSpan.FromSeconds(30));
 
             Assert.Equal(2, ctx.Processor.MaxInFlight);
 
@@ -51,9 +49,7 @@ public sealed class PosterFetchWorkerPoolTests
         await ctx.Pool.StartAsync(CancellationToken.None);
         try
         {
-            await WaitUntilAsync(
-                () => ctx.Processor.AttemptedCount >= 1,
-                TimeSpan.FromSeconds(10));
+            await ctx.Processor.WaitForAttemptedAsync(TimeSpan.FromSeconds(15));
 
             await Task.Delay(150);
             Assert.Equal(1, ctx.Processor.MaxInFlight);
@@ -91,20 +87,6 @@ public sealed class PosterFetchWorkerPoolTests
         Assert.Contains(1L, ctx.Processor.AttemptedItemIds);
         Assert.Contains(2L, ctx.Processor.AttemptedItemIds);
         Assert.Contains(2L, ctx.Processor.SuccessfulItemIds);
-    }
-
-    private static async Task WaitUntilAsync(Func<bool> predicate, TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            if (predicate())
-                return;
-
-            await Task.Delay(20);
-        }
-
-        throw new TimeoutException("The operation has timed out.");
     }
 
     private static PosterFetchJob CreateJob(long itemId)
@@ -164,6 +146,8 @@ public sealed class PosterFetchWorkerPoolTests
         private readonly bool _failFirstJob;
         private readonly TaskCompletionSource<bool> _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource<bool> _processed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<bool> _attempted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<bool> _concurrentStart = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _inFlight;
         private int _processedCount;
         private int _maxInFlight;
@@ -190,7 +174,11 @@ public sealed class PosterFetchWorkerPoolTests
         public async Task<PosterFetchProcessResult> ProcessJobAsync(PosterFetchJob job, int workerId, CancellationToken stoppingToken)
         {
             lock (AttemptedItemIds)
+            {
                 AttemptedItemIds.Add(job.ItemId);
+                if (AttemptedItemIds.Count >= 1)
+                    _attempted.TrySetResult(true);
+            }
 
             if (_failFirstJob && Interlocked.CompareExchange(ref _hasFailed, 1, 0) == 0)
             {
@@ -202,6 +190,8 @@ public sealed class PosterFetchWorkerPoolTests
 
             var current = Interlocked.Increment(ref _inFlight);
             UpdateMax(current);
+            if (current >= 2)
+                _concurrentStart.TrySetResult(true);
 
             try
             {
@@ -223,6 +213,22 @@ public sealed class PosterFetchWorkerPoolTests
 
         public void ReleaseAll()
             => _release.TrySetResult(true);
+
+        public Task WaitForAttemptedAsync(TimeSpan timeout)
+        {
+            if (AttemptedCount >= 1)
+                return Task.CompletedTask;
+
+            return _attempted.Task.WaitAsync(timeout);
+        }
+
+        public Task WaitForConcurrentStartAsync(TimeSpan timeout)
+        {
+            if (Volatile.Read(ref _maxInFlight) >= 2)
+                return Task.CompletedTask;
+
+            return _concurrentStart.Task.WaitAsync(timeout);
+        }
 
         public Task WaitForProcessedAsync(int expected)
         {
