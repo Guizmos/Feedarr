@@ -101,6 +101,26 @@ public sealed class PostersControllerThumbTests
         Assert.IsType<PhysicalFileResult>(result);
     }
 
+    [Fact]
+    public async Task GetReleasePosterThumb_MissingThumb_EnqueuesWarmup_AndServesOriginal()
+    {
+        using var ctx = new ThumbContext();
+        var id = ctx.CreateRelease("poster.jpg", storeDir: "tmdb-550");
+        ctx.CreateStoreOriginal("tmdb-550", ".jpg");
+        var thumbQueue = new CaptureThumbQueue();
+        var controller = ctx.CreateController(thumbQueue);
+
+        var result = await controller.GetReleasePosterThumb(id, 500, CancellationToken.None);
+
+        var physical = Assert.IsType<PhysicalFileResult>(result);
+        Assert.Equal("image/jpeg", physical.ContentType);
+        Assert.True(thumbQueue.LastEnqueuedJob is not null);
+        Assert.Equal("tmdb-550", thumbQueue.LastEnqueuedJob!.StoreDir);
+        Assert.Equal(PosterThumbJobReason.MissingThumb, thumbQueue.LastEnqueuedJob.Reason);
+        Assert.Contains(500, thumbQueue.LastEnqueuedJob.Widths ?? []);
+        Assert.False(File.Exists(Path.Combine(ctx.StoreDir, "tmdb-550", "w500.webp")));
+    }
+
     // ── entity thumb ──────────────────────────────────────────────────────────
 
     [Fact]
@@ -199,7 +219,7 @@ public sealed class PostersControllerThumbTests
         public string PostersDir => PosterFetch.PostersDirPath;
         public string StoreDir => PosterFetch.PosterStoreDirPath;
 
-        public Controllers.PostersController CreateController()
+        public Controllers.PostersController CreateController(IPosterThumbQueue? thumbQueue = null)
         {
             var controller = new Controllers.PostersController(
                 Releases, MediaEntities,
@@ -210,7 +230,8 @@ public sealed class PostersControllerThumbTests
                 RetroLogs,
                 null!, null!, null!, null!, null!, null!, null!, null!, null!,
                 NullLogger<Controllers.PostersController>.Instance,
-                new PosterThumbService(NullLogger<PosterThumbService>.Instance));
+                new PosterThumbService(NullLogger<PosterThumbService>.Instance),
+                thumbQueue);
 
             controller.ControllerContext = new ControllerContext
             {
@@ -267,6 +288,13 @@ public sealed class PostersControllerThumbTests
             File.WriteAllBytes(Path.Combine(dir, $"w{width}.webp"), Encoding.UTF8.GetBytes("webp-thumb-bytes"));
         }
 
+        public void CreateStoreOriginal(string storeDir, string ext)
+        {
+            var dir = Path.Combine(StoreDir, storeDir);
+            Directory.CreateDirectory(dir);
+            File.WriteAllBytes(Path.Combine(dir, $"original{ext}"), Encoding.UTF8.GetBytes("original-poster-bytes"));
+        }
+
         public void Dispose() => _workspace.Dispose();
     }
 
@@ -281,6 +309,23 @@ public sealed class PostersControllerThumbTests
         public int Count => 0;
         public PosterFetchQueueSnapshot GetSnapshot()
             => new(0, 0, false, null, null, null, null, 0, 0, 0, 0, 0, 0, 0);
+    }
+
+    private sealed class CaptureThumbQueue : IPosterThumbQueue
+    {
+        public PosterThumbJob? LastEnqueuedJob { get; private set; }
+
+        public ValueTask<PosterThumbEnqueueResult> EnqueueAsync(PosterThumbJob job, CancellationToken ct, TimeSpan timeout)
+        {
+            LastEnqueuedJob = job;
+            return ValueTask.FromResult(new PosterThumbEnqueueResult(PosterThumbEnqueueStatus.Enqueued));
+        }
+
+        public ValueTask<PosterThumbJob> DequeueAsync(CancellationToken ct) => ValueTask.FromCanceled<PosterThumbJob>(ct);
+
+        public PosterThumbJob? Complete(PosterThumbJob job) => null;
+
+        public int Count => LastEnqueuedJob is null ? 0 : 1;
     }
 
     private sealed class PassthroughProtectionService2 : IApiKeyProtectionService

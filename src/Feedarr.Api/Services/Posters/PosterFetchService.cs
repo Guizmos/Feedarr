@@ -54,6 +54,7 @@ public sealed class PosterFetchService
     private readonly MusicBrainzClient _musicBrainz;
     private readonly PosterMatchCacheService _matchCache;
     private readonly PosterThumbService _thumbService;
+    private readonly IPosterThumbQueue _thumbQueue;
     private readonly AppOptions _opt;
     private readonly IWebHostEnvironment _env;
     private readonly PosterMatchingOrchestrator _matchingOrchestrator;
@@ -101,7 +102,8 @@ public sealed class PosterFetchService
         PosterMatchingOrchestrator matchingOrchestrator,
         ActiveExternalProviderConfigResolver activeConfigResolver,
         ILogger<PosterFetchService> logger,
-        PosterThumbService? thumbService = null)
+        PosterThumbService? thumbService = null,
+        IPosterThumbQueue? thumbQueue = null)
     {
         _releases = releases;
         _activity = activity;
@@ -118,6 +120,7 @@ public sealed class PosterFetchService
         _musicBrainz = musicBrainz;
         _matchCache = matchCache;
         _thumbService = thumbService ?? new PosterThumbService(Microsoft.Extensions.Logging.Abstractions.NullLogger<PosterThumbService>.Instance);
+        _thumbQueue = thumbQueue ?? NoOpPosterThumbQueue.Instance;
         _opt = opt.Value;
         _env = env;
         _matchingOrchestrator = matchingOrchestrator;
@@ -158,6 +161,100 @@ public sealed class PosterFetchService
                 _storeLocks[storeDir] = sem;
             }
             return sem;
+        }
+    }
+
+    internal bool TryResolveStoreThumbPath(string storeDir, int width, out string thumbPath)
+    {
+        thumbPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(storeDir))
+            return false;
+
+        return GetStoreResolver().TryResolvePosterFile(storeDir, $"w{width}.webp", out thumbPath);
+    }
+
+    internal bool TryResolveStoreOriginalPath(string storeDir, out string originalPath)
+    {
+        originalPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(storeDir))
+            return false;
+
+        var resolver = GetStoreResolver();
+        if (!resolver.TryResolveStoreDir(storeDir, out var storeDirFull) || !Directory.Exists(storeDirFull))
+            return false;
+
+        originalPath = Directory.EnumerateFiles(storeDirFull, "original.*", SearchOption.TopDirectoryOnly).FirstOrDefault() ?? string.Empty;
+        return !string.IsNullOrWhiteSpace(originalPath) && System.IO.File.Exists(originalPath);
+    }
+
+    internal async ValueTask<PosterThumbEnqueueResult> EnqueueThumbGenerationAsync(
+        string? storeDir,
+        PosterThumbJobReason reason,
+        CancellationToken ct,
+        IReadOnlyList<int>? widths = null,
+        long? releaseId = null)
+    {
+        if (string.IsNullOrWhiteSpace(storeDir))
+            return new PosterThumbEnqueueResult(PosterThumbEnqueueStatus.Rejected);
+
+        var normalizedWidths = widths?
+            .Distinct()
+            .Where(width => PosterThumbService.SupportedWidths.Contains(width))
+            .OrderBy(width => width)
+            .ToArray();
+
+        var job = new PosterThumbJob(
+            StoreDir: storeDir,
+            Widths: normalizedWidths is { Length: > 0 } ? normalizedWidths : null,
+            Reason: reason,
+            ReleaseId: releaseId);
+
+        return await _thumbQueue.EnqueueAsync(job, ct, PosterThumbQueue.DefaultEnqueueTimeout).ConfigureAwait(false);
+    }
+
+    internal async Task<PosterThumbWorkResult> EnsureThumbsAsync(PosterThumbJob job, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(job.StoreDir))
+            return new PosterThumbWorkResult(false, true, "missing_store_dir", []);
+
+        var widths = job.Widths is { Count: > 0 }
+            ? job.Widths.Where(width => PosterThumbService.SupportedWidths.Contains(width)).Distinct().OrderBy(width => width).ToArray()
+            : PosterThumbService.SupportedWidths;
+        if (widths.Length == 0)
+            widths = PosterThumbService.SupportedWidths;
+
+        var resolver = GetStoreResolver();
+        if (!resolver.TryResolveStoreDir(job.StoreDir, out var storeDirFull))
+            return new PosterThumbWorkResult(false, true, "invalid_store_dir", []);
+
+        var sem = GetStoreLock(job.StoreDir);
+        await sem.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (!Directory.Exists(storeDirFull))
+                return new PosterThumbWorkResult(false, true, "missing_store_dir", []);
+
+            var missing = widths
+                .Where(width => !System.IO.File.Exists(Path.Combine(storeDirFull, $"w{width}.webp")))
+                .ToArray();
+            if (missing.Length == 0)
+                return new PosterThumbWorkResult(true, true, "already_exists", []);
+
+            if (!TryResolveStoreOriginalPath(job.StoreDir, out var originalPath))
+                return new PosterThumbWorkResult(false, true, "missing_original", []);
+
+            var generated = await _thumbService.GenerateThumbsAsync(originalPath, storeDirFull, missing, ct).ConfigureAwait(false);
+            var remaining = missing
+                .Where(width => !System.IO.File.Exists(Path.Combine(storeDirFull, $"w{width}.webp")))
+                .ToArray();
+
+            return remaining.Length == 0
+                ? new PosterThumbWorkResult(true, false, "generated", generated)
+                : new PosterThumbWorkResult(generated.Count > 0, generated.Count == 0, remaining.Length == missing.Length ? "generation_failed" : "partial", generated);
+        }
+        finally
+        {
+            sem.Release();
         }
     }
 
@@ -235,6 +332,7 @@ public sealed class PosterFetchService
             if (!forceRefresh && originalPath is not null && existingThumbs.Length == PosterThumbService.SupportedWidths.Length)
             {
                 _releases.SavePosterWithStore(releaseId, tmdbId, posterPath, legacyPosterFile, posterKey, storeDir);
+                await EnqueueThumbWarmupAsync(storeDir, releaseId, ct).ConfigureAwait(false);
                 _logger.LogInformation(
                     "[POSTER_STORE] materialize skip storeDir={StoreDir} releaseId={ReleaseId} reason=already_up_to_date",
                     storeDir,
@@ -304,6 +402,7 @@ public sealed class PosterFetchService
                 .ToArray();
 
             _releases.SavePosterWithStore(releaseId, tmdbId, posterPath, legacyPosterFile, posterKey, storeDir);
+            await EnqueueThumbWarmupAsync(storeDir, releaseId, ct).ConfigureAwait(false);
 
             _logger.LogInformation(
                 "[POSTER_STORE] materialize ok storeDir={StoreDir} releaseId={ReleaseId} generated={Generated} missing={Missing}",
@@ -346,6 +445,26 @@ public sealed class PosterFetchService
             status,
             result.StoreDir ?? "none",
             result.Reason);
+    }
+
+    private async Task EnqueueThumbWarmupAsync(string? storeDir, long releaseId, CancellationToken ct)
+    {
+        try
+        {
+            var enqueue = await EnqueueThumbGenerationAsync(storeDir, PosterThumbJobReason.Warmup, ct, releaseId: releaseId).ConfigureAwait(false);
+            if (enqueue.IsTimedOut)
+            {
+                _logger.LogWarning("[POSTER_STORE] thumb warmup timed out storeDir={StoreDir} releaseId={ReleaseId}", storeDir, releaseId);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[POSTER_STORE] thumb warmup enqueue failed storeDir={StoreDir} releaseId={ReleaseId}", storeDir, releaseId);
+        }
     }
 
     private static bool TryResolveStoreIdentity(

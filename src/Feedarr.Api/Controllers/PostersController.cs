@@ -37,7 +37,7 @@ public sealed class PostersController : ControllerBase
     private readonly RawgClient _rawg;
     private readonly ComicVineClient _comicVine;
     private readonly MusicBrainzClient _musicBrainz;
-    private readonly PosterThumbService _thumbService;
+    private readonly IPosterThumbQueue _thumbQueue;
     private readonly ILogger<PostersController> _log;
 
     public PostersController(
@@ -58,7 +58,8 @@ public sealed class PostersController : ControllerBase
         ComicVineClient comicVine,
         MusicBrainzClient musicBrainz,
         ILogger<PostersController> log,
-        PosterThumbService? thumbService = null)
+        PosterThumbService? thumbService = null,
+        IPosterThumbQueue? thumbQueue = null)
     {
         _releases = releases;
         _mediaEntities = mediaEntities;
@@ -76,7 +77,7 @@ public sealed class PostersController : ControllerBase
         _rawg = rawg;
         _comicVine = comicVine;
         _musicBrainz = musicBrainz;
-        _thumbService = thumbService ?? new PosterThumbService(Microsoft.Extensions.Logging.Abstractions.NullLogger<PosterThumbService>.Instance);
+        _thumbQueue = thumbQueue ?? NoOpPosterThumbQueue.Instance;
         _log = log;
     }
 
@@ -997,13 +998,10 @@ public sealed class PostersController : ControllerBase
     private PosterPathResolver CreatePosterPathResolver()
         => new(_posterFetch.PostersDirPath);
 
-    private PosterStorePathResolver CreateStoreResolver()
-        => new(_posterFetch.PosterStoreDirPath);
-
     /// <summary>
     /// Resolves and serves a poster thumbnail with the following fallback chain:
     /// 1. store/{storeDir}/w{w}.webp (pre-generated WebP thumb)
-    /// 2. store/{storeDir}/original.* (full-size original from store — re-generates thumb on the fly)
+    /// 2. store/{storeDir}/original.* (full-size original from store — enqueue thumb warmup, serve original immediately)
     /// 3. legacy flat poster_file
     /// 4. 404
     /// All served paths get <c>Cache-Control: public, max-age=31536000, immutable</c>.
@@ -1011,16 +1009,12 @@ public sealed class PostersController : ControllerBase
     private async Task<IActionResult> BuildThumbResultAsync(
         string? storeDir, string? posterFile, int w, string logContext, CancellationToken ct)
     {
-        // Clamp to supported widths (serve nearest available if requested width not exact)
         var effectiveWidth = PosterThumbService.SupportedWidths.Contains(w)
             ? w
             : PosterThumbService.SupportedWidths.OrderBy(sw => Math.Abs(sw - w)).First();
 
-        var storeResolver = CreateStoreResolver();
-
-        // 1. Try pre-generated WebP thumb from store
         if (!string.IsNullOrWhiteSpace(storeDir) &&
-            storeResolver.TryResolvePosterFile(storeDir, $"w{effectiveWidth}.webp", out var thumbFull) &&
+            _posterFetch.TryResolveStoreThumbPath(storeDir, effectiveWidth, out var thumbFull) &&
             System.IO.File.Exists(thumbFull))
         {
             Response.Headers.CacheControl = "public, max-age=31536000, immutable";
@@ -1028,46 +1022,13 @@ public sealed class PostersController : ControllerBase
             return PhysicalFile(thumbFull, "image/webp");
         }
 
-        // 2. Try original from store → generate thumb on-the-fly
         if (!string.IsNullOrWhiteSpace(storeDir) &&
-            storeResolver.TryResolveStoreDir(storeDir, out var storeDirFull) &&
-            Directory.Exists(storeDirFull))
+            _posterFetch.TryResolveStoreOriginalPath(storeDir, out var originalPath))
         {
-            var origFiles = Directory.GetFiles(storeDirFull, "original.*");
-            var origFile = origFiles.FirstOrDefault();
-            if (origFile is not null && System.IO.File.Exists(origFile))
-            {
-                // Attempt on-the-fly thumb generation (best-effort, non-blocking)
-                try
-                {
-                    var thumbBytes = await _thumbService.GenerateSingleThumbAsync(origFile, effectiveWidth, ct).ConfigureAwait(false);
-                    if (thumbBytes is not null && thumbBytes.Length > 0)
-                    {
-                        // Write for next hit
-                        var writePath = Path.Combine(storeDirFull, $"w{effectiveWidth}.webp");
-                        var tmpPath = writePath + ".tmp";
-                        await System.IO.File.WriteAllBytesAsync(tmpPath, thumbBytes, ct).ConfigureAwait(false);
-                        System.IO.File.Move(tmpPath, writePath, overwrite: true);
-
-                        Response.Headers.CacheControl = "public, max-age=31536000, immutable";
-                        Response.Headers.Vary = "Accept-Encoding";
-                        return PhysicalFile(writePath, "image/webp");
-                    }
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
-                {
-                    _log.LogWarning(ex, "On-the-fly thumb generation failed for {Context}", logContext);
-                }
-
-                // Serve original as fallback
-                Response.Headers.CacheControl = "public, max-age=31536000, immutable";
-                Response.Headers.Vary = "Accept-Encoding";
-                return PhysicalFile(origFile, GetContentTypeForPoster(origFile));
-            }
+            await EnqueueMissingThumbAsync(storeDir, effectiveWidth, logContext, ct).ConfigureAwait(false);
+            return BuildAbsolutePosterFileResult(originalPath, logContext);
         }
 
-        // 3. Legacy flat poster_file fallback
         if (!string.IsNullOrWhiteSpace(posterFile))
             return BuildPosterFileResult(posterFile, logContext);
 
@@ -1091,38 +1052,64 @@ public sealed class PostersController : ControllerBase
         if (!TryResolveStoredPosterPath(storedFile, out var fullPath))
             return NotFound();
 
+        return BuildAbsolutePosterFileResult(fullPath, logContext, cacheControl, SanitizeForLog(storedFile));
+    }
+
+    private async Task EnqueueMissingThumbAsync(string storeDir, int width, string logContext, CancellationToken ct)
+    {
         try
         {
-            using var stream = new FileStream(
-                fullPath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete);
+            var enqueue = await _thumbQueue.EnqueueAsync(
+                new PosterThumbJob(storeDir, [width], PosterThumbJobReason.MissingThumb),
+                ct,
+                PosterThumbQueue.DefaultEnqueueTimeout).ConfigureAwait(false);
+            if (enqueue.IsTimedOut)
+                _log.LogWarning("Poster thumb enqueue timed out for {Context} storeDir={StoreDir} width={Width}", logContext, storeDir, width);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Poster thumb enqueue failed for {Context} storeDir={StoreDir} width={Width}", logContext, storeDir, width);
+        }
+    }
 
-            Response.Headers.CacheControl = cacheControl;
-            Response.Headers.Vary = "Accept-Encoding";
-            return PhysicalFile(fullPath, GetContentTypeForPoster(fullPath));
-        }
-        catch (FileNotFoundException)
+    private IActionResult BuildAbsolutePosterFileResult(
+        string fullPath,
+        string logContext,
+        string cacheControl = "public, max-age=31536000, immutable",
+        string? logFile = null)
+    {
+        try
         {
-            _log.LogInformation("Poster file missing for {Context}: {File}", logContext, SanitizeForLog(storedFile));
-            return NotFound();
-        }
-        catch (DirectoryNotFoundException)
-        {
-            _log.LogInformation("Poster directory missing for {Context}: {File}", logContext, SanitizeForLog(storedFile));
-            return NotFound();
+            if (Directory.Exists(fullPath))
+            {
+                _log.LogWarning("Poster file path resolves to a directory for {Context}: {File}", logContext, logFile ?? SanitizeForLog(Path.GetFileName(fullPath)));
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "poster file unavailable" });
+            }
+
+            if (!System.IO.File.Exists(fullPath))
+            {
+                _log.LogInformation("Poster file missing for {Context}: {File}", logContext, logFile ?? SanitizeForLog(Path.GetFileName(fullPath)));
+                return NotFound();
+            }
         }
         catch (UnauthorizedAccessException ex)
         {
-            _log.LogWarning(ex, "Poster file access denied for {Context}: {File}", logContext, SanitizeForLog(storedFile));
+            _log.LogWarning(ex, "Poster file access denied for {Context}: {File}", logContext, logFile ?? SanitizeForLog(Path.GetFileName(fullPath)));
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "poster file unavailable" });
         }
         catch (IOException ex)
         {
-            _log.LogWarning(ex, "Poster file read failed for {Context}: {File}", logContext, SanitizeForLog(storedFile));
+            _log.LogWarning(ex, "Poster file read failed for {Context}: {File}", logContext, logFile ?? SanitizeForLog(Path.GetFileName(fullPath)));
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "poster file unavailable" });
         }
+
+        Response.Headers.CacheControl = cacheControl;
+        Response.Headers.Vary = "Accept-Encoding";
+        return PhysicalFile(fullPath, GetContentTypeForPoster(fullPath));
     }
 
     private static string GetContentTypeForPoster(string fullPath)

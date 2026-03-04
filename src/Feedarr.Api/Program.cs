@@ -190,6 +190,8 @@ builder.Services.AddSingleton<SyncOrchestrationService>();
 builder.Services.AddSingleton<RetroFetchLogService>();
 builder.Services.AddSingleton<IPosterFetchQueue, PosterFetchQueue>();
 builder.Services.AddHostedService<PosterFetchWorker>();
+builder.Services.AddSingleton<IPosterThumbQueue, PosterThumbQueue>();
+builder.Services.AddHostedService<PosterThumbWorker>();
 builder.Services.AddSingleton<MediaEntityArrStatusService>();
 builder.Services.AddSingleton<ExternalIdBackfillService>();
 builder.Services.AddSingleton<RequestTmdbResolverService>();
