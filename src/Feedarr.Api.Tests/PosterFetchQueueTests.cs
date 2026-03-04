@@ -99,6 +99,23 @@ public sealed class PosterFetchQueueTests
         Assert.NotNull(snapshot.LastJobStartedAtTs);
     }
 
+    [Fact]
+    public async Task DequeueAsync_AllowsTwoConcurrentReaders()
+    {
+        var queue = CreateQueue();
+
+        await queue.EnqueueAsync(CreateJob(50), CancellationToken.None, PosterFetchQueue.DefaultEnqueueTimeout);
+        await queue.EnqueueAsync(CreateJob(51), CancellationToken.None, PosterFetchQueue.DefaultEnqueueTimeout);
+
+        var firstTask = queue.DequeueAsync(CancellationToken.None).AsTask();
+        var secondTask = queue.DequeueAsync(CancellationToken.None).AsTask();
+
+        await Task.WhenAll(firstTask, secondTask);
+
+        Assert.NotEqual(firstTask.Result.ItemId, secondTask.Result.ItemId);
+        Assert.Equal(2, queue.GetSnapshot().InFlightCount);
+    }
+
     private static PosterFetchQueue CreateQueue()
         => new(NullLogger<PosterFetchQueue>.Instance);
 

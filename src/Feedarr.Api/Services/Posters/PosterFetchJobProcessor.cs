@@ -6,18 +6,22 @@ using Microsoft.Extensions.Options;
 
 namespace Feedarr.Api.Services.Posters;
 
-public sealed class PosterFetchWorker : BackgroundService
+public interface IPosterFetchJobProcessor
 {
-    private readonly ILogger<PosterFetchWorker> _log;
+    Task<PosterFetchProcessResult> ProcessJobAsync(PosterFetchJob job, int workerId, CancellationToken stoppingToken);
+}
+
+public sealed class PosterFetchJobProcessor : IPosterFetchJobProcessor
+{
+    private readonly ILogger<PosterFetchJobProcessor> _log;
     private readonly IPosterFetchQueue _queue;
     private readonly PosterFetchService _posters;
     private readonly ReleaseRepository _releases;
     private readonly RetroFetchLogService _retroLogs;
     private readonly PosterFetchOptions _opt;
-    private DateTimeOffset _nextAllowed = DateTimeOffset.MinValue;
 
-    public PosterFetchWorker(
-        ILogger<PosterFetchWorker> log,
+    public PosterFetchJobProcessor(
+        ILogger<PosterFetchJobProcessor> log,
         IPosterFetchQueue queue,
         PosterFetchService posters,
         ReleaseRepository releases,
@@ -32,36 +36,11 @@ public sealed class PosterFetchWorker : BackgroundService
         _opt = opt.Value;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            PosterFetchJob currentJob;
-            try
-            {
-                currentJob = await _queue.DequeueAsync(stoppingToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-
-            while (true)
-            {
-                var result = await ProcessJobAsync(currentJob, stoppingToken).ConfigureAwait(false);
-                var followUp = _queue.Complete(currentJob, result);
-                if (followUp is null)
-                    break;
-
-                currentJob = followUp;
-            }
-        }
-    }
-
-    private async Task<PosterFetchProcessResult> ProcessJobAsync(PosterFetchJob job, CancellationToken stoppingToken)
+    public async Task<PosterFetchProcessResult> ProcessJobAsync(PosterFetchJob job, int workerId, CancellationToken stoppingToken)
     {
         _log.LogInformation(
-            "Poster job start {ItemId} title={Title} year={Year} category={Category} force={Force} attempt={Attempt}",
+            "Poster worker {WorkerId} job start {ItemId} title={Title} year={Year} category={Category} force={Force} attempt={Attempt}",
+            workerId,
             job.ItemId,
             job.Title,
             job.Year,
@@ -72,7 +51,7 @@ public sealed class PosterFetchWorker : BackgroundService
         var release = _releases.GetForPoster(job.ItemId);
         if (release is null)
         {
-            _log.LogWarning("Poster job skipped (release missing) {ItemId}", job.ItemId);
+            _log.LogWarning("Poster worker {WorkerId} job skipped (release missing) {ItemId}", workerId, job.ItemId);
             return new PosterFetchProcessResult(true);
         }
 
@@ -82,7 +61,7 @@ public sealed class PosterFetchWorker : BackgroundService
 
         if (!job.ForceRefresh && ShouldSkipByTtl(release))
         {
-            _log.LogInformation("Poster job skipped by TTL {ItemId}", job.ItemId);
+            _log.LogInformation("Poster worker {WorkerId} job skipped by TTL {ItemId}", workerId, job.ItemId);
             return new PosterFetchProcessResult(true);
         }
 
@@ -92,8 +71,6 @@ public sealed class PosterFetchWorker : BackgroundService
         {
             attempt++;
             string? lastFailureOverride = null;
-
-            await ApplyRateLimitAsync(stoppingToken).ConfigureAwait(false);
 
             try
             {
@@ -109,7 +86,8 @@ public sealed class PosterFetchWorker : BackgroundService
                 if (res.Ok)
                 {
                     _log.LogInformation(
-                        "Poster job success {ItemId} status={Status}",
+                        "Poster worker {WorkerId} job success {ItemId} status={Status}",
+                        workerId,
                         job.ItemId,
                         res.StatusCode);
                     return new PosterFetchProcessResult(true);
@@ -118,7 +96,8 @@ public sealed class PosterFetchWorker : BackgroundService
                 if (!ShouldRetry(res.StatusCode))
                 {
                     _log.LogWarning(
-                        "Poster job failed (no retry) {ItemId} status={Status}",
+                        "Poster worker {WorkerId} job failed (no retry) {ItemId} status={Status}",
+                        workerId,
                         job.ItemId,
                         res.StatusCode);
                     LogRetroFailure(job, lastFailureOverride);
@@ -127,18 +106,18 @@ public sealed class PosterFetchWorker : BackgroundService
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
-                _log.LogWarning("Poster job cancelled {ItemId}", job.ItemId);
+                _log.LogWarning("Poster worker {WorkerId} job cancelled {ItemId}", workerId, job.ItemId);
                 return new PosterFetchProcessResult(false);
             }
             catch (OperationCanceledException)
             {
-                _log.LogWarning("Poster job timed out {ItemId} attempt={Attempt}", job.ItemId, attempt);
+                _log.LogWarning("Poster worker {WorkerId} job timed out {ItemId} attempt={Attempt}", workerId, job.ItemId, attempt);
                 PosterAudit.UpdateAttemptFailure(_releases, job.ItemId, null, null, null, null, "timeout");
                 lastFailureOverride = "timeout";
             }
             catch (Exception ex)
             {
-                _log.LogError(ex, "Poster job error {ItemId} attempt={Attempt}", job.ItemId, attempt);
+                _log.LogError(ex, "Poster worker {WorkerId} job error {ItemId} attempt={Attempt}", workerId, job.ItemId, attempt);
                 var error = $"exception: {ex.GetType().Name}: {ex.Message}";
                 if (error.Length > 200)
                     error = error[..200];
@@ -148,14 +127,14 @@ public sealed class PosterFetchWorker : BackgroundService
 
             if (attempt >= maxAttempts)
             {
-                _log.LogError("Poster job failed after retries {ItemId}", job.ItemId);
+                _log.LogError("Poster worker {WorkerId} job failed after retries {ItemId}", workerId, job.ItemId);
                 LogRetroFailure(job, lastFailureOverride);
                 return new PosterFetchProcessResult(false);
             }
 
             if (DateTimeOffset.UtcNow - startedAt >= maxItemDuration)
             {
-                _log.LogWarning("Poster job time budget exceeded {ItemId}", job.ItemId);
+                _log.LogWarning("Poster worker {WorkerId} job time budget exceeded {ItemId}", workerId, job.ItemId);
                 PosterAudit.UpdateAttemptFailure(_releases, job.ItemId, null, null, null, null, "time budget exceeded");
                 LogRetroFailure(job, "time budget exceeded");
                 return new PosterFetchProcessResult(false);
@@ -163,7 +142,8 @@ public sealed class PosterFetchWorker : BackgroundService
 
             var delay = GetBackoffDelay(attempt);
             _log.LogInformation(
-                "Poster job retrying {ItemId} attempt={NextAttempt} delayMs={DelayMs}",
+                "Poster worker {WorkerId} job retrying {ItemId} attempt={NextAttempt} delayMs={DelayMs}",
+                workerId,
                 job.ItemId,
                 attempt + 1,
                 delay.TotalMilliseconds);
@@ -175,7 +155,7 @@ public sealed class PosterFetchWorker : BackgroundService
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
-                _log.LogWarning("Poster job cancelled during retry delay {ItemId}", job.ItemId);
+                _log.LogWarning("Poster worker {WorkerId} job cancelled during retry delay {ItemId}", workerId, job.ItemId);
                 return new PosterFetchProcessResult(false);
             }
         }
@@ -221,19 +201,6 @@ public sealed class PosterFetchWorker : BackgroundService
             provider,
             query,
             reason));
-    }
-
-    private async Task ApplyRateLimitAsync(CancellationToken ct)
-    {
-        var now = DateTimeOffset.UtcNow;
-        if (now < _nextAllowed)
-        {
-            var delay = _nextAllowed - now;
-            _log.LogInformation("Poster fetch rate limited; delaying {DelayMs}ms", delay.TotalMilliseconds);
-            await Task.Delay(delay, ct).ConfigureAwait(false);
-        }
-
-        _nextAllowed = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(Math.Max(0, _opt.MinIntervalMs));
     }
 
     private bool ShouldSkipByTtl(ReleaseForPoster release)

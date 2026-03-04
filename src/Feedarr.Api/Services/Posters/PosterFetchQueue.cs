@@ -30,7 +30,7 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
         _log = log;
         _channel = Channel.CreateBounded<long>(new BoundedChannelOptions(Capacity)
         {
-            SingleReader = true,
+            SingleReader = false,
             SingleWriter = false,
             AllowSynchronousContinuations = false,
             FullMode = BoundedChannelFullMode.Wait,
@@ -115,7 +115,7 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
                 var startedAtTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 _lastJobStartedAtTs = startedAtTs;
                 _currentJob = new PosterFetchCurrentJobSnapshot(entry.Job.ItemId, entry.Job.ForceRefresh, startedAtTs);
-                Interlocked.Exchange(ref _inFlightCount, 1);
+                Interlocked.Increment(ref _inFlightCount);
                 return entry.Job;
             }
         }
@@ -139,7 +139,7 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
             if (!_entries.TryGetValue(job.ItemId, out var entry))
             {
                 _currentJob = null;
-                Interlocked.Exchange(ref _inFlightCount, 0);
+                DecrementInFlightCount();
                 return null;
             }
 
@@ -153,13 +153,12 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
                 var startedAtTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 _lastJobStartedAtTs = startedAtTs;
                 _currentJob = new PosterFetchCurrentJobSnapshot(followUp.ItemId, followUp.ForceRefresh, startedAtTs);
-                Interlocked.Exchange(ref _inFlightCount, 1);
                 return followUp;
             }
 
             _entries.TryRemove(job.ItemId, out _);
             _currentJob = null;
-            Interlocked.Exchange(ref _inFlightCount, 0);
+            DecrementInFlightCount();
             return null;
         }
     }
@@ -285,6 +284,19 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
                 ? incoming.RetroLogFile
                 : baseJob.RetroLogFile
         };
+    }
+
+    private void DecrementInFlightCount()
+    {
+        while (true)
+        {
+            var snapshot = Interlocked.Read(ref _inFlightCount);
+            if (snapshot <= 0)
+                return;
+
+            if (Interlocked.CompareExchange(ref _inFlightCount, snapshot - 1, snapshot) == snapshot)
+                return;
+        }
     }
 
     private sealed class QueueEntry
