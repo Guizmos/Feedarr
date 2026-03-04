@@ -175,16 +175,6 @@ function SettingsStandardPage({ section }) {
             }
           />
         )}
-        {showUsers && (
-          <>
-            <div className="subspacer" />
-            <SubAction
-              icon="info"
-              label={tSecurity("settings.security.subbar.info")}
-              onClick={() => setAuthModesInfoOpen(true)}
-            />
-          </>
-        )}
         {showApplications && (
           <>
             <div className="subspacer" />
@@ -221,6 +211,7 @@ function SettingsStandardPage({ section }) {
     showBackup,
     showExternals,
     saveState,
+    canSave,
     canAddArrApp,
     triggerArrSync,
     arrSyncing,

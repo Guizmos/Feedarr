@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSubbarSetter } from "../../layout/useSubbar.js";
 import SubAction from "../../ui/SubAction.jsx";
 import Loader from "../../ui/Loader.jsx";
@@ -46,13 +46,13 @@ export default function SettingsSecurityPage() {
     saveSecuritySettings,
   } = securitySettings;
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     try {
       await loadSecuritySettings();
     } catch {
       // Load error is already exposed in hook state.
     }
-  };
+  }, [loadSecuritySettings]);
 
   const performSave = async (options = {}) => {
     if (!isDirty || saveState === "loading") return;
@@ -101,7 +101,7 @@ export default function SettingsSecurityPage() {
     if (hasLoadedRef.current) return;
     hasLoadedRef.current = true;
     void handleRefresh();
-  }, []);
+  }, [handleRefresh]);
 
   useEffect(() => {
     setContent(
