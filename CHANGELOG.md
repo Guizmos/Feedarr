@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.4.0](https://github.com/Guizmos/Feedarr/compare/v2.3.0...v2.4.0) (2026-03-04)
+
+
+### Features
+
+* **maintenance:** advanced panel + provider-aware manual limits ([55f850d](https://github.com/Guizmos/Feedarr/commit/55f850d1ac2b615e5afec6155be32d08eb364417))
+
+
+### Bug Fixes
+
+* **CI:** Fix CI error ([2d8dadf](https://github.com/Guizmos/Feedarr/commit/2d8dadff536506376fd87361ab300e5a88ae7341))
+* **CI:** Fix CI error ([cd38499](https://github.com/Guizmos/Feedarr/commit/cd38499d8b00d29c7ca21dee3c013d0b66b2f34e))
+* **settings:** resolve undefined variables after settings refactor ([28a32c2](https://github.com/Guizmos/Feedarr/commit/28a32c2140ee2bd0ebb7517c075212a696d0a3d3))
+* **UI:** fix CI error ([aa21509](https://github.com/Guizmos/Feedarr/commit/aa215091d86ef37a72901fe269ce09281f3b4c02))
+* **UI:** fix CI error ([0b48d32](https://github.com/Guizmos/Feedarr/commit/0b48d3264267f536bff18865515c690f72d63c35))
+* **UI:** fix error download message ([38f4d2d](https://github.com/Guizmos/Feedarr/commit/38f4d2dfa7e61c00819b6fbe8be0b668f0cc049c))
+
+
+### Performance Improvements
+
+* **posters:** enable configurable poster worker pool (1-2) ([c69e1a9](https://github.com/Guizmos/Feedarr/commit/c69e1a981194b52a5451a94647adc6b17f2acc4f))
+* **posters:** move thumbnail generation out of HTTP path ([aa81486](https://github.com/Guizmos/Feedarr/commit/aa814861f48a6f0a2a586499ecac68feed6a5489))
+* **providers:** add per-provider concurrency limiter ([62f3966](https://github.com/Guizmos/Feedarr/commit/62f3966e6398934d43aa8803797517083a958cd8))
+* **sqlite:** remove shared cache mode and log startup options ([5763ae2](https://github.com/Guizmos/Feedarr/commit/5763ae243d1cb48b821031421c5aa1e040c22d74))
+* **sync:** add bounded parallelism for source synchronization ([63c0c23](https://github.com/Guizmos/Feedarr/commit/63c0c23eaf549ba14786777557b345d60ed5a39e))
+
 ## [2.3.0](https://github.com/Guizmos/Feedarr/compare/v2.2.1...v2.3.0) (2026-03-03)
 
 
