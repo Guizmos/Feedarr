@@ -167,6 +167,7 @@ builder.Services.AddSingleton<AuthThrottleService>();
 builder.Services.AddSingleton<CategoryRecommendationService>();
 builder.Services.AddSingleton<ExternalProviderRegistry>();
 builder.Services.AddSingleton<ActiveExternalProviderConfigResolver>();
+builder.Services.AddSingleton<IExternalProviderLimiter, ExternalProviderLimiter>();
 builder.Services.AddSingleton<ExternalProviderTestService>();
 builder.Services.AddHostedService<BasicAuthTransportSecurityStartupService>();
 builder.Services.AddHostedService<ExternalProvidersBootstrapService>();

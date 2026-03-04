@@ -38,6 +38,7 @@ public sealed class PostersController : ControllerBase
     private readonly ComicVineClient _comicVine;
     private readonly MusicBrainzClient _musicBrainz;
     private readonly IPosterThumbQueue _thumbQueue;
+    private readonly IExternalProviderLimiter _externalProviderLimiter;
     private readonly ILogger<PostersController> _log;
 
     public PostersController(
@@ -59,7 +60,8 @@ public sealed class PostersController : ControllerBase
         MusicBrainzClient musicBrainz,
         ILogger<PostersController> log,
         PosterThumbService? thumbService = null,
-        IPosterThumbQueue? thumbQueue = null)
+        IPosterThumbQueue? thumbQueue = null,
+        IExternalProviderLimiter? externalProviderLimiter = null)
     {
         _releases = releases;
         _mediaEntities = mediaEntities;
@@ -78,6 +80,7 @@ public sealed class PostersController : ControllerBase
         _comicVine = comicVine;
         _musicBrainz = musicBrainz;
         _thumbQueue = thumbQueue ?? NoOpPosterThumbQueue.Instance;
+        _externalProviderLimiter = externalProviderLimiter ?? NoOpExternalProviderLimiter.Instance;
         _log = log;
     }
 
@@ -434,8 +437,8 @@ public sealed class PostersController : ControllerBase
         var results = new List<PosterSearchResult>();
         if (mediaType == "game")
         {
-            var igdbTask = _igdb.SearchGameListAsync(query, null, ct);
-            var rawgTask = _rawg.SearchGameListAsync(query, ct);
+            var igdbTask = RunProviderAsync(ProviderKind.Igdb, innerCt => _igdb.SearchGameListAsync(query, null, innerCt), ct);
+            var rawgTask = RunProviderAsync(ProviderKind.Others, innerCt => _rawg.SearchGameListAsync(query, innerCt), ct);
             await Task.WhenAll(igdbTask, rawgTask);
 
             results.AddRange(igdbTask.Result.Select(r => new PosterSearchResult
@@ -469,8 +472,8 @@ public sealed class PostersController : ControllerBase
             var (artist, title) = ParseAudioSearchQuery(query);
 
             // Run TheAudioDB and MusicBrainz searches in parallel
-            var audioDbTask = _theAudioDb.SearchAudioListAsync(title, artist, null, ct);
-            var mbTask = _musicBrainz.SearchReleaseListAsync(title, artist, ct);
+            var audioDbTask = RunProviderAsync(ProviderKind.Others, innerCt => _theAudioDb.SearchAudioListAsync(title, artist, null, innerCt), ct);
+            var mbTask = RunProviderAsync(ProviderKind.Others, innerCt => _musicBrainz.SearchReleaseListAsync(title, artist, innerCt), ct);
             await Task.WhenAll(audioDbTask, mbTask);
 
             results.AddRange(audioDbTask.Result.Select(audio =>
@@ -510,8 +513,8 @@ public sealed class PostersController : ControllerBase
         }
         else if (mediaType == "book")
         {
-            var gbTask = _googleBooks.SearchBookAsync(query, null, ct);
-            var olTask = _openLibrary.SearchBookListAsync(query, ct);
+            var gbTask = RunProviderAsync(ProviderKind.Others, innerCt => _googleBooks.SearchBookAsync(query, null, innerCt), ct);
+            var olTask = RunProviderAsync(ProviderKind.Others, innerCt => _openLibrary.SearchBookListAsync(query, innerCt), ct);
             await Task.WhenAll(gbTask, olTask);
             var gbBook = await gbTask;
             var olBooks = await olTask;
@@ -548,7 +551,7 @@ public sealed class PostersController : ControllerBase
         }
         else if (mediaType == "comic")
         {
-            var comic = await _comicVine.SearchComicAsync(query, null, ct);
+            var comic = await RunProviderAsync(ProviderKind.Others, innerCt => _comicVine.SearchComicAsync(query, null, innerCt), ct);
             if (comic is not null)
             {
                 results.Add(new PosterSearchResult
@@ -566,7 +569,7 @@ public sealed class PostersController : ControllerBase
         }
         else if (mediaType == "series")
         {
-            var tv = await _tmdb.SearchTvListAsync(query, null, ct);
+            var tv = await RunProviderAsync(ProviderKind.Tmdb, innerCt => _tmdb.SearchTvListAsync(query, null, innerCt), ct);
             results.AddRange(tv.Select(r => new PosterSearchResult
             {
                 Provider = "tmdb",
@@ -582,7 +585,7 @@ public sealed class PostersController : ControllerBase
         }
         else if (mediaType == "movie")
         {
-            var movies = await _tmdb.SearchMovieListAsync(query, null, ct);
+            var movies = await RunProviderAsync(ProviderKind.Tmdb, innerCt => _tmdb.SearchMovieListAsync(query, null, innerCt), ct);
             results.AddRange(movies.Select(r => new PosterSearchResult
             {
                 Provider = "tmdb",
@@ -598,8 +601,8 @@ public sealed class PostersController : ControllerBase
         }
         else
         {
-            var moviesTask = _tmdb.SearchMovieListAsync(query, null, ct);
-            var tvTask = _tmdb.SearchTvListAsync(query, null, ct);
+            var moviesTask = RunProviderAsync(ProviderKind.Tmdb, innerCt => _tmdb.SearchMovieListAsync(query, null, innerCt), ct);
+            var tvTask = RunProviderAsync(ProviderKind.Tmdb, innerCt => _tmdb.SearchTvListAsync(query, null, innerCt), ct);
             await Task.WhenAll(moviesTask, tvTask);
             var movies = moviesTask.Result;
             var tv = tvTask.Result;
@@ -994,6 +997,9 @@ public sealed class PostersController : ControllerBase
     /// </summary>
     private static string SanitizeForLog(string value)
         => value.Replace('\r', ' ').Replace('\n', ' ').Replace('\t', ' ');
+
+    private Task<T> RunProviderAsync<T>(ProviderKind kind, Func<CancellationToken, Task<T>> action, CancellationToken ct)
+        => _externalProviderLimiter.RunAsync(kind, action, ct);
 
     private PosterPathResolver CreatePosterPathResolver()
         => new(_posterFetch.PostersDirPath);
