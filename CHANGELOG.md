@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.4.4](https://github.com/Guizmos/Feedarr/compare/v2.4.3...v2.4.4) (2026-03-05)
+
+
+### Bug Fixes
+
+* **badges:** prevent Library badge reappearing on internal navigation ([c386b99](https://github.com/Guizmos/Feedarr/commit/c386b992c2bcbf39f25762d28e86c2a46a463d5f))
+* **badges:** prevent Library badge reappearing on internal navigation ([00dbdd3](https://github.com/Guizmos/Feedarr/commit/00dbdd343decb4a244d18250282a199517fc2bc7))
+
 ## [2.4.3](https://github.com/Guizmos/Feedarr/compare/v2.4.2...v2.4.3) (2026-03-05)
 
 
