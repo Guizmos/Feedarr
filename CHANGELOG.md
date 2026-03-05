@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.4.3](https://github.com/Guizmos/Feedarr/compare/v2.4.2...v2.4.3) (2026-03-05)
+
+
+### Bug Fixes
+
+* **UI:** fix CI error ([cecc8a0](https://github.com/Guizmos/Feedarr/commit/cecc8a004a5b73353998f7f66f8623a72daad152))
+
+
+### Performance Improvements
+
+* **badges:** shared base summary cache + single-flight for /api/badges/summary ([8397e33](https://github.com/Guizmos/Feedarr/commit/8397e33f568f9591749738dd5eb389d917ca4e2c))
+
 ## [2.4.2](https://github.com/Guizmos/Feedarr/compare/v2.4.1...v2.4.2) (2026-03-05)
 
 
