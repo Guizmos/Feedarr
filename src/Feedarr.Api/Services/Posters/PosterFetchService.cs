@@ -68,6 +68,7 @@ public sealed class PosterFetchService
     // Per-storeDir semaphores to prevent concurrent races writing the same store directory.
     private readonly Dictionary<string, SemaphoreSlim> _storeLocks = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _storeLocksGate = new();
+    private readonly TimeSpan _thumbEnqueueTimeout;
 
     private enum StoreMaterializationStatus
     {
@@ -129,6 +130,7 @@ public sealed class PosterFetchService
         _matchingOrchestrator = matchingOrchestrator;
         _activeConfigResolver = activeConfigResolver;
         _logger = logger;
+        _thumbEnqueueTimeout = ResolveThumbEnqueueTimeout(_opt);
 
         // Compute once: data/ is relative → anchor on ContentRoot
         _dataDirAbs = Path.IsPathRooted(opt.Value.DataDir)
@@ -233,7 +235,19 @@ public sealed class PosterFetchService
             Reason: reason,
             ReleaseId: releaseId);
 
-        return await _thumbQueue.EnqueueAsync(job, ct, PosterThumbQueue.DefaultEnqueueTimeout).ConfigureAwait(false);
+        var enqueue = await _thumbQueue.EnqueueAsync(job, ct, _thumbEnqueueTimeout).ConfigureAwait(false);
+        if (enqueue.IsTimedOut)
+        {
+            _logger.LogWarning(
+                "Poster thumb enqueue timed out reason={Reason} storeDir={StoreDir} releaseId={ReleaseId} timeoutMs={TimeoutMs} backlog={Backlog}",
+                reason,
+                storeDir,
+                releaseId,
+                (int)_thumbEnqueueTimeout.TotalMilliseconds,
+                _thumbQueue.Count);
+        }
+
+        return enqueue;
     }
 
     internal async Task<PosterThumbWorkResult> EnsureThumbsAsync(PosterThumbJob job, CancellationToken ct)
@@ -478,7 +492,7 @@ public sealed class PosterFetchService
             var enqueue = await EnqueueThumbGenerationAsync(storeDir, PosterThumbJobReason.Warmup, ct, releaseId: releaseId).ConfigureAwait(false);
             if (enqueue.IsTimedOut)
             {
-                _logger.LogWarning("[POSTER_STORE] thumb warmup timed out storeDir={StoreDir} releaseId={ReleaseId}", storeDir, releaseId);
+                _logger.LogWarning("[POSTER_STORE] thumb warmup timed out storeDir={StoreDir} releaseId={ReleaseId} backlog={Backlog}", storeDir, releaseId, _thumbQueue.Count);
             }
         }
         catch (OperationCanceledException)
@@ -489,6 +503,14 @@ public sealed class PosterFetchService
         {
             _logger.LogWarning(ex, "[POSTER_STORE] thumb warmup enqueue failed storeDir={StoreDir} releaseId={ReleaseId}", storeDir, releaseId);
         }
+    }
+
+    private static TimeSpan ResolveThumbEnqueueTimeout(AppOptions options)
+    {
+        var timeoutMs = options.ThumbEnqueueTimeoutMs <= 0
+            ? PosterThumbQueue.DefaultEnqueueTimeoutMs
+            : options.ThumbEnqueueTimeoutMs;
+        return TimeSpan.FromMilliseconds(Math.Clamp(timeoutMs, 100, 30000));
     }
 
     private static bool TryResolveStoreIdentity(

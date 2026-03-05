@@ -15,6 +15,8 @@ using Feedarr.Api.Models;
 using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services.ExternalProviders;
 using Microsoft.Extensions.Caching.Memory;
+using Feedarr.Api.Options;
+using Microsoft.Extensions.Options;
 
 namespace Feedarr.Api.Controllers;
 
@@ -24,6 +26,8 @@ public sealed class PostersController : ControllerBase
 {
     private const int MaxBulkIds = 1000;
     private static readonly TimeSpan PosterStatsCacheDuration = TimeSpan.FromSeconds(5);
+    private const string ImmutableCacheControl = "public, max-age=31536000, immutable";
+    private const string ThumbFallbackCacheControl = "public, max-age=5";
     private static readonly MemoryCache PosterStatsCache = new(new MemoryCacheOptions());
 
     private readonly ReleaseRepository _releases;
@@ -45,6 +49,7 @@ public sealed class PostersController : ControllerBase
     private readonly IPosterThumbQueue _thumbQueue;
     private readonly IExternalProviderLimiter _externalProviderLimiter;
     private readonly ILogger<PostersController> _log;
+    private readonly TimeSpan _thumbEnqueueTimeout;
 
     public PostersController(
         ReleaseRepository releases,
@@ -66,7 +71,8 @@ public sealed class PostersController : ControllerBase
         ILogger<PostersController> log,
         PosterThumbService? thumbService = null,
         IPosterThumbQueue? thumbQueue = null,
-        IExternalProviderLimiter? externalProviderLimiter = null)
+        IExternalProviderLimiter? externalProviderLimiter = null,
+        IOptions<AppOptions>? appOptions = null)
     {
         _releases = releases;
         _mediaEntities = mediaEntities;
@@ -87,6 +93,7 @@ public sealed class PostersController : ControllerBase
         _thumbQueue = thumbQueue ?? NoOpPosterThumbQueue.Instance;
         _externalProviderLimiter = externalProviderLimiter ?? NoOpExternalProviderLimiter.Instance;
         _log = log;
+        _thumbEnqueueTimeout = ResolveThumbEnqueueTimeout(appOptions?.Value);
     }
 
     // GET /api/posters/release/{id}
@@ -1039,10 +1046,10 @@ public sealed class PostersController : ControllerBase
     /// <summary>
     /// Resolves and serves a poster thumbnail with the following fallback chain:
     /// 1. store/{storeDir}/w{w}.webp (pre-generated WebP thumb)
-    /// 2. store/{storeDir}/original.* (full-size original from store — enqueue thumb warmup, serve original immediately)
+    /// 2. store/{storeDir}/original.* (full-size original from store — enqueue thumb warmup, serve original immediately with short cache)
     /// 3. legacy flat poster_file
     /// 4. 404
-    /// All served paths get <c>Cache-Control: public, max-age=31536000, immutable</c>.
+    /// Store thumb hits and legacy flat files use immutable cache headers.
     /// </summary>
     private async Task<IActionResult> BuildThumbResultAsync(
         string? storeDir, string? posterFile, int w, string logContext, CancellationToken ct)
@@ -1055,7 +1062,7 @@ public sealed class PostersController : ControllerBase
             _posterFetch.TryResolveStoreThumbPath(storeDir, effectiveWidth, out var thumbFull) &&
             System.IO.File.Exists(thumbFull))
         {
-            Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+            Response.Headers.CacheControl = ImmutableCacheControl;
             Response.Headers.Vary = "Accept-Encoding";
             return PhysicalFile(thumbFull, "image/webp");
         }
@@ -1064,7 +1071,8 @@ public sealed class PostersController : ControllerBase
             _posterFetch.TryResolveStoreOriginalPath(storeDir, out var originalPath))
         {
             await EnqueueMissingThumbAsync(storeDir, effectiveWidth, logContext, ct).ConfigureAwait(false);
-            return BuildAbsolutePosterFileResult(originalPath, logContext);
+            Response.Headers["X-Thumb-Fallback"] = "1";
+            return BuildAbsolutePosterFileResult(originalPath, logContext, ThumbFallbackCacheControl);
         }
 
         if (!string.IsNullOrWhiteSpace(posterFile))
@@ -1085,7 +1093,7 @@ public sealed class PostersController : ControllerBase
         return resolved;
     }
 
-    private IActionResult BuildPosterFileResult(string storedFile, string logContext, string cacheControl = "public, max-age=31536000, immutable")
+    private IActionResult BuildPosterFileResult(string storedFile, string logContext, string cacheControl = ImmutableCacheControl)
     {
         if (!TryResolveStoredPosterPath(storedFile, out var fullPath))
             return NotFound();
@@ -1100,9 +1108,9 @@ public sealed class PostersController : ControllerBase
             var enqueue = await _thumbQueue.EnqueueAsync(
                 new PosterThumbJob(storeDir, [width], PosterThumbJobReason.MissingThumb),
                 ct,
-                PosterThumbQueue.DefaultEnqueueTimeout).ConfigureAwait(false);
+                _thumbEnqueueTimeout).ConfigureAwait(false);
             if (enqueue.IsTimedOut)
-                _log.LogWarning("Poster thumb enqueue timed out for {Context} storeDir={StoreDir} width={Width}", logContext, storeDir, width);
+                _log.LogWarning("Poster thumb enqueue timed out for {Context} storeDir={StoreDir} width={Width} timeoutMs={TimeoutMs} backlog={Backlog}", logContext, storeDir, width, (int)_thumbEnqueueTimeout.TotalMilliseconds, _thumbQueue.Count);
         }
         catch (OperationCanceledException)
         {
@@ -1117,7 +1125,7 @@ public sealed class PostersController : ControllerBase
     private IActionResult BuildAbsolutePosterFileResult(
         string fullPath,
         string logContext,
-        string cacheControl = "public, max-age=31536000, immutable",
+        string cacheControl = ImmutableCacheControl,
         string? logFile = null)
     {
         try
@@ -1148,6 +1156,15 @@ public sealed class PostersController : ControllerBase
         Response.Headers.CacheControl = cacheControl;
         Response.Headers.Vary = "Accept-Encoding";
         return PhysicalFile(fullPath, GetContentTypeForPoster(fullPath));
+    }
+
+    private static TimeSpan ResolveThumbEnqueueTimeout(AppOptions? appOptions)
+    {
+        var timeoutMs = appOptions?.ThumbEnqueueTimeoutMs ?? PosterThumbQueue.DefaultEnqueueTimeoutMs;
+        if (timeoutMs <= 0)
+            timeoutMs = PosterThumbQueue.DefaultEnqueueTimeoutMs;
+
+        return TimeSpan.FromMilliseconds(Math.Clamp(timeoutMs, 100, 30000));
     }
 
     private static string GetContentTypeForPoster(string fullPath)

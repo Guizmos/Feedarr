@@ -85,6 +85,7 @@ public sealed class PostersControllerThumbTests
         Assert.Equal("image/webp", physical.ContentType);
         Assert.Equal("public, max-age=31536000, immutable",
             controller.Response.Headers.CacheControl.ToString());
+        Assert.False(controller.Response.Headers.ContainsKey("X-Thumb-Fallback"));
     }
 
     [Fact]
@@ -119,6 +120,28 @@ public sealed class PostersControllerThumbTests
         Assert.Equal(PosterThumbJobReason.MissingThumb, thumbQueue.LastEnqueuedJob.Reason);
         Assert.Contains(500, thumbQueue.LastEnqueuedJob.Widths ?? []);
         Assert.False(File.Exists(Path.Combine(ctx.StoreDir, "tmdb-550", "w500.webp")));
+        Assert.Equal("public, max-age=5", controller.Response.Headers.CacheControl.ToString());
+        Assert.Equal("1", controller.Response.Headers["X-Thumb-Fallback"].ToString());
+    }
+
+    [Fact]
+    public async Task GetReleasePosterThumb_MissingThumb_UsesConfiguredEnqueueTimeout()
+    {
+        using var ctx = new ThumbContext();
+        var id = ctx.CreateRelease("poster.jpg", storeDir: "tmdb-550");
+        ctx.CreateStoreOriginal("tmdb-550", ".jpg");
+        var thumbQueue = new CaptureThumbQueue();
+        var options = OptionsFactory.Create(new AppOptions
+        {
+            DataDir = ctx.DataDir,
+            DbFileName = "feedarr.db",
+            ThumbEnqueueTimeoutMs = 3210
+        });
+        var controller = ctx.CreateController(thumbQueue, options);
+
+        _ = await controller.GetReleasePosterThumb(id, 500, CancellationToken.None);
+
+        Assert.Equal(TimeSpan.FromMilliseconds(3210), thumbQueue.LastTimeout);
     }
 
     // ── entity thumb ──────────────────────────────────────────────────────────
@@ -218,8 +241,9 @@ public sealed class PostersControllerThumbTests
         public long SourceId { get; }
         public string PostersDir => PosterFetch.PostersDirPath;
         public string StoreDir => PosterFetch.PosterStoreDirPath;
+        public string DataDir => _workspace.DataDir;
 
-        public Controllers.PostersController CreateController(IPosterThumbQueue? thumbQueue = null)
+        public Controllers.PostersController CreateController(IPosterThumbQueue? thumbQueue = null, Microsoft.Extensions.Options.IOptions<AppOptions>? optionsOverride = null)
         {
             var controller = new Controllers.PostersController(
                 Releases, MediaEntities,
@@ -231,7 +255,9 @@ public sealed class PostersControllerThumbTests
                 null!, null!, null!, null!, null!, null!, null!, null!, null!,
                 NullLogger<Controllers.PostersController>.Instance,
                 new PosterThumbService(NullLogger<PosterThumbService>.Instance),
-                thumbQueue);
+                thumbQueue,
+                null,
+                optionsOverride ?? Options);
 
             controller.ControllerContext = new ControllerContext
             {
@@ -316,10 +342,12 @@ public sealed class PostersControllerThumbTests
     private sealed class CaptureThumbQueue : IPosterThumbQueue
     {
         public PosterThumbJob? LastEnqueuedJob { get; private set; }
+        public TimeSpan LastTimeout { get; private set; }
 
         public ValueTask<PosterThumbEnqueueResult> EnqueueAsync(PosterThumbJob job, CancellationToken ct, TimeSpan timeout)
         {
             LastEnqueuedJob = job;
+            LastTimeout = timeout;
             return ValueTask.FromResult(new PosterThumbEnqueueResult(PosterThumbEnqueueStatus.Enqueued));
         }
 

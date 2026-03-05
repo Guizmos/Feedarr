@@ -176,6 +176,11 @@ public sealed class CriticalFlowsAndPerfTests
             new ProviderStatsService(new StatsRepository(db, new MemoryCache(new MemoryCacheOptions()))),
             new ApiRequestMetricsService(),
             backup,
+            new SystemStatusCacheService(
+                new MemoryCache(new MemoryCacheOptions()),
+                new SystemStatusSnapshotProvider(db, NullLogger<SystemStatusSnapshotProvider>.Instance),
+                appOptions,
+                NullLogger<SystemStatusCacheService>.Instance),
             new MemoryCache(new MemoryCacheOptions()),
             new SetupStateService(settings, new MemoryCache(new MemoryCacheOptions())),
             storageCache,
