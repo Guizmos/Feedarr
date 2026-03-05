@@ -10,6 +10,7 @@ using Feedarr.Api.Services.Backup;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Threading;
 using OptionsFactory = Microsoft.Extensions.Options.Options;
 
 namespace Feedarr.Api.Tests;
@@ -17,7 +18,7 @@ namespace Feedarr.Api.Tests;
 public sealed class BadgesControllerSummaryTests
 {
     [Fact]
-    public void Summary_ReturnsExpectedShapeAndValues()
+    public async Task Summary_ReturnsExpectedShapeAndValues()
     {
         using var workspace = new TestWorkspace();
         var db = CreateDb(workspace);
@@ -52,16 +53,22 @@ public sealed class BadgesControllerSummaryTests
         });
 
         using var cache = new MemoryCache(new MemoryCacheOptions());
+        var summaryCache = new BadgesSummaryCacheService(
+            cache,
+            new BadgesBaseSummaryProvider(
+                db,
+                settings,
+                new BackupExecutionCoordinator()),
+            OptionsFactory.Create(new AppOptions { BadgesSummaryCacheSeconds = 3 }),
+            NullLogger<BadgesSummaryCacheService>.Instance);
         var controller = new BadgesController(
             signal,
             db,
             activity,
-            settings,
-            new BackupExecutionCoordinator(),
-            cache,
+            summaryCache,
             NullLogger<BadgesController>.Instance);
 
-        var action = controller.Summary(activitySinceTs: 1005, releasesSinceTs: 1_700_000_150, activityLimit: 200);
+        var action = await controller.Summary(activitySinceTs: 1005, releasesSinceTs: 1_700_000_150, activityLimit: 200);
         var ok = Assert.IsType<OkObjectResult>(action);
         Assert.Equal(200, ok.StatusCode ?? 200);
 
@@ -86,6 +93,70 @@ public sealed class BadgesControllerSummaryTests
         Assert.True(root.TryGetProperty("settings", out var settingsJson));
         Assert.Equal(2, settingsJson.GetProperty("missingExternalCount").GetInt32());
         Assert.True(settingsJson.GetProperty("hasAdvancedMaintenanceEnabled").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Summary_DifferentClientParams_ReusesSharedBaseSummary()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        using (var conn = db.Open())
+        {
+            var sourceId = InsertSource(conn, 1_700_000_000);
+            InsertRelease(conn, sourceId, "guid-a", 1_700_000_100);
+            InsertRelease(conn, sourceId, "guid-b", 1_700_000_200);
+            conn.Execute(
+                """
+                INSERT INTO activity_log(source_id, level, event_type, message, data_json, created_at_ts)
+                VALUES
+                  (NULL, 'info', 'sync', 'info', NULL, 1000),
+                  (NULL, 'warn', 'sync', 'warn', NULL, 1010),
+                  (NULL, 'error', 'sync', 'error', NULL, 1020);
+                """);
+        }
+
+        var signal = new BadgeSignal();
+        var activity = new ActivityRepository(db, signal);
+        var baseSummary = new BadgesBaseSummary(
+            LastActivityTs: 1020,
+            SourcesCount: 1,
+            ReleasesCount: 2,
+            ReleasesLatestTs: 1_700_000_200,
+            IncludeInfo: true,
+            IncludeWarn: true,
+            IncludeError: true,
+            MissingExternalCount: 1,
+            HasAdvancedMaintenanceEnabled: false,
+            IsSyncRunning: false,
+            SchedulerBusy: false,
+            UpdatesBadge: false);
+        var provider = new FakeBadgesBaseSummaryProvider(async _ =>
+        {
+            await Task.Yield();
+            return baseSummary;
+        });
+
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        var summaryCache = new BadgesSummaryCacheService(
+            cache,
+            provider,
+            OptionsFactory.Create(new AppOptions { BadgesSummaryCacheSeconds = 3 }),
+            NullLogger<BadgesSummaryCacheService>.Instance);
+        var controller = new BadgesController(
+            signal,
+            db,
+            activity,
+            summaryCache,
+            NullLogger<BadgesController>.Instance);
+
+        var first = await controller.Summary(activitySinceTs: 1000, releasesSinceTs: 1_700_000_050, activityLimit: 200);
+        var second = await controller.Summary(activitySinceTs: 1010, releasesSinceTs: 1_700_000_150, activityLimit: 50);
+
+        Assert.IsType<OkObjectResult>(first);
+        Assert.IsType<OkObjectResult>(second);
+        Assert.Equal(1, provider.CallCount);
     }
 
     private static Db CreateDb(TestWorkspace workspace)
@@ -146,5 +217,23 @@ public sealed class BadgesControllerSummaryTests
             }
         }
     }
-}
 
+    private sealed class FakeBadgesBaseSummaryProvider : IBadgesBaseSummaryProvider
+    {
+        private readonly Func<CancellationToken, Task<BadgesBaseSummary>> _factory;
+        private int _callCount;
+
+        public FakeBadgesBaseSummaryProvider(Func<CancellationToken, Task<BadgesBaseSummary>> factory)
+        {
+            _factory = factory;
+        }
+
+        public int CallCount => Volatile.Read(ref _callCount);
+
+        public async Task<BadgesBaseSummary> LoadAsync(CancellationToken ct)
+        {
+            Interlocked.Increment(ref _callCount);
+            return await _factory(ct);
+        }
+    }
+}

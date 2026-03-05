@@ -5,6 +5,7 @@ using Feedarr.Api.Data;
 using Feedarr.Api.Models;
 using Feedarr.Api.Services.Categories;
 using Microsoft.Extensions.Caching.Memory;
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 
 namespace Feedarr.Api.Controllers;
@@ -16,7 +17,9 @@ public sealed class FeedController : ControllerBase
     private readonly Db _db;
     private readonly UnifiedCategoryService _unified;
     private readonly IMemoryCache _cache;
+    private readonly Action? _onTopCacheMissCompute;
     private static readonly TimeSpan TopCacheDuration = TimeSpan.FromSeconds(20);
+    private static readonly ConcurrentDictionary<string, Lazy<object>> TopInFlight = new(StringComparer.Ordinal);
     private static readonly Regex SearchTokenRegex = new(@"[a-zA-Z0-9_-]+", RegexOptions.Compiled);
     private const int MaxFtsTokenLength = 64;
     private const int TopMaxHours = 24 * 7;
@@ -109,11 +112,12 @@ public sealed class FeedController : ControllerBase
         "WHEN 'comics' THEN 'Comics' " +
         "ELSE COALESCE(scm.group_label, sc.unified_label, " + ResolvedTopCategoryKeySql + ") END";
 
-    public FeedController(Db db, UnifiedCategoryService unified, IMemoryCache cache)
+    public FeedController(Db db, UnifiedCategoryService unified, IMemoryCache cache, Action? onTopCacheMissCompute = null)
     {
         _db = db;
         _unified = unified;
         _cache = cache;
+        _onTopCacheMissCompute = onTopCacheMissCompute;
     }
 
     private class FeedRow
@@ -557,6 +561,48 @@ public sealed class FeedController : ControllerBase
         var cacheKey = $"feed:top:v4:{effectiveSourceId?.ToString() ?? "all"}:{effectiveHours}:{effectiveTake}:{effectivePerCategoryTake}:{effectiveSort}:{effectiveDedupe}";
         if (_cache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
             return Ok(cached);
+        var inflightKey = $"{_db.DbPath}|{cacheKey}";
+        var sharedComputation = TopInFlight.GetOrAdd(
+            inflightKey,
+            _ => new Lazy<object>(
+                () => ComputeTopResult(
+                    cacheKey,
+                    effectiveSourceId,
+                    effectiveHours,
+                    effectiveTake,
+                    effectivePerCategoryTake,
+                    effectiveSort,
+                    effectiveDedupe,
+                    supportsEntityDedupe,
+                    sinceTs,
+                    ct),
+                LazyThreadSafetyMode.ExecutionAndPublication));
+
+        try
+        {
+            var result = sharedComputation.Value;
+            return Ok(result);
+        }
+        finally
+        {
+            TopInFlight.TryRemove(new KeyValuePair<string, Lazy<object>>(inflightKey, sharedComputation));
+        }
+    }
+
+    private object ComputeTopResult(
+        string cacheKey,
+        long? effectiveSourceId,
+        int effectiveHours,
+        int effectiveTake,
+        int effectivePerCategoryTake,
+        string effectiveSort,
+        string effectiveDedupe,
+        bool supportsEntityDedupe,
+        long sinceTs,
+        CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        _onTopCacheMissCompute?.Invoke();
 
         using var conn = _db.Open();
 
@@ -788,6 +834,6 @@ public sealed class FeedController : ControllerBase
         };
 
         _cache.Set(cacheKey, result, TopCacheDuration);
-        return Ok(result);
+        return result;
     }
 }
