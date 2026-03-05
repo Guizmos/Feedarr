@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.1](https://github.com/Guizmos/Feedarr/compare/v2.4.0...v2.4.1) (2026-03-05)
+
+
+### Performance Improvements
+
+* **audit:** reduce db background load, sweep missing posters, optimize feed/top cache-miss ([17452e4](https://github.com/Guizmos/Feedarr/commit/17452e46c435f0cee010bc7cdcfc236676cefdb7))
+
 ## [2.4.0](https://github.com/Guizmos/Feedarr/compare/v2.3.0...v2.4.0) (2026-03-04)
 
 
