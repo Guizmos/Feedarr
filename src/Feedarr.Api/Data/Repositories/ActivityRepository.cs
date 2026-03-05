@@ -8,6 +8,7 @@ namespace Feedarr.Api.Data.Repositories;
 public sealed class ActivityRepository
 {
     public sealed record BadgeActivitySummary(long LastActivityTs, int UnreadCount, string Tone);
+    public sealed record BadgeActivityDeltaSummary(int UnreadCount, string Tone);
 
     private readonly Db _db;
     private readonly Feedarr.Api.Services.BadgeSignal _signal;
@@ -214,6 +215,76 @@ public sealed class ActivityRepository
         var tone = unreadError > 0 ? "error" : unreadWarn > 0 ? "warn" : "info";
 
         return new BadgeActivitySummary(lastTs, unreadCount, tone);
+    }
+
+    public BadgeActivityDeltaSummary GetBadgeDeltaSummary(
+        long sinceTs,
+        int limit,
+        bool includeInfo,
+        bool includeWarn,
+        bool includeError)
+    {
+        using var conn = _db.Open();
+        var safeSinceTs = Math.Max(0L, sinceTs);
+        var safeLimit = Math.Clamp(limit <= 0 ? 200 : limit, 1, 500);
+
+        var row = conn.QueryFirstOrDefault(
+            """
+            WITH latest AS (
+              SELECT LOWER(COALESCE(level, '')) as lvl
+              FROM activity_log
+              WHERE created_at_ts > @sinceTs
+              ORDER BY created_at_ts DESC
+              LIMIT @lim
+            )
+            SELECT
+              SUM(
+                CASE
+                  WHEN (
+                    (@includeInfo = 1 AND lvl = 'info')
+                    OR (@includeWarn = 1 AND (lvl = 'warn' OR lvl = 'warning'))
+                    OR (@includeError = 1 AND lvl = 'error')
+                  )
+                  THEN 1
+                  ELSE 0
+                END
+              ) as unreadCount,
+              SUM(
+                CASE
+                  WHEN @includeError = 1
+                   AND lvl = 'error'
+                  THEN 1
+                  ELSE 0
+                END
+              ) as unreadError,
+              SUM(
+                CASE
+                  WHEN @includeWarn = 1
+                   AND (lvl = 'warn' OR lvl = 'warning')
+                  THEN 1
+                  ELSE 0
+                END
+              ) as unreadWarn
+            FROM latest;
+            """,
+            new
+            {
+                lim = safeLimit,
+                sinceTs = safeSinceTs,
+                includeInfo = includeInfo ? 1 : 0,
+                includeWarn = includeWarn ? 1 : 0,
+                includeError = includeError ? 1 : 0
+            });
+
+        if (row is null)
+            return new BadgeActivityDeltaSummary(0, "info");
+
+        var unreadCount = Convert.ToInt32(row.unreadCount ?? 0);
+        var unreadError = Convert.ToInt32(row.unreadError ?? 0);
+        var unreadWarn = Convert.ToInt32(row.unreadWarn ?? 0);
+        var tone = unreadError > 0 ? "error" : unreadWarn > 0 ? "warn" : "info";
+
+        return new BadgeActivityDeltaSummary(unreadCount, tone);
     }
 
     public void Purge()
