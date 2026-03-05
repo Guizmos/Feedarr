@@ -338,6 +338,8 @@ public sealed class SyncOrchestrationServiceCancellationTests
     {
         public ValueTask<PosterFetchEnqueueResult> EnqueueAsync(PosterFetchJob job, CancellationToken ct, TimeSpan timeout)
             => ValueTask.FromResult(new PosterFetchEnqueueResult(PosterFetchEnqueueStatus.Enqueued));
+        public ValueTask<PosterFetchEnqueueBatchResult> EnqueueManyAsync(IReadOnlyList<PosterFetchJob> jobs, CancellationToken ct, TimeSpan timeout)
+            => ValueTask.FromResult(new PosterFetchEnqueueBatchResult(jobs.Count, 0, 0, 0));
         public ValueTask<PosterFetchJob> DequeueAsync(CancellationToken ct) => ValueTask.FromCanceled<PosterFetchJob>(ct);
         public void RecordRetry() { }
         public PosterFetchJob? Complete(PosterFetchJob job, PosterFetchProcessResult result) => null;

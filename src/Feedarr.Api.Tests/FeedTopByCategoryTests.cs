@@ -169,6 +169,48 @@ public sealed class FeedTopByCategoryTests
     }
 
     [Fact]
+    public void Top_CanBeCalledMultipleTimes_WithDifferentSortModes()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var sourceId = InsertSource(db, "source-repeat-calls");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        InsertSourceCategory(db, sourceId, 2000, "Movies", unifiedKey: "films", unifiedLabel: "Films");
+        InsertRelease(
+            db,
+            sourceId,
+            guid: "guid-repeat-1",
+            categoryId: 2000,
+            unifiedCategory: "Film",
+            seeders: 60,
+            categoryIds: "2000",
+            title: "Repeat One",
+            publishedAt: now - 120,
+            createdAt: now - 20);
+        InsertRelease(
+            db,
+            sourceId,
+            guid: "guid-repeat-2",
+            categoryId: 2000,
+            unifiedCategory: "Film",
+            seeders: 40,
+            categoryIds: "2000",
+            title: "Repeat Two",
+            publishedAt: now - 60,
+            createdAt: now - 10);
+
+        var controller = CreateController(db);
+        var first = controller.Top(hours: 24, take: 5, perCategoryTake: null, sort: "recent", dedupe: "title_year", limit: null, sourceId: null, indexerId: null);
+        var second = controller.Top(hours: 24, take: 5, perCategoryTake: null, sort: "score", dedupe: "title_year", limit: null, sourceId: null, indexerId: null);
+
+        Assert.IsType<OkObjectResult>(first);
+        Assert.IsType<OkObjectResult>(second);
+    }
+
+    [Fact]
     public void Top_UsesLibraryResolverFallbackForDynamicCategoryBuckets()
     {
         using var workspace = new TestWorkspace();

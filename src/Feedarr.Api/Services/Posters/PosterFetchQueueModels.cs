@@ -16,6 +16,15 @@ public readonly record struct PosterFetchEnqueueResult(PosterFetchEnqueueStatus 
     public bool IsRejected => Status == PosterFetchEnqueueStatus.Rejected;
 }
 
+public readonly record struct PosterFetchEnqueueBatchResult(
+    int Enqueued,
+    int Coalesced,
+    int TimedOut,
+    int Rejected)
+{
+    public int Total => Enqueued + Coalesced + TimedOut + Rejected;
+}
+
 public readonly record struct PosterFetchProcessResult(bool Succeeded);
 
 public sealed record PosterFetchCurrentJobSnapshot(

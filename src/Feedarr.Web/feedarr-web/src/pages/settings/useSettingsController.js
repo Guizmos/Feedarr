@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet } from "../../api/client.js";
 import { sleep } from "./settingsUtils.js";
+import usePolling from "../../hooks/usePolling.js";
 
 // Specialized hooks
 import useExternalProviderInstances from "./hooks/useExternalProviderInstances.js";
@@ -34,6 +35,7 @@ export default function useSettingsController(section = "general") {
   const [hostPort, setHostPort] = useState("");
   const [initialHostPort, setInitialHostPort] = useState("");
   const [urlBase] = useState("");
+  const [backupPollMs, setBackupPollMs] = useState(3000);
 
   // Compose specialized hooks
   const providers = useExternalProviderInstances();
@@ -201,13 +203,17 @@ export default function useSettingsController(section = "general") {
 
   useEffect(() => {
     if (!showBackup) return;
-
-    const timer = setInterval(() => {
-      loadBackupStateRef.current();
-    }, 3000);
-
-    return () => clearInterval(timer);
+    setBackupPollMs(3000);
   }, [showBackup]);
+
+  usePolling(() => {
+    if (!showBackup) return;
+    Promise.resolve(loadBackupStateRef.current())
+      .then(() => setBackupPollMs(3000))
+      .catch(() => {
+        setBackupPollMs((prev) => Math.min(15000, Math.max(3000, prev * 2)));
+      });
+  }, backupPollMs, showBackup);
 
   // Load maintenance stats when section is active
   const maintenanceLoadedRef = useRef(false);

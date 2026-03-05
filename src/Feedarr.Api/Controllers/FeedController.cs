@@ -4,7 +4,6 @@ using Dapper;
 using Feedarr.Api.Data;
 using Feedarr.Api.Models;
 using Feedarr.Api.Services.Categories;
-using Feedarr.Api.Services.Matching;
 using Microsoft.Extensions.Caching.Memory;
 using System.Text.RegularExpressions;
 
@@ -23,7 +22,6 @@ public sealed class FeedController : ControllerBase
     private const int TopMaxHours = 24 * 7;
     private const int TopMaxTake = 50;
     private const string TopWindowField = "published_at_ts";
-    private const string TopOrderSql = "releases.published_at_ts DESC, releases.id DESC";
     private const string UnifiedCategoryToKeySql =
         "CASE releases.unified_category " +
         "WHEN 'Film' THEN 'films' " +
@@ -87,67 +85,16 @@ public sealed class FeedController : ControllerBase
         "WHEN 'audio' THEN 'audio' " +
         "WHEN 'spectacle' THEN 'spectacle' " +
         "ELSE lower(trim(sc.unified_key)) END";
-    private const string EffectiveTopCategoryKeySql =
-        "COALESCE(" + UnifiedCategoryToKeySql + ", " + MappingKeyToCanonicalSql + ", " + LegacySourceCategoryKeyToCanonicalSql + ")";
-    private const string TopFallbackCategoryKeySql =
+    private const string NormalizedTopTitleSql =
+        "COALESCE(releases.title_normalized, lower(trim(COALESCE(releases.title_clean, releases.title, ''))))";
+    private const string TitleHeuristicTopCategoryKeySql =
         "CASE " +
-        "WHEN lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%spectacle%' " +
-        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%concert%' " +
-        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%opera%' " +
-        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%theatre%' " +
-        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%ballet%' " +
-        "THEN 'spectacle' " +
-        "WHEN lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%emission%' " +
-        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%enquete%' " +
-        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%magazine%' " +
-        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%talk%' " +
-        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%show%' " +
-        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%reportage%' " +
-        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%documentaire%' " +
-        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%docu%' " +
-        "  OR lower(COALESCE(releases.title_clean, releases.title, '')) LIKE '%quotidien%' " +
-        "THEN 'emissions' " +
-        "WHEN lower(COALESCE(sc.name, '')) LIKE '%pc/games%' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE '%pc games%' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE '%game%' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE '%jeu%' " +
-        "THEN 'games' " +
-        "WHEN lower(COALESCE(sc.name, '')) LIKE '%anime%' THEN 'anime' " +
-        "WHEN lower(COALESCE(sc.name, '')) LIKE '%audio%' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE '%music%' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE '%musique%' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE '%podcast%' " +
-        "THEN 'audio' " +
-        "WHEN lower(COALESCE(sc.name, '')) LIKE '%book%' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE '%livre%' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE '%ebook%' " +
-        "THEN 'books' " +
-        "WHEN lower(COALESCE(sc.name, '')) LIKE '%comic%' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE '%manga%' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE '%scan%' " +
-        "THEN 'comics' " +
-        "WHEN lower(COALESCE(sc.name, '')) LIKE '%spectacle%' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE '%concert%' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE '%opera%' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE '%theatre%' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE '%ballet%' " +
-        "THEN 'spectacle' " +
-        "WHEN lower(COALESCE(sc.name, '')) LIKE '%documentary%' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE '%documentaire%' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE '%doc%' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE '%emission%' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE '%show%' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE '%magazine%' " +
-        "THEN 'emissions' " +
-        "WHEN lower(COALESCE(sc.name, '')) = 'movies' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE 'movie%' " +
-        "THEN 'films' " +
-        "WHEN lower(COALESCE(sc.name, '')) = 'tv' " +
-        "  OR lower(COALESCE(sc.name, '')) LIKE 'tv/%' " +
-        "THEN 'series' " +
+        "WHEN instr(" + NormalizedTopTitleSql + ", 'spectacle') > 0 OR instr(" + NormalizedTopTitleSql + ", 'concert') > 0 OR instr(" + NormalizedTopTitleSql + ", 'opera') > 0 OR instr(" + NormalizedTopTitleSql + ", 'theatre') > 0 OR instr(" + NormalizedTopTitleSql + ", 'ballet') > 0 THEN 'spectacle' " +
+        "WHEN instr(" + NormalizedTopTitleSql + ", 'emission') > 0 OR instr(" + NormalizedTopTitleSql + ", 'enquete') > 0 OR instr(" + NormalizedTopTitleSql + ", 'magazine') > 0 OR instr(" + NormalizedTopTitleSql + ", 'talk') > 0 OR instr(" + NormalizedTopTitleSql + ", 'show') > 0 OR instr(" + NormalizedTopTitleSql + ", 'reportage') > 0 OR instr(" + NormalizedTopTitleSql + ", 'documentaire') > 0 OR instr(" + NormalizedTopTitleSql + ", 'docu') > 0 OR instr(" + NormalizedTopTitleSql + ", 'quotidien') > 0 THEN 'emissions' " +
         "ELSE NULL END";
-    private const string ResolvedTopCategoryKeySql =
-        "COALESCE(" + EffectiveTopCategoryKeySql + ", " + TopFallbackCategoryKeySql + ")";
+    private const string EffectiveTopCategoryKeySql =
+        "COALESCE(NULLIF(releases.top_category_key, ''), " + UnifiedCategoryToKeySql + ", " + MappingKeyToCanonicalSql + ", " + LegacySourceCategoryKeyToCanonicalSql + ", " + TitleHeuristicTopCategoryKeySql + ")";
+    private const string ResolvedTopCategoryKeySql = EffectiveTopCategoryKeySql;
     private const string ResolvedTopCategoryLabelSql =
         "CASE " + ResolvedTopCategoryKeySql + " " +
         "WHEN 'films' THEN 'Films' " +
@@ -348,9 +295,9 @@ public sealed class FeedController : ControllerBase
             "entity" =>
                 $"CASE WHEN {alias}.entityId IS NOT NULL AND {alias}.entityId > 0 THEN ('entity:' || CAST({alias}.entityId AS TEXT)) ELSE ('release:' || CAST({alias}.id AS TEXT)) END",
             "title_year" =>
-                $"CASE WHEN COALESCE({alias}.dedupeTitle, '') <> '' THEN ('title_year:' || {alias}.dedupeTitle || '|' || COALESCE(CAST({alias}.year AS TEXT), '-') || '|' || lower(trim(COALESCE({alias}.mediaType, '')))) ELSE ('release:' || CAST({alias}.id AS TEXT)) END",
+                $"CASE WHEN COALESCE({alias}.dedupeKey, '') <> '' THEN {alias}.dedupeKey ELSE ('release:' || CAST({alias}.id AS TEXT)) END",
             "title" =>
-                $"CASE WHEN COALESCE({alias}.dedupeTitle, '') <> '' THEN ('title:' || {alias}.dedupeTitle) ELSE ('release:' || CAST({alias}.id AS TEXT)) END",
+                $"CASE WHEN COALESCE({alias}.titleNormalized, '') <> '' THEN ('title:' || {alias}.titleNormalized) ELSE ('release:' || CAST({alias}.id AS TEXT)) END",
             _ => $"'release:' || CAST({alias}.id AS TEXT)"
         };
     }
@@ -612,15 +559,11 @@ public sealed class FeedController : ControllerBase
             return Ok(cached);
 
         using var conn = _db.Open();
-        conn.CreateFunction<string, string>(
-            "top_normalize_title",
-            value => TitleNormalizer.NormalizeTitleStrict(value),
-            isDeterministic: true);
 
         var sourceFilterSql = effectiveSourceId.HasValue
             ? "releases.source_id = @sid AND "
             : string.Empty;
-        var topSortOrderSql = BuildTopSortOrderSql("deduped", effectiveSort);
+        var topSortOrderSql = BuildTopSortOrderSql("tmp", effectiveSort);
         var topDedupeKeySql = BuildTopDedupeKeySql("base", effectiveDedupe);
 
         // Rank in SQL so the chosen business sort also drives dedupe selection and
@@ -678,7 +621,14 @@ public sealed class FeedController : ControllerBase
             ras.radarr_url as radarrUrl,
             COALESCE(ras.sonarr_url, ras.radarr_url) as openUrl,
             ras.checked_at_ts as arrCheckedAtTs,
-            top_normalize_title(COALESCE(releases.title_clean, releases.title, '')) as dedupeTitle,
+            COALESCE(releases.title_normalized, lower(trim(COALESCE(releases.title_clean, releases.title, '')))) as titleNormalized,
+            CASE
+              WHEN COALESCE(releases.dedupe_key, '') <> '' THEN releases.dedupe_key
+              WHEN COALESCE(releases.title_normalized, lower(trim(COALESCE(releases.title_clean, releases.title, ''))), '') <> '' THEN (
+                'title_year:' || COALESCE(releases.title_normalized, lower(trim(COALESCE(releases.title_clean, releases.title, '')))) || '|' || COALESCE(CAST(releases.year AS TEXT), '-') || '|' || lower(trim(COALESCE(releases.media_type, '')))
+              )
+              ELSE ('release:' || CAST(releases.id AS TEXT))
+            END as dedupeKey,
             (COALESCE(releases.grabs, 0) * 5 + COALESCE(releases.seeders, 0)) as topScore
           FROM releases
           LEFT JOIN media_entities me
@@ -706,55 +656,69 @@ public sealed class FeedController : ControllerBase
         )
         """;
 
-        var globalArgs = new DynamicParameters();
-        globalArgs.Add("sinceTs", sinceTs);
-        globalArgs.Add("take", effectiveTake);
-        if (effectiveSourceId.HasValue) globalArgs.Add("sid", effectiveSourceId.Value);
+        var materializeArgs = new DynamicParameters();
+        materializeArgs.Add("sinceTs", sinceTs);
+        if (effectiveSourceId.HasValue) materializeArgs.Add("sid", effectiveSourceId.Value);
 
-        var globalSql = baseCteSql + $"""
-        SELECT *
-        FROM (
-          SELECT
-            deduped.*,
-            ROW_NUMBER() OVER (ORDER BY {topSortOrderSql}) as globalRn
-          FROM deduped
-        ) ranked_global
-        WHERE ranked_global.globalRn <= @take
-        ORDER BY ranked_global.globalRn ASC;
-        """;
+        const string tempTableName = "feed_top_deduped";
+        conn.Execute($"DROP TABLE IF EXISTS temp.{tempTableName};");
 
-        var globalRows = conn.Query<FeedRow>(globalSql, globalArgs).ToList();
+        List<FeedRow> globalRows;
+        IEnumerable<TopCategoryRow> categoryRows;
+        try
+        {
+            var materializeSql = $"""
+            CREATE TEMP TABLE {tempTableName} AS
+            {baseCteSql}
+            SELECT * FROM deduped;
+            """;
+            conn.Execute(materializeSql, materializeArgs);
+
+            var globalSql = $"""
+            SELECT *
+            FROM (
+              SELECT
+                tmp.*,
+                ROW_NUMBER() OVER (ORDER BY {topSortOrderSql}) as globalRn
+              FROM {tempTableName} tmp
+            ) ranked_global
+            WHERE ranked_global.globalRn <= @take
+            ORDER BY ranked_global.globalRn ASC;
+            """;
+            globalRows = conn.Query<FeedRow>(globalSql, new { take = effectiveTake }).ToList();
+
+            var categoriesSql = $"""
+            SELECT *
+            FROM (
+              SELECT
+                tmp.*,
+                COUNT(1) OVER (
+                  PARTITION BY tmp.unifiedCategoryKey
+                ) as catCount,
+                ROW_NUMBER() OVER (
+                  PARTITION BY tmp.unifiedCategoryKey
+                  ORDER BY {topSortOrderSql}
+                ) as catRn
+              FROM {tempTableName} tmp
+              WHERE tmp.unifiedCategoryKey IS NOT NULL
+            ) ranked_category
+            WHERE ranked_category.catRn <= @perCategoryTake
+            ORDER BY ranked_category.catCount DESC,
+                     COALESCE(ranked_category.unifiedCategoryLabel, ranked_category.unifiedCategoryKey) ASC,
+                     ranked_category.unifiedCategoryKey ASC,
+                     ranked_category.catRn ASC;
+            """;
+            categoryRows = conn.Query<TopCategoryRow>(categoriesSql, new { perCategoryTake = effectivePerCategoryTake }).ToList();
+        }
+        finally
+        {
+            conn.Execute($"DROP TABLE IF EXISTS temp.{tempTableName};");
+        }
+
         foreach (var row in globalRows)
         {
             PopulateUnifiedCategoryMetadata(row);
         }
-
-        var categoriesSql = baseCteSql + $"""
-        SELECT *
-        FROM (
-          SELECT
-            deduped.*,
-            COUNT(1) OVER (
-              PARTITION BY deduped.unifiedCategoryKey
-            ) as catCount,
-            ROW_NUMBER() OVER (
-              PARTITION BY deduped.unifiedCategoryKey
-              ORDER BY {topSortOrderSql}
-            ) as catRn
-          FROM deduped
-          WHERE deduped.unifiedCategoryKey IS NOT NULL
-        ) ranked_category
-        WHERE ranked_category.catRn <= @perCategoryTake
-        ORDER BY ranked_category.catCount DESC,
-                 COALESCE(ranked_category.unifiedCategoryLabel, ranked_category.unifiedCategoryKey) ASC,
-                 ranked_category.unifiedCategoryKey ASC,
-                 ranked_category.catRn ASC;
-        """;
-
-        var categoryArgs = new DynamicParameters();
-        categoryArgs.Add("sinceTs", sinceTs);
-        categoryArgs.Add("perCategoryTake", effectivePerCategoryTake);
-        if (effectiveSourceId.HasValue) categoryArgs.Add("sid", effectiveSourceId.Value);
 
         var categoryResults = new List<object>();
         string? currentKey = null;
@@ -762,7 +726,7 @@ public sealed class FeedController : ControllerBase
         var currentCount = 0;
         List<FeedRow>? currentTop = null;
 
-        foreach (var row in conn.Query<TopCategoryRow>(categoriesSql, categoryArgs))
+        foreach (var row in categoryRows)
         {
             PopulateUnifiedCategoryMetadata(row);
             if (string.IsNullOrWhiteSpace(row.UnifiedCategoryKey))

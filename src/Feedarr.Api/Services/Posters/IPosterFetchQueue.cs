@@ -3,6 +3,7 @@ namespace Feedarr.Api.Services.Posters;
 public interface IPosterFetchQueue
 {
     ValueTask<PosterFetchEnqueueResult> EnqueueAsync(PosterFetchJob job, CancellationToken ct, TimeSpan timeout);
+    ValueTask<PosterFetchEnqueueBatchResult> EnqueueManyAsync(IReadOnlyList<PosterFetchJob> jobs, CancellationToken ct, TimeSpan timeout);
     ValueTask<PosterFetchJob> DequeueAsync(CancellationToken ct);
     void RecordRetry();
     PosterFetchJob? Complete(PosterFetchJob job, PosterFetchProcessResult result);

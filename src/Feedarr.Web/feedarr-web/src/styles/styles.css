@@ -3246,6 +3246,14 @@ body.modal-open .content{
   overflow-x: auto;
 }
 
+.history-table--desktop{
+  display: block;
+}
+
+.history-cards--mobile{
+  display: none;
+}
+
 .history-table .thead,
 .history-table .trow{
   grid-template-columns: minmax(100px, 0.8fr) minmax(90px, 0.6fr) minmax(220px, 3.5fr) minmax(140px, 1fr) minmax(120px, 0.8fr);
@@ -3285,10 +3293,13 @@ body.modal-open .content{
 
 .history-table .td-date{
   white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .history-table .td-response{
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .history-table .th-right,
@@ -3306,6 +3317,8 @@ body.modal-open .content{
   font-size: 10.5px;
   padding: 0px 7px;
   line-height: 1.2;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .history-empty{
@@ -3413,6 +3426,90 @@ body.modal-open .content{
   }
   .history-meta{
     text-align: center;
+  }
+}
+
+@media (max-width: 768px){
+  .history-table--desktop{
+    display: none;
+  }
+
+  .history-cards--mobile{
+    display: grid;
+    gap: 10px;
+    margin-top: 10px;
+  }
+
+  .history-card{
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius);
+    background: var(--panel);
+    box-shadow: var(--row-shadow);
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .history-card--empty{
+    text-align: center;
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .history-card__header{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .history-card__date{
+    color: var(--muted);
+    font-size: 14px;
+    overflow-wrap: anywhere;
+    text-align: right;
+  }
+
+  .history-card__kv{
+    display: grid;
+    grid-template-columns: minmax(120px, 1fr) minmax(80px, 1fr);
+    row-gap: 6px;
+    column-gap: 10px;
+    align-items: baseline;
+  }
+
+  .history-card__k{
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .history-card__v{
+    color: var(--text);
+    font-size: 14px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+
+  .history-card__categories{
+    display: grid;
+    gap: 6px;
+  }
+
+  .history-card__chips{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .history-card__chips .cat-bubble{
+    font-size: 14px;
+    line-height: 1.3;
+    max-width: 100%;
   }
 }
 
