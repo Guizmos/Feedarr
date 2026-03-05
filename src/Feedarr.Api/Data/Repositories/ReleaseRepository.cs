@@ -3,6 +3,7 @@ using Feedarr.Api.Data;
 using Feedarr.Api.Dtos.Sources;
 using Feedarr.Api.Models;
 using Feedarr.Api.Services.Categories;
+using Feedarr.Api.Services.Matching;
 using Feedarr.Api.Services.Torznab;
 using Feedarr.Api.Services.Titles;
 using Microsoft.Data.Sqlite;
@@ -33,6 +34,28 @@ public sealed class ReleaseRepository
         nameof(UnifiedCategory.Book),
         nameof(UnifiedCategory.Comic)
     };
+
+    private static readonly string[] TopSpectacleKeywords =
+    [
+        "spectacle",
+        "concert",
+        "opera",
+        "theatre",
+        "ballet"
+    ];
+
+    private static readonly string[] TopEmissionKeywords =
+    [
+        "emission",
+        "enquete",
+        "magazine",
+        "talk",
+        "show",
+        "reportage",
+        "documentaire",
+        "docu",
+        "quotidien"
+    ];
 
     public ReleaseRepository(
         Db db,
@@ -66,6 +89,7 @@ public sealed class ReleaseRepository
           source_id, guid, title, link, published_at_ts,
                     size_bytes, seeders, leechers, grabs, info_hash, download_url, category_id,
                     std_category_id, spec_category_id, unified_category, category_ids,
+                    title_normalized, dedupe_key, top_category_key,
           raw_json, seen, created_at_ts,
 
           title_clean, year, season, episode, resolution, source, codec, release_group, media_type
@@ -74,6 +98,7 @@ public sealed class ReleaseRepository
           @sourceId, @guid, @title, @link, @pub,
                     @size, @seed, @leech, @grabs, @hash, @dl, @cat,
                     @stdCat, @specCat, @unifiedCat, @catIds,
+                    @titleNormalized, @dedupeKey, @topCategoryKey,
           NULL, {defaultSeen}, @now,
 
           @titleClean, @year, @season, @episode, @resolution, @source, @codec, @group, @mediaType
@@ -96,6 +121,9 @@ public sealed class ReleaseRepository
           spec_category_id = COALESCE(excluded.spec_category_id, releases.spec_category_id),
           unified_category = COALESCE(excluded.unified_category, releases.unified_category),
           category_ids = COALESCE(excluded.category_ids, releases.category_ids),
+          title_normalized = COALESCE(excluded.title_normalized, releases.title_normalized),
+          dedupe_key = COALESCE(excluded.dedupe_key, releases.dedupe_key),
+          top_category_key = COALESCE(excluded.top_category_key, releases.top_category_key),
 
           title_clean = CASE
                           WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.title_clean
@@ -157,7 +185,21 @@ public sealed class ReleaseRepository
                     unifiedCategory = _resolver.Resolve(indexerKey, stdCategoryId, specCategoryId, normalizedIds);
                 }
                 var parsed = _parser.Parse(it.Title, unifiedCategory);
+                var titleNormalized = TitleNormalizer.NormalizeTitleStrict(parsed.TitleClean ?? it.Title);
+                var normalizedMediaType = string.IsNullOrWhiteSpace(parsed.MediaType)
+                    ? string.Empty
+                    : parsed.MediaType.Trim().ToLowerInvariant();
+                var topCategoryKey = BuildTopCategoryKey(
+                    unifiedCategory,
+                    categoryMap,
+                    normalizedIds,
+                    primaryCategoryId,
+                    parsed.TitleClean,
+                    it.Title);
                 var stableGuid = BuildStableGuid(it, parsed.TitleClean);
+                var dedupeKey = !string.IsNullOrWhiteSpace(titleNormalized)
+                    ? $"title_year:{titleNormalized}|{(parsed.Year.HasValue ? parsed.Year.Value.ToString() : "-")}|{normalizedMediaType}"
+                    : $"release:{stableGuid}";
 
                 return new UpsertRow
                 {
@@ -177,6 +219,9 @@ public sealed class ReleaseRepository
                     SpecCategoryId = specCategoryId,
                     UnifiedCategory = unifiedCategory.ToString(),
                     CategoryIds = distinctIds.Count > 0 ? string.Join(",", distinctIds) : null,
+                    TitleNormalized = titleNormalized,
+                    DedupeKey = dedupeKey,
+                    TopCategoryKey = topCategoryKey,
                     now = now,
 
                     TitleClean = parsed.TitleClean,
@@ -268,6 +313,9 @@ public sealed class ReleaseRepository
         AddParameter(cmd, "@specCat", SqliteType.Integer);
         AddParameter(cmd, "@unifiedCat", SqliteType.Text);
         AddParameter(cmd, "@catIds", SqliteType.Text);
+        AddParameter(cmd, "@titleNormalized", SqliteType.Text);
+        AddParameter(cmd, "@dedupeKey", SqliteType.Text);
+        AddParameter(cmd, "@topCategoryKey", SqliteType.Text);
         AddParameter(cmd, "@now", SqliteType.Integer);
         AddParameter(cmd, "@titleClean", SqliteType.Text);
         AddParameter(cmd, "@year", SqliteType.Integer);
@@ -299,6 +347,9 @@ public sealed class ReleaseRepository
             SetParameterValue(cmd, "@specCat", row.SpecCategoryId);
             SetParameterValue(cmd, "@unifiedCat", row.UnifiedCategory);
             SetParameterValue(cmd, "@catIds", row.CategoryIds);
+            SetParameterValue(cmd, "@titleNormalized", row.TitleNormalized);
+            SetParameterValue(cmd, "@dedupeKey", row.DedupeKey);
+            SetParameterValue(cmd, "@topCategoryKey", row.TopCategoryKey);
             SetParameterValue(cmd, "@now", row.now);
             SetParameterValue(cmd, "@titleClean", row.TitleClean);
             SetParameterValue(cmd, "@year", row.Year);
@@ -344,6 +395,9 @@ public sealed class ReleaseRepository
         public int? SpecCategoryId { get; init; }
         public string UnifiedCategory { get; init; } = "";
         public string? CategoryIds { get; init; }
+        public string? TitleNormalized { get; init; }
+        public string? DedupeKey { get; init; }
+        public string? TopCategoryKey { get; init; }
         public long now { get; init; }
         public string? TitleClean { get; init; }
         public int? Year { get; init; }
@@ -374,6 +428,125 @@ public sealed class ReleaseRepository
         }
 
         return UnifiedCategory.Autre;
+    }
+
+    private static string? BuildTopCategoryKey(
+        UnifiedCategory unifiedCategory,
+        Dictionary<int, (string key, string label)>? categoryMap,
+        IReadOnlyCollection<int> categoryIds,
+        int? primaryCategoryId,
+        string? titleClean,
+        string? rawTitle)
+    {
+        if (unifiedCategory != UnifiedCategory.Autre)
+        {
+            var key = UnifiedCategoryMappings.ToKey(unifiedCategory);
+            if (!string.Equals(key, "other", StringComparison.Ordinal))
+                return key;
+        }
+
+        if (TryResolveMapCategoryKey(categoryMap, categoryIds, primaryCategoryId, out var mapKey))
+            return mapKey;
+
+        var normalizedTitle = NormalizeForCategoryHeuristics(titleClean ?? rawTitle);
+        if (ContainsAny(normalizedTitle, TopSpectacleKeywords))
+            return "spectacle";
+        if (ContainsAny(normalizedTitle, TopEmissionKeywords))
+            return "emissions";
+
+        return null;
+    }
+
+    private static bool TryResolveMapCategoryKey(
+        Dictionary<int, (string key, string label)>? categoryMap,
+        IReadOnlyCollection<int> categoryIds,
+        int? primaryCategoryId,
+        out string key)
+    {
+        key = string.Empty;
+        if (categoryMap is null || categoryMap.Count == 0)
+            return false;
+
+        var bestId = CategorySelection.PickBestCategoryId(categoryIds, categoryMap);
+        if (!bestId.HasValue && primaryCategoryId.HasValue)
+            bestId = primaryCategoryId;
+        if (!bestId.HasValue || !categoryMap.TryGetValue(bestId.Value, out var entry))
+            return false;
+
+        if (CategoryGroupCatalog.TryNormalizeKey(entry.key, out var canonicalFromKey))
+        {
+            key = canonicalFromKey;
+            return true;
+        }
+
+        var label = NormalizeForCategoryHeuristics(entry.label);
+        if (ContainsAny(label, ["pcgames", "game", "jeu"]))
+        {
+            key = "games";
+            return true;
+        }
+        if (label.Contains("anime", StringComparison.Ordinal))
+        {
+            key = "anime";
+            return true;
+        }
+        if (ContainsAny(label, ["audio", "music", "musique", "podcast"]))
+        {
+            key = "audio";
+            return true;
+        }
+        if (ContainsAny(label, ["book", "livre", "ebook"]))
+        {
+            key = "books";
+            return true;
+        }
+        if (ContainsAny(label, ["comic", "manga", "scan"]))
+        {
+            key = "comics";
+            return true;
+        }
+        if (ContainsAny(label, TopSpectacleKeywords))
+        {
+            key = "spectacle";
+            return true;
+        }
+        if (ContainsAny(label, ["documentary", "documentaire", "doc", "emission", "show", "magazine"]))
+        {
+            key = "emissions";
+            return true;
+        }
+        if (label is "movies" or "movie")
+        {
+            key = "films";
+            return true;
+        }
+        if (label is "tv")
+        {
+            key = "series";
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string NormalizeForCategoryHeuristics(string? value)
+    {
+        var normalized = TitleNormalizer.RemoveDiacritics((value ?? string.Empty).Trim().ToLowerInvariant());
+        return new string(normalized.Where(char.IsLetterOrDigit).ToArray());
+    }
+
+    private static bool ContainsAny(string value, IReadOnlyList<string> tokens)
+    {
+        if (string.IsNullOrEmpty(value))
+            return false;
+
+        foreach (var token in tokens)
+        {
+            if (value.Contains(token, StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
     }
 
     private static string BuildStableGuid(TorznabItem it, string? titleClean)
@@ -555,6 +728,27 @@ public sealed class ReleaseRepository
         return rows.ToList();
     }
 
+    public async Task<IReadOnlyList<long>> GetReleaseIdsMissingPosterAsync(int limit, CancellationToken ct = default)
+    {
+        using var conn = _db.Open();
+        var lim = Math.Clamp(limit <= 0 ? 200 : limit, 1, 1000);
+        var rows = await conn.QueryAsync<long>(
+            new CommandDefinition(
+                """
+                SELECT releases.id
+                FROM releases
+                LEFT JOIN media_entities me
+                  ON me.id = releases.entity_id
+                WHERE (COALESCE(releases.poster_file, me.poster_file) IS NULL OR COALESCE(releases.poster_file, me.poster_file) = '')
+                ORDER BY releases.published_at_ts DESC, releases.id DESC
+                LIMIT @lim;
+                """,
+                new { lim },
+                cancellationToken: ct)).ConfigureAwait(false);
+
+        return rows.AsList();
+    }
+
     public int GetMissingPosterCount()
     {
         using var conn = _db.Open();
@@ -570,8 +764,52 @@ public sealed class ReleaseRepository
     }
 
     public sealed record PosterStats(int MissingTotal, int MissingActionable, long LastPosterChangeTs);
+    public sealed record MaterializedPosterStats(
+        int Total,
+        int Missing,
+        int Failed,
+        int Ok,
+        int MissingActionable,
+        long LastPosterChangeTs,
+        long UpdatedAtTs);
+    public readonly record struct PosterStatsWatermark(
+        long ReleasesCount,
+        long ReleasesMaxTs,
+        long MediaEntitiesCount,
+        long MediaEntitiesMaxTs);
 
-    public PosterStats GetPosterStats(long nowTs, long shortCooldownSeconds, long longCooldownSeconds)
+    public PosterStatsWatermark GetPosterStatsWatermark()
+    {
+        using var conn = _db.Open();
+        var releases = conn.QueryFirstOrDefault(
+            """
+            SELECT
+              COUNT(1) as total,
+              MAX(COALESCE(poster_updated_at_ts, poster_last_attempt_ts, created_at_ts, 0)) as maxTs
+            FROM releases;
+            """);
+        var releasesCount = releases is null ? 0L : Convert.ToInt64(releases.total ?? 0L);
+        var releasesMaxTs = releases is null ? 0L : Convert.ToInt64(releases.maxTs ?? 0L);
+
+        var hasMediaEntities = conn.ExecuteScalar<long>(
+            "SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name='media_entities';") > 0;
+        if (!hasMediaEntities)
+            return new PosterStatsWatermark(releasesCount, releasesMaxTs, 0L, 0L);
+
+        var media = conn.QueryFirstOrDefault(
+            """
+            SELECT
+              COUNT(1) as total,
+              MAX(COALESCE(poster_updated_at_ts, updated_at_ts, created_at_ts, 0)) as maxTs
+            FROM media_entities;
+            """);
+        var mediaCount = media is null ? 0L : Convert.ToInt64(media.total ?? 0L);
+        var mediaMaxTs = media is null ? 0L : Convert.ToInt64(media.maxTs ?? 0L);
+
+        return new PosterStatsWatermark(releasesCount, releasesMaxTs, mediaCount, mediaMaxTs);
+    }
+
+    public void RefreshPosterStatsSnapshot(long nowTs, long shortCooldownSeconds, long longCooldownSeconds)
     {
         using var conn = _db.Open();
         var shortCutoff = nowTs - shortCooldownSeconds;
@@ -580,20 +818,44 @@ public sealed class ReleaseRepository
         var row = conn.QueryFirstOrDefault(
             """
             SELECT
-              COUNT(1) as missingTotal,
+              COUNT(1) as total,
+              SUM(
+                CASE
+                  WHEN (COALESCE(releases.poster_file, me.poster_file) IS NULL OR COALESCE(releases.poster_file, me.poster_file) = '')
+                  THEN 1
+                  ELSE 0
+                END
+              ) as missing,
+              SUM(
+                CASE
+                  WHEN (
+                    (COALESCE(releases.poster_file, me.poster_file) IS NULL OR COALESCE(releases.poster_file, me.poster_file) = '')
+                    AND (releases.poster_last_error IS NOT NULL AND releases.poster_last_error <> '')
+                  )
+                  THEN 1
+                  ELSE 0
+                END
+              ) as failed,
+              SUM(
+                CASE
+                  WHEN (COALESCE(releases.poster_file, me.poster_file) IS NOT NULL AND COALESCE(releases.poster_file, me.poster_file) <> '')
+                  THEN 1
+                  ELSE 0
+                END
+              ) as ok,
               SUM(
                 CASE
                   WHEN (
                     (COALESCE(releases.poster_file, me.poster_file) IS NULL OR COALESCE(releases.poster_file, me.poster_file) = '')
                     AND (
-                      poster_last_attempt_ts IS NULL
+                      releases.poster_last_attempt_ts IS NULL
                       OR (
-                        (poster_last_error IS NULL OR poster_last_error = '')
-                        AND poster_last_attempt_ts <= @shortCutoff
+                        (releases.poster_last_error IS NULL OR releases.poster_last_error = '')
+                        AND releases.poster_last_attempt_ts <= @shortCutoff
                       )
                       OR (
-                        (poster_last_error IS NOT NULL AND poster_last_error <> '')
-                        AND poster_last_attempt_ts <= @longCutoff
+                        (releases.poster_last_error IS NOT NULL AND releases.poster_last_error <> '')
+                        AND releases.poster_last_attempt_ts <= @longCutoff
                       )
                     )
                   )
@@ -604,16 +866,94 @@ public sealed class ReleaseRepository
               MAX(COALESCE(releases.poster_updated_at_ts, me.poster_updated_at_ts, 0)) as lastPosterChangeTs
             FROM releases
             LEFT JOIN media_entities me
-              ON me.id = releases.entity_id
-            WHERE (COALESCE(releases.poster_file, me.poster_file) IS NULL OR COALESCE(releases.poster_file, me.poster_file) = '');
+              ON me.id = releases.entity_id;
             """,
             new { shortCutoff, longCutoff }
         );
 
-        var missingTotal = row is null ? 0 : Convert.ToInt32(row.missingTotal ?? 0);
+        var total = row is null ? 0 : Convert.ToInt32(row.total ?? 0);
+        var missing = row is null ? 0 : Convert.ToInt32(row.missing ?? 0);
+        var failed = row is null ? 0 : Convert.ToInt32(row.failed ?? 0);
+        var ok = row is null ? 0 : Convert.ToInt32(row.ok ?? 0);
         var missingActionable = row is null ? 0 : Convert.ToInt32(row.missingActionable ?? 0);
         var lastPosterChangeTs = row is null ? 0 : Convert.ToInt64(row.lastPosterChangeTs ?? 0);
-        return new PosterStats(missingTotal, missingActionable, lastPosterChangeTs);
+
+        conn.Execute(
+            """
+            INSERT INTO poster_stats(
+              singleton_id,
+              total,
+              missing,
+              failed,
+              ok,
+              missing_actionable,
+              last_poster_change_ts,
+              updated_at_ts
+            )
+            VALUES (
+              1,
+              @total,
+              @missing,
+              @failed,
+              @ok,
+              @missingActionable,
+              @lastPosterChangeTs,
+              @updatedAtTs
+            )
+            ON CONFLICT(singleton_id) DO UPDATE SET
+              total = excluded.total,
+              missing = excluded.missing,
+              failed = excluded.failed,
+              ok = excluded.ok,
+              missing_actionable = excluded.missing_actionable,
+              last_poster_change_ts = excluded.last_poster_change_ts,
+              updated_at_ts = excluded.updated_at_ts;
+            """,
+            new
+            {
+                total,
+                missing,
+                failed,
+                ok,
+                missingActionable,
+                lastPosterChangeTs,
+                updatedAtTs = nowTs
+            }
+        );
+    }
+
+    public MaterializedPosterStats GetPosterStatsSnapshot()
+    {
+        using var conn = _db.Open();
+        var row = conn.QueryFirstOrDefault<MaterializedPosterStats>(
+            """
+            SELECT
+              total as Total,
+              missing as Missing,
+              failed as Failed,
+              ok as Ok,
+              missing_actionable as MissingActionable,
+              last_poster_change_ts as LastPosterChangeTs,
+              updated_at_ts as UpdatedAtTs
+            FROM poster_stats
+            WHERE singleton_id = 1
+            LIMIT 1;
+            """
+        );
+
+        return row ?? new MaterializedPosterStats(0, 0, 0, 0, 0, 0, 0);
+    }
+
+    public PosterStats GetPosterStats(long nowTs, long shortCooldownSeconds, long longCooldownSeconds)
+    {
+        var snapshot = GetPosterStatsSnapshot();
+        if (snapshot.UpdatedAtTs <= 0)
+        {
+            RefreshPosterStatsSnapshot(nowTs, shortCooldownSeconds, longCooldownSeconds);
+            snapshot = GetPosterStatsSnapshot();
+        }
+
+        return new PosterStats(snapshot.Missing, snapshot.MissingActionable, snapshot.LastPosterChangeTs);
     }
 
     public sealed class PosterStateRow

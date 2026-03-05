@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiGet } from "../../../api/client.js";
+import usePolling from "../../../hooks/usePolling.js";
 
 const UPDATE_ACK_KEY = "feedarr:lastSeenReleaseTag";
 const UPDATE_CACHE_KEY = "feedarr:update:latest";
@@ -55,6 +56,7 @@ export default function useUpdates() {
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
   const [lastSeenReleaseTag, setLastSeenReleaseTag] = useState(() => readString(UPDATE_ACK_KEY, ""));
+  const [pollBackoff, setPollBackoff] = useState(1);
 
   const latestTag = String(data?.latestRelease?.tagName || "");
   const hasUnseenUpdate = !!(data?.isUpdateAvailable && latestTag && latestTag !== lastSeenReleaseTag);
@@ -104,17 +106,24 @@ export default function useUpdates() {
     }
   }, [checkForUpdates]);
 
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const lastCheck = readNumber(UPDATE_LAST_CHECK_TS_KEY, 0);
-      const intervalMs = getIntervalMs(data);
-      if ((Date.now() - lastCheck) >= intervalMs) {
-        checkForUpdates({ force: false, silent: true });
-      }
-    }, 60_000);
+  usePolling(() => {
+    const lastCheck = readNumber(UPDATE_LAST_CHECK_TS_KEY, 0);
+    const intervalMs = getIntervalMs(data);
+    if ((Date.now() - lastCheck) < intervalMs) return;
 
-    return () => clearInterval(timer);
-  }, [checkForUpdates, data]);
+    Promise.resolve(checkForUpdates({ force: false, silent: true }))
+      .then((res) => {
+        if (res) {
+          setPollBackoff(1);
+          return;
+        }
+
+        setPollBackoff((prev) => Math.min(8, Math.max(1, prev * 2)));
+      })
+      .catch(() => {
+        setPollBackoff((prev) => Math.min(8, Math.max(1, prev * 2)));
+      });
+  }, 60_000 * pollBackoff);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;

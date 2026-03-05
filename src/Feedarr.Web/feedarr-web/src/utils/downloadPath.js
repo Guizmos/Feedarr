@@ -1,5 +1,7 @@
 import { resolveApiUrl } from "../api/client.js";
 
+const IFRAME_CLEANUP_MS = 30_000;
+
 function reportDownloadError(onError, message, error) {
   console.error(message, error);
   if (typeof onError === "function") {
@@ -7,27 +9,49 @@ function reportDownloadError(onError, message, error) {
   }
 }
 
-function navigateCurrentTab(url) {
-  if (typeof document !== "undefined" && document.body) {
-    const link = document.createElement("a");
-    link.href = url;
-    link.rel = "noopener noreferrer";
-    link.style.display = "none";
-    document.body.appendChild(link);
-    try {
-      link.click();
-    } finally {
-      document.body.removeChild(link);
+function triggerDownloadWithIframe(url) {
+  if (typeof document === "undefined" || !document.body) {
+    throw new Error("document.body indisponible");
+  }
+
+  const iframe = document.createElement("iframe");
+  iframe.style.display = "none";
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.src = url;
+
+  document.body.appendChild(iframe);
+
+  const timeout = typeof window !== "undefined" ? window.setTimeout : setTimeout;
+  timeout(() => {
+    if (iframe.parentNode) {
+      iframe.parentNode.removeChild(iframe);
     }
-    return true;
+  }, IFRAME_CLEANUP_MS);
+
+  return true;
+}
+
+function triggerDownloadWithAnchor(url) {
+  if (typeof document === "undefined" || !document.body) {
+    throw new Error("document.body indisponible");
   }
 
-  if (typeof window !== "undefined") {
-    window.location.assign(url);
-    return true;
+  const link = document.createElement("a");
+  link.href = url;
+  link.target = "_self";
+  link.rel = "noopener";
+  link.style.display = "none";
+
+  document.body.appendChild(link);
+  try {
+    link.click();
+  } finally {
+    if (link.parentNode) {
+      link.parentNode.removeChild(link);
+    }
   }
 
-  return false;
+  return true;
 }
 
 export function openDownloadPath(downloadPath, options = {}) {
@@ -56,13 +80,11 @@ export function openDownloadPath(downloadPath, options = {}) {
       return false;
     }
 
-    const popup = window.open(url.toString(), "_blank", "noopener,noreferrer");
-    if (!popup) {
-      return navigateCurrentTab(url.toString());
+    try {
+      return triggerDownloadWithIframe(url.toString());
+    } catch {
+      return triggerDownloadWithAnchor(url.toString());
     }
-
-    popup.opener = null;
-    return true;
   } catch (error) {
     reportDownloadError(onError, "Impossible d'ouvrir le lien de telechargement.", error);
     return false;

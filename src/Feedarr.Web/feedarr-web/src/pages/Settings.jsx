@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { Suspense, useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useSubbarSetter } from "../layout/useSubbar.js";
 import SubAction from "../ui/SubAction.jsx";
@@ -7,24 +7,37 @@ import Loader from "../ui/Loader.jsx";
 import useSettingsController from "./settings/useSettingsController.js";
 import SettingsGeneral from "./settings/SettingsGeneral.jsx";
 import SettingsProviders from "./settings/SettingsProviders.jsx";
-import SettingsMaintenance from "./settings/SettingsMaintenance.jsx";
 import SettingsBackup from "./settings/SettingsBackup.jsx";
-import SettingsUiPage from "./settings/SettingsUiPage.jsx";
-import SettingsSecurityPage from "./settings/SettingsSecurityPage.jsx";
-import SettingsArrPage from "./settings/SettingsArrPage.jsx";
+
+const SettingsMaintenance = React.lazy(() => import("./settings/SettingsMaintenance.jsx"));
+const SettingsUiPage = React.lazy(() => import("./settings/SettingsUiPage.jsx"));
+const SettingsSecurityPage = React.lazy(() => import("./settings/SettingsSecurityPage.jsx"));
+const SettingsArrPage = React.lazy(() => import("./settings/SettingsArrPage.jsx"));
 
 export default function Settings() {
   const location = useLocation();
   const section = location.pathname.split("/")[2] || "general";
 
   if (section === "ui") {
-    return <SettingsUiPage />;
+    return (
+      <Suspense fallback={<Loader label="Chargement des paramètres…" />}>
+        <SettingsUiPage />
+      </Suspense>
+    );
   }
   if (section === "users") {
-    return <SettingsSecurityPage />;
+    return (
+      <Suspense fallback={<Loader label="Chargement des paramètres…" />}>
+        <SettingsSecurityPage />
+      </Suspense>
+    );
   }
   if (section === "applications") {
-    return <SettingsArrPage />;
+    return (
+      <Suspense fallback={<Loader label="Chargement des paramètres…" />}>
+        <SettingsArrPage />
+      </Suspense>
+    );
   }
 
   return <SettingsStandardPage section={section} />;
@@ -203,7 +216,11 @@ function SettingsStandardPage({ section }) {
         <div className="settings-grid">
           {showGeneral && <SettingsGeneral {...general} />}
           {showExternals && <SettingsProviders controller={providers} posterModalOpen={posterModalOpen} closePosterModal={() => setPosterModalOpen(false)} />}
-          {showMaintenance && <SettingsMaintenance {...maintenance} />}
+          {showMaintenance && (
+            <Suspense fallback={<Loader label="Chargement des paramètres…" />}>
+              <SettingsMaintenance {...maintenance} />
+            </Suspense>
+          )}
           {showBackup && <SettingsBackup {...backup} />}
         </div>
       )}

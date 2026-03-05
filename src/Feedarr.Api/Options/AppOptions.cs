@@ -11,4 +11,7 @@ public sealed class AppOptions
     public int RssLimitGlobalPerSource { get; set; } = 250;
     public bool RssOnlySync { get; set; } = false;
     public int StorageUsageCacheTtlSeconds { get; set; } = 30;
+    public int PosterStatsRefreshSeconds { get; set; } = 60;
+    public int MissingPosterSweepMinutes { get; set; } = 10;
+    public int MissingPosterSweepBatchSize { get; set; } = 200;
 }

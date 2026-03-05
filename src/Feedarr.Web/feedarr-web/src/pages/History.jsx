@@ -13,6 +13,7 @@ import {
   RELEASES_GROUP_PRIORITY,
   normalizeCategoryGroupKey,
 } from "../domain/categories/index.js";
+import { extractCategoryIds } from "./history/historyCategories.js";
 
 const PAGE_SIZE = 15;
 
@@ -75,54 +76,40 @@ function extractResponseMs(entry, data) {
   return null;
 }
 
-function extractCategoryIds(entry) {
-  const message = String(entry?.message ?? "").toLowerCase();
-  const parts = message.split("cats=");
-  if (parts.length < 2) return [];
-  const catsSection = parts[1].split("missing=")[0];
-  if (!catsSection) return [];
-  return catsSection
-    .split(",")
-    .map((raw) => raw.trim().split("=")[0])
-    .map((value) => Number(value))
-    .filter((value) => Number.isFinite(value));
-}
-
 function resolveCategoryInfo(raw) {
-  if (!raw) return null;
+  if (!raw || typeof raw !== "object") return null;
+  const id = Number(raw.id);
+  const normalizedId = Number.isFinite(id) && id > 0 ? id : null;
   const unifiedKey = normalizeCategoryGroupKey(raw.unifiedKey || raw.key) || null;
   if (unifiedKey) {
     return {
+      id: normalizedId,
       key: unifiedKey,
-      label: CATEGORY_GROUP_LABELS[unifiedKey] || raw.unifiedLabel || raw.name || unifiedKey,
+      label: String(CATEGORY_GROUP_LABELS[unifiedKey] || raw.label || raw.unifiedLabel || raw.name || unifiedKey),
     };
   }
-  if (raw.unifiedLabel) {
+  if (raw.label || raw.unifiedLabel || raw.name) {
     return {
+      id: normalizedId,
       key: null,
-      label: raw.unifiedLabel,
-    };
-  }
-  if (raw.name) {
-    return {
-      key: null,
-      label: raw.name,
+      label: String(raw.label || raw.unifiedLabel || raw.name),
     };
   }
   return null;
 }
 
-function buildCategoryList(catIds, lookup) {
-  if (!lookup || catIds.length === 0) return [];
+function normalizeCategoryList(rawCategories) {
+  const list = Array.isArray(rawCategories) ? rawCategories : [];
   const unique = new Map();
-  catIds.forEach((id) => {
-    const info = resolveCategoryInfo(lookup[id]);
+
+  list.forEach((raw) => {
+    const info = resolveCategoryInfo(raw);
     if (!info || !info.label) return;
-    const key = info.key || info.label;
-    if (!unique.has(key)) unique.set(key, info);
+    const dedupeKey = `${info.id ?? "na"}|${info.key || ""}|${String(info.label).toLowerCase()}`;
+    if (!unique.has(dedupeKey)) unique.set(dedupeKey, info);
   });
-  const list = Array.from(unique.values());
-  return list.sort((a, b) => {
+
+  return Array.from(unique.values()).sort((a, b) => {
     const orderA = RELEASES_GROUP_PRIORITY.indexOf(a.key);
     const orderB = RELEASES_GROUP_PRIORITY.indexOf(b.key);
     if (orderA !== -1 || orderB !== -1) {
@@ -130,6 +117,27 @@ function buildCategoryList(catIds, lookup) {
     }
     return String(a.label).localeCompare(String(b.label), getActiveUiLanguage(), { sensitivity: "base" });
   });
+}
+
+function buildFallbackCategoryList(entry, data) {
+  return extractCategoryIds(entry, data).map((id) => ({
+    id,
+    key: null,
+    label: `Cat ${id}`,
+  }));
+}
+
+function mergeCategories(previous, incoming) {
+  const merged = new Map();
+  (Array.isArray(previous) ? previous : []).forEach((cat) => {
+    const key = `${cat.id ?? "na"}|${cat.key || ""}|${String(cat.label || "").toLowerCase()}`;
+    if (!merged.has(key)) merged.set(key, cat);
+  });
+  (Array.isArray(incoming) ? incoming : []).forEach((cat) => {
+    const key = `${cat.id ?? "na"}|${cat.key || ""}|${String(cat.label || "").toLowerCase()}`;
+    if (!merged.has(key)) merged.set(key, cat);
+  });
+  return normalizeCategoryList(Array.from(merged.values()));
 }
 
 export default function History() {
@@ -171,39 +179,6 @@ export default function History() {
         sourceColorById[id] = getSourceColor(id, src?.color);
       });
 
-      const categoriesBySourceId = {};
-      const categoryFetchIds = new Set();
-      activity.forEach((entry) => {
-        const sourceId = entry?.sourceId ?? entry?.source_id;
-        if (!sourceId) return;
-        if (extractCategoryIds(entry).length > 0) {
-          categoryFetchIds.add(sourceId);
-        }
-      });
-
-      if (categoryFetchIds.size > 0) {
-        const sourceIds = Array.from(categoryFetchIds);
-        const categoryResults = await Promise.allSettled(
-          sourceIds.map((sourceId) =>
-            apiGet(`/api/categories/${sourceId}`)
-          )
-        );
-        sourceIds.forEach((sourceId, idx) => {
-          const res = categoryResults[idx];
-          if (res.status !== "fulfilled" || !Array.isArray(res.value)) return;
-          const map = {};
-          res.value.forEach((cat) => {
-            if (!cat?.id) return;
-            map[cat.id] = {
-              name: cat?.name || String(cat.id),
-              unifiedKey: cat?.unifiedKey || null,
-              unifiedLabel: cat?.unifiedLabel || null,
-            };
-          });
-          categoriesBySourceId[sourceId] = map;
-        });
-      }
-
       const grouped = new Map();
       const orderedKeys = [];
 
@@ -219,7 +194,7 @@ export default function History() {
             createdAt,
             itemsCount: null,
             responseMs: null,
-            catIds: new Set(),
+            categories: [],
           };
           grouped.set(key, group);
           orderedKeys.push(key);
@@ -227,21 +202,25 @@ export default function History() {
         const data = parseDataJson(entry?.dataJson ?? entry?.data_json);
         const itemsCount = extractItemsCount(entry, data);
         const responseMs = extractResponseMs(entry, data);
-        const catIds = extractCategoryIds(entry);
+        const entryCategories = normalizeCategoryList(entry?.categories);
+        const fallbackCategories = entryCategories.length === 0
+          ? buildFallbackCategoryList(entry, data)
+          : [];
+        const categories = entryCategories.length > 0 ? entryCategories : fallbackCategories;
         if (Number.isFinite(itemsCount)) {
           group.itemsCount = itemsCount;
         }
         if (Number.isFinite(responseMs) && group.responseMs == null) {
           group.responseMs = responseMs;
         }
-        catIds.forEach((id) => group.catIds.add(id));
+        if (categories.length > 0) {
+          group.categories = mergeCategories(group.categories, categories);
+        }
       });
 
       const mapped = orderedKeys.map((key) => {
         const group = grouped.get(key);
-        const lookup = categoriesBySourceId[group.sourceId];
-        const catIds = Array.from(group.catIds || []);
-        const categories = group.itemsCount > 0 ? buildCategoryList(catIds, lookup) : [];
+        const categories = group.itemsCount > 0 ? normalizeCategoryList(group.categories) : [];
         return {
           id: key,
           sourceId: group.sourceId,
@@ -291,6 +270,20 @@ export default function History() {
     const start = (currentPage - 1) * PAGE_SIZE;
     return rows.slice(start, start + PAGE_SIZE);
   }, [rows, currentPage]);
+
+  const renderCategories = useCallback((row) => {
+    if (!Array.isArray(row?.categories) || row.categories.length === 0) {
+      return <span className="muted">-</span>;
+    }
+    return row.categories.map((cat) => (
+      <span
+        key={`${row.id}-${cat.id ?? "na"}-${cat.key || cat.label}`}
+        className={`cat-bubble cat-bubble--${cat.key || "unknown"}`}
+      >
+        {cat.label}
+      </span>
+    ));
+  }, []);
 
   const refresh = useCallback(() => {
     setPage(1);
@@ -348,58 +341,84 @@ export default function History() {
       )}
 
       {!loading && !err && (
-      <div className="history-table table">
-        <div className="thead">
-          <div className="th">{tr("Fournisseurs", "Providers")}</div>
-          <div className="th">{tr("Éléments", "Items")}</div>
-          <div className="th">{tr("Catégories sync", "Sync categories")}</div>
-          <div className="th">{tr("Date", "Date")}</div>
-          <div className="th th-right">{tr("Temps de réponse", "Response time")}</div>
-        </div>
-        {pagedRows.length === 0 ? (
-          <div className="trow">
-            <div className="td history-empty">{tr("Aucune entrée d'historique", "No history entries")}</div>
+      <>
+        <div className="history-table history-table--desktop table">
+          <div className="thead">
+            <div className="th">{tr("Fournisseurs", "Providers")}</div>
+            <div className="th">{tr("Éléments", "Items")}</div>
+            <div className="th">{tr("Catégories sync", "Sync categories")}</div>
+            <div className="th">{tr("Date", "Date")}</div>
+            <div className="th th-right">{tr("Temps de réponse", "Response time")}</div>
           </div>
-        ) : (
-          pagedRows.map((row) => {
-            const indexerClass = getIndexerClass(row.indexer);
-            const indexerStyle = buildIndexerPillStyle(row.indexerColor);
-            return (
-            <div className="trow" key={row.id}>
-              <div className="td">
-                <span
-                  className={`banner-pill banner-pill--indexer${indexerClass ? ` ${indexerClass}` : ""}`}
-                  style={indexerStyle || undefined}
-                >
-                  {row.indexer}
-                </span>
-              </div>
-              <div className="td td-query" title={row.itemsCount != null ? `${row.itemsCount}` : "-"}>
-                {row.itemsCount != null ? row.itemsCount : "-"}
-              </div>
-              <div className="td td-categories">
-                {row.categories.length > 0 ? (
-                  row.categories.map((cat) => (
-                    <span
-                      key={`${row.id}-${cat.key || cat.label}`}
-                      className={`cat-bubble cat-bubble--${cat.key || "unknown"}`}
-                    >
-                      {cat.label}
-                    </span>
-                  ))
-                ) : (
-                  <span className="muted">-</span>
-                )}
-              </div>
-              <div className="td td-date">{row.date}</div>
-              <div className="td td-right td-response">
-                {Number.isFinite(row.responseMs) ? `${row.responseMs}ms` : "-"}
-              </div>
+          {pagedRows.length === 0 ? (
+            <div className="trow">
+              <div className="td history-empty">{tr("Aucune entrée d'historique", "No history entries")}</div>
             </div>
-            );
-          })
-        )}
-      </div>
+          ) : (
+            pagedRows.map((row) => {
+              const indexerClass = getIndexerClass(row.indexer);
+              const indexerStyle = buildIndexerPillStyle(row.indexerColor);
+              return (
+              <div className="trow" key={row.id}>
+                <div className="td">
+                  <span
+                    className={`banner-pill banner-pill--indexer${indexerClass ? ` ${indexerClass}` : ""}`}
+                    style={indexerStyle || undefined}
+                  >
+                    {row.indexer}
+                  </span>
+                </div>
+                <div className="td td-query" title={row.itemsCount != null ? `${row.itemsCount}` : "-"}>
+                  {row.itemsCount != null ? row.itemsCount : "-"}
+                </div>
+                <div className="td td-categories">
+                  {renderCategories(row)}
+                </div>
+                <div className="td td-date">{row.date}</div>
+                <div className="td td-right td-response">
+                  {Number.isFinite(row.responseMs) ? `${row.responseMs}ms` : "-"}
+                </div>
+              </div>
+              );
+            })
+          )}
+        </div>
+        <div className="history-cards history-cards--mobile">
+          {pagedRows.length === 0 ? (
+            <div className="history-card history-card--empty">{tr("Aucune entrée d'historique", "No history entries")}</div>
+          ) : (
+            pagedRows.map((row) => {
+              const indexerClass = getIndexerClass(row.indexer);
+              const indexerStyle = buildIndexerPillStyle(row.indexerColor);
+              return (
+                <article className="history-card" key={`mobile-${row.id}`}>
+                  <div className="history-card__header">
+                    <span
+                      className={`banner-pill banner-pill--indexer${indexerClass ? ` ${indexerClass}` : ""}`}
+                      style={indexerStyle || undefined}
+                    >
+                      {row.indexer}
+                    </span>
+                    <span className="history-card__date">{row.date}</span>
+                  </div>
+
+                  <div className="history-card__kv">
+                    <div className="history-card__k">{tr("Éléments", "Items")}</div>
+                    <div className="history-card__v">{row.itemsCount != null ? row.itemsCount : "-"}</div>
+                    <div className="history-card__k">{tr("Temps de réponse", "Response time")}</div>
+                    <div className="history-card__v">{Number.isFinite(row.responseMs) ? `${row.responseMs}ms` : "-"}</div>
+                  </div>
+
+                  <div className="history-card__categories">
+                    <div className="history-card__k">{tr("Catégories sync", "Sync categories")}</div>
+                    <div className="history-card__chips">{renderCategories(row)}</div>
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
+      </>
       )}
 
       {!loading && !err && (

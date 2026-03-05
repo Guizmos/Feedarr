@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { apiGet, apiPost } from "../api/client.js";
 import { addTask, removeTask } from "../app/taskTracker.js";
+import usePolling from "./usePolling.js";
 
 const STORAGE_KEY = "feedarr:retroFetch";
 const TASK_KEY = "retro-fetch-posters";
@@ -58,8 +59,7 @@ function saveRetroTask(task) {
 
 export function useRetroFetchProgress() {
   const [retroTask, setRetroTask] = useState(() => loadRetroTask());
-  const pollRef = useRef(null);
-  const isPollingRef = useRef(false);
+  const [pollMs, setPollMs] = useState(4000);
 
   // Synchroniser la tâche chargée avec taskTracker au montage
   useEffect(() => {
@@ -81,23 +81,12 @@ export function useRetroFetchProgress() {
     }
   }, []); // Exécute uniquement au montage
 
-  const stopPolling = useCallback(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-    isPollingRef.current = false;
-  }, []);
-
   const handleStorageChange = useCallback((event) => {
     if (event.detail.key === STORAGE_KEY) {
       const task = loadRetroTask();
       setRetroTask(task);
-      if (!task?.active) {
-        stopPolling();
-      }
     }
-  }, [stopPolling]);
+  }, []);
 
   useEffect(() => {
     window.addEventListener("storage_change", handleStorageChange);
@@ -106,16 +95,9 @@ export function useRetroFetchProgress() {
     };
   }, [handleStorageChange]);
 
-  useEffect(() => {
-    if (!retroTask?.active) {
-      stopPolling();
-      return;
-    }
+  const tick = useCallback(async () => {
+    if (!retroTask?.active) return;
 
-    if (isPollingRef.current) return;
-    isPollingRef.current = true;
-
-    async function tick() {
       try {
         const ids = Array.isArray(retroTask.ids) ? retroTask.ids : [];
         const startedAtTs = Number(retroTask.startedAtTs ?? 0);
@@ -149,19 +131,20 @@ export function useRetroFetchProgress() {
         }
         
         saveRetroTask(updatedTask);
+        setPollMs(4000);
 
       } catch {
-        // Silently ignore for now, but could add error handling
+        setPollMs((prev) => Math.min(16000, Math.max(4000, prev * 2)));
       }
-    }
+  }, [retroTask]);
 
-    tick();
-    pollRef.current = setInterval(tick, 4000);
+  useEffect(() => {
+    if (retroTask?.active) setPollMs(4000);
+  }, [retroTask?.active]);
 
-    return () => {
-      stopPolling();
-    };
-  }, [retroTask, stopPolling]);
+  usePolling(() => {
+    void tick();
+  }, pollMs, !!retroTask?.active);
 
   const startRetroFetch = useCallback(async () => {
     try {

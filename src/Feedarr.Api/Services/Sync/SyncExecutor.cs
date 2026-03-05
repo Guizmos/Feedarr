@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services.Posters;
@@ -349,7 +351,20 @@ public sealed class SyncExecutor : ISyncExecutor
                 "info",
                 "sync",
                 BuildSuccessActivityMessage(plan, name, items.Count, syncMode),
-                dataJson: $"{{\"itemsCount\":{items.Count},\"usedMode\":\"{usedMode}\",\"syncMode\":\"{syncMode}\",\"insertedNew\":{insertedNew},\"totalBeforeRetention\":{retentionResult.TotalBefore},\"purgedByPerCat\":{retentionResult.PurgedByPerCategory},\"purgedByGlobal\":{retentionResult.PurgedByGlobal},\"postersPurged\":{postersPurged},\"failedPosterDeletes\":{failedDeletes},\"elapsedMs\":{elapsedMs},\"correlationId\":\"{plan.Telemetry.CorrelationId}\"}}");
+                dataJson: BuildSuccessActivityDataJson(
+                    itemsCount: items.Count,
+                    usedMode: usedMode,
+                    syncMode: syncMode,
+                    insertedNew: insertedNew,
+                    totalBeforeRetention: retentionResult.TotalBefore,
+                    purgedByPerCategory: retentionResult.PurgedByPerCategory,
+                    purgedByGlobal: retentionResult.PurgedByGlobal,
+                    postersPurged: postersPurged,
+                    failedPosterDeletes: failedDeletes,
+                    elapsedMs: elapsedMs,
+                    correlationId: plan.Telemetry.CorrelationId,
+                    seenCategories: categoryMapResult.SeenCategories,
+                    categoryMap: plan.Filter.CategoryMap));
 
             return new SyncExecutionResult(
                 Ok: true,
@@ -408,41 +423,54 @@ public sealed class SyncExecutor : ISyncExecutor
         if (plan.Poster.SelectionMode == PosterSelectionMode.Seeds)
         {
             var seeds = _releases.GetNewPosterJobSeeds(plan.Input.Source.Id, plan.Poster.LastSyncAt);
+            var jobs = new List<PosterFetchJob>();
             foreach (var seed in seeds)
             {
                 var job = _posterJobs.CreateFromSeed(seed, plan.Poster.ForceRefresh);
                 if (job is null) continue;
 
                 requested++;
-                var enqueue = await _posterQueue.EnqueueAsync(job, ct, PosterFetchQueue.DefaultEnqueueTimeout).ConfigureAwait(false);
-                CountEnqueue(enqueue, ref enqueued, ref coalesced, ref timedOut);
+                jobs.Add(job);
             }
+
+            var batch = await _posterQueue.EnqueueManyAsync(jobs, ct, PosterFetchQueue.DefaultBatchEnqueueTimeout).ConfigureAwait(false);
+            enqueued += batch.Enqueued;
+            coalesced += batch.Coalesced;
+            timedOut += batch.TimedOut;
         }
         else
         {
             var ids = _releases.GetNewIdsWithoutPoster(plan.Input.Source.Id, plan.Poster.LastSyncAt);
+            var jobs = new List<PosterFetchJob>();
             foreach (var id in ids)
             {
                 var job = _posterJobs.Create(id, plan.Poster.ForceRefresh);
                 if (job is null) continue;
 
                 requested++;
-                var enqueue = await _posterQueue.EnqueueAsync(job, ct, PosterFetchQueue.DefaultEnqueueTimeout).ConfigureAwait(false);
-                CountEnqueue(enqueue, ref enqueued, ref coalesced, ref timedOut);
+                jobs.Add(job);
             }
+
+            var batch = await _posterQueue.EnqueueManyAsync(jobs, ct, PosterFetchQueue.DefaultBatchEnqueueTimeout).ConfigureAwait(false);
+            enqueued += batch.Enqueued;
+            coalesced += batch.Coalesced;
+            timedOut += batch.TimedOut;
+        }
+
+        if (timedOut > 0)
+        {
+            _log.LogWarning(
+                "{Prefix} poster enqueue timed out sourceId={SourceId} sourceName={SourceName} requested={Requested} enqueued={Enqueued} coalesced={Coalesced} timedOut={TimedOut}; missing posters will be swept later",
+                plan.Telemetry.LogPrefix,
+                plan.Input.Source.Id,
+                plan.Input.Source.Name ?? string.Empty,
+                requested,
+                enqueued,
+                coalesced,
+                timedOut);
         }
 
         return (requested, enqueued, coalesced, timedOut);
-    }
-
-    private static void CountEnqueue(PosterFetchEnqueueResult enqueue, ref int enqueued, ref int coalesced, ref int timedOut)
-    {
-        if (enqueue.IsEnqueued)
-            enqueued++;
-        else if (enqueue.IsCoalesced)
-            coalesced++;
-        else if (enqueue.IsTimedOut)
-            timedOut++;
     }
 
     private void LogCategorySelectionSnapshot(SyncPlan plan)
@@ -491,4 +519,67 @@ public sealed class SyncExecutor : ISyncExecutor
             _ => $"Sync ERROR: {safeError}"
         };
     }
+
+    private static string BuildSuccessActivityDataJson(
+        int itemsCount,
+        string usedMode,
+        string syncMode,
+        int insertedNew,
+        int totalBeforeRetention,
+        int purgedByPerCategory,
+        int purgedByGlobal,
+        int postersPurged,
+        int failedPosterDeletes,
+        long elapsedMs,
+        string correlationId,
+        IReadOnlyDictionary<int, int> seenCategories,
+        IReadOnlyDictionary<int, (string key, string label)> categoryMap)
+    {
+        var categoryIds = seenCategories.Keys.OrderBy(id => id).ToArray();
+        var categories = BuildActivityCategoriesSnapshot(seenCategories, categoryMap);
+
+        return JsonSerializer.Serialize(new
+        {
+            itemsCount,
+            usedMode,
+            syncMode,
+            insertedNew,
+            totalBeforeRetention,
+            purgedByPerCat = purgedByPerCategory,
+            purgedByGlobal,
+            postersPurged,
+            failedPosterDeletes,
+            elapsedMs,
+            correlationId,
+            categoryIds,
+            categories
+        });
+    }
+
+    private static IReadOnlyList<ActivityCategorySnapshot> BuildActivityCategoriesSnapshot(
+        IReadOnlyDictionary<int, int> seenCategories,
+        IReadOnlyDictionary<int, (string key, string label)> categoryMap)
+    {
+        return seenCategories
+            .OrderByDescending(kvp => kvp.Value)
+            .ThenBy(kvp => kvp.Key)
+            .Select(kvp =>
+            {
+                var id = kvp.Key;
+                var count = kvp.Value;
+                if (categoryMap.TryGetValue(id, out var mapped))
+                {
+                    return new ActivityCategorySnapshot(id, count, mapped.key, mapped.label);
+                }
+
+                return new ActivityCategorySnapshot(id, count, null, null);
+            })
+            .ToArray();
+    }
+
+    private sealed record ActivityCategorySnapshot(
+        [property: JsonPropertyName("id")] int Id,
+        [property: JsonPropertyName("count")] int Count,
+        [property: JsonPropertyName("key")] string? Key,
+        [property: JsonPropertyName("label")] string? Label);
 }

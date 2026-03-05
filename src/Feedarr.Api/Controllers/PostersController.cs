@@ -14,6 +14,7 @@ using Feedarr.Api.Services.Posters;
 using Feedarr.Api.Models;
 using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services.ExternalProviders;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace Feedarr.Api.Controllers;
 
@@ -21,6 +22,10 @@ namespace Feedarr.Api.Controllers;
 [Route("api/posters")]
 public sealed class PostersController : ControllerBase
 {
+    private const int MaxBulkIds = 1000;
+    private static readonly TimeSpan PosterStatsCacheDuration = TimeSpan.FromSeconds(5);
+    private static readonly MemoryCache PosterStatsCache = new(new MemoryCacheOptions());
+
     private readonly ReleaseRepository _releases;
     private readonly MediaEntityRepository _mediaEntities;
     private readonly ActivityRepository _activity;
@@ -654,30 +659,36 @@ public sealed class PostersController : ControllerBase
     [HttpPost("releases/fetch")]
     public Task<IActionResult> FetchBulk([FromBody] BulkDto dto, CancellationToken ct)
     {
-        if (dto?.Ids is null || dto.Ids.Count == 0)
-            return Task.FromResult<IActionResult>(BadRequest(new { error = "ids missing" }));
+        var ids = dto?.Ids;
+        var validation = ValidateBulkPayloadIds(ids);
+        if (validation is not null)
+            return Task.FromResult(validation);
 
-        return EnqueueBulk(dto.Ids, forceRefresh: false, ct);
+        return EnqueueBulk(ids!, forceRefresh: false, ct);
     }
 
     // POST /api/posters/refresh-bulk
     [HttpPost("refresh-bulk")]
     public Task<IActionResult> RefreshBulk([FromBody] BulkDto dto, CancellationToken ct)
     {
-        if (dto?.Ids is null || dto.Ids.Count == 0)
-            return Task.FromResult<IActionResult>(BadRequest(new { error = "ids missing" }));
+        var ids = dto?.Ids;
+        var validation = ValidateBulkPayloadIds(ids);
+        if (validation is not null)
+            return Task.FromResult(validation);
 
-        return EnqueueBulk(dto.Ids, forceRefresh: true, ct);
+        return EnqueueBulk(ids!, forceRefresh: true, ct);
     }
 
     // POST /api/posters/releases/state
     [HttpPost("releases/state")]
     public IActionResult GetReleasesState([FromBody] BulkDto dto)
     {
-        if (dto?.Ids is null || dto.Ids.Count == 0)
-            return BadRequest(new { error = "ids missing" });
+        var ids = dto?.Ids;
+        var validation = ValidateBulkPayloadIds(ids);
+        if (validation is not null)
+            return validation;
 
-        var rows = _releases.GetPosterStateByReleaseIds(dto.Ids);
+        var rows = _releases.GetPosterStateByReleaseIds(ids!);
         var items = rows.Select(row => new
         {
             id = row.Id,
@@ -734,6 +745,9 @@ public sealed class PostersController : ControllerBase
     public IActionResult RetroFetchProgress([FromBody] RetroFetchProgressDto? dto)
     {
         var ids = dto?.Ids ?? new List<long>();
+        if (ids.Count > MaxBulkIds)
+            return StatusCode(StatusCodes.Status413PayloadTooLarge, new { error = "too many ids", maxIds = MaxBulkIds });
+
         var startedAtTs = dto?.StartedAtTs ?? 0;
         var (total, done, pending) = _releases.GetPosterProgressByIds(ids, startedAtTs);
         return Ok(new { total, done, pending });
@@ -769,6 +783,10 @@ public sealed class PostersController : ControllerBase
     [HttpGet("stats")]
     public IActionResult GetPosterStats()
     {
+        const string cacheKey = "posters:stats:v2";
+        if (PosterStatsCache.TryGetValue<object>(cacheKey, out var cached) && cached is not null)
+            return Ok(cached);
+
         const long shortCooldownSeconds = 6 * 60 * 60;
         const long longCooldownSeconds = 24 * 60 * 60;
 
@@ -778,13 +796,16 @@ public sealed class PostersController : ControllerBase
         var fingerprint = $"{stats.MissingActionable}|{stats.LastPosterChangeTs}|{lastSyncTs}";
         var lastChangeTs = Math.Max(stats.LastPosterChangeTs, lastSyncTs);
 
-        return Ok(new
+        var payload = new
         {
             missingTotal = stats.MissingTotal,
             missingActionable = stats.MissingActionable,
             stateFingerprint = fingerprint,
             lastChangeTs
-        });
+        };
+
+        PosterStatsCache.Set(cacheKey, payload, PosterStatsCacheDuration);
+        return Ok(payload);
     }
 
     // GET /api/posters/queue/status
@@ -839,12 +860,13 @@ public sealed class PostersController : ControllerBase
         int? total = null,
         string? retroLogFile = null)
     {
-        var enqueued = 0;
-        var coalesced = 0;
-        var missing = 0;
-        var timedOut = 0;
+        var requestedIds = ids as IReadOnlyCollection<long> ?? ids.ToList();
+        var distinctIds = requestedIds.Distinct().ToList();
 
-        foreach (var id in ids.Distinct())
+        var missing = 0;
+        var jobs = new List<PosterFetchJob>(distinctIds.Count);
+
+        foreach (var id in distinctIds)
         {
             var job = _jobFactory.Create(id, forceRefresh, retroLogFile);
             if (job is null)
@@ -853,16 +875,16 @@ public sealed class PostersController : ControllerBase
                 continue;
             }
 
-            var enqueue = await _queue.EnqueueAsync(job, ct, PosterFetchQueue.DefaultEnqueueTimeout).ConfigureAwait(false);
-            if (enqueue.IsEnqueued)
-                enqueued++;
-            else if (enqueue.IsCoalesced)
-                coalesced++;
-            else if (enqueue.IsTimedOut)
-                timedOut++;
+            jobs.Add(job);
         }
 
-        var totalCount = total ?? ids.Count();
+        var batch = await _queue.EnqueueManyAsync(jobs, ct, PosterFetchQueue.DefaultBatchEnqueueTimeout).ConfigureAwait(false);
+        missing += batch.Rejected;
+
+        var enqueued = batch.Enqueued;
+        var coalesced = batch.Coalesced;
+        var timedOut = batch.TimedOut;
+        var totalCount = total ?? requestedIds.Count;
         var result = Accepted(new
         {
             ok = true,
@@ -876,6 +898,16 @@ public sealed class PostersController : ControllerBase
         });
 
         return (result, enqueued, coalesced, missing, timedOut, totalCount);
+    }
+
+    private IActionResult? ValidateBulkPayloadIds(IReadOnlyCollection<long>? ids)
+    {
+        if (ids is null || ids.Count == 0)
+            return BadRequest(new { error = "ids missing" });
+        if (ids.Count > MaxBulkIds)
+            return StatusCode(StatusCodes.Status413PayloadTooLarge, new { error = "too many ids", maxIds = MaxBulkIds });
+
+        return null;
     }
 
     // GET /api/posters/retro-fetch/log/{file}

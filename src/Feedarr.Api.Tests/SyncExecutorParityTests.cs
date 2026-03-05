@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using System.IO;
 using Feedarr.Api.Data;
 using Feedarr.Api.Data.Repositories;
@@ -55,6 +56,149 @@ public sealed class SyncExecutorParityTests
         Assert.Equal(auto.SyncMode, scheduler.SyncMode);
         Assert.Equal(auto.UsedMode, scheduler.UsedMode);
     }
+
+    [Fact]
+    public async Task ManualAndAutoSyncActivity_AlwaysIncludeCategoryIdsInDataJson()
+    {
+        using var context = new SyncTestContext();
+        var manualSource = context.CreateConfiguredSource("Manual", "http://localhost:9117/api/manual");
+        var autoSource = context.CreateConfiguredSource("Auto", "http://localhost:9117/api/auto");
+
+        var manual = await context.Service.ExecuteSourceSyncAsync(manualSource, new ManualSyncPolicy(), rssOnly: false, CancellationToken.None);
+        var auto = await context.Service.ExecuteSourceSyncAsync(autoSource, new AutoSyncPolicy(), rssOnly: false, CancellationToken.None);
+
+        Assert.True(manual.Ok);
+        Assert.True(auto.Ok);
+
+        using var manualData = GetLatestSyncSuccessDataJson(context.Activity, manualSource.Id);
+        using var autoData = GetLatestSyncSuccessDataJson(context.Activity, autoSource.Id);
+
+        Assert.True(manualData.RootElement.TryGetProperty("categoryIds", out var manualCategoryIds));
+        Assert.Contains(manualCategoryIds.EnumerateArray().Select(x => x.GetInt32()), id => id == 2000);
+        Assert.True(manualData.RootElement.TryGetProperty("categories", out var manualCategories));
+        Assert.Contains(
+            manualCategories.EnumerateArray()
+                .Select(x => x.TryGetProperty("id", out var id) ? id.GetInt32() : -1),
+            id => id == 2000);
+
+        Assert.True(autoData.RootElement.TryGetProperty("categoryIds", out var autoCategoryIds));
+        Assert.Contains(autoCategoryIds.EnumerateArray().Select(x => x.GetInt32()), id => id == 2000);
+        Assert.True(autoData.RootElement.TryGetProperty("categories", out var autoCategories));
+        Assert.Contains(
+            autoCategories.EnumerateArray()
+                .Select(x => x.TryGetProperty("id", out var id) ? id.GetInt32() : -1),
+            id => id == 2000);
+    }
+
+    [Fact]
+    public async Task ManualAndAutoSyncActivity_ListEndpointAlwaysContainsCanonicalCategories()
+    {
+        using var context = new SyncTestContext();
+        var manualSource = context.CreateConfiguredSource("Manual", "http://localhost:9117/api/manual");
+        var autoSource = context.CreateConfiguredSource("Auto", "http://localhost:9117/api/auto");
+
+        var manual = await context.Service.ExecuteSourceSyncAsync(manualSource, new ManualSyncPolicy(), rssOnly: false, CancellationToken.None);
+        var auto = await context.Service.ExecuteSourceSyncAsync(autoSource, new AutoSyncPolicy(), rssOnly: false, CancellationToken.None);
+
+        Assert.True(manual.Ok);
+        Assert.True(auto.Ok);
+
+        var manualEntry = GetLatestSyncSuccessEntry(context.Activity, manualSource.Id);
+        var autoEntry = GetLatestSyncSuccessEntry(context.Activity, autoSource.Id);
+
+        Assert.True(manualEntry.TryGetValue("categories", out var manualCategoriesRaw));
+        Assert.NotNull(manualCategoriesRaw);
+        var manualCategories = ((IEnumerable<object>)manualCategoriesRaw!)
+            .Select(ToCategorySnapshot)
+            .Where(snapshot => snapshot is not null)
+            .Select(snapshot => snapshot!)
+            .ToList();
+        Assert.Contains(manualCategories, category => category.Id == 2000);
+        Assert.Contains(manualCategories, category => !string.IsNullOrWhiteSpace(category.Label));
+
+        Assert.True(autoEntry.TryGetValue("categories", out var autoCategoriesRaw));
+        Assert.NotNull(autoCategoriesRaw);
+        var autoCategories = ((IEnumerable<object>)autoCategoriesRaw!)
+            .Select(ToCategorySnapshot)
+            .Where(snapshot => snapshot is not null)
+            .Select(snapshot => snapshot!)
+            .ToList();
+        Assert.Contains(autoCategories, category => category.Id == 2000);
+        Assert.Contains(autoCategories, category => !string.IsNullOrWhiteSpace(category.Label));
+    }
+
+    private static JsonDocument GetLatestSyncSuccessDataJson(ActivityRepository activity, long sourceId)
+    {
+        var row = GetLatestSyncSuccessEntry(activity, sourceId);
+        if (!row.TryGetValue("dataJson", out var rawDataJson) || rawDataJson is not string dataJson || string.IsNullOrWhiteSpace(dataJson))
+            throw new Xunit.Sdk.XunitException($"No sync success activity dataJson found for sourceId={sourceId}.");
+
+        return JsonDocument.Parse(dataJson);
+    }
+
+    private static IDictionary<string, object> GetLatestSyncSuccessEntry(ActivityRepository activity, long sourceId)
+    {
+        foreach (var entry in activity.List(limit: 50, sourceId: sourceId, eventType: "sync", level: "info"))
+        {
+            if (entry is not IDictionary<string, object> row)
+                continue;
+
+            if (!row.TryGetValue("dataJson", out var rawDataJson))
+                continue;
+
+            var dataJson = rawDataJson as string;
+            if (string.IsNullOrWhiteSpace(dataJson))
+                continue;
+
+            JsonDocument parsed;
+            try
+            {
+                parsed = JsonDocument.Parse(dataJson);
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (parsed.RootElement.TryGetProperty("itemsCount", out _))
+                return row;
+
+            parsed.Dispose();
+        }
+
+        throw new Xunit.Sdk.XunitException($"No sync success activity entry found for sourceId={sourceId}.");
+    }
+
+    private static CategorySnapshot? ToCategorySnapshot(object? raw)
+    {
+        if (raw is IDictionary<string, object> data)
+        {
+            if (!data.TryGetValue("id", out var idRaw) || idRaw is null)
+                return null;
+            var idFromDict = Convert.ToInt32(idRaw);
+            var labelFromDict = data.TryGetValue("label", out var labelRaw) ? labelRaw?.ToString() : null;
+            return new CategorySnapshot(idFromDict, labelFromDict);
+        }
+
+        if (raw is null)
+            return null;
+
+        var type = raw.GetType();
+        var idProp = type.GetProperty("Id") ?? type.GetProperty("id");
+        if (idProp is null)
+            return null;
+        var idValue = idProp.GetValue(raw);
+        if (idValue is null)
+            return null;
+        var id = Convert.ToInt32(idValue);
+
+        var labelProp = type.GetProperty("Label") ?? type.GetProperty("label");
+        var label = labelProp?.GetValue(raw)?.ToString();
+
+        return new CategorySnapshot(id, label);
+    }
+
+    private sealed record CategorySnapshot(int Id, string? Label);
 
     private sealed class SyncTestContext : IDisposable
     {
@@ -188,6 +332,8 @@ public sealed class SyncExecutorParityTests
     {
         public ValueTask<PosterFetchEnqueueResult> EnqueueAsync(PosterFetchJob job, CancellationToken ct, TimeSpan timeout)
             => ValueTask.FromResult(new PosterFetchEnqueueResult(PosterFetchEnqueueStatus.Enqueued));
+        public ValueTask<PosterFetchEnqueueBatchResult> EnqueueManyAsync(IReadOnlyList<PosterFetchJob> jobs, CancellationToken ct, TimeSpan timeout)
+            => ValueTask.FromResult(new PosterFetchEnqueueBatchResult(jobs.Count, 0, 0, 0));
 
         public ValueTask<PosterFetchJob> DequeueAsync(CancellationToken ct)
             => ValueTask.FromCanceled<PosterFetchJob>(ct);
