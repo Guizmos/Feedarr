@@ -9,6 +9,12 @@ import { applyTheme } from "../app/theme.js";
 import { applyUiLanguage } from "../app/locale.js";
 import { usePosterQueueMonitoring } from "../hooks/usePosterQueueMonitoring.js";
 import { usePosterPollingService } from "../hooks/usePosterPollingService.js";
+import useBadges from "../hooks/useBadges.js";
+
+const IS_DEV =
+  typeof import.meta !== "undefined"
+  && typeof import.meta.env !== "undefined"
+  && !!import.meta.env.DEV;
 
 export default function Shell() {
   const navigate = useNavigate();
@@ -35,6 +41,17 @@ export default function Shell() {
     maxDurationMs: 90000,
     enabled: true,
   });
+
+  const badges = useBadges({
+    pollMs: 25000,
+    activityLimit: 200,
+  });
+
+  useEffect(() => {
+    if (!IS_DEV) return undefined;
+    console.debug("[badges] mount Shell");
+    return () => console.debug("[badges] unmount Shell");
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -194,7 +211,7 @@ export default function Shell() {
         />
 
         <div className="body">
-          <Sidebar onNavigate={closeNav} />
+          <Sidebar onNavigate={closeNav} badges={badges} />
 
           <div className="content">
             <Subbar />

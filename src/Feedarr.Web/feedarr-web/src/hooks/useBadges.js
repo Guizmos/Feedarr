@@ -8,6 +8,67 @@ const RELEASES_LAST_SEEN_TS_KEY = "feedarr:lastSeen:releases_ts";
 const UPDATE_LAST_SEEN_TAG_KEY = "feedarr:lastSeenReleaseTag";
 const UPDATE_CACHE_KEY = "feedarr:update:latest";
 const UPDATE_LAST_CHECK_TS_KEY = "feedarr:update:lastCheckTs";
+const IS_DEV =
+  typeof import.meta !== "undefined"
+  && typeof import.meta.env !== "undefined"
+  && !!import.meta.env.DEV;
+
+function debugBadges(message, details) {
+  if (!IS_DEV || typeof console === "undefined") return;
+  if (details === undefined) {
+    console.debug(`[badges] ${message}`);
+    return;
+  }
+  console.debug(`[badges] ${message}`, details);
+}
+
+function isLibraryBadgeVisible(value) {
+  return value != null && value !== false && value !== 0;
+}
+
+export function computeReleasesBadgeValue({
+  releasesNewSinceTsCount,
+  releasesCount,
+  releasesLatestTs,
+  lastSeenReleasesCount,
+  lastSeenReleasesTs,
+}) {
+  const safeLastSeenTs = Number.isFinite(Number(lastSeenReleasesTs))
+    ? Number(lastSeenReleasesTs)
+    : 0;
+  const safeLatestTs = Number.isFinite(Number(releasesLatestTs))
+    ? Number(releasesLatestTs)
+    : 0;
+  const safeTotalCount = Number.isFinite(Number(releasesCount))
+    ? Math.max(0, Math.trunc(Number(releasesCount)))
+    : NaN;
+  const safeSeenCount = Number.isFinite(Number(lastSeenReleasesCount))
+    ? Math.max(0, Math.trunc(Number(lastSeenReleasesCount)))
+    : 0;
+  const unseenRaw = Number(releasesNewSinceTsCount);
+  const hasExactUnseenCount = Number.isFinite(unseenRaw) && unseenRaw >= 0;
+
+  if (hasExactUnseenCount) {
+    const exactUnseenCount = Math.trunc(unseenRaw);
+    return exactUnseenCount > 0 ? exactUnseenCount : 0;
+  }
+
+  const releasesDelta = Number.isFinite(safeTotalCount)
+    ? Math.max(0, safeTotalCount - safeSeenCount)
+    : 0;
+  const hasNewByTs = safeLatestTs > 0 && safeLatestTs > safeLastSeenTs;
+  const hasReliableTsPair = safeLastSeenTs > 0 && safeLatestTs > 0;
+
+  // Once we have a reliable seen/latest timestamp pair, timestamp wins over count delta.
+  if (hasReliableTsPair) {
+    if (!hasNewByTs) return 0;
+    return releasesDelta > 0 ? releasesDelta : "warn";
+  }
+
+  if (releasesDelta > 0) return releasesDelta;
+  if (hasNewByTs) return "warn";
+  return 0;
+}
 
 function readCachedUpdate() {
   if (typeof window === "undefined") return null;
@@ -208,6 +269,13 @@ export default function useBadges({
   const refreshInFlight = useRef(false);
   const refreshRef = useRef(null);
   const summaryModeRef = useRef({ legacyOnly: false });
+  const libraryBadgeDebugContextRef = useRef(null);
+  const previousLibraryBadgeVisibleRef = useRef(false);
+
+  useEffect(() => {
+    debugBadges("mount useBadges");
+    return () => debugBadges("unmount useBadges");
+  }, []);
 
   const resolveUpdateState = useCallback(async () => {
     let updatePayload = readCachedUpdate();
@@ -344,22 +412,27 @@ export default function useBadges({
     const releasesNewSinceTsCount = releasesNewSinceTsRaw == null
       ? NaN
       : Number(releasesNewSinceTsRaw);
-    const hasExactUnseenCount = Number.isFinite(releasesNewSinceTsCount) && releasesNewSinceTsCount >= 0;
-    const exactUnseenCount = hasExactUnseenCount ? Math.trunc(releasesNewSinceTsCount) : null;
-
-    const releasesDelta = typeof releasesCount === "number"
-      ? Math.max(0, releasesCount - lastSeenReleasesCount)
-      : null;
-    const hasNewByTs = typeof releasesLatestTs === "number"
-      ? releasesLatestTs > lastSeenReleasesTs
-      : false;
-    const releasesBadgeValue = hasExactUnseenCount
-      ? (exactUnseenCount > 0 ? exactUnseenCount : 0)
-      : releasesDelta && releasesDelta > 0
-        ? releasesDelta
-        : hasNewByTs
-          ? "warn"
-          : 0;
+    const releasesBadgeValue = computeReleasesBadgeValue({
+      releasesNewSinceTsCount,
+      releasesCount,
+      releasesLatestTs,
+      lastSeenReleasesCount,
+      lastSeenReleasesTs,
+    });
+    libraryBadgeDebugContextRef.current = {
+      source: "legacy",
+      summary: {
+        releasesCount,
+        releasesLatestTs,
+        releasesNewSinceTsCount,
+      },
+      sinceTs: safeSinceTs,
+      lastSeenTs: lastSeenReleasesTs,
+      lastSeenCount: lastSeenReleasesCount,
+      documentHidden: typeof document === "undefined" ? null : document.hidden,
+      pathname: typeof window === "undefined" ? "" : window.location.pathname,
+      computedBadge: releasesBadgeValue,
+    };
 
     // Extraction des tâches (retro fetch, sync, etc.)
     const tasks = Array.isArray(sys?.tasks)
@@ -423,20 +496,29 @@ export default function useBadges({
     const releasesLatestTs = parseTs(releases?.latestTs ?? 0);
     const releasesNewSinceTsRaw = releases?.newSinceTsCount;
     const releasesNewSinceTsCount = releasesNewSinceTsRaw == null ? NaN : Number(releasesNewSinceTsRaw);
-    const hasExactUnseenCount = Number.isFinite(releasesNewSinceTsCount) && releasesNewSinceTsCount >= 0;
-    const exactUnseenCount = hasExactUnseenCount ? Math.trunc(releasesNewSinceTsCount) : null;
-
-    const releasesDelta = Number.isFinite(releasesCount)
-      ? Math.max(0, Math.trunc(releasesCount) - lastSeenReleasesCount)
-      : null;
-    const hasNewByTs = releasesLatestTs > lastSeenReleasesTs;
-    const releasesBadgeValue = hasExactUnseenCount
-      ? (exactUnseenCount > 0 ? exactUnseenCount : 0)
-      : releasesDelta && releasesDelta > 0
-        ? releasesDelta
-        : hasNewByTs
-          ? "warn"
-          : 0;
+    const releasesBadgeValue = computeReleasesBadgeValue({
+      releasesNewSinceTsCount,
+      releasesCount,
+      releasesLatestTs,
+      lastSeenReleasesCount,
+      lastSeenReleasesTs,
+    });
+    libraryBadgeDebugContextRef.current = {
+      source: "summary",
+      summary: {
+        activityUnreadCount: activity?.unreadCount ?? null,
+        activityLastActivityTs: activity?.lastActivityTs ?? null,
+        releasesTotalCount: releases?.totalCount ?? null,
+        releasesLatestTs: releases?.latestTs ?? null,
+        releasesNewSinceTsCount: releases?.newSinceTsCount ?? null,
+      },
+      sinceTs: safeReleasesSinceTs,
+      lastSeenTs: lastSeenReleasesTs,
+      lastSeenCount: lastSeenReleasesCount,
+      documentHidden: typeof document === "undefined" ? null : document.hidden,
+      pathname: typeof window === "undefined" ? "" : window.location.pathname,
+      computedBadge: releasesBadgeValue,
+    };
 
     const settingsMissing = Number(settings?.missingExternalCount ?? NaN);
     const updateState = await resolveUpdateState();
@@ -533,6 +615,21 @@ export default function useBadges({
       window.removeEventListener("feedarr:update-refreshed", onUpdateSignal);
     };
   }, []);
+
+  useEffect(() => {
+    const isVisible = isLibraryBadgeVisible(badges.releases);
+    const wasVisible = previousLibraryBadgeVisibleRef.current;
+    previousLibraryBadgeVisibleRef.current = isVisible;
+
+    if (!wasVisible && isVisible) {
+      debugBadges("libraryBadge false->true", {
+        releasesBadge: badges.releases,
+        ...libraryBadgeDebugContextRef.current,
+        documentHidden: typeof document === "undefined" ? null : document.hidden,
+        pathname: typeof window === "undefined" ? "" : window.location.pathname,
+      });
+    }
+  }, [badges.releases]);
 
   return {
     ...badges,

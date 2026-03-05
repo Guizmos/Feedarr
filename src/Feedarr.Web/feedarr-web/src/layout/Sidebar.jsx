@@ -1,8 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import useBadges from "../hooks/useBadges.js";
 import useTasks from "../hooks/useTasks.js";
 import AppIcon from "../ui/AppIcon.jsx";
+
+const IS_DEV =
+  typeof import.meta !== "undefined"
+  && typeof import.meta.env !== "undefined"
+  && !!import.meta.env.DEV;
+const NOOP = () => {};
 
 function Item({ to, icon, label, badge, end = true, onNavigate, forceActive = false, animateOnIncrease = false }) {
   const normalized =
@@ -59,24 +64,21 @@ function Item({ to, icon, label, badge, end = true, onNavigate, forceActive = fa
   );
 }
 
-export default function Sidebar({ onNavigate }) {
+export default function Sidebar({ onNavigate, badges }) {
   const {
-    activity,
-    activityTone,
+    activity = 0,
+    activityTone = "info",
     system: systemBadge,
-    releases,
-    latestActivityTs,
-    lastSeenActivityTs,
-    markActivitySeen,
-    latestReleasesCount,
-    latestReleasesTs,
-    lastSeenReleasesTs,
-    markReleasesSeen,
-    isUpdateAvailable,
-  } = useBadges({
-    pollMs: 25000,
-    activityLimit: 200,
-  });
+    releases = 0,
+    latestActivityTs = 0,
+    lastSeenActivityTs = 0,
+    markActivitySeen = NOOP,
+    latestReleasesCount = 0,
+    latestReleasesTs = 0,
+    lastSeenReleasesTs = 0,
+    markReleasesSeen = NOOP,
+    isUpdateAvailable = false,
+  } = badges || {};
   const tasks = useTasks();
   const location = useLocation();
   const isIndexers = location.pathname.startsWith("/indexers");
@@ -87,6 +89,12 @@ export default function Sidebar({ onNavigate }) {
   const isLogs = path.startsWith("/activity");
   const updateBadge = isUpdateAvailable ? { value: 1, tone: "error" } : null;
   const systemItemBadge = updateBadge || (systemBadge ? { value: "warn", tone: systemBadge } : null);
+
+  useEffect(() => {
+    if (!IS_DEV) return undefined;
+    console.debug("[badges] mount Sidebar");
+    return () => console.debug("[badges] unmount Sidebar");
+  }, []);
 
   useEffect(() => {
     if (isLogs && latestActivityTs > 0 && latestActivityTs > lastSeenActivityTs) {
