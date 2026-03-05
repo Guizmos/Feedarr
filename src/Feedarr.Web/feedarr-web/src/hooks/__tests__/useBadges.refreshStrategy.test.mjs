@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createBadgeSseRefreshScheduler, runSummaryRefreshWithFallback } from "../useBadges.js";
+import {
+  computeReleasesBadgeValue,
+  createBadgeSseRefreshScheduler,
+  runSummaryRefreshWithFallback,
+} from "../useBadges.js";
 
 function createFakeClock() {
   let nowMs = 0;
@@ -103,3 +107,26 @@ test("summary fallback switches to legacy path when summary endpoint is missing 
   assert.equal(legacyCalls, 2);
 });
 
+test("releases badge stays hidden when latestTs is already seen even if seen count is stale", () => {
+  const badge = computeReleasesBadgeValue({
+    releasesNewSinceTsCount: NaN,
+    releasesCount: 42,
+    releasesLatestTs: 1700000000000,
+    lastSeenReleasesCount: 0,
+    lastSeenReleasesTs: 1700000000000,
+  });
+
+  assert.equal(badge, 0);
+});
+
+test("releases badge comes back only when latestTs is newer than seen timestamp", () => {
+  const badge = computeReleasesBadgeValue({
+    releasesNewSinceTsCount: NaN,
+    releasesCount: 43,
+    releasesLatestTs: 1700000001000,
+    lastSeenReleasesCount: 42,
+    lastSeenReleasesTs: 1700000000000,
+  });
+
+  assert.equal(badge, 1);
+});
