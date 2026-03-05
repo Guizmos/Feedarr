@@ -6,7 +6,8 @@ namespace Feedarr.Api.Services.Posters;
 public sealed class PosterThumbQueue : IPosterThumbQueue
 {
     private const int Capacity = 2000;
-    public static readonly TimeSpan DefaultEnqueueTimeout = TimeSpan.FromMilliseconds(250);
+    public const int DefaultEnqueueTimeoutMs = 2000;
+    public static readonly TimeSpan DefaultEnqueueTimeout = TimeSpan.FromMilliseconds(DefaultEnqueueTimeoutMs);
 
     private readonly Channel<string> _channel;
     private readonly ConcurrentDictionary<string, QueueEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
@@ -16,7 +17,7 @@ public sealed class PosterThumbQueue : IPosterThumbQueue
     {
         _channel = Channel.CreateBounded<string>(new BoundedChannelOptions(Capacity)
         {
-            SingleReader = true,
+            SingleReader = false,
             SingleWriter = false,
             AllowSynchronousContinuations = false,
             FullMode = BoundedChannelFullMode.Wait,

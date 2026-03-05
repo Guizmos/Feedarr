@@ -11,7 +11,11 @@ public sealed class AppOptions
     public int RssLimitGlobalPerSource { get; set; } = 250;
     public bool RssOnlySync { get; set; } = false;
     public int StorageUsageCacheTtlSeconds { get; set; } = 30;
+    public int SystemStatusCacheSeconds { get; set; } = 7;
     public int PosterStatsRefreshSeconds { get; set; } = 60;
+    public int BadgesSseCoalesceMs { get; set; } = 750;
+    public int ThumbEnqueueTimeoutMs { get; set; } = 2000;
+    public int ThumbWorkers { get; set; } = 1;
     public int MissingPosterSweepMinutes { get; set; } = 10;
     public int MissingPosterSweepBatchSize { get; set; } = 200;
 }

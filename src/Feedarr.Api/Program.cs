@@ -154,6 +154,8 @@ builder.Services.AddSingleton<MaintenanceLockService>();
 
 // Services
 builder.Services.AddSingleton<BadgeSignal>();
+builder.Services.AddSingleton<ISystemStatusSnapshotProvider, SystemStatusSnapshotProvider>();
+builder.Services.AddSingleton<SystemStatusCacheService>();
 builder.Services.AddSingleton<ProviderStatsService>();
 builder.Services.AddSingleton<ApiRequestMetricsService>();
 builder.Services.AddSingleton<BackupExecutionCoordinator>();
@@ -194,7 +196,11 @@ builder.Services.AddSingleton<IPosterFetchQueue, PosterFetchQueue>();
 builder.Services.AddHostedService<PosterFetchWorkerPool>();
 builder.Services.AddHostedService<MissingPosterSweepWorker>();
 builder.Services.AddSingleton<IPosterThumbQueue, PosterThumbQueue>();
-builder.Services.AddHostedService<PosterThumbWorker>();
+var thumbWorkers = Math.Clamp(builder.Configuration.GetValue<int?>("App:ThumbWorkers") ?? 1, 1, 2);
+for (var i = 0; i < thumbWorkers; i++)
+{
+    builder.Services.AddSingleton<IHostedService, PosterThumbWorker>();
+}
 builder.Services.AddHostedService<PosterStatsRefreshWorker>();
 builder.Services.AddSingleton<MediaEntityArrStatusService>();
 builder.Services.AddSingleton<ExternalIdBackfillService>();

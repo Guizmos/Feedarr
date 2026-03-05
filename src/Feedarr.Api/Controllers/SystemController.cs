@@ -49,6 +49,7 @@ public sealed class SystemController : ControllerBase
     private readonly ProviderStatsService _providerStats;
     private readonly ApiRequestMetricsService _apiRequestMetrics;
     private readonly BackupService _backupService;
+    private readonly SystemStatusCacheService _systemStatusCache;
     private readonly IMemoryCache _cache;
     private readonly SetupStateService _setupState;
     private readonly StorageUsageCacheService _storageCache;
@@ -61,6 +62,7 @@ public sealed class SystemController : ControllerBase
         ProviderStatsService providerStats,
         ApiRequestMetricsService apiRequestMetrics,
         BackupService backupService,
+        SystemStatusCacheService systemStatusCache,
         IMemoryCache cache,
         SetupStateService setupState,
         StorageUsageCacheService storageCache,
@@ -72,6 +74,7 @@ public sealed class SystemController : ControllerBase
         _providerStats = providerStats;
         _apiRequestMetrics = apiRequestMetrics;
         _backupService = backupService;
+        _systemStatusCache = systemStatusCache;
         _cache = cache;
         _setupState = setupState;
         _storageCache = storageCache;
@@ -80,45 +83,21 @@ public sealed class SystemController : ControllerBase
 
     [HttpGet("status")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public IActionResult Status([FromQuery] long? releasesSinceTs = null)
+    public async Task<IActionResult> Status([FromQuery] long? releasesSinceTs = null, CancellationToken ct = default)
     {
-        using var conn = _db.Open();
-
         var safeSinceTs = Math.Max(0L, releasesSinceTs ?? 0L);
+        var snapshot = await _systemStatusCache.GetSnapshotAsync(ct).ConfigureAwait(false);
+        int? releasesNewSinceTsCount = null;
 
-        using var multi = conn.QueryMultiple(
-            """
-            SELECT COUNT(1) FROM sources;
-            SELECT COUNT(1) FROM releases;
-            SELECT MAX(created_at_ts) FROM releases;
-            SELECT COUNT(1) FROM releases WHERE created_at_ts > @sinceTs;
-            SELECT MAX(last_sync_at_ts) FROM sources;
-            """,
-            new { sinceTs = safeSinceTs });
-
-        var sourcesCount = multi.ReadSingle<int>();
-        var releasesCount = multi.ReadSingle<int>();
-        var releasesLatestTs = multi.ReadSingleOrDefault<long?>();
-        var sinceCount = multi.ReadSingle<int>();
-        int? releasesNewSinceTsCount = safeSinceTs > 0 ? sinceCount : null;
-
-        long? lastSyncAt = multi.ReadSingleOrDefault<long?>();
+        if (safeSinceTs > 0)
+        {
+            using var conn = _db.Open();
+            releasesNewSinceTsCount = conn.ExecuteScalar<int>(
+                "SELECT COUNT(1) FROM releases WHERE created_at_ts > @sinceTs;",
+                new { sinceTs = safeSinceTs });
+        }
 
         var version = GetAppVersion();
-        var dbSizeMb = 0.0;
-        try
-        {
-            if (System.IO.File.Exists(_db.DbPath))
-            {
-                var bytes = new FileInfo(_db.DbPath).Length;
-                dbSizeMb = Math.Round(bytes / 1024d / 1024d, 1);
-            }
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Failed to read database size");
-            dbSizeMb = 0.0;
-        }
 
         var dto = new SystemStatusDto
         {
@@ -127,12 +106,12 @@ public sealed class SystemController : ControllerBase
             UptimeSeconds = (long)(DateTimeOffset.UtcNow - _startedAt).TotalSeconds,
             DataDir = "hidden",
             DbPath = Path.GetFileName(_db.DbPath),
-            DbSizeMB = dbSizeMb,
-            SourcesCount = sourcesCount,
-            ReleasesCount = releasesCount,
-            ReleasesLatestTs = releasesLatestTs,
+            DbSizeMB = snapshot.DbSizeMb,
+            SourcesCount = snapshot.SourcesCount,
+            ReleasesCount = snapshot.ReleasesCount,
+            ReleasesLatestTs = snapshot.ReleasesLatestTs,
             ReleasesNewSinceTsCount = releasesNewSinceTsCount,
-            LastSyncAtTs = lastSyncAt
+            LastSyncAtTs = snapshot.LastSyncAtTs
         };
 
         return Ok(dto);

@@ -63,6 +63,11 @@ public sealed class SystemControllerBackupRestartRequiredTests
             stats,
             new ApiRequestMetricsService(),
             backupService,
+            new SystemStatusCacheService(
+                new MemoryCache(new MemoryCacheOptions()),
+                new SystemStatusSnapshotProvider(db, NullLogger<SystemStatusSnapshotProvider>.Instance),
+                appOptions,
+                NullLogger<SystemStatusCacheService>.Instance),
             new MemoryCache(new MemoryCacheOptions()),
             new SetupStateService(settings, new MemoryCache(new MemoryCacheOptions())),
             storageCache,

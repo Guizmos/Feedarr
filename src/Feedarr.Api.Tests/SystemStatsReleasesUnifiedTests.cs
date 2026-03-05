@@ -129,6 +129,11 @@ public sealed class SystemStatsReleasesUnifiedTests
             new ProviderStatsService(new StatsRepository(db, new MemoryCache(new MemoryCacheOptions()))),
             new ApiRequestMetricsService(),
             backup,
+            new SystemStatusCacheService(
+                new MemoryCache(new MemoryCacheOptions()),
+                new SystemStatusSnapshotProvider(db, NullLogger<SystemStatusSnapshotProvider>.Instance),
+                options,
+                NullLogger<SystemStatusCacheService>.Instance),
             new MemoryCache(new MemoryCacheOptions()),
             new SetupStateService(settings, new MemoryCache(new MemoryCacheOptions())),
             storageCache,
