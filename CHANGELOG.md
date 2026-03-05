@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.2](https://github.com/Guizmos/Feedarr/compare/v2.4.1...v2.4.2) (2026-03-05)
+
+
+### Performance Improvements
+
+* **core:** stabilize multi-client performance ([108a773](https://github.com/Guizmos/Feedarr/commit/108a773f3a228e1ed605296ace90d90746c45e2b))
+
 ## [2.4.1](https://github.com/Guizmos/Feedarr/compare/v2.4.0...v2.4.1) (2026-03-05)
 
 
