@@ -234,46 +234,53 @@ public sealed class FeedTopByCategoryTests
             createdAt: now - 5);
 
         var computeCalls = 0;
-        var firstComputeEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var releaseFirstCompute = new ManualResetEventSlim(false);
+        using var startGate = new ManualResetEventSlim(false);
 
         var controller = CreateController(
             db,
             onTopCacheMissCompute: () =>
             {
-                if (Interlocked.Increment(ref computeCalls) != 1)
-                    return;
-
-                firstComputeEntered.TrySetResult();
-                Assert.True(
-                    releaseFirstCompute.Wait(TimeSpan.FromSeconds(5)),
-                    "Timed out waiting to release first feed/top computation.");
+                Interlocked.Increment(ref computeCalls);
+                Thread.Sleep(150);
             });
 
-        var task1 = Task.Run(() => controller.Top(
-            hours: 24,
-            take: 5,
-            perCategoryTake: 5,
-            sort: "recent",
-            dedupe: "none",
-            limit: null,
-            sourceId: null,
-            indexerId: null));
+        var task1 = Task.Factory.StartNew(
+            () =>
+            {
+                startGate.Wait();
+                return controller.Top(
+                    hours: 24,
+                    take: 5,
+                    perCategoryTake: 5,
+                    sort: "recent",
+                    dedupe: "none",
+                    limit: null,
+                    sourceId: null,
+                    indexerId: null);
+            },
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
 
-        await firstComputeEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var task2 = Task.Factory.StartNew(
+            () =>
+            {
+                startGate.Wait();
+                return controller.Top(
+                    hours: 24,
+                    take: 5,
+                    perCategoryTake: 5,
+                    sort: "recent",
+                    dedupe: "none",
+                    limit: null,
+                    sourceId: null,
+                    indexerId: null);
+            },
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
 
-        var task2 = Task.Run(() => controller.Top(
-            hours: 24,
-            take: 5,
-            perCategoryTake: 5,
-            sort: "recent",
-            dedupe: "none",
-            limit: null,
-            sourceId: null,
-            indexerId: null));
-
-        await Task.Delay(50);
-        releaseFirstCompute.Set();
+        startGate.Set();
 
         var results = await Task.WhenAll(task1, task2);
 
