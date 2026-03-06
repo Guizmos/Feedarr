@@ -1,22 +1,52 @@
-/**
- * Tests for EventSource close-on-error behavior in useBadges.
- *
- * These tests exercise the onError handler logic in isolation
- * (no React required — pure handler behavior).
- *
- * Run: node --test src/hooks/__tests__/useBadges.sse.test.mjs
- */
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createBadgeSseConnector } from "../useBadges.js";
 
-// ---------------------------------------------------------------------------
-// Minimal mock for EventSource (records close() calls)
-// ---------------------------------------------------------------------------
-function makeMockEs() {
+function createFakeClock() {
+  let nowMs = 0;
+  let nextId = 1;
+  const timers = new Map();
+
+  const setTimer = (cb, ms) => {
+    const id = nextId++;
+    timers.set(id, { at: nowMs + Math.max(0, Number(ms) || 0), cb });
+    return id;
+  };
+
+  const clearTimer = (id) => {
+    timers.delete(id);
+  };
+
+  const advance = (ms) => {
+    nowMs += Math.max(0, Number(ms) || 0);
+    let progressed = true;
+    while (progressed) {
+      progressed = false;
+      const due = [...timers.entries()]
+        .filter(([, timer]) => timer.at <= nowMs)
+        .sort((a, b) => a[1].at - b[1].at || a[0] - b[0]);
+
+      for (const [id, timer] of due) {
+        timers.delete(id);
+        timer.cb();
+        progressed = true;
+      }
+    }
+  };
+
+  return {
+    setTimer,
+    clearTimer,
+    advance,
+  };
+}
+
+function makeMockEventSource(url) {
   const listeners = {};
   let closed = false;
 
   return {
+    url,
     get closed() {
       return closed;
     },
@@ -38,85 +68,118 @@ function makeMockEs() {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Replicate the onError handler as defined in useBadges.js (after the fix)
-// ---------------------------------------------------------------------------
-function makeHandlers(es, setSseConnected) {
-  const onError = () => {
-    setSseConnected(false);
-    es.close();
-  };
-  const onOpen = () => setSseConnected(true);
-
-  es.addEventListener("error", onError);
-  es.addEventListener("open", onOpen);
-
-  // Cleanup (mirrors useEffect return)
-  const cleanup = () => {
-    setSseConnected(false);
-    es.removeEventListener("error", onError);
-    es.removeEventListener("open", onOpen);
-    es.close();
-  };
-
-  return { onError, cleanup };
+function countActiveConnections(instances) {
+  return instances.filter((it) => !it.closed).length;
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+test("SSE error triggers reconnect with backoff (no manual page reload)", () => {
+  const clock = createFakeClock();
+  const instances = [];
+  let connected = false;
 
-test("onError closes the EventSource and marks SSE as disconnected", () => {
-  const es = makeMockEs();
-  let sseConnected = true;
-  makeHandlers(es, (v) => {
-    sseConnected = v;
+  const connector = createBadgeSseConnector({
+    url: "/api/badges/stream",
+    reconnectBaseMs: 1000,
+    reconnectMaxMs: 5000,
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer,
+    onConnected: () => { connected = true; },
+    onDisconnected: () => { connected = false; },
+    onSignal: () => {},
+    createEventSource: (url) => {
+      const es = makeMockEventSource(url);
+      instances.push(es);
+      return es;
+    },
   });
 
-  es.emit("error");
+  assert.equal(instances.length, 1);
+  instances[0].emit("open");
+  assert.equal(connected, true);
 
-  assert.equal(sseConnected, false, "sseConnected must be false after error");
-  assert.equal(es.closed, true, "es.close() must have been called on error");
+  instances[0].emit("error");
+  assert.equal(connected, false, "must mark disconnected on SSE error");
+  assert.equal(instances[0].closed, true, "must close broken connection before reconnect");
+
+  clock.advance(999);
+  assert.equal(instances.length, 1, "must wait reconnect backoff");
+
+  clock.advance(1);
+  assert.equal(instances.length, 2, "must reconnect after backoff");
+  instances[1].emit("open");
+  assert.equal(connected, true, "must reconnect without manual reload");
+
+  connector.dispose();
 });
 
-test("cleanup (unmount) closes the EventSource", () => {
-  const es = makeMockEs();
-  let sseConnected = true;
-  const { cleanup } = makeHandlers(es, (v) => {
-    sseConnected = v;
+test("after reconnect, next SSE event still triggers badges refresh", async () => {
+  const clock = createFakeClock();
+  const instances = [];
+  let refreshCalls = 0;
+
+  const connector = createBadgeSseConnector({
+    url: "/api/badges/stream",
+    reconnectBaseMs: 400,
+    reconnectMaxMs: 1200,
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer,
+    onSignal: () => { refreshCalls++; },
+    createEventSource: (url) => {
+      const es = makeMockEventSource(url);
+      instances.push(es);
+      return es;
+    },
   });
 
-  cleanup();
+  assert.equal(instances.length, 1);
+  instances[0].emit("error");
+  clock.advance(400);
+  assert.equal(instances.length, 2, "a new EventSource must be created after error");
 
-  assert.equal(sseConnected, false, "sseConnected must be false on unmount");
-  assert.equal(es.closed, true, "es.close() must be called on unmount");
+  instances[1].emit("badges-changed");
+  await Promise.resolve();
+  assert.equal(refreshCalls, 1, "badge signal after reconnect must refresh");
+
+  connector.dispose();
 });
 
-test("onOpen sets sseConnected to true without closing", () => {
-  const es = makeMockEs();
-  let sseConnected = false;
-  makeHandlers(es, (v) => {
-    sseConnected = v;
+test("connector prevents multiple concurrent EventSource leaks", () => {
+  const clock = createFakeClock();
+  const instances = [];
+
+  const connector = createBadgeSseConnector({
+    url: "/api/badges/stream",
+    reconnectBaseMs: 300,
+    reconnectMaxMs: 300,
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer,
+    onSignal: () => {},
+    createEventSource: (url) => {
+      const es = makeMockEventSource(url);
+      instances.push(es);
+      return es;
+    },
   });
 
-  es.emit("open");
+  assert.equal(instances.length, 1);
+  assert.equal(countActiveConnections(instances), 1);
 
-  assert.equal(sseConnected, true, "sseConnected must be true after open");
-  assert.equal(es.closed, false, "es must NOT be closed after open");
-});
+  instances[0].emit("error");
+  instances[0].emit("error");
+  assert.equal(countActiveConnections(instances), 0, "broken connection must be closed");
 
-test("error after successful open closes the connection", () => {
-  const es = makeMockEs();
-  let sseConnected = false;
-  makeHandlers(es, (v) => {
-    sseConnected = v;
-  });
+  clock.advance(300);
+  assert.equal(instances.length, 2, "only one reconnect must be scheduled");
+  assert.equal(countActiveConnections(instances), 1);
 
-  es.emit("open");
-  assert.equal(sseConnected, true);
-  assert.equal(es.closed, false);
+  instances[1].emit("error");
+  instances[1].emit("error");
+  clock.advance(300);
+  assert.equal(instances.length, 3, "still one new connection per reconnect cycle");
+  assert.equal(countActiveConnections(instances), 1);
 
-  es.emit("error");
-  assert.equal(sseConnected, false, "must disconnect on error even after open");
-  assert.equal(es.closed, true, "must close on error even after open");
+  connector.dispose();
+  assert.equal(countActiveConnections(instances), 0, "dispose must close active connection");
+  clock.advance(3000);
+  assert.equal(instances.length, 3, "dispose must prevent further reconnects");
 });

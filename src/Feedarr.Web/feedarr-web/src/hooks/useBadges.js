@@ -115,6 +115,114 @@ export function createBadgeSseRefreshScheduler(
   };
 }
 
+export function createBadgeSseConnector({
+  url,
+  onConnected = () => {},
+  onDisconnected = () => {},
+  onReady = () => {},
+  onSignal = () => {},
+  minSignalIntervalMs = 1000,
+  reconnectBaseMs = 1000,
+  reconnectMaxMs = 15000,
+  createEventSource = (nextUrl) => new EventSource(nextUrl, { withCredentials: true }),
+  setTimer = (cb, ms) => setTimeout(cb, ms),
+  clearTimer = (id) => clearTimeout(id),
+} = {}) {
+  let disposed = false;
+  let reconnectTimerId = null;
+  let reconnectAttempt = 0;
+  let eventSource = null;
+  let listeners = null;
+
+  const scheduler = createBadgeSseRefreshScheduler(
+    () => onSignal(),
+    {
+      minIntervalMs: minSignalIntervalMs,
+      setTimer,
+      clearTimer,
+    }
+  );
+
+  const clearReconnectTimer = () => {
+    if (reconnectTimerId != null) {
+      clearTimer(reconnectTimerId);
+      reconnectTimerId = null;
+    }
+  };
+
+  const detachCurrent = () => {
+    if (!eventSource) return;
+    if (listeners) {
+      eventSource.removeEventListener("ready", listeners.onReadyEvent);
+      eventSource.removeEventListener("badge", listeners.onBadgeChanged);
+      eventSource.removeEventListener("badges-changed", listeners.onBadgeChanged);
+      eventSource.removeEventListener("error", listeners.onError);
+      eventSource.removeEventListener("open", listeners.onOpen);
+    }
+    eventSource.close();
+    eventSource = null;
+    listeners = null;
+  };
+
+  const scheduleReconnect = () => {
+    if (disposed || reconnectTimerId != null) return;
+
+    const attempt = Math.max(0, reconnectAttempt);
+    const delay = Math.min(
+      Math.max(250, Number(reconnectMaxMs) || 15000),
+      Math.max(250, Number(reconnectBaseMs) || 1000) * (2 ** attempt)
+    );
+    reconnectAttempt = Math.min(attempt + 1, 10);
+
+    reconnectTimerId = setTimer(() => {
+      reconnectTimerId = null;
+      connect();
+    }, delay);
+  };
+
+  const connect = () => {
+    if (disposed || eventSource) return;
+    const nextEventSource = createEventSource(url);
+
+    const onReadyEvent = () => {
+      reconnectAttempt = 0;
+      onConnected();
+      onReady();
+    };
+    const onBadgeChanged = () => scheduler.trigger();
+    const onError = () => {
+      onDisconnected();
+      detachCurrent();
+      scheduleReconnect();
+    };
+    const onOpen = () => {
+      reconnectAttempt = 0;
+      onConnected();
+    };
+
+    nextEventSource.addEventListener("ready", onReadyEvent);
+    nextEventSource.addEventListener("badge", onBadgeChanged);
+    nextEventSource.addEventListener("badges-changed", onBadgeChanged);
+    nextEventSource.addEventListener("error", onError);
+    nextEventSource.addEventListener("open", onOpen);
+
+    eventSource = nextEventSource;
+    listeners = { onReadyEvent, onBadgeChanged, onError, onOpen };
+  };
+
+  connect();
+
+  return {
+    dispose() {
+      disposed = true;
+      onDisconnected();
+      clearReconnectTimer();
+      scheduler.dispose();
+      detachCurrent();
+    },
+  };
+}
+
 /**
  * Badges Sonarr-like
  * - activity: nb d'events non-info (ou error-only si tu veux)
@@ -488,39 +596,19 @@ export default function useBadges({
     if (typeof window === "undefined" || typeof EventSource === "undefined") return undefined;
 
     const url = resolveApiUrl("/api/badges/stream");
-    const es = new EventSource(url, { withCredentials: true });
-    const scheduler = createBadgeSseRefreshScheduler(
-      () => refreshRef.current?.(),
-      { minIntervalMs: 1000 }
-    );
-
-    const onReady = () => {
-      setSseConnected(true);
-      refreshRef.current?.();
-    };
-    const onBadgeChanged = () => scheduler.trigger();
-    const onError = () => {
-      setSseConnected(false);
-      es.close();
-    };
-    const onOpen = () => setSseConnected(true);
-    es.addEventListener("ready", onReady);
-    es.addEventListener("badge", onBadgeChanged);
-    es.addEventListener("badges-changed", onBadgeChanged);
-    es.addEventListener("error", onError);
-    es.addEventListener("open", onOpen);
+    const connector = createBadgeSseConnector({
+      url,
+      onConnected: () => setSseConnected(true),
+      onDisconnected: () => setSseConnected(false),
+      onReady: () => refreshRef.current?.(),
+      onSignal: () => refreshRef.current?.(),
+      createEventSource: (nextUrl) => new EventSource(nextUrl, { withCredentials: true }),
+    });
 
     return () => {
-      setSseConnected(false);
-      scheduler.dispose();
-      es.removeEventListener("ready", onReady);
-      es.removeEventListener("badge", onBadgeChanged);
-      es.removeEventListener("badges-changed", onBadgeChanged);
-      es.removeEventListener("error", onError);
-      es.removeEventListener("open", onOpen);
-      es.close();
+      connector.dispose();
     };
-  }, []); // stable: EventSource connection created once, never recreated
+  }, []); // stable manager: reconnect handled internally
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
