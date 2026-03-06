@@ -54,6 +54,28 @@ export async function runSummaryRefreshWithFallback({ state, runSummary, runLega
   }
 }
 
+export function resolveSystemToneFromSummary(systemPayload) {
+  const system = systemPayload && typeof systemPayload === "object" ? systemPayload : null;
+  if (!system) return null;
+
+  const toneRaw = String(system?.tone ?? system?.severity ?? "").toLowerCase();
+  if (toneRaw === "error") return "error";
+  if (toneRaw === "warn" || toneRaw === "warning") return "warn";
+
+  const status = String(system?.status ?? system?.Status ?? "").toLowerCase();
+  if (system?.ok === false) return "error";
+  if (status === "error") return "error";
+  if (status === "warn" || status === "warning") return "warn";
+
+  const errors = Number(system?.errors ?? system?.Errors ?? NaN);
+  if (Number.isFinite(errors) && errors > 0) return "error";
+
+  const warnings = Number(system?.warnings ?? system?.Warnings ?? NaN);
+  if (Number.isFinite(warnings) && warnings > 0) return "warn";
+
+  return null;
+}
+
 export function createBadgeSseRefreshScheduler(
   refresh,
   {
@@ -525,6 +547,7 @@ export default function useBadges({
     const latestActivityTs = parseTs(activity?.lastActivityTs ?? 0);
     const activityToneRaw = String(activity?.tone || "info").toLowerCase();
     const activityTone = activityToneRaw === "error" || activityToneRaw === "warn" ? activityToneRaw : "info";
+    const systemTone = resolveSystemToneFromSummary(system);
 
     const sourcesCount = Number(system?.sourcesCount ?? NaN);
     const releasesCount = Number(releases?.totalCount ?? NaN);
@@ -552,7 +575,7 @@ export default function useBadges({
     setBadges((prev) => ({
       activity: Number.isFinite(activityCount) ? Math.max(0, Math.trunc(activityCount)) : prev.activity,
       activityTone,
-      system: prev.system,
+      system: systemTone,
       sources: Number.isFinite(sourcesCount) ? Math.max(0, Math.trunc(sourcesCount)) : prev.sources,
       releases: releasesBadgeValue ?? prev.releases,
       settingsMissing: Number.isFinite(settingsMissing) ? Math.max(0, Math.trunc(settingsMissing)) : prev.settingsMissing,

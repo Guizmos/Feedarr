@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createBadgeSseRefreshScheduler, runSummaryRefreshWithFallback } from "../useBadges.js";
+import {
+  createBadgeSseRefreshScheduler,
+  resolveSystemToneFromSummary,
+  runSummaryRefreshWithFallback,
+} from "../useBadges.js";
 
 function createFakeClock() {
   let nowMs = 0;
@@ -103,3 +107,22 @@ test("summary fallback switches to legacy path when summary endpoint is missing 
   assert.equal(legacyCalls, 2);
 });
 
+test("summary system tone is recalculated from current payload", () => {
+  assert.equal(resolveSystemToneFromSummary({ tone: "warn" }), "warn");
+  assert.equal(resolveSystemToneFromSummary({ status: "error" }), "error");
+  assert.equal(resolveSystemToneFromSummary({ warnings: 1 }), "warn");
+  assert.equal(resolveSystemToneFromSummary({ errors: 2 }), "error");
+});
+
+test("summary system tone no longer depends on previous badge state", () => {
+  const previousSystemTone = "error";
+  const currentPayloadTone = resolveSystemToneFromSummary({ status: "warn" });
+
+  assert.equal(currentPayloadTone, "warn");
+  assert.notEqual(currentPayloadTone, previousSystemTone);
+});
+
+test("summary system tone ignores updatesBadge flag (no impact on updates behavior)", () => {
+  assert.equal(resolveSystemToneFromSummary({ updatesBadge: true }), null);
+  assert.equal(resolveSystemToneFromSummary({ updatesBadge: false }), null);
+});
