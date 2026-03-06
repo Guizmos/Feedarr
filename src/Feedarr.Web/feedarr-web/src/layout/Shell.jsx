@@ -9,7 +9,8 @@ import { applyTheme } from "../app/theme.js";
 import { applyUiLanguage } from "../app/locale.js";
 import { usePosterQueueMonitoring } from "../hooks/usePosterQueueMonitoring.js";
 import { usePosterPollingService } from "../hooks/usePosterPollingService.js";
-import useBadges from "../hooks/useBadges.js";
+import { BadgeStoreProvider } from "../badges/useBadgeStore.js";
+import BadgesRouteListener from "../badges/BadgesRouteListener.jsx";
 
 const IS_DEV =
   typeof import.meta !== "undefined"
@@ -40,11 +41,6 @@ export default function Shell() {
     intervalMs: 12000,
     maxDurationMs: 90000,
     enabled: true,
-  });
-
-  const badges = useBadges({
-    pollMs: 25000,
-    activityLimit: 200,
   });
 
   useEffect(() => {
@@ -200,45 +196,48 @@ export default function Shell() {
   }, [closeNav, isNavOpen, openNav]);
 
   return (
-    <SubbarProvider>
-      <div className={`app app-shell ${showOnboardingBar ? "onboarding-bar-visible" : ""} ${isNavOpen ? "is-open" : ""}`}>
-        <Topbar onToggleNav={toggleNav} />
-        <button
-          type="button"
-          className="drawer-overlay"
-          aria-label="Fermer le menu latéral"
-          onClick={closeNav}
-        />
+    <BadgeStoreProvider pollMs={25000} activityLimit={200}>
+      <BadgesRouteListener />
+      <SubbarProvider>
+        <div className={`app app-shell ${showOnboardingBar ? "onboarding-bar-visible" : ""} ${isNavOpen ? "is-open" : ""}`}>
+          <Topbar onToggleNav={toggleNav} />
+          <button
+            type="button"
+            className="drawer-overlay"
+            aria-label="Fermer le menu latéral"
+            onClick={closeNav}
+          />
 
-        <div className="body">
-          <Sidebar onNavigate={closeNav} badges={badges} />
+          <div className="body">
+            <Sidebar onNavigate={closeNav} />
 
-          <div className="content">
-            <Subbar />
-            <Outlet />
-          </div>
-        </div>
-
-        {showOnboardingBar && (
-          <div className="onboarding-bar">
-            <div className="onboarding-bar__content">
-              <div className="onboarding-bar__title">Configuration rapide</div>
-              <div className="onboarding-bar__text">
-                Ajoute un indexeur et/ou des providers pour activer toutes les fonctionnalités.
-              </div>
+            <div className="content">
+              <Subbar />
+              <Outlet />
             </div>
-            <button
-              className="btn btn-accent"
-              type="button"
-              onClick={() => {
-                navigate("/setup");
-              }}
-            >
-              Démarrer le wizard
-            </button>
           </div>
-        )}
-      </div>
-    </SubbarProvider>
+
+          {showOnboardingBar && (
+            <div className="onboarding-bar">
+              <div className="onboarding-bar__content">
+                <div className="onboarding-bar__title">Configuration rapide</div>
+                <div className="onboarding-bar__text">
+                  Ajoute un indexeur et/ou des providers pour activer toutes les fonctionnalités.
+                </div>
+              </div>
+              <button
+                className="btn btn-accent"
+                type="button"
+                onClick={() => {
+                  navigate("/setup");
+                }}
+              >
+                Démarrer le wizard
+              </button>
+            </div>
+          )}
+        </div>
+      </SubbarProvider>
+    </BadgeStoreProvider>
   );
 }
