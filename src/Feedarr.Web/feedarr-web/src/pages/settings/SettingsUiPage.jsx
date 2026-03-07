@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+
+import React, { useEffect, useRef, useState } from "react";
 import { useSubbarSetter } from "../../layout/useSubbar.js";
 import SubAction from "../../ui/SubAction.jsx";
 import Loader from "../../ui/Loader.jsx";
@@ -31,13 +32,13 @@ export default function SettingsUiPage() {
     handleThemeChange,
   } = uiSettings;
 
-  const handleRefresh = useCallback(async () => {
+  const handleRefresh = async () => {
     try {
       await loadUiSettings();
     } catch {
       // Inline error state is already managed by the hook.
     }
-  }, [loadUiSettings]);
+  };
 
   const handleSave = async () => {
     if (!isDirty || saveState === "loading") return;
@@ -68,7 +69,7 @@ export default function SettingsUiPage() {
     if (hasLoadedRef.current) return;
     hasLoadedRef.current = true;
     void handleRefresh();
-  }, [handleRefresh]);
+  }, []);
 
   useEffect(() => {
     setContent(

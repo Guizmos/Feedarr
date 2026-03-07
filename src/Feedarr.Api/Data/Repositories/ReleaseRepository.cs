@@ -20,6 +20,7 @@ public sealed class ReleaseRepository
     private readonly TitleParser _parser;
     private readonly UnifiedCategoryResolver _resolver;
     private readonly ILogger<ReleaseRepository> _logger;
+    private readonly Feedarr.Api.Services.BadgeSignal? _badgeSignal;
 
     private static readonly string[] RetentionUnifiedCategories =
     {
@@ -64,12 +65,14 @@ public sealed class ReleaseRepository
         Db db,
         TitleParser parser,
         UnifiedCategoryResolver resolver,
-        ILogger<ReleaseRepository>? logger = null)
+        ILogger<ReleaseRepository>? logger = null,
+        Feedarr.Api.Services.BadgeSignal? badgeSignal = null)
     {
         _db = db;
         _parser = parser;
         _resolver = resolver;
         _logger = logger ?? NullLogger<ReleaseRepository>.Instance;
+        _badgeSignal = badgeSignal;
     }
 
     public int UpsertMany(
@@ -278,6 +281,9 @@ public sealed class ReleaseRepository
             insertedNew,
             stopwatch.ElapsedMilliseconds,
             msPerRow);
+
+        if (rowsCount > 0)
+            _badgeSignal?.Notify("releases");
 
         return insertedNew;
     }
@@ -2251,6 +2257,9 @@ LEFT JOIN media_entities me
 
         tx.Commit();
 
+        if (deletedIds.Count > 0)
+            _badgeSignal?.Notify("releases");
+
         return new RetentionResult(
             totalBefore,
             totalAfter,
@@ -2683,6 +2692,8 @@ LEFT JOIN media_entities me
         var deleted = conn.Execute("DELETE FROM releases WHERE id IN @ids;", new { ids }, tx);
 
         tx.Commit();
+        if (deleted > 0)
+            _badgeSignal?.Notify("releases");
         return deleted;
     }
 
