@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.4.4](https://github.com/Guizmos/Feedarr/compare/v2.4.3...v2.4.4) (2026-03-07)
+
+
+### Bug Fixes
+
+* **bade:** step1 to ajust badge comportment ([94e8881](https://github.com/Guizmos/Feedarr/commit/94e8881aae9fbef60a60fcb0f01a61911969e4d8))
+* **bade:** step2 to ajust badge comportment ([31e20ad](https://github.com/Guizmos/Feedarr/commit/31e20ad5cbbf3ac5ac6e81cd68a28e4e04706d8a))
+* **bade:** step3 to ajust badge comportment ([94500b3](https://github.com/Guizmos/Feedarr/commit/94500b3b4fb5218a46020e5d6579e0751c7ffd09))
+* **badges:** prevent Library badge reappearing on internal navigation ([c386b99](https://github.com/Guizmos/Feedarr/commit/c386b992c2bcbf39f25762d28e86c2a46a463d5f))
+* **badges:** prevent Library badge reappearing on internal navigation ([00dbdd3](https://github.com/Guizmos/Feedarr/commit/00dbdd343decb4a244d18250282a199517fc2bc7))
+
 ## [2.4.3](https://github.com/Guizmos/Feedarr/compare/v2.4.2...v2.4.3) (2026-03-05)
 
 
