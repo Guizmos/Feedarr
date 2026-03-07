@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using Feedarr.Api.Services;
 using Feedarr.Api.Services.Security;
 using System.Diagnostics;
 
@@ -10,10 +11,16 @@ public sealed class BackupExecutionCoordinator
 
     private readonly SemaphoreSlim _operationGate = new(1, 1);
     private readonly object _stateLock = new();
+    private readonly BadgeSignal? _badgeSignal;
 
     private bool _syncBlocked;
     private int _activeSyncActivities;
     private BackupOperationStateDto _state = new();
+
+    public BackupExecutionCoordinator(BadgeSignal? badgeSignal = null)
+    {
+        _badgeSignal = badgeSignal;
+    }
 
     public BackupOperationStateDto GetState()
     {
@@ -43,6 +50,7 @@ public sealed class BackupExecutionCoordinator
                 return null;
 
             _activeSyncActivities++;
+            _badgeSignal?.Notify("system");
             return new SyncLease(this, activityName);
         }
     }
@@ -73,6 +81,7 @@ public sealed class BackupExecutionCoordinator
                 _state.StartedAtTs = startedAt.ToUnixTimeSeconds();
                 _state.LastError = null;
             }
+            _badgeSignal?.Notify("system");
 
             await WaitForSyncDrainAsync(ct).ConfigureAwait(false);
 
@@ -80,6 +89,7 @@ public sealed class BackupExecutionCoordinator
             {
                 _state.Phase = "running";
             }
+            _badgeSignal?.Notify("system");
 
             var result = await action(ct).ConfigureAwait(false);
 
@@ -95,6 +105,7 @@ public sealed class BackupExecutionCoordinator
                 _state.LastError = null;
                 _syncBlocked = false;
             }
+            _badgeSignal?.Notify("system");
 
             return result;
         }
@@ -158,6 +169,7 @@ public sealed class BackupExecutionCoordinator
             _state.LastError = safeError;
             _syncBlocked = false;
         }
+        _badgeSignal?.Notify("system");
     }
 
     private void ExitSyncActivity()
@@ -167,6 +179,7 @@ public sealed class BackupExecutionCoordinator
             if (_activeSyncActivities > 0)
                 _activeSyncActivities--;
         }
+        _badgeSignal?.Notify("system");
     }
 
     private sealed class SyncLease : IDisposable

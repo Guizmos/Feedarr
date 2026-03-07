@@ -143,6 +143,31 @@ test("after reconnect, next SSE event still triggers badges refresh", async () =
   connector.dispose();
 });
 
+test("legacy 'badge' SSE event still triggers refresh", async () => {
+  const clock = createFakeClock();
+  const instances = [];
+  let refreshCalls = 0;
+
+  const connector = createBadgeSseConnector({
+    url: "/api/badges/stream",
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer,
+    onSignal: () => { refreshCalls++; },
+    createEventSource: (url) => {
+      const es = makeMockEventSource(url);
+      instances.push(es);
+      return es;
+    },
+  });
+
+  assert.equal(instances.length, 1);
+  instances[0].emit("badge");
+  await Promise.resolve();
+  assert.equal(refreshCalls, 1, "legacy badge event must still refresh badges");
+
+  connector.dispose();
+});
+
 test("connector prevents multiple concurrent EventSource leaks", () => {
   const clock = createFakeClock();
   const instances = [];

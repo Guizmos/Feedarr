@@ -10,11 +10,16 @@ public sealed class SourceRepository
 {
     private readonly Db _db;
     private readonly IApiKeyProtectionService _keyProtection;
+    private readonly Feedarr.Api.Services.BadgeSignal? _badgeSignal;
 
-    public SourceRepository(Db db, IApiKeyProtectionService keyProtection)
+    public SourceRepository(
+        Db db,
+        IApiKeyProtectionService keyProtection,
+        Feedarr.Api.Services.BadgeSignal? badgeSignal = null)
     {
         _db = db;
         _keyProtection = keyProtection;
+        _badgeSignal = badgeSignal;
     }
 
     public static bool TryNormalizeGroupKey(string? value, out string normalizedKey)
@@ -36,7 +41,7 @@ public sealed class SourceRepository
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var encryptedKey = _keyProtection.Protect(apiKey);
 
-        return conn.ExecuteScalar<long>(
+        var createdId = conn.ExecuteScalar<long>(
             """
             INSERT INTO sources(name, enabled, torznab_url, api_key, auth_mode, color, created_at_ts, updated_at_ts, provider_id)
             VALUES (@name, 1, @url, @key, @mode, @color, @now, @now, @providerId);
@@ -44,6 +49,9 @@ public sealed class SourceRepository
             """,
             new { name, url = torznabUrl, key = encryptedKey, mode = authMode, color, now, providerId }
         );
+        if (createdId > 0)
+            _badgeSignal?.Notify("system");
+        return createdId;
     }
 
     public long? GetIdByTorznabUrl(string torznabUrl)
@@ -156,6 +164,9 @@ public sealed class SourceRepository
             new { id, en = enabled ? 1 : 0, now }
         );
 
+        if (rows > 0)
+            _badgeSignal?.Notify("system");
+
         return rows > 0;
     }
 
@@ -231,6 +242,9 @@ public sealed class SourceRepository
             );
         }
 
+        if (rows > 0)
+            _badgeSignal?.Notify("system");
+
         return rows > 0;
     }
 
@@ -239,7 +253,7 @@ public sealed class SourceRepository
         using var conn = _db.Open();
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-        conn.Execute(
+        var rows = conn.Execute(
             """
             UPDATE sources
             SET last_sync_at_ts = @now,
@@ -250,6 +264,8 @@ public sealed class SourceRepository
             """,
             new { id, now, status, error }
         );
+        if (rows > 0)
+            _badgeSignal?.Notify("system");
     }
 
     public void SaveRssMode(long id, string? rssMode)
@@ -257,10 +273,12 @@ public sealed class SourceRepository
         using var conn = _db.Open();
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-        conn.Execute(
+        var rows = conn.Execute(
             "UPDATE sources SET rss_mode=@m, updated_at_ts=@now WHERE id=@id",
             new { id, m = rssMode, now }
         );
+        if (rows > 0)
+            _badgeSignal?.Notify("system");
     }
 
     public void ReplaceCategories(long sourceId, IEnumerable<(int id, string name, bool isSub, int? parentId)> cats)
@@ -519,14 +537,17 @@ public sealed class SourceRepository
     public int Delete(long id)
     {
         using var conn = _db.Open();
-        return conn.Execute("DELETE FROM sources WHERE id = @id", new { id });
+        var rows = conn.Execute("DELETE FROM sources WHERE id = @id", new { id });
+        if (rows > 0)
+            _badgeSignal?.Notify("system");
+        return rows;
     }
 
     public int DisableByProviderId(long providerId)
     {
         using var conn = _db.Open();
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        return conn.Execute(
+        var rows = conn.Execute(
             """
             UPDATE sources
             SET enabled = 0,
@@ -536,6 +557,9 @@ public sealed class SourceRepository
             """,
             new { pid = providerId, now }
         );
+        if (rows > 0)
+            _badgeSignal?.Notify("system");
+        return rows;
     }
 
     public int CountByProviderId(long providerId)
