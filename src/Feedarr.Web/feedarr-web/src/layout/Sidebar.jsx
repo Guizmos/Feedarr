@@ -1,9 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import useBadges from "../hooks/useBadges.js";
 import useTasks from "../hooks/useTasks.js";
 import AppIcon from "../ui/AppIcon.jsx";
+import { useBadgeStoreContext } from "../badges/useBadgeStore.js";
 
+const IS_DEV =
+  typeof import.meta !== "undefined"
+  && typeof import.meta.env !== "undefined"
+  && !!import.meta.env.DEV;
 function Item({ to, icon, label, badge, end = true, onNavigate, forceActive = false, animateOnIncrease = false }) {
   const normalized =
     badge && typeof badge === "object"
@@ -60,23 +64,14 @@ function Item({ to, icon, label, badge, end = true, onNavigate, forceActive = fa
 }
 
 export default function Sidebar({ onNavigate }) {
+  const badges = useBadgeStoreContext();
   const {
-    activity,
-    activityTone,
+    activity = 0,
+    activityTone = "info",
     system: systemBadge,
-    releases,
-    latestActivityTs,
-    lastSeenActivityTs,
-    markActivitySeen,
-    latestReleasesCount,
-    latestReleasesTs,
-    lastSeenReleasesTs,
-    markReleasesSeen,
-    isUpdateAvailable,
-  } = useBadges({
-    pollMs: 25000,
-    activityLimit: 200,
-  });
+    releases = 0,
+    hasUnseenUpdate = false,
+  } = badges || {};
   const tasks = useTasks();
   const location = useLocation();
   const isIndexers = location.pathname.startsWith("/indexers");
@@ -85,28 +80,14 @@ export default function Sidebar({ onNavigate }) {
   const path = location.pathname;
   const isLibrary = path.startsWith("/library");
   const isLogs = path.startsWith("/activity");
-  const updateBadge = isUpdateAvailable ? { value: 1, tone: "error" } : null;
+  const updateBadge = hasUnseenUpdate ? { value: 1, tone: "error" } : null;
   const systemItemBadge = updateBadge || (systemBadge ? { value: "warn", tone: systemBadge } : null);
 
   useEffect(() => {
-    if (isLogs && latestActivityTs > 0 && latestActivityTs > lastSeenActivityTs) {
-      markActivitySeen(latestActivityTs);
-    }
-  }, [isLogs, latestActivityTs, lastSeenActivityTs, markActivitySeen]);
-
-  useEffect(() => {
-    if (!isLibrary) return;
-    const hasNewTs = latestReleasesTs > 0 && latestReleasesTs > lastSeenReleasesTs;
-    if (hasNewTs) {
-      markReleasesSeen(latestReleasesCount, latestReleasesTs);
-    }
-  }, [
-    isLibrary,
-    latestReleasesCount,
-    latestReleasesTs,
-    lastSeenReleasesTs,
-    markReleasesSeen,
-  ]);
+    if (!IS_DEV) return undefined;
+    console.debug("[badges] mount Sidebar");
+    return () => console.debug("[badges] unmount Sidebar");
+  }, []);
 
   return (
     <aside className="sidebar drawer">
@@ -249,7 +230,7 @@ export default function Sidebar({ onNavigate }) {
               onClick={onNavigate}
             >
               <span>À propos</span>
-              {isUpdateAvailable ? (
+              {hasUnseenUpdate ? (
                 <span className="snav__badge snav__badge--error snav__subbadge">1</span>
               ) : null}
             </NavLink>

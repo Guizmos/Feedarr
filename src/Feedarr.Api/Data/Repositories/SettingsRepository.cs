@@ -10,6 +10,15 @@ namespace Feedarr.Api.Data.Repositories;
 
 public sealed class SettingsRepository
 {
+    public sealed record BadgesRelevantSettingsSnapshot(
+        bool BadgeInfo,
+        bool BadgeWarn,
+        bool BadgeError,
+        bool HasTmdbApiKey,
+        bool HasIgdbClientId,
+        bool HasIgdbClientSecret,
+        bool HasAdvancedMaintenanceEnabled);
+
     private readonly Db _db;
     private readonly IApiKeyProtectionService _keyProtection;
     private readonly ILogger<SettingsRepository> _logger;
@@ -471,6 +480,112 @@ public sealed class SettingsRepository
         );
     }
 
+    public BadgesRelevantSettingsSnapshot GetBadgesRelevantSettingsSnapshot()
+    {
+        using var conn = _db.Open();
+        var rows = conn.Query<SettingsKeyValueRow>(
+            """
+            SELECT key as Key, value_json as ValueJson
+            FROM app_settings
+            WHERE key IN (
+              'ui',
+              'maintenance',
+              'tmdb_api_key',
+              'igdb_client_id',
+              'igdb_client_secret',
+              'tmdb_enabled',
+              'tvmaze_enabled',
+              'fanart_enabled',
+              'igdb_enabled',
+              'external'
+            );
+            """);
+
+        var byKey = rows
+            .Where(r => !string.IsNullOrWhiteSpace(r.Key))
+            .ToDictionary(r => r.Key!, r => r.ValueJson, StringComparer.Ordinal);
+
+        var badgeInfo = UiSettings.BuildDefaults().BadgeInfo;
+        var badgeWarn = UiSettings.BuildDefaults().BadgeWarn;
+        var badgeError = UiSettings.BuildDefaults().BadgeError;
+
+        if (byKey.TryGetValue("ui", out var uiJson) && !string.IsNullOrWhiteSpace(uiJson))
+        {
+            try
+            {
+                var loaded = JsonSerializer.Deserialize<UiSettings>(uiJson, JsonOpts);
+                if (loaded is not null)
+                {
+                    if (uiJson.Contains("badgeInfo", StringComparison.OrdinalIgnoreCase))
+                        badgeInfo = loaded.BadgeInfo;
+                    if (uiJson.Contains("badgeWarn", StringComparison.OrdinalIgnoreCase))
+                        badgeWarn = loaded.BadgeWarn;
+                    if (uiJson.Contains("badgeError", StringComparison.OrdinalIgnoreCase))
+                        badgeError = loaded.BadgeError;
+                }
+            }
+            catch
+            {
+                // Keep defaults.
+            }
+        }
+
+        var advancedMaintenance = new MaintenanceSettings().MaintenanceAdvancedOptionsEnabled;
+        if (byKey.TryGetValue("maintenance", out var maintenanceJson) && !string.IsNullOrWhiteSpace(maintenanceJson))
+        {
+            try
+            {
+                var loaded = JsonSerializer.Deserialize<MaintenanceSettings>(maintenanceJson, JsonOpts);
+                if (loaded is not null &&
+                    maintenanceJson.Contains("maintenanceAdvancedOptionsEnabled", StringComparison.OrdinalIgnoreCase))
+                {
+                    advancedMaintenance = loaded.MaintenanceAdvancedOptionsEnabled;
+                }
+            }
+            catch
+            {
+                // Keep defaults.
+            }
+        }
+
+        var hasDedicatedExternalKeys = byKey.ContainsKey("tmdb_api_key")
+            || byKey.ContainsKey("igdb_client_id")
+            || byKey.ContainsKey("igdb_client_secret")
+            || byKey.ContainsKey("tmdb_enabled")
+            || byKey.ContainsKey("tvmaze_enabled")
+            || byKey.ContainsKey("fanart_enabled")
+            || byKey.ContainsKey("igdb_enabled");
+
+        bool hasTmdbApiKey;
+        bool hasIgdbClientId;
+        bool hasIgdbClientSecret;
+
+        if (hasDedicatedExternalKeys)
+        {
+            hasTmdbApiKey = HasPopulatedStringSetting(byKey, "tmdb_api_key");
+            hasIgdbClientId = HasPopulatedStringSetting(byKey, "igdb_client_id");
+            hasIgdbClientSecret = HasPopulatedStringSetting(byKey, "igdb_client_secret");
+        }
+        else
+        {
+            var legacyExternal = ParseLegacyExternal(byKey.TryGetValue("external", out var externalJson)
+                ? externalJson
+                : null);
+            hasTmdbApiKey = !string.IsNullOrWhiteSpace(legacyExternal?.TmdbApiKey);
+            hasIgdbClientId = !string.IsNullOrWhiteSpace(legacyExternal?.IgdbClientId);
+            hasIgdbClientSecret = !string.IsNullOrWhiteSpace(legacyExternal?.IgdbClientSecret);
+        }
+
+        return new BadgesRelevantSettingsSnapshot(
+            BadgeInfo: badgeInfo,
+            BadgeWarn: badgeWarn,
+            BadgeError: badgeError,
+            HasTmdbApiKey: hasTmdbApiKey,
+            HasIgdbClientId: hasIgdbClientId,
+            HasIgdbClientSecret: hasIgdbClientSecret,
+            HasAdvancedMaintenanceEnabled: advancedMaintenance);
+    }
+
     // --------------------
     // Helpers DB
     // --------------------
@@ -612,6 +727,45 @@ public sealed class SettingsRepository
         };
     }
 
+    private static bool HasPopulatedStringSetting(IReadOnlyDictionary<string, string?> byKey, string key)
+    {
+        if (!byKey.TryGetValue(key, out var raw))
+            return false;
+
+        var value = ParseStoredString(raw);
+        return !string.IsNullOrWhiteSpace(value);
+    }
+
+    private static string? ParseStoredString(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        try
+        {
+            return JsonSerializer.Deserialize<string>(raw, JsonOpts);
+        }
+        catch
+        {
+            return raw.Trim().Trim('"');
+        }
+    }
+
+    private static ExternalSettings? ParseLegacyExternal(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        try
+        {
+            return JsonSerializer.Deserialize<ExternalSettings>(raw, JsonOpts);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private GeneralSettings ApplyArrSettings(GeneralSettings general, ArrSettings arr)
     {
         general.ArrSyncIntervalMinutes = arr.ArrSyncIntervalMinutes;
@@ -675,5 +829,11 @@ public sealed class SettingsRepository
             return true;
         }
         public bool IsProtected(string value) => false;
+    }
+
+    private sealed class SettingsKeyValueRow
+    {
+        public string? Key { get; init; }
+        public string? ValueJson { get; init; }
     }
 }

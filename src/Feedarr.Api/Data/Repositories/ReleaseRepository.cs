@@ -58,6 +58,9 @@ public sealed class ReleaseRepository
         "quotidien"
     ];
 
+    private const long DefaultMissingPosterShortCooldownSeconds = 15 * 60;
+    private const long DefaultMissingPosterHardFailCooldownSeconds = 24 * 60 * 60;
+
     public ReleaseRepository(
         Db db,
         TitleParser parser,
@@ -750,6 +753,131 @@ public sealed class ReleaseRepository
                 LIMIT @lim;
                 """,
                 new { lim },
+                cancellationToken: ct)).ConfigureAwait(false);
+
+        return rows.AsList();
+    }
+
+    public async Task<(int TotalMissing, int ActionableMissing)> GetMissingPosterActionableCountsAsync(
+        long nowTs,
+        long shortCooldownSeconds = DefaultMissingPosterShortCooldownSeconds,
+        long hardFailCooldownSeconds = DefaultMissingPosterHardFailCooldownSeconds,
+        CancellationToken ct = default)
+    {
+        using var conn = _db.Open();
+        var now = nowTs > 0 ? nowTs : DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var shortCooldown = Math.Clamp(
+            shortCooldownSeconds <= 0 ? DefaultMissingPosterShortCooldownSeconds : shortCooldownSeconds,
+            30L,
+            7L * 24L * 60L * 60L);
+        var hardCooldown = Math.Clamp(
+            hardFailCooldownSeconds <= 0 ? DefaultMissingPosterHardFailCooldownSeconds : hardFailCooldownSeconds,
+            shortCooldown,
+            14L * 24L * 60L * 60L);
+
+        var shortCutoff = now - shortCooldown;
+        var hardCutoff = now - hardCooldown;
+
+        var row = await conn.QueryFirstOrDefaultAsync(
+            new CommandDefinition(
+                """
+                WITH missing AS (
+                  SELECT
+                    releases.poster_last_attempt_ts as lastAttemptTs,
+                    CASE
+                      WHEN releases.poster_last_error IS NULL OR releases.poster_last_error = '' THEN 0
+                      WHEN (
+                        (instr(lower(releases.poster_last_error), 'no ') > 0
+                         AND instr(lower(releases.poster_last_error), 'match') > 0)
+                        OR instr(lower(releases.poster_last_error), 'missing ') > 0
+                        OR instr(lower(releases.poster_last_error), 'release not found') > 0
+                        OR instr(lower(releases.poster_last_error), 'title_clean missing') > 0
+                      ) THEN 1
+                      ELSE 0
+                    END as isHardFail
+                  FROM releases
+                  LEFT JOIN media_entities me
+                    ON me.id = releases.entity_id
+                  WHERE (COALESCE(releases.poster_file, me.poster_file) IS NULL OR COALESCE(releases.poster_file, me.poster_file) = '')
+                ),
+                actionable AS (
+                  SELECT 1
+                  FROM missing
+                  WHERE (
+                    lastAttemptTs IS NULL
+                    OR (isHardFail = 0 AND lastAttemptTs <= @shortCutoff)
+                    OR (isHardFail = 1 AND lastAttemptTs <= @hardCutoff)
+                  )
+                )
+                SELECT
+                  (SELECT COUNT(1) FROM missing) as totalMissing,
+                  (SELECT COUNT(1) FROM actionable) as actionableMissing;
+                """,
+                new { shortCutoff, hardCutoff },
+                cancellationToken: ct)).ConfigureAwait(false);
+
+        var totalMissing = row is null ? 0 : Convert.ToInt32(row.totalMissing ?? 0);
+        var actionableMissing = row is null ? 0 : Convert.ToInt32(row.actionableMissing ?? 0);
+        return (totalMissing, actionableMissing);
+    }
+
+    public async Task<IReadOnlyList<long>> GetReleaseIdsMissingPosterActionableAsync(
+        int limit,
+        long nowTs,
+        long shortCooldownSeconds = DefaultMissingPosterShortCooldownSeconds,
+        long hardFailCooldownSeconds = DefaultMissingPosterHardFailCooldownSeconds,
+        CancellationToken ct = default)
+    {
+        using var conn = _db.Open();
+        var lim = Math.Clamp(limit <= 0 ? 200 : limit, 1, 1000);
+        var now = nowTs > 0 ? nowTs : DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var shortCooldown = Math.Clamp(
+            shortCooldownSeconds <= 0 ? DefaultMissingPosterShortCooldownSeconds : shortCooldownSeconds,
+            30L,
+            7L * 24L * 60L * 60L);
+        var hardCooldown = Math.Clamp(
+            hardFailCooldownSeconds <= 0 ? DefaultMissingPosterHardFailCooldownSeconds : hardFailCooldownSeconds,
+            shortCooldown,
+            14L * 24L * 60L * 60L);
+
+        var shortCutoff = now - shortCooldown;
+        var hardCutoff = now - hardCooldown;
+
+        var rows = await conn.QueryAsync<long>(
+            new CommandDefinition(
+                """
+                WITH missing AS (
+                  SELECT
+                    releases.id as id,
+                    releases.published_at_ts as publishedAtTs,
+                    releases.poster_last_attempt_ts as lastAttemptTs,
+                    CASE
+                      WHEN releases.poster_last_error IS NULL OR releases.poster_last_error = '' THEN 0
+                      WHEN (
+                        (instr(lower(releases.poster_last_error), 'no ') > 0
+                         AND instr(lower(releases.poster_last_error), 'match') > 0)
+                        OR instr(lower(releases.poster_last_error), 'missing ') > 0
+                        OR instr(lower(releases.poster_last_error), 'release not found') > 0
+                        OR instr(lower(releases.poster_last_error), 'title_clean missing') > 0
+                      ) THEN 1
+                      ELSE 0
+                    END as isHardFail
+                  FROM releases
+                  LEFT JOIN media_entities me
+                    ON me.id = releases.entity_id
+                  WHERE (COALESCE(releases.poster_file, me.poster_file) IS NULL OR COALESCE(releases.poster_file, me.poster_file) = '')
+                )
+                SELECT id
+                FROM missing
+                WHERE (
+                  lastAttemptTs IS NULL
+                  OR (isHardFail = 0 AND lastAttemptTs <= @shortCutoff)
+                  OR (isHardFail = 1 AND lastAttemptTs <= @hardCutoff)
+                )
+                ORDER BY publishedAtTs DESC, id DESC
+                LIMIT @lim;
+                """,
+                new { shortCutoff, hardCutoff, lim },
                 cancellationToken: ct)).ConfigureAwait(false);
 
         return rows.AsList();
