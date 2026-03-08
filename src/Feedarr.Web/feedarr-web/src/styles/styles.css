@@ -4051,6 +4051,10 @@ body.modal-open .content{
   background: rgba(239, 68, 68, 0.13);
 }
 
+.page--indexers .errorbox + .indexer-list.itemrow-grid {
+  margin-top: 16px;
+}
+
 .page--indexers .itemrow__footer .itemrow__action-label,
 .page--providers .itemrow__footer .itemrow__action-label,
 .page--settings .itemrow__footer .itemrow__action-label,
