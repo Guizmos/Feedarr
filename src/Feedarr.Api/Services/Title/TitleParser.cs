@@ -21,21 +21,21 @@ public sealed class ParsedTitle
 
 public sealed class TitleParser
 {
-    private static readonly Regex RxSeasonEpisode = new(@"(?i)\bS(?<s>\d{1,2})E(?<e>\d{1,3})(?:E(?<e2>\d{1,3})|-(?<e2>\d{1,3}))?\b", RegexOptions.Compiled);
-    private static readonly Regex RxAltSeasonEpisode = new(@"(?i)\b(?<s>\d{1,2})x(?<e>\d{1,3})(?:-(?<e2>\d{1,3}))?\b", RegexOptions.Compiled);
+    private static readonly Regex RxSeasonEpisode = new(@"(?i)\bS(?<s>\d{1,2})E(?<e>\d{1,4})(?:E(?<e2>\d{1,4})|-(?<e2>\d{1,4}))?\b", RegexOptions.Compiled);
+    private static readonly Regex RxAltSeasonEpisode = new(@"(?i)\b(?<s>\d{1,2})x(?<e>\d{1,4})(?:-(?<e2>\d{1,4}))?\b", RegexOptions.Compiled);
     private static readonly Regex RxSeasonOnly = new(@"(?i)\bS(?<s>\d{1,2})(?!E\d)\b", RegexOptions.Compiled);
     private static readonly Regex RxSeasonWord = new(@"(?i)\b(season|saison)[\s._-]*(?<s>\d{1,2})\b", RegexOptions.Compiled);
     private static readonly Regex RxSeasonDisc = new(@"(?i)\bS(?<s>\d{1,2})D(?<d>\d{1,2})\b", RegexOptions.Compiled);
-    private static readonly Regex RxEpisodeOnly = new(@"(?i)\bE(?<e>\d{1,3})\b", RegexOptions.Compiled);
+    private static readonly Regex RxEpisodeOnly = new(@"(?i)\bE(?<e>\d{1,4})\b", RegexOptions.Compiled);
     private static readonly Regex RxAirDateYmd = new(@"\b(?<y>19\d{2}|20\d{2})[._/ -](?<m>\d{1,2})[._/ -](?<d>\d{1,2})\b", RegexOptions.Compiled);
     private static readonly Regex RxAirDateDmy = new(@"\b(?<d>\d{1,2})[._/ -](?<m>\d{1,2})[._/ -](?<y>19\d{2}|20\d{2})\b", RegexOptions.Compiled);
-    private static readonly Regex RxSYearEpisode = new(@"(?i)\bS(19\d{2}|20\d{2})E\d{1,3}\b", RegexOptions.Compiled);
+    private static readonly Regex RxSYearEpisode = new(@"(?i)\bS(19\d{2}|20\d{2})E\d{1,4}\b", RegexOptions.Compiled);
     private static readonly Regex RxYear = new(@"\b(19\d{2}|20\d{2})\b", RegexOptions.Compiled);
     private static readonly Regex RxYearRange = new(@"\b(19\d{2}|20\d{2})\s*-\s*(19\d{2}|20\d{2})\b", RegexOptions.Compiled);
-    private static readonly Regex RxWeirdRes = new(@"\b\d{3,4}p\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex RxRes = new(@"(?i)\b(2160p|1080p|720p|480p|4k)\b", RegexOptions.Compiled);
-    private static readonly Regex RxLangTags = new(@"(?i)\b(multi\d*|multi|vff|vfq|vfi|vf|vostfr|vost|vof|truefrench|subfrench|french|fr|eng|english|vo)\b", RegexOptions.Compiled);
-    private static readonly Regex RxTechSplit = new(@"(?i)\b(2160p|1080p|720p|480p|4k|WEB[- .]?DL|WEB[- .]?RIP|BLURAY|BDRIP|BRRIP|HDTV|DVDRIP|FULL\s*DVD|DVD|x264|x265|HEVC|AV1|MPEG2|AC3|MULTI|VFF|VFQ|VFI|VF|VOSTFR|TRUEFRENCH)\b", RegexOptions.Compiled);
+    private static readonly Regex RxWeirdRes = new(@"\b\d{3,4}[pi]\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex RxRes = new(@"(?i)\b(2160p|1080p|1080i|720p|480p|4k)\b", RegexOptions.Compiled);
+    private static readonly Regex RxLangTags = new(@"(?i)\b(multi\d*|multi|dual|vff|vfq|vfi|vf|vostfr|vost|vof|truefrench|subfrench|french|fr|eng|english|vo)\b", RegexOptions.Compiled);
+    private static readonly Regex RxTechSplit = new(@"(?i)\b(2160p|1080p|1080i|720p|480p|4k|WEB[- .]?DL|WEB[- .]?RIP|BLURAY|BDRIP|BRRIP|HDTV|DVDRIP|FULL\s*DVD|DVD|x264|x265|HEVC|AV1|MPEG2|AC3|MULTI|DUAL|VFF|VFQ|VFI|VF|VOSTFR|TRUEFRENCH)\b", RegexOptions.Compiled);
     private static readonly Regex RxGameBrackets = new(@"\[[^\]]*\]", RegexOptions.Compiled);
     private static readonly Regex RxGameParens = new(@"\([^\)]*\)", RegexOptions.Compiled);
     private static readonly Regex RxGameReleaseGroup = new(@"[-_]\s*[A-Za-z0-9_]{2,25}\s*$", RegexOptions.Compiled);
@@ -69,21 +69,28 @@ public sealed class TitleParser
     private static readonly Regex RxGameHash = new(@"(?i)\b[a-f0-9]{7,}\b", RegexOptions.Compiled);
     private static readonly Regex RxGameTrailingNums = new(@"\s+\d+(\s+\d+)+\s*$", RegexOptions.Compiled);
     private static readonly Regex RxGameTrailingSingleLetter = new(@"\s+\p{L}\s*$", RegexOptions.Compiled);
-    private static readonly Regex RxCollectionSuffix = new(@"(?i)\s*[-'"" ]?\s*(integrale|integral|complete|collection|pack|trilogie|trilogy|saga|hexalogie|pentalogie|quadrilogie|quadrilogy|tetralogie|tetralogy|duologie|duology|coffret|boxset|box set|anthology|anthologie)\s*$", RegexOptions.Compiled);
-    private static readonly Regex RxCollectionMid = new(@"(?i)\s+[-'"" ]?\s*(integrale|integral|complete|collection|pack|trilogie|trilogy|saga|hexalogie|pentalogie|quadrilogie|quadrilogy|tetralogie|tetralogy|duologie|duology|coffret|boxset|box set|anthology|anthologie)\s+(?=\d{4}|1080p|720p|2160p|480p|WEB|BluRay|HDTV|x264|x265|HEVC|AV1)", RegexOptions.Compiled);
+    private static readonly Regex RxCollectionSuffix = new(@"(?i)\s*[-'"" ]?\s*(integrale|intégrale|intergale|integral|intégral|complete|collection|pack|trilogie|trilogy|saga|hexalogie|pentalogie|quadrilogie|quadrilogy|tetralogie|tetralogy|duologie|duology|coffret|boxset|box set|anthology|anthologie)\s*$", RegexOptions.Compiled);
+    private static readonly Regex RxCollectionMid = new(@"(?i)\s+[-'"" ]?\s*(integrale|intégrale|intergale|integral|intégral|complete|collection|pack|trilogie|trilogy|saga|hexalogie|pentalogie|quadrilogie|quadrilogy|tetralogie|tetralogy|duologie|duology|coffret|boxset|box set|anthology|anthologie)\s+(?=\d{4}|1080p|1080i|720p|2160p|480p|WEB|BluRay|HDTV|x264|x265|HEVC|AV1)", RegexOptions.Compiled);
+    private static readonly Regex RxSeriesYearPackCompound = new(
+        @"(?i)\b(19\d{2}|20\d{2})(integrale|intégrale|intergale|integral|intégral|complete|collection|pack)\b",
+        RegexOptions.Compiled);
     private static readonly Regex RxSeriesPackWords = new(
-        @"(?i)\b(integrale|intégrale|integral|complete|collection|pack|coffret|box\s*set|boxset|anthology|anthologie|saga|trilogie|quadrilogie|tetralogie|duologie|hexalogie|pentalogie|remastered|remaster|repack)\b",
+        @"(?i)\b(integrale|intégrale|intergale|integral|intégral|complete|collection|pack|coffret|box\s*set|boxset|anthology|anthologie|saga|trilogie|quadrilogie|tetralogie|duologie|hexalogie|pentalogie|remastered|remaster|restored|repack)\b",
         RegexOptions.Compiled);
     private static readonly Regex RxSeriesJunk = new(
         @"(?i)\b(doc|docu|documentary|documentaire|docuseries|mini[-\s]?series|miniseries)\b",
         RegexOptions.Compiled);
     private static readonly Regex RxAudioJunk = new(
-        @"(?i)\b(eac3|aac|ac3|ddp|dd|dts|truehd|atmos|flac|opus|mp3|xvid|divx|5\.1|7\.1|2\.0|1\.0|10bit|10bits|8bit|hdr|dv|dolby\s*vision|4klight|lc)\b",
+        @"(?i)\b(e[- ]?ac3|eac3|aac|ac3|ddp(?:\d(?:\.\d)?)?|dd|dts|truehd|atmos|flac|opus|mp3|xvid|divx|avc|h\.?264|h\.?265|5\.1|7\.1|2\.0|1\.0|10bit|10bits|8bit|hdr|dv|dolby\s*vision|4klight|lc|mp4|mkv|avi|mov|wmv)\b",
         RegexOptions.Compiled);
     private static readonly Regex RxVideoStandardJunk = new(@"\b(PAL|NTSC|SECAM)\b", RegexOptions.Compiled);
     private static readonly Regex RxFilmJunk = new(
         @"(?i)\b(repack|custom|re[-._\s]?edition|reedition|réédition)\b",
         RegexOptions.Compiled);
+    private static readonly Regex RxEditionCutJunk = new(
+        @"(?i)\b(director'?s?\s*cut(?:\s*\d+)?|extended\s*cut|final\s*cut|uncut)\b",
+        RegexOptions.Compiled);
+    private static readonly Regex RxAnimationJunk = new(@"(?i)\b(oav|ova)\b", RegexOptions.Compiled);
     private static readonly (Regex rx, string value)[] Sources =
     {
         (new Regex(@"(?i)\bWEB[- .]?DL\b", RegexOptions.Compiled), "WEB-DL"),
@@ -126,10 +133,7 @@ public sealed class TitleParser
         }
 
         if (!p.Year.HasValue)
-        {
-            var my = RxYear.Match(tokenSource);
-            if (my.Success) p.Year = TryInt(my.Value);
-        }
+            p.Year = ExtractLikelyYear(tokenSource, category);
 
         var mr = RxRes.Match(tokenSource);
         if (mr.Success)
@@ -220,6 +224,9 @@ public sealed class TitleParser
         {
             case UnifiedCategory.Serie:
             {
+                var hadSeriesPackWords = RxSeriesPackWords.IsMatch(s);
+                s = RxSeriesYearPackCompound.Replace(s, " ");
+
                 // Toujours retirer les mots pack/collection (INTEGRALE, COMPLETE, …)
                 // avant le split, quel que soit le chemin pris
                 s = RxSeriesPackWords.Replace(s, " ");
@@ -242,6 +249,10 @@ public sealed class TitleParser
                 {
                     s = SplitBeforeTechTags(s);
                 }
+
+                if (hadSeriesPackWords && !p.Season.HasValue && !p.Episode.HasValue)
+                    s = Regex.Replace(s, @"\b(19\d{2}|20\d{2})\b", " ");
+
                 break;
             }
 
@@ -278,21 +289,31 @@ public sealed class TitleParser
         }
 
         s = RxLangTags.Replace(s, " ");
+        s = RxCollectionSuffix.Replace(s, "");
 
         if (category == UnifiedCategory.Film)
         {
             s = RxFilmJunk.Replace(s, " ");
+            s = RxEditionCutJunk.Replace(s, " ");
+            s = RxCollectionSuffix.Replace(s, "");
+        }
+        else if (category == UnifiedCategory.Animation)
+        {
+            s = RxAnimationJunk.Replace(s, " ");
+            s = RxEditionCutJunk.Replace(s, " ");
             s = RxCollectionSuffix.Replace(s, "");
         }
 
         if (category == UnifiedCategory.Serie)
             s = RxSeriesJunk.Replace(s, " ");
 
+        s = Regex.Replace(s, @"(?i)\bS\d{1,2}E\d{1,4}(?:E\d{1,4}|-\d{1,4})?\b", " ");
+        s = Regex.Replace(s, @"(?i)\b\d{1,2}x\d{1,4}(?:-\d{1,4})?\b", " ");
         s = Regex.Replace(s, @"(?i)\bS\d{1,2}\b", " ");
         s = Regex.Replace(s, @"(?i)\bS(19\d{2}|20\d{2})\b", " ");
-        s = Regex.Replace(s, @"(?i)\bS(19\d{2}|20\d{2})E\d{1,3}\b", " ");
+        s = Regex.Replace(s, @"(?i)\bS(19\d{2}|20\d{2})E\d{1,4}\b", " ");
         s = Regex.Replace(s, @"(?i)\b(season|saison)\s*\d{1,2}\b", " ");
-        s = Regex.Replace(s, @"(?i)\bE\d{1,3}\b", " ");
+        s = Regex.Replace(s, @"(?i)\bE\d{1,4}\b", " ");
 
         while (Regex.IsMatch(s, @"\s*[\(\[][^\)\]]+[\)\]]\s*$"))
             s = Regex.Replace(s, @"\s*[\(\[][^\)\]]+[\)\]]\s*$", "");
@@ -306,9 +327,9 @@ public sealed class TitleParser
     private static string SplitBeforeSeriesTokens(string value)
     {
         if (RxSeasonEpisode.IsMatch(value))
-            return Regex.Split(value, @"(?i)\bS\d{1,2}E\d{1,3}(?:E\d{1,3}|-\d{1,3})?\b")[0];
+            return Regex.Split(value, @"(?i)\bS\d{1,2}E\d{1,4}(?:E\d{1,4}|-\d{1,4})?\b")[0];
         if (RxAltSeasonEpisode.IsMatch(value))
-            return Regex.Split(value, @"(?i)\b\d{1,2}x\d{1,3}(?:-\d{1,3})?\b")[0];
+            return Regex.Split(value, @"(?i)\b\d{1,2}x\d{1,4}(?:-\d{1,4})?\b")[0];
         if (RxSeasonDisc.IsMatch(value))
             return Regex.Split(value, @"(?i)\bS\d{1,2}D\d{1,2}\b")[0];
         if (RxSeasonOnly.IsMatch(value))
@@ -327,24 +348,64 @@ public sealed class TitleParser
     private static string SplitBeforeEmissionTokens(string value)
     {
         if (RxSeasonEpisode.IsMatch(value))
-            return Regex.Split(value, @"(?i)\bS\d{1,2}E\d{1,3}(?:E\d{1,3}|-\d{1,3})?\b")[0];
+            return Regex.Split(value, @"(?i)\bS\d{1,2}E\d{1,4}(?:E\d{1,4}|-\d{1,4})?\b")[0];
         if (RxAltSeasonEpisode.IsMatch(value))
-            return Regex.Split(value, @"(?i)\b\d{1,2}x\d{1,3}(?:-\d{1,3})?\b")[0];
+            return Regex.Split(value, @"(?i)\b\d{1,2}x\d{1,4}(?:-\d{1,4})?\b")[0];
         if (RxAirDateDmy.IsMatch(value))
             return Regex.Split(value, @"\b\d{1,2}[._/ -]\d{1,2}[._/ -](19\d{2}|20\d{2})\b")[0];
         if (RxAirDateYmd.IsMatch(value))
             return Regex.Split(value, @"\b(19\d{2}|20\d{2})[._/ -]\d{1,2}[._/ -]\d{1,2}\b")[0];
         if (RxSYearEpisode.IsMatch(value))
-            return Regex.Split(value, @"(?i)\bS(19\d{2}|20\d{2})E\d{1,3}\b")[0];
+            return Regex.Split(value, @"(?i)\bS(19\d{2}|20\d{2})E\d{1,4}\b")[0];
         return SplitBeforeSeriesTokens(value);
     }
 
     private static string SplitBeforeFilmTokens(string value, int? year)
     {
-        var s = Regex.Split(value, @"(?i)\bS\d{1,2}E\d{1,3}\b")[0];
+        var s = Regex.Split(value, @"(?i)\bS\d{1,2}E\d{1,4}\b")[0];
         if (year.HasValue)
-            return Regex.Split(s, @"\b(19\d{2}|20\d{2})\b")[0];
+        {
+            var yearValue = year.Value.ToString(CultureInfo.InvariantCulture);
+            var matches = Regex.Matches(s, $@"\b{yearValue}\b");
+            Match? splitOn = null;
+            foreach (Match match in matches)
+            {
+                if (match.Index > 0)
+                    splitOn = match;
+            }
+
+            if (splitOn is not null)
+                return s[..splitOn.Index];
+        }
+
         return SplitBeforeTechTags(s);
+    }
+
+    private static int? ExtractLikelyYear(string raw, UnifiedCategory category)
+    {
+        var matches = RxYear.Matches(raw);
+        if (matches.Count == 0)
+            return null;
+
+        var firstNonWhitespaceIndex = 0;
+        while (firstNonWhitespaceIndex < raw.Length && char.IsWhiteSpace(raw[firstNonWhitespaceIndex]))
+            firstNonWhitespaceIndex++;
+
+        Match? selected = null;
+        foreach (Match match in matches)
+        {
+            if (match.Index > firstNonWhitespaceIndex)
+                selected = match;
+        }
+
+        if (selected is not null)
+            return TryInt(selected.Value);
+
+        return category switch
+        {
+            UnifiedCategory.Film or UnifiedCategory.Animation or UnifiedCategory.Spectacle or UnifiedCategory.Autre => null,
+            _ => TryInt(matches[0].Value)
+        };
     }
 
     private static string SplitBeforeTechTags(string value)
