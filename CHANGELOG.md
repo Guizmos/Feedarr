@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.4.5](https://github.com/Guizmos/Feedarr/compare/v2.4.4...v2.4.5) (2026-03-09)
+
+
+### Bug Fixes
+
+* **parser:** improve title parsing edge cases ([2044a78](https://github.com/Guizmos/Feedarr/commit/2044a787c3372a40db717b15acf06ff9bf4e649c))
+* **parser:** restore title parsing precision changes ([dbdfe1e](https://github.com/Guizmos/Feedarr/commit/dbdfe1e2ddedaba26d1607ba9d1e98e0630b836d))
+* **ui:** add margin under info notice on indexers page ([4dee090](https://github.com/Guizmos/Feedarr/commit/4dee090b64f1bd1573c2d1713948521c00128a65))
+
 ## [2.4.4](https://github.com/Guizmos/Feedarr/compare/v2.4.3...v2.4.4) (2026-03-07)
 
 
