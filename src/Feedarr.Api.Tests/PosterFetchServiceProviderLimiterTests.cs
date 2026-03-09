@@ -43,6 +43,20 @@ public sealed class PosterFetchServiceProviderLimiterTests
         Assert.True(handler.MaxInFlight <= 2, $"Observed max TMDB concurrency {handler.MaxInFlight}");
     }
 
+    [Fact]
+    public async Task SaveTmdbPosterAsync_WithTvMediaType_DoesNotCrashWhenMovieEndpointReturns404()
+    {
+        using var ctx = new PosterFetchLimiterContext(new TvOnlyTmdbHandler());
+        var releaseId = ctx.CreateRelease("Oedo Fire Slayer", 2026, mediaType: "tv");
+
+        var posterUrl = await ctx.Posters.SaveTmdbPosterAsync(releaseId, 4242, "/poster.jpg", CancellationToken.None, logSingle: false);
+
+        Assert.False(string.IsNullOrWhiteSpace(posterUrl));
+        var release = ctx.Releases.GetForPoster(releaseId);
+        Assert.NotNull(release);
+        Assert.Equal("tmdb-4242-manual.jpg", release!.PosterFile);
+    }
+
     private sealed class PosterFetchLimiterContext : IDisposable
     {
         private readonly TestWorkspace _workspace;
@@ -146,7 +160,7 @@ public sealed class PosterFetchServiceProviderLimiterTests
         public PosterFetchService Posters { get; }
         public long SourceId { get; }
 
-        public long CreateRelease(string title, int year)
+        public long CreateRelease(string title, int year, string mediaType = "movie")
         {
             using var conn = Db.Open();
             var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -158,11 +172,11 @@ public sealed class PosterFetchServiceProviderLimiterTests
                 )
                 VALUES(
                   @sourceId, @guid, @title, @ts, @ts,
-                  @title, @year, 'Film', 'movie'
+                  @title, @year, 'Film', @mediaType
                 );
                 SELECT last_insert_rowid();
                 """,
-                new { sourceId = SourceId, guid = Guid.NewGuid().ToString("N"), title, ts, year });
+                new { sourceId = SourceId, guid = Guid.NewGuid().ToString("N"), title, ts, year, mediaType });
         }
 
         public void Dispose()
@@ -224,6 +238,52 @@ public sealed class PosterFetchServiceProviderLimiterTests
                 if (Interlocked.CompareExchange(ref _maxInFlight, candidate, snapshot) == snapshot)
                     return;
             }
+        }
+
+        private static HttpResponseMessage JsonResponse(string json)
+            => new(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            };
+
+        private static byte[] CreateValidImageBytes()
+        {
+            using var image = new Image<Rgba32>(600, 900, new Rgba32(220, 20, 60));
+            using var ms = new MemoryStream();
+            image.Save(ms, new JpegEncoder());
+            return ms.ToArray();
+        }
+    }
+
+    private sealed class TvOnlyTmdbHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var uri = request.RequestUri ?? new Uri("https://api.themoviedb.org/3/");
+            var path = uri.AbsolutePath.ToLowerInvariant();
+
+            if (uri.Host.Contains("image.tmdb.org", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(CreateValidImageBytes())
+                });
+            }
+
+            if (path.Contains("/movie/"))
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+
+            if (path.Contains("/tv/") && path.Contains("/credits"))
+            {
+                return Task.FromResult(JsonResponse("{\"cast\":[],\"crew\":[]}"));
+            }
+
+            if (path.Contains("/tv/"))
+            {
+                return Task.FromResult(JsonResponse("{\"name\":\"Oedo Fire Slayer\",\"overview\":\"Mock overview\",\"genres\":[],\"vote_average\":8,\"vote_count\":100}"));
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
         }
 
         private static HttpResponseMessage JsonResponse(string json)

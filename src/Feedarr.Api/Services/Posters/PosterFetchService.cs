@@ -2927,12 +2927,13 @@ public sealed class PosterFetchService
     {
         if (tmdbId <= 0) return;
 
+        var normalizedMediaType = NormalizeMediaTypeForTmdb(mediaType);
         TmdbClient.DetailsResult? details = null;
-        if (mediaType == "series")
+        if (normalizedMediaType == "series")
         {
             details = await RunTmdbAsync(innerCt => _tmdb.GetTvDetailsAsync(tmdbId, innerCt), ct).ConfigureAwait(false);
         }
-        else if (mediaType == "movie")
+        else if (normalizedMediaType == "movie")
         {
             details = await RunTmdbAsync(innerCt => _tmdb.GetMovieDetailsAsync(tmdbId, innerCt), ct).ConfigureAwait(false);
         }
@@ -2960,6 +2961,18 @@ public sealed class PosterFetchService
             details.Writers,
             details.Cast
         );
+    }
+
+    private static string? NormalizeMediaTypeForTmdb(string? mediaType)
+    {
+        var normalized = (mediaType ?? string.Empty).Trim().ToLowerInvariant();
+        if (normalized is "series" or "tv" or "show")
+            return "series";
+
+        if (normalized is "movie" or "film")
+            return "movie";
+
+        return null;
     }
 
     private async Task UpdateExternalDetailsFromIgdbAsync(long id, int igdbId, CancellationToken ct)

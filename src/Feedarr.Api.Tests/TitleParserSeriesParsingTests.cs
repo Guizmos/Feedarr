@@ -26,6 +26,24 @@ public sealed class TitleParserSeriesParsingTests
     [InlineData(
         "Columbo.COMPLETE.DUAL.1080i.BLURAY.REMUX.AVC-GLaDOS",
         "Columbo")]
+    [InlineData(
+        "She-Hulk.Attorney.at.Law.S01MULTi.1080p.WEBRip.x265-KFL",
+        "She-Hulk Attorney at Law")]
+    [InlineData(
+        "Man.Seeking.Woman.INTEGRALE.VOST.FR.EN.720p.HDTV.AC3.x264-STEGNER",
+        "Man Seeking Woman")]
+    [InlineData(
+        "Das.Boot.Directors.Cut.2.Multi.VFF.1080p.Bluray-Remux.AVC-SNBX.mkv",
+        "Das Boot")]
+    [InlineData(
+        "Oedo.Fire.Slayer.-The.Legend.of.Phoenix-.S01E08v2.VOSTFR.720p.WEB.x264.AAC.-Tsundere-Raws.CR",
+        "Oedo Fire Slayer - The Legend of Phoenix")]
+    [InlineData(
+        "Automan.Integrale.French.Tvrip.Xvid.Mp3-NoTag",
+        "Automan")]
+    [InlineData(
+        "Romanzo.Criminale.2008.CUSTOM.S01.MULTI.VFF.1080p.BluRay.AC3.5.1.x264-SQUEEZE",
+        "Romanzo Criminale")]
     public void Parse_Series_RemovesKnownNoisePatterns(string raw, string expectedTitleClean)
     {
         var parsed = _parser.Parse(raw, UnifiedCategory.Serie);
