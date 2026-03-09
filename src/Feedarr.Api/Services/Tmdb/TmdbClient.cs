@@ -352,7 +352,16 @@ public sealed class TmdbClient
 
         var mediaInfoLanguage = GetMediaInfoLanguage();
         var url = $"movie/{tmdbId}?api_key={Uri.EscapeDataString(key)}&language={Uri.EscapeDataString(mediaInfoLanguage)}";
-        var r = await GetJsonAsync<MovieDetailsResponse>(url, ct).ConfigureAwait(false);        if (r is null) return null;
+        MovieDetailsResponse? r;
+        try
+        {
+            r = await GetJsonAsync<MovieDetailsResponse>(url, ct).ConfigureAwait(false);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+        if (r is null) return null;
         var credits = await GetMovieCreditsAsync(tmdbId, mediaInfoLanguage, ct).ConfigureAwait(false);
         return new DetailsResult(
             r.Title?.Trim(),
@@ -377,7 +386,16 @@ public sealed class TmdbClient
 
         var mediaInfoLanguage = GetMediaInfoLanguage();
         var url = $"tv/{tmdbId}?api_key={Uri.EscapeDataString(key)}&language={Uri.EscapeDataString(mediaInfoLanguage)}";
-        var r = await GetJsonAsync<TvDetailsResponse>(url, ct).ConfigureAwait(false);        if (r is null) return null;
+        TvDetailsResponse? r;
+        try
+        {
+            r = await GetJsonAsync<TvDetailsResponse>(url, ct).ConfigureAwait(false);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+        if (r is null) return null;
         var credits = await GetTvCreditsAsync(tmdbId, mediaInfoLanguage, ct).ConfigureAwait(false);
         var runtime = r.EpisodeRunTime?.FirstOrDefault(x => x > 0);
         return new DetailsResult(
@@ -593,7 +611,16 @@ public sealed class TmdbClient
         if (tmdbId <= 0) return null;
 
         var url = $"movie/{tmdbId}/credits?api_key={Uri.EscapeDataString(key)}&language={Uri.EscapeDataString(mediaInfoLanguage)}";
-        var r = await GetJsonAsync<CreditsResponse>(url, ct).ConfigureAwait(false);        if (r is null) return null;
+        CreditsResponse? r;
+        try
+        {
+            r = await GetJsonAsync<CreditsResponse>(url, ct).ConfigureAwait(false);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+        if (r is null) return null;
 
         var directors = r.Crew?
             .Where(x => string.Equals(x.Job, "Director", StringComparison.OrdinalIgnoreCase))
@@ -634,7 +661,16 @@ public sealed class TmdbClient
         if (tmdbId <= 0) return null;
 
         var url = $"tv/{tmdbId}/credits?api_key={Uri.EscapeDataString(key)}&language={Uri.EscapeDataString(mediaInfoLanguage)}";
-        var r = await GetJsonAsync<CreditsResponse>(url, ct).ConfigureAwait(false);        if (r is null) return null;
+        CreditsResponse? r;
+        try
+        {
+            r = await GetJsonAsync<CreditsResponse>(url, ct).ConfigureAwait(false);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+        if (r is null) return null;
 
         var directors = r.Crew?
             .Where(x => string.Equals(x.Job, "Creator", StringComparison.OrdinalIgnoreCase)
