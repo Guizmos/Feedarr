@@ -12,6 +12,8 @@ import {
   normalizeReleasesTone,
 } from "../badges/badgeMappers.js";
 
+export { createBadgeSseConnector } from "./useBadgeSse.js";
+
 export async function runSummaryRefreshWithFallback({ state, runSummary, runLegacy }) {
   if (state?.legacyOnly) {
     return runLegacy();
