@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createBadgeSseRefreshScheduler, runSummaryRefreshWithFallback } from "../useBadges.js";
+import { createBadgeSseRefreshScheduler } from "../useBadgeSse.js";
+import { runSummaryRefreshWithFallback } from "../useBadges.js";
 
 function createFakeClock() {
   let nowMs = 0;

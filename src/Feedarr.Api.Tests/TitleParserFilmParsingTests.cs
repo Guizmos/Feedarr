@@ -34,6 +34,18 @@ public sealed class TitleParserFilmParsingTests
         "Gravity")]
     [InlineData(
         UnifiedCategory.Film,
+        "Jurassic.World.Dominion.CUSTOM.EXTENDED.2022.2160p.MULTi.VF2.UHD.Blu-ray.REMUX.HDR.DoVi.HEVC.DTS-X.DTS-HDHRA.7.1-MOONLY",
+        "Jurassic World Dominion")]
+    [InlineData(
+        UnifiedCategory.Film,
+        "LAssaut.2011.FR.2011.VFF.1080p.BluRay.AC3.5.1.AVC-JiHeff",
+        "LAssaut")]
+    [InlineData(
+        UnifiedCategory.Animation,
+        "Asterix.et.obelix.ANIMATION.iNTEGRALE.(1967-2018).FRENCH.1080p.BluRay.AAC.x265-SceneGuardians",
+        "Asterix et obelix")]
+    [InlineData(
+        UnifiedCategory.Film,
         "KUBO.and.the.last.stings.2016Multi.VF2.1080p.BluRay.3D.SBS.AC3.x264-OLIS",
         "KUBO and the last stings")]
     public void Parse_Video_CleansKnownNoisyPatterns(UnifiedCategory category, string raw, string expectedTitleClean)

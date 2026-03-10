@@ -2942,6 +2942,46 @@ LEFT JOIN media_entities me
             new { limit = safeLimit, offset = safeOffset }
         ).AsList();
     }
+
+    // -------------------------------------------------------------------------
+    // Badge summary
+    // -------------------------------------------------------------------------
+
+    public sealed record BadgeSummaryStats(
+        int SourcesCount,
+        int ReleasesCount,
+        long ReleasesLatestTs,
+        int? ReleasesNewSinceTsCount);
+
+    public BadgeSummaryStats GetBadgeSummaryStats(long releasesSinceTs)
+    {
+        using var conn = _db.Open();
+
+        using var stats = conn.QueryMultiple(
+            """
+            SELECT COUNT(1) FROM sources;
+            SELECT COUNT(1) FROM releases;
+            SELECT COALESCE(MAX(created_at_ts), 0) FROM releases;
+            """);
+
+        var sourcesCount = stats.ReadSingle<int>();
+        var releasesCount = stats.ReadSingle<int>();
+        var releasesLatestTs = stats.ReadSingle<long>();
+
+        int? releasesNewSinceTsCount = null;
+        if (releasesSinceTs > 0)
+        {
+            releasesNewSinceTsCount = conn.ExecuteScalar<int>(
+                """
+                SELECT COUNT(1)
+                FROM releases
+                WHERE created_at_ts > @sinceTs;
+                """,
+                new { sinceTs = releasesSinceTs });
+        }
+
+        return new BadgeSummaryStats(sourcesCount, releasesCount, releasesLatestTs, releasesNewSinceTsCount);
+    }
 }
 
 public sealed class LegacyPosterRow

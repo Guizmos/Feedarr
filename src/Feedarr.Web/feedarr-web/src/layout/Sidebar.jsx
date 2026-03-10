@@ -3,23 +3,19 @@ import { NavLink, useLocation } from "react-router-dom";
 import useBadges from "../hooks/useBadges.js";
 import useTasks from "../hooks/useTasks.js";
 import AppIcon from "../ui/AppIcon.jsx";
+import NotificationBadge from "../ui/NotificationBadge.jsx";
 
 function Item({ to, icon, label, badge, end = true, onNavigate, forceActive = false, animateOnIncrease = false }) {
   const normalized =
     badge && typeof badge === "object"
       ? badge
-      : { value: badge, tone: badge === "warn" ? "warn" : undefined };
+      : { value: badge, tone: undefined };
 
   const badgeValue = normalized?.value;
   const badgeTone = normalized?.tone;
-  const showBadge = badgeValue != null && badgeValue !== false && badgeValue !== 0;
-  const badgeLabel = badgeValue === "warn" ? "!" : badgeValue;
   const [isBumping, setIsBumping] = useState(false);
   const prevNumericRef = useRef(0);
   const bumpTimerRef = useRef(null);
-  const badgeClass = "snav__badge"
-    + (badgeTone ? ` snav__badge--${badgeTone}` : "")
-    + (isBumping ? " snav__badge--pulse" : "");
 
   useEffect(() => {
     const numericValue = typeof badgeValue === "number"
@@ -53,8 +49,12 @@ function Item({ to, icon, label, badge, end = true, onNavigate, forceActive = fa
       <AppIcon name={icon} className="snav__icon" />
       <span className="snav__label">{label}</span>
 
-      {/* badge: nombre (ex: 3) ou "warn" */}
-      {showBadge && <span className={badgeClass}>{badgeLabel}</span>}
+      <NotificationBadge
+        value={badgeValue}
+        tone={badgeTone}
+        baseClass="snav__badge"
+        extraClass={isBumping ? "snav__badge--pulse" : undefined}
+      />
     </NavLink>
   );
 }
@@ -65,6 +65,7 @@ export default function Sidebar({ onNavigate }) {
     activityTone,
     system: systemBadge,
     releases,
+    releasesTone,
     latestActivityTs,
     lastSeenActivityTs,
     markActivitySeen,
@@ -115,7 +116,9 @@ export default function Sidebar({ onNavigate }) {
           to="/library"
           icon="video_library"
           label="Bibliothèque"
-          badge={!isLibrary && releases ? releases : null}
+          badge={!isLibrary && (releases > 0 || releasesTone === "warn")
+          ? { value: releases > 0 ? releases : "!", tone: releasesTone === "warn" ? "warn" : undefined }
+          : null}
           animateOnIncrease
           onNavigate={onNavigate}
         />

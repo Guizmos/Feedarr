@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
-using Dapper;
-using Feedarr.Api.Data;
 using Feedarr.Api.Data.Repositories;
+using Feedarr.Api.Models.Badges;
 using Feedarr.Api.Models.Settings;
 using Feedarr.Api.Services;
 using Feedarr.Api.Services.Backup;
@@ -14,7 +13,7 @@ namespace Feedarr.Api.Controllers;
 public sealed class BadgesController : ControllerBase
 {
     private readonly BadgeSignal _signal;
-    private readonly Db _db;
+    private readonly ReleaseRepository _releases;
     private readonly ActivityRepository _activity;
     private readonly SettingsRepository _settings;
     private readonly BackupExecutionCoordinator _backupCoordinator;
@@ -23,7 +22,7 @@ public sealed class BadgesController : ControllerBase
 
     public BadgesController(
         BadgeSignal signal,
-        Db db,
+        ReleaseRepository releases,
         ActivityRepository activity,
         SettingsRepository settings,
         BackupExecutionCoordinator backupCoordinator,
@@ -31,7 +30,7 @@ public sealed class BadgesController : ControllerBase
         ILogger<BadgesController> log)
     {
         _signal = signal;
-        _db = db;
+        _releases = releases;
         _activity = activity;
         _settings = settings;
         _backupCoordinator = backupCoordinator;
@@ -72,35 +71,7 @@ public sealed class BadgesController : ControllerBase
             includeWarn: ui.BadgeWarn,
             includeError: ui.BadgeError);
 
-        int sourcesCount;
-        int releasesCount;
-        long releasesLatestTs;
-        int? releasesNewSinceTsCount = null;
-
-        using (var conn = _db.Open())
-        {
-            using var stats = conn.QueryMultiple(
-                """
-                SELECT COUNT(1) FROM sources;
-                SELECT COUNT(1) FROM releases;
-                SELECT COALESCE(MAX(created_at_ts), 0) FROM releases;
-                """);
-
-            sourcesCount = stats.ReadSingle<int>();
-            releasesCount = stats.ReadSingle<int>();
-            releasesLatestTs = stats.ReadSingle<long>();
-
-            if (safeReleasesSinceTs > 0)
-            {
-                releasesNewSinceTsCount = conn.ExecuteScalar<int>(
-                    """
-                    SELECT COUNT(1)
-                    FROM releases
-                    WHERE created_at_ts > @sinceTs;
-                    """,
-                    new { sinceTs = safeReleasesSinceTs });
-            }
-        }
+        var releasesStats = _releases.GetBadgeSummaryStats(safeReleasesSinceTs);
 
         var ext = _settings.GetExternalFlags();
         var missingExternalCount = 0;
@@ -111,33 +82,36 @@ public sealed class BadgesController : ControllerBase
         var maintenance = _settings.GetMaintenance(new MaintenanceSettings());
         var backupState = _backupCoordinator.GetState();
 
-        var payload = new
-        {
-            activity = new
-            {
-                unreadCount = activity.UnreadCount,
-                lastActivityTs = activity.LastActivityTs,
-                tone = activity.Tone
-            },
-            releases = new
-            {
-                totalCount = releasesCount,
-                latestTs = releasesLatestTs,
-                newSinceTsCount = releasesNewSinceTsCount
-            },
-            system = new
-            {
-                isSyncRunning = backupState.ActiveSyncActivities > 0,
-                schedulerBusy = backupState.IsBusy || backupState.SyncBlocked,
-                updatesBadge = false,
-                sourcesCount
-            },
-            settings = new
-            {
-                missingExternalCount,
-                hasAdvancedMaintenanceEnabled = maintenance.MaintenanceAdvancedOptionsEnabled
-            }
-        };
+        // releases.tone: "warn" when only timestamp fallback is available (no exact count),
+        //                "info" when an exact count is provided.
+        var releasesTone = releasesStats.ReleasesNewSinceTsCount.HasValue
+            ? "info"
+            : releasesStats.ReleasesLatestTs > safeReleasesSinceTs
+                ? "warn"
+                : "info";
+
+        // system.tone: "warn" during an exclusive blocking operation (backup/restore).
+        //              null  when no actionable condition is present.
+        string? systemTone = backupState.SyncBlocked ? "warn" : null;
+
+        var payload = new BadgeSummaryResponse(
+            Activity: new BadgeActivityPayload(
+                UnreadCount: activity.UnreadCount,
+                LastActivityTs: activity.LastActivityTs,
+                Tone: activity.Tone),
+            Releases: new BadgeReleasesPayload(
+                TotalCount: releasesStats.ReleasesCount,
+                LatestTs: releasesStats.ReleasesLatestTs,
+                NewSinceTsCount: releasesStats.ReleasesNewSinceTsCount,
+                Tone: releasesTone),
+            System: new BadgeSystemPayload(
+                IsSyncRunning: backupState.ActiveSyncActivities > 0,
+                SchedulerBusy: backupState.IsBusy || backupState.SyncBlocked,
+                SourcesCount: releasesStats.SourcesCount,
+                Tone: systemTone),
+            Settings: new BadgeSettingsPayload(
+                MissingExternalCount: missingExternalCount,
+                HasAdvancedMaintenanceEnabled: maintenance.MaintenanceAdvancedOptionsEnabled));
 
         _cache.Set(cacheKey, payload, SummaryCacheDuration);
         _log.LogDebug(

@@ -1,5 +1,6 @@
 using Dapper;
 using Feedarr.Api.Data;
+using Feedarr.Api.Models.Badges;
 using System.Dynamic;
 using System.Text.Json;
 
@@ -7,8 +8,6 @@ namespace Feedarr.Api.Data.Repositories;
 
 public sealed class ActivityRepository
 {
-    public sealed record BadgeActivitySummary(long LastActivityTs, int UnreadCount, string Tone);
-
     private readonly Db _db;
     private readonly Feedarr.Api.Services.BadgeSignal _signal;
 

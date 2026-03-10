@@ -1,41 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiGet, resolveApiUrl } from "../api/client.js";
+import { apiGet } from "../api/client.js";
 import usePolling from "./usePolling.js";
-
-const ACTIVITY_LAST_SEEN_KEY = "feedarr:lastSeen:activity";
-const RELEASES_LAST_SEEN_KEY = "feedarr:lastSeen:releases";
-const RELEASES_LAST_SEEN_TS_KEY = "feedarr:lastSeen:releases_ts";
-const UPDATE_LAST_SEEN_TAG_KEY = "feedarr:lastSeenReleaseTag";
-const UPDATE_CACHE_KEY = "feedarr:update:latest";
-const UPDATE_LAST_CHECK_TS_KEY = "feedarr:update:lastCheckTs";
-
-function readCachedUpdate() {
-  if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(UPDATE_CACHE_KEY);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return null;
-
-    const hasLegacyShape = !!parsed.latestRelease && !Object.prototype.hasOwnProperty.call(parsed, "releases");
-    const hasInvalidReleases = Object.prototype.hasOwnProperty.call(parsed, "releases") && !Array.isArray(parsed.releases);
-    if (hasLegacyShape || hasInvalidReleases) {
-      window.localStorage.removeItem(UPDATE_CACHE_KEY);
-      window.localStorage.removeItem(UPDATE_LAST_CHECK_TS_KEY);
-      return null;
-    }
-
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function persistCachedUpdate(payload) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(UPDATE_CACHE_KEY, JSON.stringify(payload || {}));
-  window.localStorage.setItem(UPDATE_LAST_CHECK_TS_KEY, String(Date.now()));
-}
+import useUpdateBadge from "./useUpdateBadge.js";
+import useBadgeSse from "./useBadgeSse.js";
+import useSeenBadges from "./useSeenBadges.js";
+import {
+  parseTs,
+  computeReleasesBadgeValue,
+  normalizeActivityTone,
+  normalizeSystemTone,
+  normalizeReleasesTone,
+} from "../badges/badgeMappers.js";
 
 export async function runSummaryRefreshWithFallback({ state, runSummary, runLegacy }) {
   if (state?.legacyOnly) {
@@ -54,67 +29,6 @@ export async function runSummaryRefreshWithFallback({ state, runSummary, runLega
   }
 }
 
-export function createBadgeSseRefreshScheduler(
-  refresh,
-  {
-    minIntervalMs = 1000,
-    now = () => Date.now(),
-    setTimer = (cb, ms) => setTimeout(cb, ms),
-    clearTimer = (id) => clearTimeout(id),
-  } = {}
-) {
-  const intervalMs = Math.max(250, Number(minIntervalMs) || 1000);
-  let timerId = null;
-  let hasRun = false;
-  let lastRunAt = 0;
-  let pending = false;
-  let disposed = false;
-
-  const invoke = () => {
-    if (disposed) return;
-    pending = false;
-    hasRun = true;
-    lastRunAt = now();
-    Promise.resolve()
-      .then(() => refresh())
-      .catch(() => {});
-  };
-
-  const schedule = () => {
-    if (disposed || !pending || timerId != null) return;
-
-    const elapsed = hasRun ? now() - lastRunAt : Number.POSITIVE_INFINITY;
-    const waitMs = elapsed >= intervalMs ? 0 : intervalMs - elapsed;
-
-    if (waitMs <= 0) {
-      invoke();
-      return;
-    }
-
-    timerId = setTimer(() => {
-      timerId = null;
-      if (!pending || disposed) return;
-      invoke();
-    }, waitMs);
-  };
-
-  return {
-    trigger() {
-      if (disposed) return;
-      pending = true;
-      schedule();
-    },
-    dispose() {
-      disposed = true;
-      pending = false;
-      if (timerId != null) {
-        clearTimer(timerId);
-        timerId = null;
-      }
-    },
-  };
-}
-
 /**
  * Badges Sonarr-like
  * - activity: nb d'events non-info (ou error-only si tu veux)
@@ -125,24 +39,13 @@ export default function useBadges({
   activityLimit = 200,
   activityMode = "nonInfo", // "nonInfo" | "errorOnly"
 } = {}) {
-  const [lastSeenActivityTs, setLastSeenActivityTsState] = useState(() =>
-    typeof window === "undefined" ? 0 : Number(window.localStorage.getItem(ACTIVITY_LAST_SEEN_KEY) || 0)
-  );
-
-  const [lastSeenReleasesCount, setLastSeenReleasesCountState] = useState(() =>
-    typeof window === "undefined" ? 0 : Number(window.localStorage.getItem(RELEASES_LAST_SEEN_KEY) || 0)
-  );
-
-  const [lastSeenReleasesTs, setLastSeenReleasesTsState] = useState(() =>
-    typeof window === "undefined" ? 0 : Number(window.localStorage.getItem(RELEASES_LAST_SEEN_TS_KEY) || 0)
-  );
-
   const [badges, setBadges] = useState({
     activity: 0,
     activityTone: "info",
     system: null,
     sources: 0,
-    releases: 0,
+    releases: 0,       // always number — never "warn"
+    releasesTone: "info", // "info" | "warn"
     settingsMissing: 0,
     latestActivityTs: 0,
     latestReleasesCount: 0,
@@ -152,96 +55,20 @@ export default function useBadges({
     latestUpdateTag: "",
     tasks: [],
   });
-  const [sseConnected, setSseConnected] = useState(false);
 
-  function parseTs(value) {
-    if (value == null) return 0;
-    if (typeof value === "number") return Number.isFinite(value) ? value : 0;
-    const asNumber = Number(value);
-    if (Number.isFinite(asNumber)) return asNumber;
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-
-  function setLastSeenActivityTs(ts) {
-    if (typeof window === "undefined") return;
-    const value = Number(ts || 0);
-    window.localStorage.setItem(ACTIVITY_LAST_SEEN_KEY, String(value));
-  }
-
-  function setLastSeenReleasesCount(count) {
-    if (typeof window === "undefined") return;
-    const value = Number(count || 0);
-    window.localStorage.setItem(RELEASES_LAST_SEEN_KEY, String(value));
-  }
-
-  function setLastSeenReleasesTs(ts) {
-    if (typeof window === "undefined") return;
-    const value = Number(ts || 0);
-    window.localStorage.setItem(RELEASES_LAST_SEEN_TS_KEY, String(value));
-  }
-
-  const markActivitySeen = useCallback((ts) => {
-    const next = Number(ts || 0);
-    setLastSeenActivityTs(next);
-    setLastSeenActivityTsState(next);
-    setBadges((prev) => ({ ...prev, activity: 0, latestActivityTs: next }));
-  }, []);
-
-  const markReleasesSeen = useCallback((count, latestTs) => {
-    const next = Number(count || 0);
-    const nextTs = Number(latestTs || 0);
-    setLastSeenReleasesCount(next);
-    setLastSeenReleasesCountState(next);
-    setBadges((prev) => ({
-      ...prev,
-      releases: 0,
-      latestReleasesCount: next > 0 ? next : prev.latestReleasesCount,
-      latestReleasesTs: nextTs > 0 ? nextTs : prev.latestReleasesTs,
-    }));
-    if (nextTs > 0) {
-      setLastSeenReleasesTs(nextTs);
-      setLastSeenReleasesTsState(nextTs);
-    }
-  }, []);
+  const {
+    lastSeenActivityTs,
+    lastSeenReleasesCount,
+    lastSeenReleasesTs,
+    markActivitySeen,
+    markReleasesSeen,
+  } = useSeenBadges(setBadges);
 
   const refreshInFlight = useRef(false);
   const refreshRef = useRef(null);
   const summaryModeRef = useRef({ legacyOnly: false });
 
-  const resolveUpdateState = useCallback(async () => {
-    let updatePayload = readCachedUpdate();
-    try {
-      const lastUpdateCheckTs = typeof window === "undefined"
-        ? 0
-        : Number(window.localStorage.getItem(UPDATE_LAST_CHECK_TS_KEY) || 0);
-      const updateIntervalHours = Number(updatePayload?.checkIntervalHours ?? 6);
-      const updateIntervalMs = Math.max(1, Number.isFinite(updateIntervalHours) ? updateIntervalHours : 6) * 60 * 60 * 1000;
-      const shouldCheckUpdates = !updatePayload || (Date.now() - lastUpdateCheckTs) >= updateIntervalMs;
-      if (shouldCheckUpdates) {
-        const fetched = await apiGet("/api/updates/latest");
-        if (fetched && typeof fetched === "object") {
-          updatePayload = fetched;
-          persistCachedUpdate(fetched);
-        }
-      }
-    } catch {
-      // Keep previous cached update payload on failures.
-    }
-
-    const latestUpdateTag = String(updatePayload?.latestRelease?.tagName || "");
-    const isUpdateAvailable = !!updatePayload?.isUpdateAvailable;
-    const lastSeenUpdateTag = typeof window === "undefined"
-      ? ""
-      : String(window.localStorage.getItem(UPDATE_LAST_SEEN_TAG_KEY) || "");
-    const hasUnseenUpdate = !!(
-      isUpdateAvailable
-      && latestUpdateTag
-      && latestUpdateTag !== lastSeenUpdateTag
-    );
-
-    return { isUpdateAvailable, hasUnseenUpdate, latestUpdateTag };
-  }, []);
+  const { resolve: resolveUpdateState } = useUpdateBadge();
 
   const refreshLegacy = useCallback(async () => {
     const safeSinceTs = Math.max(0, Number(lastSeenReleasesTs || 0));
@@ -353,13 +180,9 @@ export default function useBadges({
     const hasNewByTs = typeof releasesLatestTs === "number"
       ? releasesLatestTs > lastSeenReleasesTs
       : false;
-    const releasesBadgeValue = hasExactUnseenCount
-      ? (exactUnseenCount > 0 ? exactUnseenCount : 0)
-      : releasesDelta && releasesDelta > 0
-        ? releasesDelta
-        : hasNewByTs
-          ? "warn"
-          : 0;
+
+    const releasesBadgeValue = computeReleasesBadgeValue({ hasExactUnseenCount, exactUnseenCount, releasesDelta });
+    const releasesTone = normalizeReleasesTone({ backendToneRaw: "", hasExactUnseenCount, releasesDelta, hasNewByTs });
 
     // Extraction des tâches (retro fetch, sync, etc.)
     const tasks = Array.isArray(sys?.tasks)
@@ -386,6 +209,7 @@ export default function useBadges({
       system: systemTone ?? prev.system,
       sources: sourcesCount ?? prev.sources,
       releases: releasesBadgeValue ?? prev.releases,
+      releasesTone,
       settingsMissing: settingsMissing ?? prev.settingsMissing,
       latestActivityTs: activityInfo?.latestActivityTs ?? prev.latestActivityTs,
       latestReleasesCount: releasesCount ?? prev.latestReleasesCount,
@@ -415,8 +239,7 @@ export default function useBadges({
 
     const activityCount = Number(activity?.unreadCount ?? NaN);
     const latestActivityTs = parseTs(activity?.lastActivityTs ?? 0);
-    const activityToneRaw = String(activity?.tone || "info").toLowerCase();
-    const activityTone = activityToneRaw === "error" || activityToneRaw === "warn" ? activityToneRaw : "info";
+    const activityTone = normalizeActivityTone(activity?.tone);
 
     const sourcesCount = Number(system?.sourcesCount ?? NaN);
     const releasesCount = Number(releases?.totalCount ?? NaN);
@@ -430,13 +253,14 @@ export default function useBadges({
       ? Math.max(0, Math.trunc(releasesCount) - lastSeenReleasesCount)
       : null;
     const hasNewByTs = releasesLatestTs > lastSeenReleasesTs;
-    const releasesBadgeValue = hasExactUnseenCount
-      ? (exactUnseenCount > 0 ? exactUnseenCount : 0)
-      : releasesDelta && releasesDelta > 0
-        ? releasesDelta
-        : hasNewByTs
-          ? "warn"
-          : 0;
+
+    const releasesBadgeValue = computeReleasesBadgeValue({ hasExactUnseenCount, exactUnseenCount, releasesDelta });
+    const releasesTone = normalizeReleasesTone({ backendToneRaw: releases?.tone, hasExactUnseenCount, releasesDelta, hasNewByTs });
+
+    // system.tone: consumed from backend summary path.
+    // undefined means the field is absent (old server) → keep prev.system.
+    // null means no actionable condition → clear the badge.
+    const nextSystemTone = normalizeSystemTone(system?.tone);
 
     const settingsMissing = Number(settings?.missingExternalCount ?? NaN);
     const updateState = await resolveUpdateState();
@@ -444,9 +268,10 @@ export default function useBadges({
     setBadges((prev) => ({
       activity: Number.isFinite(activityCount) ? Math.max(0, Math.trunc(activityCount)) : prev.activity,
       activityTone,
-      system: prev.system,
+      system: nextSystemTone !== undefined ? nextSystemTone : prev.system,
       sources: Number.isFinite(sourcesCount) ? Math.max(0, Math.trunc(sourcesCount)) : prev.sources,
-      releases: releasesBadgeValue ?? prev.releases,
+      releases: releasesBadgeValue,
+      releasesTone,
       settingsMissing: Number.isFinite(settingsMissing) ? Math.max(0, Math.trunc(settingsMissing)) : prev.settingsMissing,
       latestActivityTs: latestActivityTs > 0 ? latestActivityTs : prev.latestActivityTs,
       latestReleasesCount: Number.isFinite(releasesCount) ? Math.max(0, Math.trunc(releasesCount)) : prev.latestReleasesCount,
@@ -476,6 +301,8 @@ export default function useBadges({
 
   refreshRef.current = refresh;
 
+  const { sseConnected } = useBadgeSse(refreshRef);
+
   const effectivePollMs = useMemo(() => {
     const base = Math.max(60000, Number(pollMs) || 60000);
     if (sseConnected) return Math.max(base, 300000);
@@ -483,44 +310,6 @@ export default function useBadges({
   }, [pollMs, sseConnected]);
 
   usePolling(refresh, effectivePollMs);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || typeof EventSource === "undefined") return undefined;
-
-    const url = resolveApiUrl("/api/badges/stream");
-    const es = new EventSource(url, { withCredentials: true });
-    const scheduler = createBadgeSseRefreshScheduler(
-      () => refreshRef.current?.(),
-      { minIntervalMs: 1000 }
-    );
-
-    const onReady = () => {
-      setSseConnected(true);
-      refreshRef.current?.();
-    };
-    const onBadgeChanged = () => scheduler.trigger();
-    const onError = () => {
-      setSseConnected(false);
-      es.close();
-    };
-    const onOpen = () => setSseConnected(true);
-    es.addEventListener("ready", onReady);
-    es.addEventListener("badge", onBadgeChanged);
-    es.addEventListener("badges-changed", onBadgeChanged);
-    es.addEventListener("error", onError);
-    es.addEventListener("open", onOpen);
-
-    return () => {
-      setSseConnected(false);
-      scheduler.dispose();
-      es.removeEventListener("ready", onReady);
-      es.removeEventListener("badge", onBadgeChanged);
-      es.removeEventListener("badges-changed", onBadgeChanged);
-      es.removeEventListener("error", onError);
-      es.removeEventListener("open", onOpen);
-      es.close();
-    };
-  }, []); // stable: EventSource connection created once, never recreated
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;

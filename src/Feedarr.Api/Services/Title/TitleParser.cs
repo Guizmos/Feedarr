@@ -89,7 +89,7 @@ public sealed class TitleParser
         RegexOptions.Compiled);
     private static readonly Regex RxVideoStandardJunk = new(@"\b(PAL|NTSC|SECAM)\b", RegexOptions.Compiled);
     private static readonly Regex RxFilmJunk = new(
-        @"(?i)\b(repack|custom|hybrid|re[-._\s]?edition|reedition|réédition)\b",
+        @"(?i)\b(repack|custom|hybrid|extended|re[-._\s]?edition|reedition|réédition)\b",
         RegexOptions.Compiled);
     private static readonly Regex RxFilmEditionJunk = new(
         @"(?i)\b(diamond|collector'?s?|ultimate|special|limited|extended|anniversary|deluxe)\s+edition\b",
@@ -97,7 +97,7 @@ public sealed class TitleParser
     private static readonly Regex RxEditionCutJunk = new(
         @"(?i)\b(director'?s?\s*cut(?:\s*\d+)?|extended\s*cut|final\s*cut|uncut)\b",
         RegexOptions.Compiled);
-    private static readonly Regex RxAnimationJunk = new(@"(?i)\b(oav|ova)\b", RegexOptions.Compiled);
+    private static readonly Regex RxAnimationJunk = new(@"(?i)\b(oav|ova|animation|animated)\b", RegexOptions.Compiled);
     private static readonly (Regex rx, string value)[] Sources =
     {
         (new Regex(@"(?i)\bWEB[- .]?DL\b", RegexOptions.Compiled), "WEB-DL"),
@@ -224,6 +224,8 @@ public sealed class TitleParser
         }
 
         var s = raw;
+        var hasRepeatedPrimaryYear = p.Year.HasValue &&
+                                     Regex.Matches(raw, $@"\b{p.Year.Value.ToString(CultureInfo.InvariantCulture)}\b").Count > 1;
 
         s = Regex.Replace(s, @"\[[^\]]*\]", " ");
         s = Regex.Replace(s, @"\([^\)]*\)", " ");
@@ -307,6 +309,8 @@ public sealed class TitleParser
             s = RxFilmEditionJunk.Replace(s, " ");
             s = RxEditionCutJunk.Replace(s, " ");
             s = RxCollectionSuffix.Replace(s, "");
+            if (hasRepeatedPrimaryYear && p.Year.HasValue)
+                s = Regex.Replace(s, $@"\b{p.Year.Value.ToString(CultureInfo.InvariantCulture)}\b", " ");
         }
         else if (category == UnifiedCategory.Animation)
         {
