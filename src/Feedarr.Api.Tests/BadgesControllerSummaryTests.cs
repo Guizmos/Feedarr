@@ -7,6 +7,8 @@ using Feedarr.Api.Models.Settings;
 using Feedarr.Api.Options;
 using Feedarr.Api.Services;
 using Feedarr.Api.Services.Backup;
+using Feedarr.Api.Services.Categories;
+using Feedarr.Api.Services.Titles;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -32,6 +34,7 @@ public sealed class BadgesControllerSummaryTests
         BackupExecutionCoordinator? coordinator = null)
     {
         var signal = new BadgeSignal();
+        var releases = new ReleaseRepository(db, new TitleParser(), new UnifiedCategoryResolver());
         var activity = new ActivityRepository(db, signal);
         var settings = new SettingsRepository(db);
         settings.SaveMaintenance(new MaintenanceSettings
@@ -46,7 +49,7 @@ public sealed class BadgesControllerSummaryTests
         var cache = new MemoryCache(new MemoryCacheOptions());
         return new BadgesController(
             signal,
-            db,
+            releases,
             activity,
             settings,
             coordinator ?? new BackupExecutionCoordinator(),
