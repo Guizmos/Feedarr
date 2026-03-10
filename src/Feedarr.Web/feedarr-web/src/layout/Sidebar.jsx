@@ -1,29 +1,21 @@
 import React, { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
+import useBadges from "../hooks/useBadges.js";
 import useTasks from "../hooks/useTasks.js";
 import AppIcon from "../ui/AppIcon.jsx";
-import { useBadgeStoreContext } from "../badges/useBadgeStore.js";
+import NotificationBadge from "../ui/NotificationBadge.jsx";
 
-const IS_DEV =
-  typeof import.meta !== "undefined"
-  && typeof import.meta.env !== "undefined"
-  && !!import.meta.env.DEV;
 function Item({ to, icon, label, badge, end = true, onNavigate, forceActive = false, animateOnIncrease = false }) {
   const normalized =
     badge && typeof badge === "object"
       ? badge
-      : { value: badge, tone: badge === "warn" ? "warn" : undefined };
+      : { value: badge, tone: undefined };
 
   const badgeValue = normalized?.value;
   const badgeTone = normalized?.tone;
-  const showBadge = badgeValue != null && badgeValue !== false && badgeValue !== 0;
-  const badgeLabel = badgeValue === "warn" ? "!" : badgeValue;
   const [isBumping, setIsBumping] = useState(false);
   const prevNumericRef = useRef(0);
   const bumpTimerRef = useRef(null);
-  const badgeClass = "snav__badge"
-    + (badgeTone ? ` snav__badge--${badgeTone}` : "")
-    + (isBumping ? " snav__badge--pulse" : "");
 
   useEffect(() => {
     const numericValue = typeof badgeValue === "number"
@@ -57,21 +49,35 @@ function Item({ to, icon, label, badge, end = true, onNavigate, forceActive = fa
       <AppIcon name={icon} className="snav__icon" />
       <span className="snav__label">{label}</span>
 
-      {/* badge: nombre (ex: 3) ou "warn" */}
-      {showBadge && <span className={badgeClass}>{badgeLabel}</span>}
+      <NotificationBadge
+        value={badgeValue}
+        tone={badgeTone}
+        baseClass="snav__badge"
+        extraClass={isBumping ? "snav__badge--pulse" : undefined}
+      />
     </NavLink>
   );
 }
 
 export default function Sidebar({ onNavigate }) {
-  const badges = useBadgeStoreContext();
   const {
-    activity = 0,
-    activityTone = "info",
+    activity,
+    activityTone,
     system: systemBadge,
-    releases = 0,
-    hasUnseenUpdate = false,
-  } = badges || {};
+    releases,
+    releasesTone,
+    latestActivityTs,
+    lastSeenActivityTs,
+    markActivitySeen,
+    latestReleasesCount,
+    latestReleasesTs,
+    lastSeenReleasesTs,
+    markReleasesSeen,
+    isUpdateAvailable,
+  } = useBadges({
+    pollMs: 25000,
+    activityLimit: 200,
+  });
   const tasks = useTasks();
   const location = useLocation();
   const isIndexers = location.pathname.startsWith("/indexers");
@@ -80,14 +86,28 @@ export default function Sidebar({ onNavigate }) {
   const path = location.pathname;
   const isLibrary = path.startsWith("/library");
   const isLogs = path.startsWith("/activity");
-  const updateBadge = hasUnseenUpdate ? { value: 1, tone: "error" } : null;
+  const updateBadge = isUpdateAvailable ? { value: 1, tone: "error" } : null;
   const systemItemBadge = updateBadge || (systemBadge ? { value: "warn", tone: systemBadge } : null);
 
   useEffect(() => {
-    if (!IS_DEV) return undefined;
-    console.debug("[badges] mount Sidebar");
-    return () => console.debug("[badges] unmount Sidebar");
-  }, []);
+    if (isLogs && latestActivityTs > 0 && latestActivityTs > lastSeenActivityTs) {
+      markActivitySeen(latestActivityTs);
+    }
+  }, [isLogs, latestActivityTs, lastSeenActivityTs, markActivitySeen]);
+
+  useEffect(() => {
+    if (!isLibrary) return;
+    const hasNewTs = latestReleasesTs > 0 && latestReleasesTs > lastSeenReleasesTs;
+    if (hasNewTs) {
+      markReleasesSeen(latestReleasesCount, latestReleasesTs);
+    }
+  }, [
+    isLibrary,
+    latestReleasesCount,
+    latestReleasesTs,
+    lastSeenReleasesTs,
+    markReleasesSeen,
+  ]);
 
   return (
     <aside className="sidebar drawer">
@@ -96,7 +116,9 @@ export default function Sidebar({ onNavigate }) {
           to="/library"
           icon="video_library"
           label="Bibliothèque"
-          badge={!isLibrary && releases ? releases : null}
+          badge={!isLibrary && (releases > 0 || releasesTone === "warn")
+          ? { value: releases > 0 ? releases : "!", tone: releasesTone === "warn" ? "warn" : undefined }
+          : null}
           animateOnIncrease
           onNavigate={onNavigate}
         />
@@ -230,7 +252,7 @@ export default function Sidebar({ onNavigate }) {
               onClick={onNavigate}
             >
               <span>À propos</span>
-              {hasUnseenUpdate ? (
+              {isUpdateAvailable ? (
                 <span className="snav__badge snav__badge--error snav__subbadge">1</span>
               ) : null}
             </NavLink>

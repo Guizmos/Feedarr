@@ -57,3 +57,7 @@ artifacts/
 
 # Docker env
 docker/*.env
+
+# Generated frontend build output copied to API wwwroot
+src/Feedarr.Api/wwwroot/assets/
+src/Feedarr.Api/wwwroot/index.html

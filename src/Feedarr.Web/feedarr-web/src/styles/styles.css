@@ -4257,14 +4257,6 @@ body.modal-open .content{
   text-overflow: ellipsis;
 }
 
-.settings-badges{
-  display:flex;
-  align-items:center;
-  gap: 6px;
-  flex: 0 0 auto;
-  margin-left: auto;
-}
-
 .settings-actions{
   margin-left: auto;
   display:flex;
@@ -4298,11 +4290,6 @@ body.modal-open .content{
     flex: 1 1 100%;
     max-width: none;
     padding-left: 44px;
-  }
-  .settings-badges{
-    order: 6;
-    flex: 1 1 100%;
-    margin-left: 44px;
   }
   .settings-id{
     width: 28px;
@@ -6331,24 +6318,9 @@ input.is-valid{
 .system-updates__footer-text{
   margin: 0;
 }
-.system-updates__footer .system-updates__unseen-badge{
-  margin-left: auto;
-}
-.system-updates__unseen-badge{
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  height: 22px;
-  padding: 0 8px;
-  font-size: 10px;
-}
 @media (max-width: 640px){
   .system-updates__footer{
     flex-wrap: wrap;
-  }
-  .system-updates__footer .system-updates__unseen-badge{
-    margin-left: 0;
   }
 }
 .system-changelog__item{
