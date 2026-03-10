@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.4.6](https://github.com/Guizmos/Feedarr/compare/v2.4.5...v2.4.6) (2026-03-10)
+
+
+### Bug Fixes
+
+* **dev:** CI error ([a1623b4](https://github.com/Guizmos/Feedarr/commit/a1623b4696af40cb77e5fd4f2bf30d74d1e3049f))
+* **dev:** delete assets* files to commit ([106bcbe](https://github.com/Guizmos/Feedarr/commit/106bcbeb38094614897447bd48582b89fd10a186))
+
 ## [2.4.5](https://github.com/Guizmos/Feedarr/compare/v2.4.4...v2.4.5) (2026-03-09)
 
 
