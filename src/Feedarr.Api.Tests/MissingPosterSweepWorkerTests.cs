@@ -14,7 +14,7 @@ namespace Feedarr.Api.Tests;
 public sealed class MissingPosterSweepWorkerTests
 {
     [Fact]
-    public async Task GetReleaseIdsMissingPosterAsync_RespectsLimit()
+    public async Task GetReleaseIdsMissingPosterActionableAsync_RespectsLimit()
     {
         using var workspace = new TestWorkspace();
         var db = CreateDb(workspace);
@@ -28,9 +28,58 @@ public sealed class MissingPosterSweepWorkerTests
         InsertRelease(conn, sourceId, "r4", 1_700_000_004, 1_700_000_004, posterFile: "already.jpg");
 
         var repository = CreateRepository(db);
-        var ids = await repository.GetReleaseIdsMissingPosterAsync(2, CancellationToken.None);
+        var ids = await repository.GetReleaseIdsMissingPosterActionableAsync(2, 1_700_000_100, ct: CancellationToken.None);
 
         Assert.Equal(2, ids.Count);
+    }
+
+    [Fact]
+    public async Task GetReleaseIdsMissingPosterActionableAsync_FiltersRecentCooldown()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+        using var conn = db.Open();
+        var sourceId = InsertSource(conn, 1_700_000_000);
+        const long nowTs = 1_700_100_000;
+
+        var failedRecentId = InsertRelease(
+            conn,
+            sourceId,
+            "failed-recent",
+            nowTs - 120,
+            nowTs - 120,
+            posterFile: null,
+            posterLastAttemptTs: nowTs - 120,
+            posterLastError: "timeout");
+        var failedOldId = InsertRelease(
+            conn,
+            sourceId,
+            "failed-old",
+            nowTs - 7200,
+            nowTs - 7200,
+            posterFile: null,
+            posterLastAttemptTs: nowTs - 7200,
+            posterLastError: "timeout");
+        var neverTriedId = InsertRelease(
+            conn,
+            sourceId,
+            "never-tried",
+            nowTs - 60,
+            nowTs - 60,
+            posterFile: null);
+
+        var repository = CreateRepository(db);
+        var ids = await repository.GetReleaseIdsMissingPosterActionableAsync(
+            limit: 10,
+            nowTs: nowTs,
+            shortCooldownSeconds: 15 * 60,
+            hardFailCooldownSeconds: 24 * 60 * 60,
+            ct: CancellationToken.None);
+
+        Assert.DoesNotContain(failedRecentId, ids);
+        Assert.Contains(failedOldId, ids);
+        Assert.Contains(neverTriedId, ids);
     }
 
     [Fact]
@@ -56,6 +105,50 @@ public sealed class MissingPosterSweepWorkerTests
         Assert.Equal(1, queue.EnqueueManyCalls);
         Assert.Contains(id1, queue.LastJobIds);
         Assert.Contains(id2, queue.LastJobIds);
+    }
+
+    [Fact]
+    public async Task SweepOnceAsync_UsesActionableFilterForCooldown()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+        using var conn = db.Open();
+        var sourceId = InsertSource(conn, 1_700_000_000);
+        var nowTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        _ = InsertRelease(
+            conn,
+            sourceId,
+            "failed-recent",
+            nowTs - 120,
+            nowTs - 120,
+            posterFile: null,
+            posterLastAttemptTs: nowTs - 120,
+            posterLastError: "timeout");
+        var oldFailedId = InsertRelease(
+            conn,
+            sourceId,
+            "failed-old",
+            nowTs - 7200,
+            nowTs - 7200,
+            posterFile: null,
+            posterLastAttemptTs: nowTs - 7200,
+            posterLastError: "timeout");
+        var neverTriedId = InsertRelease(conn, sourceId, "never-tried", nowTs - 60, nowTs - 60, posterFile: null);
+
+        var repository = CreateRepository(db);
+        var queue = new FakePosterFetchQueue(new PosterFetchEnqueueBatchResult(2, 0, 0, 0));
+        var worker = CreateWorker(repository, queue);
+
+        var result = await worker.SweepOnceAsync(CancellationToken.None);
+
+        Assert.Equal(2, result.Found);
+        Assert.Equal(2, result.Enqueued);
+        Assert.Equal(1, queue.EnqueueManyCalls);
+        Assert.Contains(oldFailedId, queue.LastJobIds);
+        Assert.Contains(neverTriedId, queue.LastJobIds);
+        Assert.DoesNotContain(queue.LastJobIds, id => id != oldFailedId && id != neverTriedId);
     }
 
     [Fact]
@@ -89,7 +182,9 @@ public sealed class MissingPosterSweepWorkerTests
             OptionsFactory.Create(new AppOptions
             {
                 MissingPosterSweepMinutes = 10,
-                MissingPosterSweepBatchSize = 200
+                MissingPosterSweepBatchSize = 200,
+                MissingPosterSweepShortCooldownMinutes = 15,
+                MissingPosterSweepHardFailCooldownMinutes = 24 * 60
             }),
             NullLogger<MissingPosterSweepWorker>.Instance);
 
@@ -114,12 +209,26 @@ public sealed class MissingPosterSweepWorkerTests
         return conn.ExecuteScalar<long>("SELECT id FROM sources LIMIT 1;");
     }
 
-    private static long InsertRelease(SqliteConnection conn, long sourceId, string guid, long publishedAt, long createdAt, string? posterFile)
+    private static long InsertRelease(
+        SqliteConnection conn,
+        long sourceId,
+        string guid,
+        long publishedAt,
+        long createdAt,
+        string? posterFile,
+        long? posterLastAttemptTs = null,
+        string? posterLastError = null)
     {
         conn.Execute(
             """
-            INSERT INTO releases(source_id, guid, title, published_at_ts, created_at_ts, poster_file)
-            VALUES (@sourceId, @guid, @title, @publishedAt, @createdAt, @posterFile);
+            INSERT INTO releases(
+              source_id, guid, title, published_at_ts, created_at_ts,
+              poster_file, poster_last_attempt_ts, poster_last_error
+            )
+            VALUES (
+              @sourceId, @guid, @title, @publishedAt, @createdAt,
+              @posterFile, @posterLastAttemptTs, @posterLastError
+            );
             """,
             new
             {
@@ -128,7 +237,9 @@ public sealed class MissingPosterSweepWorkerTests
                 title = guid,
                 publishedAt,
                 createdAt,
-                posterFile
+                posterFile,
+                posterLastAttemptTs,
+                posterLastError
             });
 
         return conn.ExecuteScalar<long>("SELECT id FROM releases WHERE guid = @guid;", new { guid });

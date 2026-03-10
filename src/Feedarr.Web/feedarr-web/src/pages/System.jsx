@@ -52,7 +52,7 @@ export default function System() {
               "subaction--system-verify",
               updates?.updatesChecking ? "is-loading" : "",
             ].filter(Boolean).join(" ")}
-            badge={updates?.isUpdateAvailable ? 1 : null}
+            badge={updates?.hasUnseenUpdate ? 1 : null}
             badgeTone="error"
           />
         ) : null}

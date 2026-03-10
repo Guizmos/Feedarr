@@ -223,7 +223,6 @@ export default function SettingsMaintenance({
               dirty={isDirty("maintenance.posterWorkers")}
               pulseClass={pulseClass("maintenance.posterWorkers")}
               error={maintenanceFieldErrors?.posterWorkers}
-              suffix="Bientôt"
             />
 
             <AdvancedSelectRow

@@ -154,6 +154,8 @@ builder.Services.AddSingleton<MaintenanceLockService>();
 
 // Services
 builder.Services.AddSingleton<BadgeSignal>();
+builder.Services.AddSingleton<IBadgesBaseSummaryProvider, BadgesBaseSummaryProvider>();
+builder.Services.AddSingleton<BadgesSummaryCacheService>();
 builder.Services.AddSingleton<ISystemStatusSnapshotProvider, SystemStatusSnapshotProvider>();
 builder.Services.AddSingleton<SystemStatusCacheService>();
 builder.Services.AddSingleton<ProviderStatsService>();

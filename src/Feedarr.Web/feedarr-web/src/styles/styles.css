@@ -3809,6 +3809,10 @@ body.modal-open .content{
   justify-content: flex-start;
 }
 
+.page--indexers .errorbox + .indexer-list.itemrow-grid{
+  margin-top: 16px;
+}
+
 .page--indexers .indexer-list.itemrow-grid > .indexer-card.itemrow,
 .page--providers .indexer-list.itemrow-grid > .indexer-card.itemrow,
 .page--settings .indexer-list.itemrow-grid > .indexer-card.itemrow,

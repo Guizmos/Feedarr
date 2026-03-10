@@ -7,6 +7,7 @@ using Feedarr.Api.Services.Categories;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Threading;
 using OptionsFactory = Microsoft.Extensions.Options.Options;
 
 namespace Feedarr.Api.Tests;
@@ -208,6 +209,83 @@ public sealed class FeedTopByCategoryTests
 
         Assert.IsType<OkObjectResult>(first);
         Assert.IsType<OkObjectResult>(second);
+    }
+
+    [Fact]
+    public async Task Top_CacheMissConcurrentRequests_ShareSingleComputation()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var sourceId = InsertSource(db, "source-single-flight");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        InsertSourceCategory(db, sourceId, 2000, "Movies", unifiedKey: "films", unifiedLabel: "Films");
+        InsertRelease(
+            db,
+            sourceId,
+            guid: "guid-single-flight-1",
+            categoryId: 2000,
+            unifiedCategory: "Film",
+            seeders: 42,
+            categoryIds: "2000",
+            title: "Single Flight",
+            publishedAt: now - 60,
+            createdAt: now - 5);
+
+        var computeCalls = 0;
+        using var startGate = new ManualResetEventSlim(false);
+
+        var controller = CreateController(
+            db,
+            onTopCacheMissCompute: () =>
+            {
+                Interlocked.Increment(ref computeCalls);
+                Thread.Sleep(150);
+            });
+
+        var task1 = Task.Factory.StartNew(
+            () =>
+            {
+                startGate.Wait();
+                return controller.Top(
+                    hours: 24,
+                    take: 5,
+                    perCategoryTake: 5,
+                    sort: "recent",
+                    dedupe: "none",
+                    limit: null,
+                    sourceId: null,
+                    indexerId: null);
+            },
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+
+        var task2 = Task.Factory.StartNew(
+            () =>
+            {
+                startGate.Wait();
+                return controller.Top(
+                    hours: 24,
+                    take: 5,
+                    perCategoryTake: 5,
+                    sort: "recent",
+                    dedupe: "none",
+                    limit: null,
+                    sourceId: null,
+                    indexerId: null);
+            },
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+
+        startGate.Set();
+
+        var results = await Task.WhenAll(task1, task2);
+
+        Assert.Equal(1, Volatile.Read(ref computeCalls));
+        Assert.All(results, result => Assert.IsType<OkObjectResult>(result));
     }
 
     [Fact]
@@ -550,12 +628,13 @@ public sealed class FeedTopByCategoryTests
         Assert.Equal("Série TV", row.GetProperty("UnifiedCategoryLabel").GetString());
     }
 
-    private static FeedController CreateController(Db db)
+    private static FeedController CreateController(Db db, Action? onTopCacheMissCompute = null)
     {
         return new FeedController(
             db,
             new UnifiedCategoryService(),
-            new MemoryCache(new MemoryCacheOptions()));
+            new MemoryCache(new MemoryCacheOptions()),
+            onTopCacheMissCompute);
     }
 
     private static Db CreateDb(TestWorkspace workspace)
