@@ -20,6 +20,9 @@ public sealed class FeedController : ControllerBase
     private readonly Action? _onTopCacheMissCompute;
     private static readonly TimeSpan TopCacheDuration = TimeSpan.FromSeconds(20);
     private static readonly ConcurrentDictionary<string, Lazy<object>> TopInFlight = new(StringComparer.Ordinal);
+    // Tri-state schema probe cache: 0=unknown, 1=exists, -1=absent. Written once per process lifetime.
+    private static int _schemaHasCategories;
+    private static int _schemaHasFts;
     private static readonly Regex SearchTokenRegex = new(@"[a-zA-Z0-9_-]+", RegexOptions.Compiled);
     private const int MaxFtsTokenLength = 64;
     private const int TopMaxHours = 24 * 7;
@@ -233,6 +236,19 @@ public sealed class FeedController : ControllerBase
         }
     }
 
+    private static bool SchemaProbe(Microsoft.Data.Sqlite.SqliteConnection conn, ref int flag, string tableName)
+    {
+        var cached = Interlocked.CompareExchange(ref flag, 0, 0);
+        if (cached != 0) return cached == 1;
+
+        var exists = conn.ExecuteScalar<long>(
+            "SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name=@n;",
+            new { n = tableName }
+        ) > 0;
+        Interlocked.Exchange(ref flag, exists ? 1 : -1);
+        return exists;
+    }
+
     private static string? BuildFtsQuery(string input)
     {
         if (string.IsNullOrWhiteSpace(input))
@@ -321,12 +337,8 @@ public sealed class FeedController : ControllerBase
         var lim = Math.Clamp(limit ?? 100, 1, 500);
 
         using var conn = _db.Open();
-        var hasCategories = conn.ExecuteScalar<long>(
-            "SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name='source_categories';"
-        ) > 0;
-        var hasFts = conn.ExecuteScalar<long>(
-            "SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name='releases_fts';"
-        ) > 0;
+        var hasCategories = SchemaProbe(conn, ref _schemaHasCategories, "source_categories");
+        var hasFts = SchemaProbe(conn, ref _schemaHasFts, "releases_fts");
 
         var where = new List<string> { "releases.source_id = @sid" };
         var args = new DynamicParameters();

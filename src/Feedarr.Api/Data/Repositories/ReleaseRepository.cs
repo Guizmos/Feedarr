@@ -887,13 +887,7 @@ public sealed class ReleaseRepository
     {
         using var conn = _db.Open();
         return conn.ExecuteScalar<int>(
-            """
-            SELECT COUNT(1)
-            FROM releases
-            LEFT JOIN media_entities me
-              ON me.id = releases.entity_id
-            WHERE (COALESCE(releases.poster_file, me.poster_file) IS NULL OR COALESCE(releases.poster_file, me.poster_file) = '');
-            """
+            "SELECT COALESCE(missing, 0) FROM poster_stats WHERE singleton_id = 1;"
         );
     }
 
