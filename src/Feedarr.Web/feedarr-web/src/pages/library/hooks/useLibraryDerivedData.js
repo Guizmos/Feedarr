@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { getEpisodeSortValue, scoreResolution } from "../utils/helpers.js";
 import { UNIFIED_CATEGORY_OPTIONS } from "../utils/constants.js";
 import { getActiveUiLanguage } from "../../../app/locale.js";
+import { matchesTitleSearch } from "../utils/searchUtils.js";
 
 function normalize(value) {
   return String(value || "").trim().toLowerCase();
@@ -65,9 +66,8 @@ export default function useLibraryDerivedData({
       }
     }
 
-    const s = String(filterQ || "").trim().toLowerCase();
-    if (s) {
-      result = result.filter((it) => String(it.title || "").toLowerCase().includes(s));
+    if (filterQ) {
+      result = result.filter((it) => matchesTitleSearch(it, filterQ));
     }
 
     return result;
