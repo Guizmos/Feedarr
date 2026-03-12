@@ -214,9 +214,11 @@ export default function Shell() {
             <Sidebar onNavigate={closeNav} />
 
             <ScrollContainerProvider scrollRef={contentRef}>
-              <div className="content" ref={contentRef}>
+              <div className="content-outer">
                 <Subbar />
-                <Outlet />
+                <div className="content" ref={contentRef}>
+                  <Outlet />
+                </div>
               </div>
             </ScrollContainerProvider>
           </div>

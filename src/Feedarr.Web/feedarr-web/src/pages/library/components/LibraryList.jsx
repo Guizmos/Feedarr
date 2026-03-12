@@ -6,12 +6,15 @@ import AppIcon from "../../../ui/AppIcon.jsx";
 import { buildIndexerPillStyle } from "../../../utils/sourceColors.js";
 import { useScrollContainer } from "../../../context/ScrollContainerContext.js";
 
-/** Seed height for the virtualizer. Slightly above the real average to reduce
- *  initial scroll-position jumps. measureElement refines it after first render. */
-const ESTIMATED_ROW_HEIGHT = 38;
+/** Fixed row height. Rows are uniform so measureElement is intentionally
+ *  disabled — dynamic remeasuring during scrollbar drag shifts getTotalSize()
+ *  mid-gesture and causes the cursor to decouple from the scrollbar thumb. */
+const ESTIMATED_ROW_HEIGHT = 39;
 
-/** Number of off-screen rows rendered above and below the visible window. */
-const OVERSCAN = 5;
+/** Number of off-screen rows rendered above and below the visible window.
+ *  Higher value reduces white-flash during fast scrollbar drag at the cost of
+ *  slightly more DOM nodes. 15 covers ~570px of buffer at the average row height. */
+const OVERSCAN = 15;
 
 /**
  * Vue liste de la bibliothèque (tableau virtualisé)
@@ -148,7 +151,7 @@ function LibraryList({
       <div
         ref={tbodyRef}
         className="library-tbody-virtual"
-        style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}
+        style={{ height: `${virtualizer.getTotalSize() - scrollMargin}px`, position: "relative" }}
       >
         {virtualizer.getVirtualItems().map((virtualItem) => {
           const it = items[virtualItem.index];
@@ -157,15 +160,13 @@ function LibraryList({
           return (
             <div
               key={it.id}
-              ref={virtualizer.measureElement}
-              data-index={virtualItem.index}
               className={`library-trow${selectedIds.has(it.id) ? " is-selected" : ""}`}
               style={{
                 position: "absolute",
                 top: 0,
                 left: 0,
                 width: "100%",
-                transform: `translateY(${virtualItem.start}px)`,
+                transform: `translateY(${virtualItem.start - scrollMargin}px)`,
                 // Replace the CSS :last-child rule which no longer applies to
                 // absolutely-positioned rows inside the virtual container.
                 ...(isLast ? { borderBottom: 0 } : {}),

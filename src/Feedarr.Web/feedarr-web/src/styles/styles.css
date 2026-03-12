@@ -637,10 +637,8 @@ body{
   padding: 0; /* Sonarr content is flush under subbar */
 }
 
-/* SUBBAR (toolbar) – sits under topbar, full width */
+/* SUBBAR (toolbar) – sits above the scroll container, no sticky needed */
 .subbar{
-  position: sticky;
-  top: var(--header-h);
   z-index: 40;
   display:flex;
   align-items:center;
@@ -1340,19 +1338,23 @@ html.display-mode-standalone body {
   overflow: auto;     /* sidebar scroll only if too long */
 }
 
-/* content becomes the scrolling container */
+/* content-outer: fixed-height column — gives Subbar + .content a defined height */
+.content-outer {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - var(--header-h));
+  height: calc(100dvh - var(--header-h));
+  overflow: hidden;
+}
+
+/* content becomes the scrolling container — fills remaining space after Subbar */
 .content {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   overflow: auto;
-  height: calc(100vh - var(--header-h)); /* under topbar */
-  height: calc(100dvh - var(--header-h)); /* under topbar */
-}
-
-/* subbar sticky inside the scrolling content */
-.subbar {
-  position: sticky;
-  top: 0;             /* because now it's sticky inside .content */
 }
 .posterCard--selected{
   outline: 3px solid var(--topbar);
@@ -6579,9 +6581,11 @@ body.nav-open{ overflow: hidden; }
       box-shadow: 4px 0 24px rgba(0,0,0,.3);
     }
     .app-shell.is-open .content{ overflow: hidden; pointer-events: none; }
-    .content{
+    .content-outer{
       height: calc(100vh - var(--header-h));
       height: calc(100dvh - var(--header-h));
+    }
+    .content{
       -webkit-overflow-scrolling: touch;
       overscroll-behavior-x: none;
     }
