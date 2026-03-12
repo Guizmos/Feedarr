@@ -1029,6 +1029,12 @@ public sealed class PosterFetchService
                 var existingSize = (string?)r.PosterSize;
                 var existingHash = (string?)r.PosterHash;
                 PosterAudit.UpdateAttemptSuccess(_releases, id, existingProvider, existingProviderId, existingLang, existingSize, existingHash);
+                await EnsureTmdbMetadataIfMissingAsync(
+                    id,
+                    tmdbIdStored,
+                    (string?)r.MediaType,
+                    r,
+                    ct).ConfigureAwait(false);
                 return new PosterFetchResult(true, 200, new
                 {
                     ok = true,
@@ -2493,6 +2499,12 @@ public sealed class PosterFetchService
 
                 var provider = cached.PosterProvider ?? cached.MatchSource;
                 PosterAudit.UpdateAttemptSuccess(_releases, id, provider, cached.PosterProviderId, cached.PosterLang, cached.PosterSize, null);
+                await EnsureTmdbMetadataIfMissingAsync(
+                    id,
+                    tmdbIdResolved,
+                    mediaType,
+                    snapshot: null,
+                    ct).ConfigureAwait(false);
 
                 if (logSingle)
                 {
@@ -2961,6 +2973,56 @@ public sealed class PosterFetchService
             details.Writers,
             details.Cast
         );
+    }
+
+    private async Task EnsureTmdbMetadataIfMissingAsync(
+        long releaseId,
+        int? tmdbId,
+        string? mediaType,
+        ReleaseForPoster? snapshot,
+        CancellationToken ct)
+    {
+        if (!tmdbId.HasValue || tmdbId.Value <= 0)
+            return;
+
+        var normalizedMediaType = NormalizeMediaTypeForTmdb(mediaType);
+        if (normalizedMediaType is null && snapshot is not null)
+        {
+            normalizedMediaType = NormalizeMediaTypeForTmdb(snapshot.MediaType);
+            if (normalizedMediaType is null)
+            {
+                UnifiedCategoryMappings.TryParse(snapshot.UnifiedCategory, out var unifiedCategory);
+                normalizedMediaType = NormalizeMediaTypeForTmdb(UnifiedCategoryMappings.ToMediaType(unifiedCategory));
+            }
+        }
+
+        if (normalizedMediaType is null)
+            return;
+
+        snapshot ??= _releases.GetForPoster(releaseId);
+        if (snapshot is null)
+            return;
+
+        if (snapshot.ExtUpdatedAtTs.HasValue && snapshot.ExtUpdatedAtTs.Value > 0)
+            return;
+
+        try
+        {
+            await UpdateExternalDetailsFromTmdbAsync(releaseId, tmdbId.Value, normalizedMediaType, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "TMDB metadata best-effort refresh failed releaseId={ReleaseId} tmdbId={TmdbId} mediaType={MediaType}",
+                releaseId,
+                tmdbId.Value,
+                normalizedMediaType);
+        }
     }
 
     private static string? NormalizeMediaTypeForTmdb(string? mediaType)
