@@ -1,5 +1,6 @@
 import React, { useMemo } from "react";
 import { CheckCircle, Image, ImageOff } from "lucide-react";
+import { useVirtualGrid } from "../hooks/useVirtualGrid.js";
 import usePosterRetryOn404 from "../../../hooks/usePosterRetryOn404.js";
 import { buildIndexerPillStyle } from "../../../utils/sourceColors.js";
 import { getAppLabel, normalizeRequestMode } from "../../../utils/appTypes.js";
@@ -195,6 +196,18 @@ function getIndexerClass(value) {
   return "";
 }
 
+/** Matches .grid.grid--poster { gap: 10px } in styles.css */
+const GAP = 10;
+
+/**
+ * Vue poster de la bibliothèque (PosterViewCard virtualisées)
+ *
+ * Row-based virtualisation via useVirtualGrid. PosterViewCard has a fixed
+ * aspect-ratio: 2/3 (cardHeightRatio = 1.5) with no title area below the
+ * image (overlay is positioned on top), so titleAreaPx = 0.
+ *
+ * Scroll container: the .content div in Shell, via ScrollContainerContext.
+ */
 function LibraryPoster({
   items,
   onOpen,
@@ -209,36 +222,62 @@ function LibraryPoster({
   integrationMode,
   cardSize,
 }) {
-  const gridStyle = useMemo(
-    () =>
-      cardSize
-        ? {
-            gridTemplateColumns: `repeat(auto-fill, minmax(${Math.round(cardSize)}px, 1fr))`,
-            '--card-scale': cardSize / 180,
-          }
-        : undefined,
-    [cardSize]
+  const { containerRef, rows, numCols, scrollMargin, virtualizer } = useVirtualGrid(
+    items,
+    cardSize,
+    { gap: GAP, cardHeightRatio: 1.5, titleAreaPx: 0 },
   );
 
+  const scaleStyle = useMemo(
+    () => (cardSize ? { "--card-scale": cardSize / 180 } : undefined),
+    [cardSize],
+  );
+
+  const totalHeight = Math.max(0, virtualizer.getTotalSize() - scrollMargin);
+
   return (
-    <div className="grid grid--poster" style={gridStyle}>
-      {items.map((it, index) => (
-        <PosterViewCard
-          key={it.id}
-          item={it}
-          itemIndex={index}
-          onOpen={onOpen}
-          selectionMode={selectionMode}
-          selected={selectedIds.has(it.id)}
-          onToggleSelect={onToggleSelect}
-          onRename={onRename}
-          indexerLabel={sourceNameById.get(Number(it.sourceId)) || ""}
-          indexerColor={sourceColorById.get(Number(it.sourceId)) || null}
-          showIndexerPill={!sourceId}
-          integrationMode={integrationMode}
-          arrStatus={arrStatusMap[it.id]}
-        />
-      ))}
+    <div
+      ref={containerRef}
+      className="grid-virtualized grid--poster"
+      style={{ ...scaleStyle, height: `${totalHeight}px`, position: "relative" }}
+    >
+      {virtualizer.getVirtualItems().map((virtualRow) => {
+        const rowItems = rows[virtualRow.index];
+        if (!rowItems) return null;
+        return (
+          <div
+            key={virtualRow.key}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              transform: `translateY(${virtualRow.start - scrollMargin}px)`,
+              display: "grid",
+              gridTemplateColumns: `repeat(${numCols}, 1fr)`,
+              gap: `${GAP}px`,
+            }}
+          >
+            {rowItems.map((it, colIndex) => (
+              <PosterViewCard
+                key={it.id}
+                item={it}
+                itemIndex={virtualRow.index * numCols + colIndex}
+                onOpen={onOpen}
+                selectionMode={selectionMode}
+                selected={selectedIds.has(it.id)}
+                onToggleSelect={onToggleSelect}
+                onRename={onRename}
+                indexerLabel={sourceNameById.get(Number(it.sourceId)) || ""}
+                indexerColor={sourceColorById.get(Number(it.sourceId)) || null}
+                showIndexerPill={!sourceId}
+                integrationMode={integrationMode}
+                arrStatus={arrStatusMap[it.id]}
+              />
+            ))}
+          </div>
+        );
+      })}
     </div>
   );
 }

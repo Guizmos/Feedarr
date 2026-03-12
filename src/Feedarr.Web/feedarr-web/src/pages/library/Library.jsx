@@ -12,6 +12,7 @@ import { normalizeRequestMode } from "@utils/appTypes.js";
 import { LayoutGrid } from "lucide-react";
 import { getActiveUiLanguage } from "../../app/locale.js";
 import { normalizeCategoryGroupKey } from "../../domain/categories/index.js";
+import { useScrollContainer } from "../../context/ScrollContainerContext.js";
 
 // Local imports
 import { fmtBytes, fmtDateFromTs } from "./utils/formatters.js";
@@ -218,6 +219,16 @@ export default function Library() {
 
   // Selection hook
   const selection = useLibrarySelection();
+
+  // Scroll container — used to reset scroll when card size changes so that
+  // the virtualizer's row grouping (which depends on numCols) stays coherent.
+  const scrollRef = useScrollContainer();
+  useEffect(() => {
+    scrollRef?.current?.scrollTo({ top: 0, behavior: "instant" });
+  }, [gridCardSize]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    scrollRef?.current?.scrollTo({ top: 0, behavior: "instant" });
+  }, [posterCardSize]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Arr apps integration
   const {

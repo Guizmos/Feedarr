@@ -773,48 +773,60 @@ body{
 /* ── Card-size scaling (driven by --card-scale set via JS) ── */
 
 /* Grid (Cartes) view — PosterCard scaling */
-.page--library .grid:not(.grid--poster) .posterCard{
+.page--library .grid:not(.grid--poster) .posterCard,
+.page--library .grid-virtualized:not(.grid--poster) .posterCard{
   border-radius: calc(18px * var(--card-scale, 1));
 }
-.page--library .grid:not(.grid--poster) .poster{
+.page--library .grid:not(.grid--poster) .poster,
+.page--library .grid-virtualized:not(.grid--poster) .poster{
   height: calc(240px * var(--card-scale, 1));
 }
-.page--library .grid:not(.grid--poster) .posterMeta{
+.page--library .grid:not(.grid--poster) .posterMeta,
+.page--library .grid-virtualized:not(.grid--poster) .posterMeta{
   padding: calc(10px * var(--card-scale, 1)) calc(10px * var(--card-scale, 1)) calc(12px * var(--card-scale, 1));
 }
-.page--library .grid:not(.grid--poster) .posterTitle{
+.page--library .grid:not(.grid--poster) .posterTitle,
+.page--library .grid-virtualized:not(.grid--poster) .posterTitle{
   font-size: calc(12px * var(--card-scale, 1));
   height: calc(30px * var(--card-scale, 1));
 }
-.page--library .grid:not(.grid--poster) .posterSub{
+.page--library .grid:not(.grid--poster) .posterSub,
+.page--library .grid-virtualized:not(.grid--poster) .posterSub{
   margin-top: calc(6px * var(--card-scale, 1));
   gap: calc(10px * var(--card-scale, 1));
   font-size: calc(11px * var(--card-scale, 1));
 }
-.page--library .grid:not(.grid--poster) .statusline{
+.page--library .grid:not(.grid--poster) .statusline,
+.page--library .grid-virtualized:not(.grid--poster) .statusline{
   height: calc(5px * var(--card-scale, 1));
 }
-.page--library .grid:not(.grid--poster) .posterFallback__icon{
+.page--library .grid:not(.grid--poster) .posterFallback__icon,
+.page--library .grid-virtualized:not(.grid--poster) .posterFallback__icon{
   width: calc(40px * var(--card-scale, 1));
   height: calc(40px * var(--card-scale, 1));
 }
-.page--library .grid:not(.grid--poster) .posterLoader{
+.page--library .grid:not(.grid--poster) .posterLoader,
+.page--library .grid-virtualized:not(.grid--poster) .posterLoader{
   width: calc(28px * var(--card-scale, 1));
   height: calc(28px * var(--card-scale, 1));
 }
-.page--library .grid:not(.grid--poster) .posterIndexerPill{
+.page--library .grid:not(.grid--poster) .posterIndexerPill,
+.page--library .grid-virtualized:not(.grid--poster) .posterIndexerPill{
   top: calc(8px * var(--card-scale, 1));
   left: calc(8px * var(--card-scale, 1));
 }
-.page--library .grid:not(.grid--poster) .posterIndexerPill--right{
+.page--library .grid:not(.grid--poster) .posterIndexerPill--right,
+.page--library .grid-virtualized:not(.grid--poster) .posterIndexerPill--right{
   left: auto;
   right: calc(8px * var(--card-scale, 1));
 }
-.page--library .grid:not(.grid--poster) .posterIndexerPill .banner-pill{
+.page--library .grid:not(.grid--poster) .posterIndexerPill .banner-pill,
+.page--library .grid-virtualized:not(.grid--poster) .posterIndexerPill .banner-pill{
   font-size: calc(10px * var(--card-scale, 1));
   padding: calc(1.5px * var(--card-scale, 1)) calc(4px * var(--card-scale, 1));
 }
-.page--library .grid:not(.grid--poster) .posterArrBadge{
+.page--library .grid:not(.grid--poster) .posterArrBadge,
+.page--library .grid-virtualized:not(.grid--poster) .posterArrBadge{
   font-size: calc(10px * var(--card-scale, 1));
   padding: calc(2px * var(--card-scale, 1)) calc(4px * var(--card-scale, 1));
   bottom: calc(8px * var(--card-scale, 1));
@@ -822,26 +834,31 @@ body{
   gap: calc(3px * var(--card-scale, 1));
   border-radius: calc(8px * var(--card-scale, 1));
 }
-.page--library .grid:not(.grid--poster) .posterArrBadge__icon{
+.page--library .grid:not(.grid--poster) .posterArrBadge__icon,
+.page--library .grid-virtualized:not(.grid--poster) .posterArrBadge__icon{
   width: calc(12px * var(--card-scale, 1));
   height: calc(12px * var(--card-scale, 1));
 }
-.page--library .grid:not(.grid--poster) .posterRenameBtn{
+.page--library .grid:not(.grid--poster) .posterRenameBtn,
+.page--library .grid-virtualized:not(.grid--poster) .posterRenameBtn{
   width: calc(22px * var(--card-scale, 1));
   height: calc(22px * var(--card-scale, 1));
   right: calc(6px * var(--card-scale, 1));
   top: calc(6px * var(--card-scale, 1));
 }
-.page--library .grid:not(.grid--poster) .posterRenameBtn .app-icon{
+.page--library .grid:not(.grid--poster) .posterRenameBtn .app-icon,
+.page--library .grid-virtualized:not(.grid--poster) .posterRenameBtn .app-icon{
   font-size: calc(14px * var(--card-scale, 1));
 }
-.page--library .grid:not(.grid--poster) .selectBadge{
+.page--library .grid:not(.grid--poster) .selectBadge,
+.page--library .grid-virtualized:not(.grid--poster) .selectBadge{
   width: calc(20px * var(--card-scale, 1));
   height: calc(20px * var(--card-scale, 1));
   top: calc(10px * var(--card-scale, 1));
   right: calc(10px * var(--card-scale, 1));
 }
-.page--library .grid:not(.grid--poster) .selectBadge .app-icon{
+.page--library .grid:not(.grid--poster) .selectBadge .app-icon,
+.page--library .grid-virtualized:not(.grid--poster) .selectBadge .app-icon{
   font-size: calc(12px * var(--card-scale, 1));
 }
 
@@ -6593,7 +6610,8 @@ body.nav-open{ overflow: hidden; }
     .page.page--system{ padding: 10px 6px; }
     .grid{ grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
     .poster,
-    .page--library .grid:not(.grid--poster) .poster{ height: auto; aspect-ratio: 2 / 3; }
+    .page--library .grid:not(.grid--poster) .poster,
+    .page--library .grid-virtualized:not(.grid--poster) .poster{ height: auto; aspect-ratio: 2 / 3; }
     .posterTitle{ white-space: nowrap; text-overflow: ellipsis; font-size: 12px; height: 18px; overflow: hidden; }
     .posterSub{ flex-wrap: wrap; max-height: 18px; overflow: hidden; font-size: 9px; gap: 6px; }
     .posterSubAlt{ display: none; }
