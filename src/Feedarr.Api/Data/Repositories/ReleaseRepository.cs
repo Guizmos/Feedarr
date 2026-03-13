@@ -1114,6 +1114,35 @@ public sealed class ReleaseRepository
         public int? TvdbId { get; set; }
     }
 
+    public sealed class MissingTmdbMetadataSeedRow
+    {
+        public long ReleaseId { get; set; }
+        public long? EntityId { get; set; }
+        public int TmdbId { get; set; }
+        public string MediaTypeNormalized { get; set; } = "";
+    }
+
+    public sealed class TmdbMetadataDonorRow
+    {
+        public long ReleaseId { get; set; }
+        public int TmdbId { get; set; }
+        public string MediaTypeNormalized { get; set; } = "";
+        public string? ExtProvider { get; set; }
+        public string? ExtProviderId { get; set; }
+        public string? ExtTitle { get; set; }
+        public string? ExtOverview { get; set; }
+        public string? ExtTagline { get; set; }
+        public string? ExtGenres { get; set; }
+        public string? ExtReleaseDate { get; set; }
+        public int? ExtRuntimeMinutes { get; set; }
+        public double? ExtRating { get; set; }
+        public int? ExtVotes { get; set; }
+        public string? ExtDirectors { get; set; }
+        public string? ExtWriters { get; set; }
+        public string? ExtCast { get; set; }
+        public long? ExtUpdatedAtTs { get; set; }
+    }
+
     public List<PosterStateRow> GetPosterStateByReleaseIds(IEnumerable<long> releaseIds)
     {
         if (releaseIds is null) return new List<PosterStateRow>();
@@ -1240,6 +1269,114 @@ public sealed class ReleaseRepository
             LIMIT @lim;
             """,
             new { lim }
+        ).AsList();
+    }
+
+    public List<MissingTmdbMetadataSeedRow> GetTmdbMetadataMissingCandidates(int limit)
+    {
+        using var conn = _db.Open();
+        var lim = Math.Clamp(limit <= 0 ? 200 : limit, 1, 5000);
+        return conn.Query<MissingTmdbMetadataSeedRow>(
+            """
+            WITH base AS (
+              SELECT
+                r.id as ReleaseId,
+                r.entity_id as EntityId,
+                CAST(COALESCE(me.tmdb_id, r.tmdb_id) AS INTEGER) as TmdbId,
+                CASE
+                  WHEN lower(trim(COALESCE(r.media_type, ''))) IN ('series', 'tv', 'show') THEN 'series'
+                  WHEN lower(trim(COALESCE(r.media_type, ''))) IN ('movie', 'film') THEN 'movie'
+                  ELSE NULL
+                END as MediaTypeNormalized,
+                COALESCE(r.poster_file, me.poster_file) as PosterFile,
+                COALESCE(me.ext_updated_at_ts, r.ext_updated_at_ts) as ExtUpdatedAtTs
+              FROM releases r
+              LEFT JOIN media_entities me
+                ON me.id = r.entity_id
+            )
+            SELECT
+              ReleaseId,
+              EntityId,
+              TmdbId,
+              MediaTypeNormalized
+            FROM base
+            WHERE MediaTypeNormalized IS NOT NULL
+              AND IFNULL(TmdbId, 0) > 0
+              AND PosterFile IS NOT NULL
+              AND PosterFile <> ''
+              AND IFNULL(ExtUpdatedAtTs, 0) <= 0
+            ORDER BY ReleaseId DESC
+            LIMIT @lim;
+            """,
+            new { lim }
+        ).AsList();
+    }
+
+    public List<TmdbMetadataDonorRow> GetTmdbMetadataDonorsByTmdbIds(IEnumerable<int> tmdbIds)
+    {
+        if (tmdbIds is null) return new List<TmdbMetadataDonorRow>();
+        var ids = tmdbIds
+            .Where(id => id > 0)
+            .Distinct()
+            .ToArray();
+        if (ids.Length == 0) return new List<TmdbMetadataDonorRow>();
+
+        using var conn = _db.Open();
+        return conn.Query<TmdbMetadataDonorRow>(
+            """
+            WITH base AS (
+              SELECT
+                r.id as ReleaseId,
+                CAST(COALESCE(me.tmdb_id, r.tmdb_id) AS INTEGER) as TmdbId,
+                CASE
+                  WHEN lower(trim(COALESCE(r.media_type, ''))) IN ('series', 'tv', 'show') THEN 'series'
+                  WHEN lower(trim(COALESCE(r.media_type, ''))) IN ('movie', 'film') THEN 'movie'
+                  ELSE NULL
+                END as MediaTypeNormalized,
+                lower(trim(COALESCE(me.ext_provider, r.ext_provider, ''))) as ExtProvider,
+                COALESCE(me.ext_provider_id, r.ext_provider_id) as ExtProviderId,
+                COALESCE(me.ext_title, r.ext_title) as ExtTitle,
+                COALESCE(me.ext_overview, r.ext_overview) as ExtOverview,
+                COALESCE(me.ext_tagline, r.ext_tagline) as ExtTagline,
+                COALESCE(me.ext_genres, r.ext_genres) as ExtGenres,
+                COALESCE(me.ext_release_date, r.ext_release_date) as ExtReleaseDate,
+                COALESCE(me.ext_runtime_minutes, r.ext_runtime_minutes) as ExtRuntimeMinutes,
+                COALESCE(me.ext_rating, r.ext_rating) as ExtRating,
+                COALESCE(me.ext_votes, r.ext_votes) as ExtVotes,
+                COALESCE(me.ext_directors, r.ext_directors) as ExtDirectors,
+                COALESCE(me.ext_writers, r.ext_writers) as ExtWriters,
+                COALESCE(me.ext_cast, r.ext_cast) as ExtCast,
+                COALESCE(me.ext_updated_at_ts, r.ext_updated_at_ts) as ExtUpdatedAtTs
+              FROM releases r
+              LEFT JOIN media_entities me
+                ON me.id = r.entity_id
+            )
+            SELECT
+              ReleaseId,
+              TmdbId,
+              MediaTypeNormalized,
+              ExtProvider,
+              ExtProviderId,
+              ExtTitle,
+              ExtOverview,
+              ExtTagline,
+              ExtGenres,
+              ExtReleaseDate,
+              ExtRuntimeMinutes,
+              ExtRating,
+              ExtVotes,
+              ExtDirectors,
+              ExtWriters,
+              ExtCast,
+              ExtUpdatedAtTs
+            FROM base
+            WHERE TmdbId IN @ids
+              AND MediaTypeNormalized IS NOT NULL
+              AND ExtProvider = 'tmdb'
+              AND IFNULL(ExtUpdatedAtTs, 0) > 0
+            ORDER BY TmdbId ASC, MediaTypeNormalized ASC, ExtUpdatedAtTs DESC, ReleaseId DESC;
+            """,
+            new { ids }
         ).AsList();
     }
 

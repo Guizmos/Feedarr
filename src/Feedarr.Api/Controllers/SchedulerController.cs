@@ -20,6 +20,7 @@ public sealed class SchedulerController : ControllerBase
     private readonly MediaEntityArrStatusService _entityStatus;
     private readonly ExternalIdBackfillService _externalIdBackfill;
     private readonly RequestTmdbBackfillService _requestTmdbBackfill;
+    private readonly TmdbMetadataBackfillService _tmdbMetadataBackfill;
     private readonly BackupExecutionCoordinator _backupCoordinator;
     private readonly ILogger<SchedulerController> _log;
 
@@ -31,6 +32,7 @@ public sealed class SchedulerController : ControllerBase
         MediaEntityArrStatusService entityStatus,
         ExternalIdBackfillService externalIdBackfill,
         RequestTmdbBackfillService requestTmdbBackfill,
+        TmdbMetadataBackfillService tmdbMetadataBackfill,
         BackupExecutionCoordinator backupCoordinator,
         ILogger<SchedulerController> log)
     {
@@ -41,6 +43,7 @@ public sealed class SchedulerController : ControllerBase
         _entityStatus = entityStatus;
         _externalIdBackfill = externalIdBackfill;
         _requestTmdbBackfill = requestTmdbBackfill;
+        _tmdbMetadataBackfill = tmdbMetadataBackfill;
         _backupCoordinator = backupCoordinator;
         _log = log;
     }
@@ -65,7 +68,7 @@ public sealed class SchedulerController : ControllerBase
         return Ok(new { ok = true });
     }
 
-    // POST /api/scheduler/media-entities/backfill?limit=200&mode=posters|external-ids|request-ids|all
+    // POST /api/scheduler/media-entities/backfill?limit=200&mode=posters|external-ids|request-ids|metadata|all
     [HttpPost("media-entities/backfill")]
     public async Task<IActionResult> BackfillMediaEntities([FromQuery] int? limit, [FromQuery] string? mode, CancellationToken ct)
     {
@@ -108,6 +111,24 @@ public sealed class SchedulerController : ControllerBase
             });
         }
 
+        if (normalizedMode is "metadata" or "tmdb-metadata")
+        {
+            var result = await _tmdbMetadataBackfill.BackfillMissingTmdbMetadataAsync(lim, ct);
+            return Ok(new
+            {
+                ok = true,
+                mode = "metadata",
+                scanned = result.Scanned,
+                eligible = result.Eligible,
+                processed = result.Processed,
+                localPropagated = result.LocalPropagated,
+                tmdbRefreshed = result.TmdbRefreshed,
+                uniqueTmdbKeysRefreshed = result.UniqueTmdbKeysRefreshed,
+                skipped = result.Skipped,
+                errors = result.Errors
+            });
+        }
+
         if (normalizedMode is "all")
         {
             var postersUpdated = _releases.BackfillEntityPosters(lim);
@@ -131,7 +152,7 @@ public sealed class SchedulerController : ControllerBase
             });
         }
 
-        return BadRequest(new { ok = false, error = "mode must be posters, external-ids, ids, request-ids, request-tmdb, or all" });
+        return BadRequest(new { ok = false, error = "mode must be posters, external-ids, ids, request-ids, request-tmdb, metadata, tmdb-metadata, or all" });
     }
 
     // POST /api/scheduler/media-entities/arr-status/refresh?limit=500
