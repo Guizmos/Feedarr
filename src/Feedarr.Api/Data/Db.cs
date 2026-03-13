@@ -23,6 +23,9 @@ public sealed class Db
         {
             conn.Execute("PRAGMA foreign_keys=ON;");
             conn.Execute("PRAGMA busy_timeout=5000;");
+            conn.Execute("PRAGMA cache_size=-8192;");
+            conn.Execute("PRAGMA temp_store=2;");
+            conn.Execute("PRAGMA synchronous=NORMAL;");
             return conn;
         }
         catch
@@ -36,6 +39,9 @@ public sealed class Db
     {
         var conn = OpenRawConnection();
         conn.Execute("PRAGMA busy_timeout=5000;");
+        conn.Execute("PRAGMA cache_size=-8192;");
+        conn.Execute("PRAGMA temp_store=2;");
+        conn.Execute("PRAGMA synchronous=NORMAL;");
         return conn;
     }
 

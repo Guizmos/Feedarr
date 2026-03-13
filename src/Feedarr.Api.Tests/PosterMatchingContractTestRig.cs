@@ -16,6 +16,7 @@ using Feedarr.Api.Services.GoogleBooks;
 using Feedarr.Api.Services.Igdb;
 using Feedarr.Api.Services.Jikan;
 using Feedarr.Api.Services.MusicBrainz;
+using Feedarr.Api.Services.Matching;
 using Feedarr.Api.Services.OpenLibrary;
 using Feedarr.Api.Services.Posters;
 using Feedarr.Api.Services.Rawg;
@@ -38,6 +39,7 @@ internal enum PosterContractScenario
     MovieTmdbFallbackFanart,
     MovieTmdbNoPosterNoFanart,
     SeriesTvmazeHit,
+    SeriesTvmazeHitNoTvdb,
     SeriesTvmazeMissTmdb,
     SeriesTmdbFallbackFanart,
     EmissionAmbiguousTmdbFallback,
@@ -67,6 +69,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
     private readonly Db _db;
     private readonly ReleaseRepository _releases;
     private readonly PosterFetchService _posters;
+    private readonly TmdbHandler _tmdbHandler;
 
     public PosterMatchingContractTestRig(PosterContractScenario scenario)
     {
@@ -99,7 +102,8 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             registry,
             NullLogger<ActiveExternalProviderConfigResolver>.Instance);
 
-        var tmdb = new TmdbClient(new HttpClient(new TmdbHandler(scenario)), settings, stats, resolver);
+        _tmdbHandler = new TmdbHandler(scenario);
+        var tmdb = new TmdbClient(new HttpClient(_tmdbHandler), settings, stats, resolver);
         var fanart = new FanartClient(new HttpClient(new FanartHandler(scenario)), stats, resolver, settings);
         var igdb = new IgdbClient(new HttpClient(new IgdbHandler(scenario)), stats, resolver);
         var tvmaze = new TvMazeClient(new HttpClient(new TvMazeHandler(scenario)), stats, resolver);
@@ -155,7 +159,11 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         string titleClean,
         int? year,
         UnifiedCategory unifiedCategory,
-        string mediaType)
+        string mediaType,
+        int? tmdbId = null,
+        string? extProvider = null,
+        string? extOverview = null,
+        long? extUpdatedAtTs = null)
     {
         using var conn = _db.Open();
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -171,7 +179,11 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
               title_clean,
               year,
               unified_category,
-              media_type
+              media_type,
+              tmdb_id,
+              ext_provider,
+              ext_overview,
+              ext_updated_at_ts
             )
             VALUES(
               1,
@@ -182,7 +194,11 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
               @titleClean,
               @year,
               @unifiedCategory,
-              @mediaType
+              @mediaType,
+              @tmdbId,
+              @extProvider,
+              @extOverview,
+              @extUpdatedAtTs
             );
             SELECT last_insert_rowid();
             """,
@@ -194,13 +210,17 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
                 titleClean,
                 year,
                 unifiedCategory = unifiedCategory.ToString(),
-                mediaType
+                mediaType,
+                tmdbId,
+                extProvider,
+                extOverview,
+                extUpdatedAtTs
             });
     }
 
     public async Task<PosterContractSnapshot> FetchSnapshotAsync(long releaseId)
     {
-        var result = await _posters.FetchPosterAsync(releaseId, CancellationToken.None, logSingle: true, skipIfExists: true);
+        var result = await FetchAsync(releaseId);
         var release = _releases.GetForPoster(releaseId);
 
         string? matchSource;
@@ -224,6 +244,54 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             TvdbId: release?.TvdbId,
             Cached: TryGetBool(root, "cached"),
             Error: TryGetString(root, "error"));
+    }
+
+    public async Task<PosterFetchResult> FetchAsync(long releaseId)
+        => await _posters.FetchPosterAsync(releaseId, CancellationToken.None, logSingle: true, skipIfExists: true);
+
+    public ReleaseForPoster? GetReleaseForPoster(long releaseId)
+        => _releases.GetForPoster(releaseId);
+
+    public int TmdbDetailsCalls => _tmdbHandler.DetailsCalls;
+
+    public void SeedPosterMatch(
+        string mediaType,
+        string titleClean,
+        int? year,
+        int? tmdbId,
+        int? tvdbId,
+        int? tvmazeId,
+        string? posterFile,
+        string matchSource = "tvmaze",
+        string? posterProvider = "tvmaze",
+        string? posterProviderId = null)
+    {
+        var normalizedTitle = TitleNormalizer.NormalizeTitle(titleClean);
+        var fingerprint = PosterMatchCacheService.BuildFingerprint(
+            new PosterTitleKey(mediaType, normalizedTitle, year, null, null));
+        var idsJson = PosterMatchCacheService.SerializeIds(new PosterMatchIds(tmdbId, tvdbId, tvmazeId, null, null));
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        var cache = new PosterMatchCacheService(_db);
+        cache.Upsert(new Feedarr.Api.Services.Posters.PosterMatch(
+            fingerprint: fingerprint,
+            mediaType: mediaType,
+            normalizedTitle: normalizedTitle,
+            year: year,
+            season: null,
+            episode: null,
+            idsJson: idsJson,
+            confidence: 0.95,
+            matchSource: matchSource,
+            posterFile: posterFile,
+            posterProvider: posterProvider,
+            posterProviderId: posterProviderId,
+            posterLang: null,
+            posterSize: "original",
+            createdTs: now,
+            lastSeenTs: now,
+            lastAttemptTs: null,
+            lastError: null));
     }
 
     public Feedarr.Api.Services.Posters.PosterMatch? TryGetCachedMatch(string mediaType, string normalizedTitle, int? year, int? season = null, int? episode = null)
@@ -433,6 +501,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
     private sealed class TmdbHandler : HttpMessageHandler
     {
         private readonly PosterContractScenario _scenario;
+        public int DetailsCalls { get; private set; }
 
         public TmdbHandler(PosterContractScenario scenario)
         {
@@ -463,7 +532,10 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
                 return Task.FromResult(JsonResponse("{\"cast\":[],\"crew\":[]}"));
 
             if (path.Contains("/movie/") || path.Contains("/tv/"))
+            {
+                DetailsCalls++;
                 return Task.FromResult(JsonResponse("{\"title\":\"Mock\",\"name\":\"Mock\",\"overview\":\"Mock\",\"genres\":[],\"vote_average\":0,\"vote_count\":0}"));
+            }
 
             if (uri.Host.Contains("image.tmdb.org", StringComparison.OrdinalIgnoreCase))
             {
@@ -648,6 +720,9 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
                 if (_scenario == PosterContractScenario.SeriesTvmazeHit)
                     return Task.FromResult(JsonResponse("[{\"show\":{\"id\":3001,\"name\":\"Show Tvmaze Hit\",\"premiered\":\"2015-01-01\",\"externals\":{\"imdb\":\"tt03001\",\"thetvdb\":3001},\"image\":{\"medium\":\"https://static.tvmaze.com/medium-3001.jpg\",\"original\":\"https://static.tvmaze.com/original-3001.jpg\"}}}]"));
 
+                if (_scenario == PosterContractScenario.SeriesTvmazeHitNoTvdb)
+                    return Task.FromResult(JsonResponse("[{\"show\":{\"id\":3101,\"name\":\"Show Tvmaze Hit\",\"premiered\":\"2015-01-01\",\"externals\":{\"imdb\":\"tt03101\"},\"image\":{\"medium\":\"https://static.tvmaze.com/medium-3101.jpg\",\"original\":\"https://static.tvmaze.com/original-3101.jpg\"}}}]"));
+
                 if (_scenario == PosterContractScenario.EmissionAmbiguousTmdbFallback)
                     return Task.FromResult(JsonResponse("[{\"show\":{\"id\":4010,\"name\":\"Random Program\",\"premiered\":\"2000-01-01\",\"externals\":{\"imdb\":\"tt04010\",\"thetvdb\":4010},\"image\":{\"medium\":\"https://static.tvmaze.com/medium-4010.jpg\",\"original\":\"https://static.tvmaze.com/original-4010.jpg\"}}}]"));
 
@@ -657,6 +732,9 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
 
             if (path.Contains("/shows/3001"))
                 return Task.FromResult(JsonResponse("{\"id\":3001,\"name\":\"Show Tvmaze Hit\",\"premiered\":\"2015-01-01\",\"externals\":{\"imdb\":\"tt03001\",\"thetvdb\":3001},\"image\":{\"medium\":\"https://static.tvmaze.com/medium-3001.jpg\",\"original\":\"https://static.tvmaze.com/original-3001.jpg\"}}"));
+
+            if (path.Contains("/shows/3101"))
+                return Task.FromResult(JsonResponse("{\"id\":3101,\"name\":\"Show Tvmaze Hit\",\"premiered\":\"2015-01-01\",\"externals\":{\"imdb\":\"tt03101\"},\"image\":{\"medium\":\"https://static.tvmaze.com/medium-3101.jpg\",\"original\":\"https://static.tvmaze.com/original-3101.jpg\"}}"));
 
             if (uri.Host.Contains("static.tvmaze.com", StringComparison.OrdinalIgnoreCase))
             {

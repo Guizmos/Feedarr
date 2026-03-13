@@ -12,6 +12,7 @@ import { normalizeRequestMode } from "@utils/appTypes.js";
 import { LayoutGrid } from "lucide-react";
 import { getActiveUiLanguage } from "../../app/locale.js";
 import { normalizeCategoryGroupKey } from "../../domain/categories/index.js";
+import { useScrollContainer } from "../../context/ScrollContainerContext.js";
 
 // Local imports
 import { fmtBytes, fmtDateFromTs } from "./utils/formatters.js";
@@ -96,6 +97,19 @@ function libraryUiReducer(state, action) {
     default:
       return state;
   }
+}
+
+/**
+ * Construit les URLSearchParams communs pour les requêtes /api/feed/{id}.
+ * Centralisé ici pour garantir que le mode source unique et le mode multi-source
+ * envoient exactement les mêmes filtres au backend.
+ */
+function buildFeedParams(filters, fetchLimit) {
+  const params = new URLSearchParams();
+  params.set("limit", String(fetchLimit));
+  if (filters.q?.trim()) params.set("q", filters.q.trim());
+  if (filters.seen) params.set("seen", filters.seen);
+  return params;
 }
 
 export default function Library() {
@@ -205,6 +219,16 @@ export default function Library() {
 
   // Selection hook
   const selection = useLibrarySelection();
+
+  // Scroll container — used to reset scroll when card size changes so that
+  // the virtualizer's row grouping (which depends on numCols) stays coherent.
+  const scrollRef = useScrollContainer();
+  useEffect(() => {
+    scrollRef?.current?.scrollTo({ top: 0, behavior: "instant" });
+  }, [gridCardSize]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    scrollRef?.current?.scrollTo({ top: 0, behavior: "instant" });
+  }, [posterCardSize]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Arr apps integration
   const {
@@ -341,9 +365,7 @@ export default function Library() {
           if (isLatestRequest()) setItems([]);
           return;
         }
-        const params = new URLSearchParams();
-        params.set("limit", String(fetchLimit));
-        if (filters.seen) params.set("seen", filters.seen);
+        const params = buildFeedParams(filters, fetchLimit);
 
         const all = await Promise.allSettled(
           enabledSources.map(async (s) => {
@@ -371,10 +393,7 @@ export default function Library() {
         merged.sort((a, b) => Number(b.publishedAt || 0) - Number(a.publishedAt || 0));
         if (isLatestRequest()) setItems(merged);
       } else {
-        const params = new URLSearchParams();
-        params.set("limit", String(fetchLimit));
-        if (filters.q.trim()) params.set("q", filters.q.trim());
-        if (filters.seen) params.set("seen", filters.seen);
+        const params = buildFeedParams(filters, fetchLimit);
 
         const data = await apiGet(`/api/feed/${sid}?${params.toString()}`, {
           signal: abortController.signal,

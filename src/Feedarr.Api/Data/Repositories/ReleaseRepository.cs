@@ -60,6 +60,15 @@ public sealed class ReleaseRepository
 
     private const long DefaultMissingPosterShortCooldownSeconds = 15 * 60;
     private const long DefaultMissingPosterHardFailCooldownSeconds = 24 * 60 * 60;
+    private const string SqlTmdbMediaTypeNormalizedExpr = """
+        CASE
+          WHEN lower(trim(COALESCE(r.media_type, ''))) IN ('series', 'tv', 'show') THEN 'series'
+          WHEN lower(trim(COALESCE(r.media_type, ''))) IN ('movie', 'film') THEN 'movie'
+          WHEN lower(trim(COALESCE(r.unified_category, ''))) IN ('serie', 'series', 'emission') THEN 'series'
+          WHEN lower(trim(COALESCE(r.unified_category, ''))) IN ('film', 'spectacle', 'animation') THEN 'movie'
+          ELSE NULL
+        END
+        """;
 
     public ReleaseRepository(
         Db db,
@@ -887,13 +896,7 @@ public sealed class ReleaseRepository
     {
         using var conn = _db.Open();
         return conn.ExecuteScalar<int>(
-            """
-            SELECT COUNT(1)
-            FROM releases
-            LEFT JOIN media_entities me
-              ON me.id = releases.entity_id
-            WHERE (COALESCE(releases.poster_file, me.poster_file) IS NULL OR COALESCE(releases.poster_file, me.poster_file) = '');
-            """
+            "SELECT COALESCE(missing, 0) FROM poster_stats WHERE singleton_id = 1;"
         );
     }
 
@@ -1120,6 +1123,55 @@ public sealed class ReleaseRepository
         public int? TvdbId { get; set; }
     }
 
+    public sealed class MissingTmdbMetadataSeedRow
+    {
+        public long ReleaseId { get; set; }
+        public long? EntityId { get; set; }
+        public int TmdbId { get; set; }
+        public string MediaTypeNormalized { get; set; } = "";
+    }
+
+    public sealed class TmdbMetadataDonorRow
+    {
+        public long ReleaseId { get; set; }
+        public int TmdbId { get; set; }
+        public string MediaTypeNormalized { get; set; } = "";
+        public string? ExtProvider { get; set; }
+        public string? ExtProviderId { get; set; }
+        public string? ExtTitle { get; set; }
+        public string? ExtOverview { get; set; }
+        public string? ExtTagline { get; set; }
+        public string? ExtGenres { get; set; }
+        public string? ExtReleaseDate { get; set; }
+        public int? ExtRuntimeMinutes { get; set; }
+        public double? ExtRating { get; set; }
+        public int? ExtVotes { get; set; }
+        public string? ExtDirectors { get; set; }
+        public string? ExtWriters { get; set; }
+        public string? ExtCast { get; set; }
+        public long? ExtUpdatedAtTs { get; set; }
+    }
+
+    private sealed class TmdbRebindReleaseSeedRow
+    {
+        public long? EntityId { get; set; }
+        public string? MediaType { get; set; }
+        public string? UnifiedCategory { get; set; }
+    }
+
+    private sealed class TmdbRebindReleaseRow
+    {
+        public long ReleaseId { get; set; }
+        public long EntityId { get; set; }
+    }
+
+    private sealed class TmdbRebindGroupRow
+    {
+        public int TmdbId { get; set; }
+        public string MediaTypeNormalized { get; set; } = "";
+        public int DistinctEntityCount { get; set; }
+    }
+
     public List<PosterStateRow> GetPosterStateByReleaseIds(IEnumerable<long> releaseIds)
     {
         if (releaseIds is null) return new List<PosterStateRow>();
@@ -1246,6 +1298,114 @@ public sealed class ReleaseRepository
             LIMIT @lim;
             """,
             new { lim }
+        ).AsList();
+    }
+
+    public List<MissingTmdbMetadataSeedRow> GetTmdbMetadataMissingCandidates(int limit)
+    {
+        using var conn = _db.Open();
+        var lim = Math.Clamp(limit <= 0 ? 200 : limit, 1, 5000);
+        return conn.Query<MissingTmdbMetadataSeedRow>(
+            """
+            WITH base AS (
+              SELECT
+                r.id as ReleaseId,
+                r.entity_id as EntityId,
+                CAST(COALESCE(me.tmdb_id, r.tmdb_id) AS INTEGER) as TmdbId,
+                CASE
+                  WHEN lower(trim(COALESCE(r.media_type, ''))) IN ('series', 'tv', 'show') THEN 'series'
+                  WHEN lower(trim(COALESCE(r.media_type, ''))) IN ('movie', 'film') THEN 'movie'
+                  ELSE NULL
+                END as MediaTypeNormalized,
+                COALESCE(r.poster_file, me.poster_file) as PosterFile,
+                COALESCE(me.ext_updated_at_ts, r.ext_updated_at_ts) as ExtUpdatedAtTs
+              FROM releases r
+              LEFT JOIN media_entities me
+                ON me.id = r.entity_id
+            )
+            SELECT
+              ReleaseId,
+              EntityId,
+              TmdbId,
+              MediaTypeNormalized
+            FROM base
+            WHERE MediaTypeNormalized IS NOT NULL
+              AND IFNULL(TmdbId, 0) > 0
+              AND PosterFile IS NOT NULL
+              AND PosterFile <> ''
+              AND IFNULL(ExtUpdatedAtTs, 0) <= 0
+            ORDER BY ReleaseId DESC
+            LIMIT @lim;
+            """,
+            new { lim }
+        ).AsList();
+    }
+
+    public List<TmdbMetadataDonorRow> GetTmdbMetadataDonorsByTmdbIds(IEnumerable<int> tmdbIds)
+    {
+        if (tmdbIds is null) return new List<TmdbMetadataDonorRow>();
+        var ids = tmdbIds
+            .Where(id => id > 0)
+            .Distinct()
+            .ToArray();
+        if (ids.Length == 0) return new List<TmdbMetadataDonorRow>();
+
+        using var conn = _db.Open();
+        return conn.Query<TmdbMetadataDonorRow>(
+            """
+            WITH base AS (
+              SELECT
+                r.id as ReleaseId,
+                CAST(COALESCE(me.tmdb_id, r.tmdb_id) AS INTEGER) as TmdbId,
+                CASE
+                  WHEN lower(trim(COALESCE(r.media_type, ''))) IN ('series', 'tv', 'show') THEN 'series'
+                  WHEN lower(trim(COALESCE(r.media_type, ''))) IN ('movie', 'film') THEN 'movie'
+                  ELSE NULL
+                END as MediaTypeNormalized,
+                lower(trim(COALESCE(me.ext_provider, r.ext_provider, ''))) as ExtProvider,
+                COALESCE(me.ext_provider_id, r.ext_provider_id) as ExtProviderId,
+                COALESCE(me.ext_title, r.ext_title) as ExtTitle,
+                COALESCE(me.ext_overview, r.ext_overview) as ExtOverview,
+                COALESCE(me.ext_tagline, r.ext_tagline) as ExtTagline,
+                COALESCE(me.ext_genres, r.ext_genres) as ExtGenres,
+                COALESCE(me.ext_release_date, r.ext_release_date) as ExtReleaseDate,
+                COALESCE(me.ext_runtime_minutes, r.ext_runtime_minutes) as ExtRuntimeMinutes,
+                COALESCE(me.ext_rating, r.ext_rating) as ExtRating,
+                COALESCE(me.ext_votes, r.ext_votes) as ExtVotes,
+                COALESCE(me.ext_directors, r.ext_directors) as ExtDirectors,
+                COALESCE(me.ext_writers, r.ext_writers) as ExtWriters,
+                COALESCE(me.ext_cast, r.ext_cast) as ExtCast,
+                COALESCE(me.ext_updated_at_ts, r.ext_updated_at_ts) as ExtUpdatedAtTs
+              FROM releases r
+              LEFT JOIN media_entities me
+                ON me.id = r.entity_id
+            )
+            SELECT
+              ReleaseId,
+              TmdbId,
+              MediaTypeNormalized,
+              ExtProvider,
+              ExtProviderId,
+              ExtTitle,
+              ExtOverview,
+              ExtTagline,
+              ExtGenres,
+              ExtReleaseDate,
+              ExtRuntimeMinutes,
+              ExtRating,
+              ExtVotes,
+              ExtDirectors,
+              ExtWriters,
+              ExtCast,
+              ExtUpdatedAtTs
+            FROM base
+            WHERE TmdbId IN @ids
+              AND MediaTypeNormalized IS NOT NULL
+              AND ExtProvider = 'tmdb'
+              AND IFNULL(ExtUpdatedAtTs, 0) > 0
+            ORDER BY TmdbId ASC, MediaTypeNormalized ASC, ExtUpdatedAtTs DESC, ReleaseId DESC;
+            """,
+            new { ids }
         ).AsList();
     }
 
@@ -1839,12 +1999,28 @@ LEFT JOIN media_entities me
         if (tmdbId <= 0) return;
 
         using var conn = _db.Open();
-        var entityId = conn.ExecuteScalar<long?>(
-            "SELECT entity_id FROM releases WHERE id = @id",
-            new { id }
+        using var tx = conn.BeginTransaction();
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var seed = conn.QueryFirstOrDefault<TmdbRebindReleaseSeedRow>(
+            """
+            SELECT
+              entity_id as EntityId,
+              media_type as MediaType,
+              unified_category as UnifiedCategory
+            FROM releases
+            WHERE id = @id;
+            """,
+            new { id },
+            tx
         );
+        if (seed is null)
+        {
+            tx.Commit();
+            return;
+        }
 
-        if (entityId.HasValue && entityId.Value > 0)
+        var currentEntityId = seed.EntityId;
+        if (currentEntityId.HasValue && currentEntityId.Value > 0)
         {
             conn.Execute(
                 """
@@ -1853,7 +2029,8 @@ LEFT JOIN media_entities me
                     updated_at_ts = @ts
                 WHERE id = @entityId;
                 """,
-                new { entityId, tmdbId, ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds() }
+                new { entityId = currentEntityId.Value, tmdbId, ts = now },
+                tx
             );
         }
 
@@ -1863,8 +2040,128 @@ LEFT JOIN media_entities me
             SET tmdb_id = COALESCE(@tmdbId, tmdb_id)
             WHERE id = @id;
             """,
-            new { id, tmdbId }
+            new { id, tmdbId },
+            tx
         );
+
+        _ = TryRebindReleaseToCanonicalTmdbEntity(
+            conn,
+            tx,
+            id,
+            tmdbId,
+            currentEntityId,
+            seed.MediaType,
+            seed.UnifiedCategory);
+
+        tx.Commit();
+    }
+
+    private bool TryRebindReleaseToCanonicalTmdbEntity(
+        IDbConnection conn,
+        IDbTransaction tx,
+        long releaseId,
+        int tmdbId,
+        long? currentEntityId,
+        string? mediaType,
+        string? unifiedCategory)
+    {
+        if (releaseId <= 0 || tmdbId <= 0 || !currentEntityId.HasValue || currentEntityId.Value <= 0)
+            return false;
+
+        var mediaTypeNormalized = NormalizeMediaTypeForTmdb(mediaType, unifiedCategory);
+        if (mediaTypeNormalized is null)
+            return false;
+
+        var canonicalEntityId = GetCanonicalTmdbEntityId(conn, tx, tmdbId, mediaTypeNormalized);
+        if (!canonicalEntityId.HasValue || canonicalEntityId.Value <= 0 || canonicalEntityId.Value == currentEntityId.Value)
+            return false;
+
+        var rebound = conn.Execute(
+            """
+            UPDATE releases
+            SET entity_id = @canonicalEntityId
+            WHERE id = @releaseId
+              AND entity_id = @currentEntityId;
+            """,
+            new
+            {
+                releaseId,
+                canonicalEntityId = canonicalEntityId.Value,
+                currentEntityId = currentEntityId.Value
+            },
+            tx
+        );
+
+        if (rebound <= 0)
+            return false;
+
+        InvalidateEntityArrStatusRows(conn, tx, new[] { currentEntityId.Value, canonicalEntityId.Value });
+        return true;
+    }
+
+    private long? GetCanonicalTmdbEntityId(IDbConnection conn, IDbTransaction tx, int tmdbId, string mediaTypeNormalized)
+    {
+        if (tmdbId <= 0 || string.IsNullOrWhiteSpace(mediaTypeNormalized))
+            return null;
+
+        return conn.QueryFirstOrDefault<long?>(
+            $"""
+            WITH candidates AS (
+              SELECT
+                me.id as EntityId,
+                MAX(CASE WHEN IFNULL(COALESCE(me.ext_updated_at_ts, r.ext_updated_at_ts), 0) > 0 THEN 1 ELSE 0 END) as HasMetadata,
+                MAX(CASE WHEN COALESCE(me.poster_file, r.poster_file, '') <> '' THEN 1 ELSE 0 END) as HasPoster,
+                COUNT(*) as ReleaseCount
+              FROM releases r
+              JOIN media_entities me
+                ON me.id = r.entity_id
+              WHERE IFNULL(CAST(COALESCE(me.tmdb_id, r.tmdb_id) AS INTEGER), 0) = @tmdbId
+                AND {SqlTmdbMediaTypeNormalizedExpr} = @mediaTypeNormalized
+                AND IFNULL(r.entity_id, 0) > 0
+              GROUP BY me.id
+            )
+            SELECT EntityId
+            FROM candidates
+            ORDER BY HasMetadata DESC, HasPoster DESC, ReleaseCount DESC, EntityId ASC
+            LIMIT 1;
+            """,
+            new { tmdbId, mediaTypeNormalized },
+            tx
+        );
+    }
+
+    private static void InvalidateEntityArrStatusRows(IDbConnection conn, IDbTransaction tx, IEnumerable<long> entityIds)
+    {
+        if (entityIds is null) return;
+        var ids = entityIds
+            .Where(id => id > 0)
+            .Distinct()
+            .ToArray();
+        if (ids.Length == 0) return;
+
+        conn.Execute(
+            "DELETE FROM media_entity_arr_status WHERE entity_id IN @ids;",
+            new { ids },
+            tx
+        );
+    }
+
+    private static string? NormalizeMediaTypeForTmdb(string? mediaType, string? unifiedCategory)
+    {
+        var normalized = (mediaType ?? string.Empty).Trim().ToLowerInvariant();
+        if (normalized is "series" or "tv" or "show")
+            return "series";
+        if (normalized is "movie" or "film")
+            return "movie";
+
+        if (!UnifiedCategoryMappings.TryParse(unifiedCategory, out var parsed))
+            return null;
+
+        var fromCategory = UnifiedCategoryMappings.ToMediaType(parsed);
+        if (fromCategory is "series" or "movie")
+            return fromCategory;
+
+        return null;
     }
 
     public void SaveTvdbId(long id, int tvdbId)
@@ -2810,6 +3107,14 @@ LEFT JOIN media_entities me
         return (processed, updated, markedRebind);
     }
 
+    public sealed record TmdbEntityRebindResult(
+        int Scanned,
+        int EligibleGroups,
+        int ReleasesRebound,
+        int GroupsCollapsed,
+        int Skipped,
+        int Errors);
+
     /// <summary>
     /// Recalcule entity_id pour les releases marquées needs_rebind=1.
     /// </summary>
@@ -2821,6 +3126,135 @@ LEFT JOIN media_entities me
     /// </summary>
     public (int processed, int rebound) RebindEntitiesForSource(long sourceId, int batchSize = 200)
         => RebindEntitiesCore(sourceId, batchSize);
+
+    public TmdbEntityRebindResult RebindEntitiesByTmdb(int batchSize = 200)
+    {
+        using var conn = _db.Open();
+        var limit = Math.Clamp(batchSize, 1, 1000);
+
+        var groups = conn.Query<TmdbRebindGroupRow>(
+            $"""
+            WITH base AS (
+              SELECT
+                CAST(COALESCE(me.tmdb_id, r.tmdb_id) AS INTEGER) as TmdbId,
+                {SqlTmdbMediaTypeNormalizedExpr} as MediaTypeNormalized,
+                r.entity_id as EntityId
+              FROM releases r
+              JOIN media_entities me
+                ON me.id = r.entity_id
+              WHERE IFNULL(r.entity_id, 0) > 0
+                AND IFNULL(CAST(COALESCE(me.tmdb_id, r.tmdb_id) AS INTEGER), 0) > 0
+            )
+            SELECT
+              TmdbId,
+              MediaTypeNormalized,
+              COUNT(DISTINCT EntityId) as DistinctEntityCount
+            FROM base
+            WHERE MediaTypeNormalized IN ('movie', 'series')
+            GROUP BY TmdbId, MediaTypeNormalized
+            HAVING COUNT(DISTINCT EntityId) > 1
+            ORDER BY DistinctEntityCount DESC, TmdbId ASC
+            LIMIT @limit;
+            """,
+            new { limit }
+        ).AsList();
+
+        if (groups.Count == 0)
+            return new TmdbEntityRebindResult(0, 0, 0, 0, 0, 0);
+
+        var scanned = groups.Count;
+        var eligibleGroups = 0;
+        var releasesRebound = 0;
+        var groupsCollapsed = 0;
+        var skipped = 0;
+        var errors = 0;
+
+        foreach (var group in groups)
+        {
+            try
+            {
+                using var tx = conn.BeginTransaction();
+                var canonicalEntityId = GetCanonicalTmdbEntityId(conn, tx, group.TmdbId, group.MediaTypeNormalized);
+                if (!canonicalEntityId.HasValue || canonicalEntityId.Value <= 0)
+                {
+                    skipped++;
+                    tx.Commit();
+                    continue;
+                }
+
+                var releaseRows = conn.Query<TmdbRebindReleaseRow>(
+                    $"""
+                    SELECT
+                      r.id as ReleaseId,
+                      r.entity_id as EntityId
+                    FROM releases r
+                    JOIN media_entities me
+                      ON me.id = r.entity_id
+                    WHERE IFNULL(r.entity_id, 0) > 0
+                      AND IFNULL(CAST(COALESCE(me.tmdb_id, r.tmdb_id) AS INTEGER), 0) = @tmdbId
+                      AND {SqlTmdbMediaTypeNormalizedExpr} = @mediaTypeNormalized
+                    ORDER BY r.id ASC;
+                    """,
+                    new
+                    {
+                        tmdbId = group.TmdbId,
+                        mediaTypeNormalized = group.MediaTypeNormalized
+                    },
+                    tx
+                ).AsList();
+
+                var toRebind = releaseRows
+                    .Where(row => row.EntityId != canonicalEntityId.Value)
+                    .ToList();
+
+                if (toRebind.Count == 0)
+                {
+                    skipped++;
+                    tx.Commit();
+                    continue;
+                }
+
+                eligibleGroups++;
+                var ids = toRebind.Select(row => row.ReleaseId).ToArray();
+                var changed = conn.Execute(
+                    """
+                    UPDATE releases
+                    SET entity_id = @canonicalEntityId
+                    WHERE id IN @ids;
+                    """,
+                    new { canonicalEntityId = canonicalEntityId.Value, ids },
+                    tx
+                );
+
+                var touchedEntityIds = toRebind
+                    .Select(row => row.EntityId)
+                    .Append(canonicalEntityId.Value);
+                InvalidateEntityArrStatusRows(conn, tx, touchedEntityIds);
+
+                tx.Commit();
+                releasesRebound += changed;
+                if (changed > 0)
+                    groupsCollapsed++;
+            }
+            catch (Exception ex)
+            {
+                errors++;
+                _logger.LogWarning(
+                    ex,
+                    "TMDB entity rebind failed for tmdbId={TmdbId} mediaType={MediaType}",
+                    group.TmdbId,
+                    group.MediaTypeNormalized);
+            }
+        }
+
+        return new TmdbEntityRebindResult(
+            scanned,
+            eligibleGroups,
+            releasesRebound,
+            groupsCollapsed,
+            skipped,
+            errors);
+    }
 
     private (int processed, int rebound) RebindEntitiesCore(long? sourceId, int batchSize)
     {

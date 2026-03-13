@@ -922,11 +922,11 @@ public sealed class MaintenanceController : ControllerBase
         }
     }
 
-    // POST /api/maintenance/rebind-entities?batchSize=200
+    // POST /api/maintenance/rebind-entities?batchSize=200&mode=category|tmdb
     // À appeler après reprocess-categories pour corriger entity_id des releases recatégorisées.
     // Traite les releases WHERE needs_rebind=1 par batch (curseur id) et recalcule entity_id.
     [HttpPost("rebind-entities")]
-    public IActionResult RebindEntities([FromQuery] int batchSize = 200)
+    public IActionResult RebindEntities([FromQuery] int batchSize = 200, [FromQuery] string? mode = null)
     {
         if (!_maintenanceLock.TryEnter())
         {
@@ -935,12 +935,32 @@ public sealed class MaintenanceController : ControllerBase
         }
         try
         {
+            var normalizedMode = (mode ?? "category").Trim().ToLowerInvariant();
+            if (normalizedMode is "tmdb" or "tmdb-aware")
+            {
+                var result = _releases.RebindEntitiesByTmdb(batchSize);
+                _activity.Add(null, "info", "maintenance", "TMDB entity rebind completed",
+                    dataJson: $"{{\"mode\":\"tmdb\",\"scanned\":{result.Scanned},\"eligibleGroups\":{result.EligibleGroups},\"releasesRebound\":{result.ReleasesRebound},\"groupsCollapsed\":{result.GroupsCollapsed},\"skipped\":{result.Skipped},\"errors\":{result.Errors}}}");
+
+                return Ok(new
+                {
+                    ok = true,
+                    mode = "tmdb",
+                    scanned = result.Scanned,
+                    eligibleGroups = result.EligibleGroups,
+                    releasesRebound = result.ReleasesRebound,
+                    groupsCollapsed = result.GroupsCollapsed,
+                    skipped = result.Skipped,
+                    errors = result.Errors
+                });
+            }
+
             var (processed, rebound) = _releases.RebindEntities(batchSize);
 
             _activity.Add(null, "info", "maintenance", "Entity rebind completed",
-                dataJson: $"{{\"processed\":{processed},\"rebound\":{rebound}}}");
+                dataJson: $"{{\"mode\":\"category\",\"processed\":{processed},\"rebound\":{rebound}}}");
 
-            return Ok(new { ok = true, processed, rebound });
+            return Ok(new { ok = true, mode = "category", processed, rebound });
         }
         catch (Exception ex)
         {
