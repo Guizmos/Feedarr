@@ -2613,6 +2613,14 @@ public sealed class PosterFetchService
                 });
             }
 
+            var effectiveTmdbId = tmdbIdResolved ?? knownIds.TmdbId;
+            await EnsureTmdbMetadataIfMissingAsync(
+                id,
+                effectiveTmdbId,
+                mediaType,
+                snapshot: null,
+                ct).ConfigureAwait(false);
+
             return new PosterFetchResult(true, 200, new
             {
                 ok = true,
@@ -2745,6 +2753,14 @@ public sealed class PosterFetchService
                 score = best.Score
             });
         }
+
+        var effectiveTmdbId = tmdbIdResolved ?? knownIds.TmdbId;
+        await EnsureTmdbMetadataIfMissingAsync(
+            id,
+            effectiveTmdbId,
+            titleKey.MediaType,
+            snapshot: null,
+            ct).ConfigureAwait(false);
 
         var result = new PosterFetchResult(true, 200, new
         {

@@ -134,6 +134,7 @@ public sealed class SchedulerController : ControllerBase
             var postersUpdated = _releases.BackfillEntityPosters(lim);
             var idsResult = await _externalIdBackfill.BackfillSeriesExternalIdsAsync(lim, ct);
             var requestIdsResult = await _requestTmdbBackfill.BackfillSeriesRequestTmdbAsync(lim, ct);
+            var metadataResult = await _tmdbMetadataBackfill.BackfillMissingTmdbMetadataAsync(lim, ct);
             return Ok(new
             {
                 ok = true,
@@ -148,7 +149,15 @@ public sealed class SchedulerController : ControllerBase
                 requestIdsReusedExistingTmdb = requestIdsResult.ReusedExistingTmdb,
                 requestIdsResolvedFromTvdbMap = requestIdsResult.ResolvedFromTvdbMap,
                 requestIdsResolvedFromTitleSearch = requestIdsResult.ResolvedFromTitleSearch,
-                requestIdsUnresolved = requestIdsResult.Unresolved
+                requestIdsUnresolved = requestIdsResult.Unresolved,
+                metadataScanned = metadataResult.Scanned,
+                metadataEligible = metadataResult.Eligible,
+                metadataProcessed = metadataResult.Processed,
+                metadataLocalPropagated = metadataResult.LocalPropagated,
+                metadataTmdbRefreshed = metadataResult.TmdbRefreshed,
+                metadataUniqueTmdbKeysRefreshed = metadataResult.UniqueTmdbKeysRefreshed,
+                metadataSkipped = metadataResult.Skipped,
+                metadataErrors = metadataResult.Errors
             });
         }
 
