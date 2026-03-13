@@ -527,6 +527,64 @@ public sealed class FeedTopByCategoryTests
     }
 
     [Fact]
+    public void Top_ProjectsMetadataFields_FromMediaEntityFallback()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var sourceId = InsertSource(db, "source-top-metadata");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        InsertSourceCategory(db, sourceId, 2000, "Movies", unifiedKey: "films", unifiedLabel: "Films");
+        var entityId = InsertMediaEntity(
+            db,
+            unifiedCategory: "Film",
+            titleClean: "Entity Metadata Title",
+            year: 2024,
+            posterFile: "entity-meta.jpg",
+            extOverview: "Overview from media entity",
+            extTagline: "Tagline from media entity",
+            extGenres: "Action,Drama",
+            extReleaseDate: "2024-01-15",
+            extRuntimeMinutes: 123,
+            extDirectors: "Jane Director",
+            extWriters: "John Writer",
+            extCast: "Alice Actor, Bob Actor");
+
+        InsertRelease(
+            db,
+            sourceId,
+            guid: "meta-guid-1",
+            categoryId: 2000,
+            unifiedCategory: "Film",
+            seeders: 55,
+            categoryIds: "2000",
+            title: "Entity Metadata Title 1080p",
+            titleClean: "Entity Metadata Title",
+            year: 2024,
+            mediaType: "movie",
+            entityId: entityId,
+            publishedAt: now - 60,
+            createdAt: now - 30);
+
+        var controller = CreateController(db);
+        var action = controller.Top(hours: 24, take: 5, perCategoryTake: 5, sort: "recent", dedupe: "none", limit: null, sourceId: null, indexerId: null);
+        var ok = Assert.IsType<OkObjectResult>(action);
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var item = Assert.Single(doc.RootElement.GetProperty("globalTop").EnumerateArray());
+        Assert.Equal("Overview from media entity", item.GetProperty("Overview").GetString());
+        Assert.Equal("Tagline from media entity", item.GetProperty("Tagline").GetString());
+        Assert.Equal("Action,Drama", item.GetProperty("Genres").GetString());
+        Assert.Equal("2024-01-15", item.GetProperty("ReleaseDate").GetString());
+        Assert.Equal(123, item.GetProperty("RuntimeMinutes").GetInt32());
+        Assert.Equal("Jane Director", item.GetProperty("Directors").GetString());
+        Assert.Equal("John Writer", item.GetProperty("Writers").GetString());
+        Assert.Equal("Alice Actor, Bob Actor", item.GetProperty("Cast").GetString());
+    }
+
+    [Fact]
     public void Top_RespectsPerCategoryTake_AfterBusinessRanking()
     {
         using var workspace = new TestWorkspace();
@@ -730,6 +788,89 @@ public sealed class FeedTopByCategoryTests
                 grabs = grabs ?? 10,
                 entityId,
                 createdAt = createdAt ?? now
+            });
+    }
+
+    private static long InsertMediaEntity(
+        Db db,
+        string unifiedCategory,
+        string titleClean,
+        int? year,
+        string? posterFile = null,
+        string? extOverview = null,
+        string? extTagline = null,
+        string? extGenres = null,
+        string? extReleaseDate = null,
+        int? extRuntimeMinutes = null,
+        string? extDirectors = null,
+        string? extWriters = null,
+        string? extCast = null)
+    {
+        using var conn = db.Open();
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        return conn.ExecuteScalar<long>(
+            """
+            INSERT INTO media_entities(
+              unified_category,
+              title_clean,
+              year,
+              poster_file,
+              poster_updated_at_ts,
+              ext_provider,
+              ext_provider_id,
+              ext_overview,
+              ext_tagline,
+              ext_genres,
+              ext_release_date,
+              ext_runtime_minutes,
+              ext_directors,
+              ext_writers,
+              ext_cast,
+              ext_updated_at_ts,
+              created_at_ts,
+              updated_at_ts
+            )
+            VALUES(
+              @unifiedCategory,
+              @titleClean,
+              @year,
+              @posterFile,
+              @posterUpdatedAtTs,
+              @extProvider,
+              @extProviderId,
+              @extOverview,
+              @extTagline,
+              @extGenres,
+              @extReleaseDate,
+              @extRuntimeMinutes,
+              @extDirectors,
+              @extWriters,
+              @extCast,
+              @extUpdatedAtTs,
+              @now,
+              @now
+            );
+            SELECT last_insert_rowid();
+            """,
+            new
+            {
+                unifiedCategory,
+                titleClean,
+                year,
+                posterFile,
+                posterUpdatedAtTs = string.IsNullOrWhiteSpace(posterFile) ? (long?)null : now,
+                extProvider = "tmdb",
+                extProviderId = "meta-entity",
+                extOverview,
+                extTagline,
+                extGenres,
+                extReleaseDate,
+                extRuntimeMinutes,
+                extDirectors,
+                extWriters,
+                extCast,
+                extUpdatedAtTs = now,
+                now
             });
     }
 
