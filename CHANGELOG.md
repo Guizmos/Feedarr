@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.5.0](https://github.com/Guizmos/Feedarr/compare/v2.4.6...v2.5.0) (2026-03-16)
+
+
+### Features
+
+* **backfill:** repair missing tmdb metadata with local propagation and fallback refresh ([997824a](https://github.com/Guizmos/Feedarr/commit/997824af07964e0d8973caf9f5992f055142885f))
+* **library:** virtualize list view with TanStack Virtual ([d321ade](https://github.com/Guizmos/Feedarr/commit/d321ade382668a8a8348c9b24def5902f2307804))
+* **maintenance:** add tmdb-aware entity rebind for fragmented releases ([34f646b](https://github.com/Guizmos/Feedarr/commit/34f646bef72866cb0585e3dc20241dbd36014174))
+
+
+### Bug Fixes
+
+* **library:** recalibrate grid card height estimate ([1268367](https://github.com/Guizmos/Feedarr/commit/1268367318c0eaa89b850d5f0c61182b33067780))
+* **library:** stabilize list virtualization scrollbar behavior ([8bafd0f](https://github.com/Guizmos/Feedarr/commit/8bafd0f131dcf486b12c1a11e1ce3952f758e41d))
+* **metadata:** investigate inconsistent metadata enrichment across grouped releases ([e923218](https://github.com/Guizmos/Feedarr/commit/e923218e998e92665305d9172fdb9bf077a19401))
+* **metadata:** refresh tmdb details when reusing cached posters ([77b42a1](https://github.com/Guizmos/Feedarr/commit/77b42a143325a9d3ac5ac6d99026aa8a5d45fa66))
+* **search:** improve title matching and normalize search queries ([3ddc752](https://github.com/Guizmos/Feedarr/commit/3ddc752a839a56d2fc9456724b3505f9d7bd8e46))
+* **top24:** project full metadata fields in top feed ([be3da49](https://github.com/Guizmos/Feedarr/commit/be3da49bbc1857d4edd02fb996b7b56b0f696e02))
+* **tvmaze:** refresh missing metadata on success paths and run metadata pass in all backfills ([d456ecd](https://github.com/Guizmos/Feedarr/commit/d456ecd05558eb5052cd2a3f00cf9dd5f5be1529))
+
+
+### Performance Improvements
+
+* **db:** SQLite PRAGMAs, poster_stats lookup and schema probe caching ([a706571](https://github.com/Guizmos/Feedarr/commit/a7065718ed441d9fe89f34c169fc8837000da101))
+
 ## [2.4.6](https://github.com/Guizmos/Feedarr/compare/v2.4.5...v2.4.6) (2026-03-10)
 
 
