@@ -208,6 +208,7 @@ builder.Services.AddSingleton<MediaEntityArrStatusService>();
 builder.Services.AddSingleton<ExternalIdBackfillService>();
 builder.Services.AddSingleton<RequestTmdbResolverService>();
 builder.Services.AddSingleton<RequestTmdbBackfillService>();
+builder.Services.AddSingleton<TmdbMetadataBackfillService>();
 builder.Services.AddSingleton<RetentionService>();
 builder.Services.AddSingleton<ReleaseInfoService>();
 builder.Services.AddSingleton<SetupStateService>();

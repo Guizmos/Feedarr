@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { ScrollContainerProvider } from "../context/ScrollContainerContext.js";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import Topbar from "./Topbar.jsx";
 import Sidebar from "./Sidebar.jsx";
@@ -29,6 +30,7 @@ export default function Shell() {
     startY: 0,
     isForm: false,
   });
+  const contentRef = useRef(null);
 
   // Monitoring automatique de la queue de posters
   usePosterQueueMonitoring({
@@ -211,10 +213,14 @@ export default function Shell() {
           <div className="body">
             <Sidebar onNavigate={closeNav} />
 
-            <div className="content">
-              <Subbar />
-              <Outlet />
-            </div>
+            <ScrollContainerProvider scrollRef={contentRef}>
+              <div className="content-outer">
+                <Subbar />
+                <div className="content" ref={contentRef}>
+                  <Outlet />
+                </div>
+              </div>
+            </ScrollContainerProvider>
           </div>
 
           {showOnboardingBar && (

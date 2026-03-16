@@ -20,6 +20,9 @@ public sealed class FeedController : ControllerBase
     private readonly Action? _onTopCacheMissCompute;
     private static readonly TimeSpan TopCacheDuration = TimeSpan.FromSeconds(20);
     private static readonly ConcurrentDictionary<string, Lazy<object>> TopInFlight = new(StringComparer.Ordinal);
+    // Tri-state schema probe cache: 0=unknown, 1=exists, -1=absent. Written once per process lifetime.
+    private static int _schemaHasCategories;
+    private static int _schemaHasFts;
     private static readonly Regex SearchTokenRegex = new(@"[a-zA-Z0-9_-]+", RegexOptions.Compiled);
     private const int MaxFtsTokenLength = 64;
     private const int TopMaxHours = 24 * 7;
@@ -233,6 +236,19 @@ public sealed class FeedController : ControllerBase
         }
     }
 
+    private static bool SchemaProbe(Microsoft.Data.Sqlite.SqliteConnection conn, ref int flag, string tableName)
+    {
+        var cached = Interlocked.CompareExchange(ref flag, 0, 0);
+        if (cached != 0) return cached == 1;
+
+        var exists = conn.ExecuteScalar<long>(
+            "SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name=@n;",
+            new { n = tableName }
+        ) > 0;
+        Interlocked.Exchange(ref flag, exists ? 1 : -1);
+        return exists;
+    }
+
     private static string? BuildFtsQuery(string input)
     {
         if (string.IsNullOrWhiteSpace(input))
@@ -321,12 +337,8 @@ public sealed class FeedController : ControllerBase
         var lim = Math.Clamp(limit ?? 100, 1, 500);
 
         using var conn = _db.Open();
-        var hasCategories = conn.ExecuteScalar<long>(
-            "SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name='source_categories';"
-        ) > 0;
-        var hasFts = conn.ExecuteScalar<long>(
-            "SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name='releases_fts';"
-        ) > 0;
+        var hasCategories = SchemaProbe(conn, ref _schemaHasCategories, "source_categories");
+        var hasFts = SchemaProbe(conn, ref _schemaHasFts, "releases_fts");
 
         var where = new List<string> { "releases.source_id = @sid" };
         var args = new DynamicParameters();
@@ -654,11 +666,19 @@ public sealed class FeedController : ControllerBase
             COALESCE(releases.poster_updated_at_ts, me.poster_updated_at_ts, 0) as posterUpdatedAtTs,
             poster_last_error as posterLastError,
             poster_last_attempt_ts as posterLastAttemptTs,
+            COALESCE(me.ext_overview, releases.ext_overview) as overview,
+            COALESCE(me.ext_tagline, releases.ext_tagline) as tagline,
+            COALESCE(me.ext_genres, releases.ext_genres) as genres,
+            COALESCE(me.ext_release_date, releases.ext_release_date) as releaseDate,
+            CAST(COALESCE(me.ext_runtime_minutes, releases.ext_runtime_minutes) AS INTEGER) as runtimeMinutes,
             COALESCE(me.ext_rating, releases.ext_rating) as rating,
             CAST(COALESCE(me.ext_votes, releases.ext_votes) AS INTEGER) as ratingVotes,
             COALESCE(me.ext_provider, releases.ext_provider) as detailsProvider,
             COALESCE(me.ext_provider_id, releases.ext_provider_id) as detailsProviderId,
             COALESCE(me.ext_updated_at_ts, releases.ext_updated_at_ts) as detailsUpdatedAtTs,
+            COALESCE(me.ext_directors, releases.ext_directors) as directors,
+            COALESCE(me.ext_writers, releases.ext_writers) as writers,
+            COALESCE(me.ext_cast, releases.ext_cast) as cast,
             CAST(COALESCE(me.tmdb_id, releases.tmdb_id) AS INTEGER) as tmdbId,
             CAST(COALESCE(me.tvdb_id, releases.tvdb_id) AS INTEGER) as tvdbId,
             ras.in_sonarr as isInSonarr,

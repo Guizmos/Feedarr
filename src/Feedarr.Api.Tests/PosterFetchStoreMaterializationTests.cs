@@ -100,6 +100,112 @@ public sealed class PosterFetchStoreMaterializationTests
         Assert.Contains(ctx.ThumbLogger.Entries, entry => entry.Level == LogLevel.Warning);
     }
 
+    [Fact]
+    public async Task FetchPosterAsync_SkipIfExists_WithTmdbAndMissingMetadata_RefreshesMetadata()
+    {
+        using var ctx = new PosterStoreContext(ImagePayloadMode.ValidImage);
+        var releaseId = ctx.CreateRelease(
+            "Metadata Missing",
+            "Metadata Missing",
+            1999,
+            posterFile: "tmdb-100-w500.jpg",
+            posterProvider: "tmdb",
+            posterProviderId: "100",
+            tmdbId: 100);
+
+        ctx.WriteLegacyPoster("tmdb-100-w500.jpg", PosterStoreContext.CreateValidImageBytes());
+
+        var result = await ctx.Posters.FetchPosterAsync(releaseId, CancellationToken.None, logSingle: false, skipIfExists: true);
+
+        Assert.True(result.Ok);
+        var release = ctx.Releases.GetForPoster(releaseId);
+        Assert.NotNull(release);
+        Assert.True((release!.ExtUpdatedAtTs ?? 0) > 0);
+        Assert.Equal("tmdb", release.ExtProvider);
+        Assert.Equal(1, ctx.TmdbHandler.MovieDetailsCalls);
+    }
+
+    [Fact]
+    public async Task FetchPosterAsync_MatchCacheReuse_WithTmdbAndMissingMetadata_RefreshesMetadata()
+    {
+        using var ctx = new PosterStoreContext(ImagePayloadMode.ValidImage);
+        var releaseId = ctx.CreateRelease("Cache Movie", "Cache Movie", 2022);
+
+        ctx.WriteLegacyPoster("tmdb-100-w500.jpg", PosterStoreContext.CreateValidImageBytes());
+        ctx.SeedPosterMatch(
+            mediaType: "movie",
+            titleClean: "Cache Movie",
+            year: 2022,
+            posterFile: "tmdb-100-w500.jpg",
+            tmdbId: 100,
+            matchSource: "tmdb",
+            posterProvider: "tmdb",
+            posterProviderId: "100");
+
+        var result = await ctx.Posters.FetchPosterAsync(releaseId, CancellationToken.None, logSingle: false, skipIfExists: true);
+
+        Assert.True(result.Ok);
+        var release = ctx.Releases.GetForPoster(releaseId);
+        Assert.NotNull(release);
+        Assert.Equal("tmdb-100-w500.jpg", release!.PosterFile);
+        Assert.True((release.ExtUpdatedAtTs ?? 0) > 0);
+        Assert.Equal("tmdb", release.ExtProvider);
+        Assert.Equal(1, ctx.TmdbHandler.MovieDetailsCalls);
+    }
+
+    [Fact]
+    public async Task FetchPosterAsync_SkipIfExists_WithExistingMetadata_DoesNotRefreshMetadata()
+    {
+        using var ctx = new PosterStoreContext(ImagePayloadMode.ValidImage);
+        var existingTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 120;
+        var releaseId = ctx.CreateRelease(
+            "Metadata Present",
+            "Metadata Present",
+            1999,
+            posterFile: "tmdb-100-w500.jpg",
+            posterProvider: "tmdb",
+            posterProviderId: "100",
+            tmdbId: 100,
+            extProvider: "tmdb",
+            extOverview: "already present",
+            extUpdatedAtTs: existingTs);
+
+        ctx.WriteLegacyPoster("tmdb-100-w500.jpg", PosterStoreContext.CreateValidImageBytes());
+
+        var result = await ctx.Posters.FetchPosterAsync(releaseId, CancellationToken.None, logSingle: false, skipIfExists: true);
+
+        Assert.True(result.Ok);
+        var release = ctx.Releases.GetForPoster(releaseId);
+        Assert.NotNull(release);
+        Assert.Equal(existingTs, release!.ExtUpdatedAtTs);
+        Assert.Equal("already present", release.ExtOverview);
+        Assert.Equal(0, ctx.TmdbHandler.MovieDetailsCalls);
+    }
+
+    [Fact]
+    public async Task FetchPosterAsync_SkipIfExists_WithoutTmdbId_DoesNotRefreshMetadata()
+    {
+        using var ctx = new PosterStoreContext(ImagePayloadMode.ValidImage);
+        var releaseId = ctx.CreateRelease(
+            "No Tmdb",
+            "No Tmdb",
+            1999,
+            posterFile: "tmdb-100-w500.jpg",
+            posterProvider: "tmdb",
+            posterProviderId: "100",
+            tmdbId: null);
+
+        ctx.WriteLegacyPoster("tmdb-100-w500.jpg", PosterStoreContext.CreateValidImageBytes());
+
+        var result = await ctx.Posters.FetchPosterAsync(releaseId, CancellationToken.None, logSingle: false, skipIfExists: true);
+
+        Assert.True(result.Ok);
+        var release = ctx.Releases.GetForPoster(releaseId);
+        Assert.NotNull(release);
+        Assert.Null(release!.ExtUpdatedAtTs);
+        Assert.Equal(0, ctx.TmdbHandler.MovieDetailsCalls);
+    }
+
     private enum ImagePayloadMode
     {
         ValidImage,
@@ -150,11 +256,12 @@ public sealed class PosterFetchStoreMaterializationTests
 
             Releases = new ReleaseRepository(Db, new TitleParser(), new UnifiedCategoryResolver());
             ThumbLogger = new ListLogger<PosterThumbService>();
+            TmdbHandler = new TmdbStoreHandler(imageMode);
 
             Posters = new PosterFetchService(
                 Releases,
                 new ActivityRepository(Db, new BadgeSignal()),
-                new TmdbClient(new HttpClient(new TmdbStoreHandler(imageMode)), settings, stats, activeResolver),
+                new TmdbClient(new HttpClient(TmdbHandler), settings, stats, activeResolver),
                 null!,
                 null!,
                 null!,
@@ -193,6 +300,7 @@ public sealed class PosterFetchStoreMaterializationTests
         public ReleaseRepository Releases { get; }
         public PosterFetchService Posters { get; }
         public ListLogger<PosterThumbService> ThumbLogger { get; }
+        public TmdbStoreHandler TmdbHandler { get; }
         public long SourceId { get; }
         public string PostersDir => Posters.PostersDirPath;
         public string StoreDir => Posters.PosterStoreDirPath;
@@ -203,7 +311,11 @@ public sealed class PosterFetchStoreMaterializationTests
             int? year,
             string? posterFile = null,
             string? posterProvider = null,
-            string? posterProviderId = null)
+            string? posterProviderId = null,
+            int? tmdbId = null,
+            string? extProvider = null,
+            string? extOverview = null,
+            long? extUpdatedAtTs = null)
         {
             using var conn = Db.Open();
             var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -219,9 +331,13 @@ public sealed class PosterFetchStoreMaterializationTests
                   year,
                   unified_category,
                   media_type,
+                  tmdb_id,
                   poster_file,
                   poster_provider,
-                  poster_provider_id
+                  poster_provider_id,
+                  ext_provider,
+                  ext_overview,
+                  ext_updated_at_ts
                 )
                 VALUES(
                   @sourceId,
@@ -233,9 +349,13 @@ public sealed class PosterFetchStoreMaterializationTests
                   @year,
                   'Film',
                   'movie',
+                  @tmdbId,
                   @posterFile,
                   @posterProvider,
-                  @posterProviderId
+                  @posterProviderId,
+                  @extProvider,
+                  @extOverview,
+                  @extUpdatedAtTs
                 );
                 SELECT last_insert_rowid();
                 """,
@@ -247,10 +367,52 @@ public sealed class PosterFetchStoreMaterializationTests
                     ts,
                     titleClean,
                     year,
+                    tmdbId,
                     posterFile,
                     posterProvider,
-                    posterProviderId
+                    posterProviderId,
+                    extProvider,
+                    extOverview,
+                    extUpdatedAtTs
                 });
+        }
+
+        public void SeedPosterMatch(
+            string mediaType,
+            string titleClean,
+            int? year,
+            string posterFile,
+            int? tmdbId,
+            string matchSource,
+            string? posterProvider,
+            string? posterProviderId)
+        {
+            var normalizedTitle = TitleNormalizer.NormalizeTitle(titleClean);
+            var fingerprint = PosterMatchCacheService.BuildFingerprint(
+                new PosterTitleKey(mediaType, normalizedTitle, year, null, null));
+            var idsJson = PosterMatchCacheService.SerializeIds(new PosterMatchIds(tmdbId, null, null, null, null));
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+            var cache = new PosterMatchCacheService(Db);
+            cache.Upsert(new Feedarr.Api.Services.Posters.PosterMatch(
+                fingerprint: fingerprint,
+                mediaType: mediaType,
+                normalizedTitle: normalizedTitle,
+                year: year,
+                season: null,
+                episode: null,
+                idsJson: idsJson,
+                confidence: 0.95,
+                matchSource: matchSource,
+                posterFile: posterFile,
+                posterProvider: posterProvider,
+                posterProviderId: posterProviderId,
+                posterLang: null,
+                posterSize: "w500",
+                createdTs: now,
+                lastSeenTs: now,
+                lastAttemptTs: null,
+                lastError: null));
         }
 
         public void WriteLegacyPoster(string fileName, byte[] bytes)
@@ -276,6 +438,8 @@ public sealed class PosterFetchStoreMaterializationTests
     private sealed class TmdbStoreHandler : HttpMessageHandler
     {
         private readonly ImagePayloadMode _imageMode;
+        public int MovieDetailsCalls { get; private set; }
+        public int MovieCreditsCalls { get; private set; }
 
         public TmdbStoreHandler(ImagePayloadMode imageMode)
         {
@@ -303,10 +467,14 @@ public sealed class PosterFetchStoreMaterializationTests
             }
 
             if (path.Contains("/movie/100/credits"))
+            {
+                MovieCreditsCalls++;
                 return Task.FromResult(JsonResponse("{\"cast\":[],\"crew\":[]}"));
+            }
 
             if (path.Contains("/movie/100"))
             {
+                MovieDetailsCalls++;
                 return Task.FromResult(JsonResponse(
                     "{\"title\":\"The Matrix\",\"overview\":\"Mock overview\",\"genres\":[],\"vote_average\":8,\"vote_count\":100}"));
             }
