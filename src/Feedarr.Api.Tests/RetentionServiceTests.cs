@@ -82,6 +82,97 @@ public sealed class RetentionServiceTests
         Assert.Equal(0, context.Releases.GetPosterReferenceCount("missing.jpg"));
     }
 
+    [Fact]
+    public void ApplyRetention_WhenStoreDirBecomesOrphan_DeletesStoreDirectory()
+    {
+        using var context = new RetentionTestContext();
+        var storeDir = "tmdb-999";
+        var oldId = context.CreateRelease("older-guid", 100, "older.jpg", storeDir: storeDir);
+        context.CreateRelease("newer-guid", 200, "newer.jpg");
+        context.AddStoreRef(oldId, storeDir);
+        var storePath = context.CreateStoreDirectory(storeDir);
+
+        var (result, _, failedDeletes) = context.Service.ApplyRetention(context.SourceId, perCatLimit: 1, globalLimit: 0);
+
+        Assert.Single(result.DeletedReleaseIds, oldId);
+        Assert.Equal(0, failedDeletes);
+        Assert.False(Directory.Exists(storePath));
+
+        using var conn = context.Db.Open();
+        var refs = conn.ExecuteScalar<int>(
+            "SELECT COUNT(1) FROM poster_store_refs WHERE release_id = @releaseId;",
+            new { releaseId = oldId });
+        Assert.Equal(0, refs);
+    }
+
+    // -------------------------------------------------------------------------
+    // SavePosterWithStore: displaced storeDir return value
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void SavePosterWithStore_WhenStoreDirChanges_ReturnsDisplacedDir()
+    {
+        using var context = new RetentionTestContext();
+        var id = context.CreateRelease("guid", 100, "poster.jpg", storeDir: "tmdb-100");
+        context.AddStoreRef(id, "tmdb-100");
+
+        var displaced = context.Releases.SavePosterWithStore(
+            id, null, null, "poster.jpg", "tmdb:200", "tmdb-200");
+
+        Assert.Equal("tmdb-100", displaced);
+    }
+
+    [Fact]
+    public void SavePosterWithStore_WhenStoreDirUnchanged_ReturnsNull()
+    {
+        using var context = new RetentionTestContext();
+        var id = context.CreateRelease("guid", 100, "poster.jpg", storeDir: "tmdb-100");
+        context.AddStoreRef(id, "tmdb-100");
+
+        var displaced = context.Releases.SavePosterWithStore(
+            id, null, null, "poster.jpg", "tmdb:100", "tmdb-100");
+
+        Assert.Null(displaced);
+    }
+
+    [Fact]
+    public void SavePosterWithStore_WhenNoPreviousStoreDir_ReturnsNull()
+    {
+        using var context = new RetentionTestContext();
+        var id = context.CreateRelease("guid", 100, "poster.jpg", storeDir: null);
+
+        var displaced = context.Releases.SavePosterWithStore(
+            id, null, null, "poster.jpg", "tmdb:100", "tmdb-100");
+
+        Assert.Null(displaced);
+    }
+
+    // -------------------------------------------------------------------------
+    // RetentionService: periodic full-scan GC
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void ApplyRetention_PeriodicFullScanGc_PurgesOrphanedStoreDirFromPosterUpdate()
+    {
+        using var context = new RetentionTestContext();
+
+        // Active release — will not be deleted by retention
+        context.CreateRelease("active", 200, "active.jpg");
+
+        // Orphaned store dir on disk with no DB reference (simulates a displaced dir
+        // from a poster update that was never cleaned up)
+        var orphanPath = context.CreateStoreDirectory("tmdb-orphan");
+
+        // First call: _lastFullScanTs=0, so full-scan GC always runs immediately
+        var (result, _, failedDeletes) = context.Service.ApplyRetention(
+            context.SourceId, perCatLimit: 0, globalLimit: 0);
+
+        Assert.Empty(result.DeletedReleaseIds);
+        Assert.Equal(0, failedDeletes);
+        Assert.False(Directory.Exists(orphanPath),
+            "Orphaned store dir from a poster update should be purged by the periodic full-scan GC");
+    }
+
     private sealed class RetentionTestContext : IDisposable
     {
         private readonly TestWorkspace _workspace;
@@ -164,7 +255,7 @@ public sealed class RetentionServiceTests
         public RetentionService Service { get; }
         public long SourceId { get; }
 
-        public long CreateRelease(string guid, long publishedAtTs, string posterFile)
+        public long CreateRelease(string guid, long publishedAtTs, string posterFile, string? storeDir = null)
         {
             using var conn = Db.Open();
             return conn.ExecuteScalar<long>(
@@ -180,6 +271,7 @@ public sealed class RetentionServiceTests
                   unified_category,
                   media_type,
                   poster_file,
+                  poster_store_dir,
                   poster_updated_at_ts
                 )
                 VALUES(
@@ -193,14 +285,15 @@ public sealed class RetentionServiceTests
                   'Film',
                   'movie',
                   @posterFile,
+                  @storeDir,
                   @publishedAtTs
                 );
                 SELECT last_insert_rowid();
                 """,
-                new { sourceId = SourceId, guid, publishedAtTs, posterFile });
+                new { sourceId = SourceId, guid, publishedAtTs, posterFile, storeDir });
         }
 
-        public long CreateReleaseWithCategory(string guid, long publishedAtTs, string posterFile, string unifiedCategory)
+        public long CreateReleaseWithCategory(string guid, long publishedAtTs, string posterFile, string unifiedCategory, string? storeDir = null)
         {
             using var conn = Db.Open();
             return conn.ExecuteScalar<long>(
@@ -216,6 +309,7 @@ public sealed class RetentionServiceTests
                   unified_category,
                   media_type,
                   poster_file,
+                  poster_store_dir,
                   poster_updated_at_ts
                 )
                 VALUES(
@@ -229,11 +323,33 @@ public sealed class RetentionServiceTests
                   @unifiedCategory,
                   'movie',
                   @posterFile,
+                  @storeDir,
                   @publishedAtTs
                 );
                 SELECT last_insert_rowid();
                 """,
-                new { sourceId = SourceId, guid, publishedAtTs, posterFile, unifiedCategory });
+                new { sourceId = SourceId, guid, publishedAtTs, posterFile, unifiedCategory, storeDir });
+        }
+
+        public void AddStoreRef(long releaseId, string storeDir)
+        {
+            using var conn = Db.Open();
+            var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            conn.Execute(
+                """
+                INSERT OR IGNORE INTO poster_store_refs(store_dir, release_id, created_at_ts)
+                VALUES(@storeDir, @releaseId, @ts);
+                """,
+                new { storeDir, releaseId, ts });
+        }
+
+        public string CreateStoreDirectory(string storeDir)
+        {
+            var path = Path.Combine(Posters.PosterStoreDirPath, storeDir);
+            Directory.CreateDirectory(path);
+            File.WriteAllBytes(Path.Combine(path, "original.jpg"), [1, 2, 3]);
+            File.WriteAllBytes(Path.Combine(path, "w500.webp"), [4, 5, 6]);
+            return path;
         }
 
         public string CreatePosterFile(string fileName)

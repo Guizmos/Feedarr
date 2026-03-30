@@ -2460,7 +2460,8 @@ LEFT JOIN media_entities me
         Dictionary<string, int> PerKeyBefore,
         Dictionary<string, int> PerKeyAfter,
         List<long> DeletedReleaseIds,
-        List<string> PosterFiles);
+        List<string> PosterFiles,
+        List<string> StoreDirs);
 
     public RetentionResult ApplyRetention(long sourceId, int perCatLimit, int globalLimit)
     {
@@ -2472,6 +2473,7 @@ LEFT JOIN media_entities me
 
         var deletedIds = new List<long>();
         var posterFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var storeDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // Phase 1: collect both candidate sets BEFORE any deletion so that poster
         // files can be retrieved in a single query (avoids calling GetPosterFilesForReleaseIds
@@ -2523,6 +2525,8 @@ LEFT JOIN media_entities me
         {
             foreach (var file in GetPosterFilesForReleaseIds(conn, tx, allCandidates))
                 posterFiles.Add(file);
+            foreach (var storeDir in GetPosterStoreDirsForReleaseIds(conn, tx, allCandidates))
+                storeDirs.Add(storeDir);
         }
 
         // Phase 3: delete per-cat candidates.
@@ -2565,7 +2569,8 @@ LEFT JOIN media_entities me
             perKeyBefore,
             perKeyAfter,
             deletedIds,
-            posterFiles.ToList());
+            posterFiles.ToList(),
+            storeDirs.ToList());
     }
 
     public int GetPosterReferenceCount(string posterFile)
@@ -2847,6 +2852,7 @@ LEFT JOIN media_entities me
     private static void DeleteReleases(IDbConnection conn, IDbTransaction tx, IReadOnlyCollection<long> ids)
     {
         if (ids.Count == 0) return;
+        conn.Execute("DELETE FROM poster_store_refs WHERE release_id IN @ids;", new { ids }, tx);
         conn.Execute("DELETE FROM releases WHERE id IN @ids;", new { ids }, tx);
     }
 
@@ -2868,6 +2874,25 @@ LEFT JOIN media_entities me
             WHERE r.id IN @ids
               AND COALESCE(r.poster_file, me.poster_file) IS NOT NULL
               AND COALESCE(r.poster_file, me.poster_file) <> '';
+            """,
+            new { ids },
+            tx
+        );
+        return rows.Where(r => !string.IsNullOrWhiteSpace(r)).ToList();
+    }
+
+    private static IEnumerable<string> GetPosterStoreDirsForReleaseIds(IDbConnection conn, IDbTransaction tx, IReadOnlyCollection<long> ids)
+    {
+        if (ids.Count == 0) return Array.Empty<string>();
+        var rows = conn.Query<string>(
+            """
+            SELECT DISTINCT COALESCE(r.poster_store_dir, me.poster_store_dir) as storeDir
+            FROM releases r
+            LEFT JOIN media_entities me
+              ON me.id = r.entity_id
+            WHERE r.id IN @ids
+              AND COALESCE(r.poster_store_dir, me.poster_store_dir) IS NOT NULL
+              AND COALESCE(r.poster_store_dir, me.poster_store_dir) <> '';
             """,
             new { ids },
             tx
@@ -2986,6 +3011,7 @@ LEFT JOIN media_entities me
         using var tx = conn.BeginTransaction();
 
         conn.Execute("DELETE FROM release_arr_status WHERE release_id IN @ids;", new { ids }, tx);
+        conn.Execute("DELETE FROM poster_store_refs WHERE release_id IN @ids;", new { ids }, tx);
         var deleted = conn.Execute("DELETE FROM releases WHERE id IN @ids;", new { ids }, tx);
 
         tx.Commit();
@@ -3381,7 +3407,13 @@ LEFT JOIN media_entities me
     /// Same as <see cref="SavePoster"/> but also persists the canonical store columns
     /// (<c>poster_key</c>, <c>poster_store_dir</c>) and upserts <c>poster_store_refs</c>.
     /// </summary>
-    public void SavePosterWithStore(
+    /// <summary>
+    /// Persists poster store metadata for a release and returns the previous
+    /// <c>poster_store_dir</c> value when it has changed, so the caller can
+    /// schedule GC for the displaced directory.  Returns <c>null</c> when the
+    /// storeDir was not changed or when no previous value existed.
+    /// </summary>
+    public string? SavePosterWithStore(
         long id, int? tmdbId, string? posterPath, string posterFile,
         string posterKey, string storeDir)
     {
@@ -3397,6 +3429,13 @@ LEFT JOIN media_entities me
 
         var entityId = conn.ExecuteScalar<long?>(
             "SELECT entity_id FROM releases WHERE id = @id",
+            new { id }
+        );
+
+        // Capture previous storeDir before the update so that callers can
+        // trigger GC for the displaced directory when it changes.
+        var prevStoreDir = conn.ExecuteScalar<string?>(
+            "SELECT poster_store_dir FROM releases WHERE id = @id",
             new { id }
         );
 
@@ -3438,6 +3477,16 @@ LEFT JOIN media_entities me
 
             conn.Execute(
                 """
+                DELETE FROM poster_store_refs
+                WHERE release_id = @id
+                  AND store_dir <> @storeDir;
+                """,
+                new { id, storeDir },
+                tx
+            );
+
+            conn.Execute(
+                """
                 INSERT OR IGNORE INTO poster_store_refs(store_dir, release_id, created_at_ts)
                 VALUES (@storeDir, @id, @ts);
                 """,
@@ -3452,6 +3501,12 @@ LEFT JOIN media_entities me
             tx.Rollback();
             throw;
         }
+
+        // Return the displaced storeDir for GC only when the value actually changed.
+        return !string.IsNullOrWhiteSpace(prevStoreDir) &&
+               !string.Equals(prevStoreDir, storeDir, StringComparison.OrdinalIgnoreCase)
+               ? prevStoreDir
+               : null;
     }
 
     /// <summary>
@@ -3475,7 +3530,14 @@ LEFT JOIN media_entities me
         {
             var chunk = dirs.Skip(i).Take(chunkSize).ToArray();
             var referenced = conn.Query<string>(
-                "SELECT DISTINCT store_dir FROM poster_store_refs WHERE store_dir IN @chunk",
+                """
+                SELECT DISTINCT psr.store_dir
+                FROM poster_store_refs psr
+                JOIN releases r
+                  ON r.id = psr.release_id
+                WHERE psr.store_dir IN @chunk
+                  AND COALESCE(r.poster_store_dir, '') = psr.store_dir;
+                """,
                 new { chunk }
             ).ToHashSet(StringComparer.OrdinalIgnoreCase);
 

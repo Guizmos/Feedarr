@@ -369,7 +369,8 @@ public sealed class PosterFetchService
 
             if (!forceRefresh && originalPath is not null && existingThumbs.Length == PosterThumbService.SupportedWidths.Length)
             {
-                _releases.SavePosterWithStore(releaseId, tmdbId, posterPath, legacyPosterFile, posterKey, storeDir);
+                var displaced1 = _releases.SavePosterWithStore(releaseId, tmdbId, posterPath, legacyPosterFile, posterKey, storeDir);
+                TryCleanupDisplacedStoreDir(displaced1);
                 await EnqueueThumbWarmupAsync(storeDir, releaseId, ct).ConfigureAwait(false);
                 _logger.LogInformation(
                     "[POSTER_STORE] materialize skip storeDir={StoreDir} releaseId={ReleaseId} reason=already_up_to_date",
@@ -439,7 +440,8 @@ public sealed class PosterFetchService
                 .Where(width => !System.IO.File.Exists(Path.Combine(storeDirFull, $"w{width}.webp")))
                 .ToArray();
 
-            _releases.SavePosterWithStore(releaseId, tmdbId, posterPath, legacyPosterFile, posterKey, storeDir);
+            var displaced2 = _releases.SavePosterWithStore(releaseId, tmdbId, posterPath, legacyPosterFile, posterKey, storeDir);
+            TryCleanupDisplacedStoreDir(displaced2);
             await EnqueueThumbWarmupAsync(storeDir, releaseId, ct).ConfigureAwait(false);
 
             _logger.LogInformation(
@@ -483,6 +485,34 @@ public sealed class PosterFetchService
             status,
             result.StoreDir ?? "none",
             result.Reason);
+    }
+
+    /// <summary>
+    /// Deletes a store directory that was displaced when a release switched to a
+    /// different <c>poster_store_dir</c>, provided no other release still references it.
+    /// </summary>
+    private void TryCleanupDisplacedStoreDir(string? displacedDir)
+    {
+        if (string.IsNullOrWhiteSpace(displacedDir)) return;
+
+        var orphaned = _releases.GetOrphanedStoreDirs([displacedDir]);
+        if (orphaned.Count == 0) return;
+
+        var resolver = GetStoreResolver();
+        if (!resolver.TryResolveStoreDir(displacedDir, out var fullPath)) return;
+        if (!Directory.Exists(fullPath)) return;
+
+        try
+        {
+            Directory.Delete(fullPath, recursive: true);
+            _logger.LogInformation(
+                "[POSTER_STORE] displaced dir purged storeDir={StoreDir}", displacedDir);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "[POSTER_STORE] failed to purge displaced dir storeDir={StoreDir}", displacedDir);
+        }
     }
 
     private async Task EnqueueThumbWarmupAsync(string? storeDir, long releaseId, CancellationToken ct)

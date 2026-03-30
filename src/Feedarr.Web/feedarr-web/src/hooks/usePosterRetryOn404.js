@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiPost, resolveApiUrl } from "../api/client.js";
 
-const RETRY_DELAYS_MS = [2000, 4000, 8000, 15000, 30000, 60000, 120000, 180000, 300000, 600000];
+const RETRY_DELAYS_MS = [1000, 2000, 3000, 5000, 8000, 12000, 18000, 30000, 60000, 120000];
 const LOADER_MAX_MS = 20000;
 
 function isLocalPosterUrl(url) {
