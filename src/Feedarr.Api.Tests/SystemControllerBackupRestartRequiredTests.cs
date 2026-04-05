@@ -56,7 +56,7 @@ public sealed class SystemControllerBackupRestartRequiredTests
             appLifetime,
             NullLogger<StorageUsageCacheService>.Instance);
 
-        var controller = new SystemController(
+        var core = new SystemApiCore(
             db,
             new TestWebHostEnvironment(workspace.RootDir),
             settings,
@@ -71,7 +71,8 @@ public sealed class SystemControllerBackupRestartRequiredTests
             new MemoryCache(new MemoryCacheOptions()),
             new SetupStateService(settings, new MemoryCache(new MemoryCacheOptions())),
             storageCache,
-            NullLogger<SystemController>.Instance);
+            NullLogger<SystemApiCore>.Instance);
+        var controller = new SystemBackupsController(core);
 
         var result = await controller.RestoreBackup("backup.zip");
         var conflict = Assert.IsType<ConflictObjectResult>(result);

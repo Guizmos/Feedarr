@@ -136,6 +136,11 @@ public sealed class MaintenanceController : ControllerBase
         if (scope is not ("all" or "history" or "logs"))
             return BadRequest(new { error = "invalid scope" });
 
+        _log.LogInformation(
+            "Maintenance PurgeLogs started scope={Scope} olderThanDays={OlderThanDays}",
+            scope,
+            dto?.OlderThanDays ?? 0);
+
         int deleted;
         if (dto?.OlderThanDays is > 0)
         {
@@ -159,6 +164,13 @@ public sealed class MaintenanceController : ControllerBase
 
         _activity.Add(null, "info", "maintenance", "Logs purged",
             dataJson: $"{{\"scope\":\"{scope}\",\"olderThanDays\":{dto?.OlderThanDays ?? 0},\"deleted\":{deleted},\"csvDeleted\":{csvDeleted}}}");
+
+        _log.LogInformation(
+            "Maintenance PurgeLogs completed scope={Scope} olderThanDays={OlderThanDays} deleted={Deleted} csvDeleted={CsvDeleted}",
+            scope,
+            dto?.OlderThanDays ?? 0,
+            deleted,
+            csvDeleted);
 
         return Ok(new { ok = true, deleted, scope, olderThanDays = dto?.OlderThanDays, csvDeleted });
     }
@@ -468,9 +480,14 @@ public sealed class MaintenanceController : ControllerBase
 
         try
         {
+            _log.LogInformation("Maintenance CleanupPosters started");
+
             var postersDir = _posterFetch.PostersDirPath;
             if (!Directory.Exists(postersDir))
+            {
+                _log.LogInformation("Maintenance CleanupPosters completed scanned={Scanned} orphaned={Orphaned} deleted={Deleted}", 0, 0, 0);
                 return Ok(new { ok = true, scanned = 0, orphaned = 0, deleted = 0, freedBytes = 0L });
+            }
 
             var files = Directory.GetFiles(postersDir, "*.*", SearchOption.TopDirectoryOnly);
             var fileNames = files
@@ -586,6 +603,15 @@ public sealed class MaintenanceController : ControllerBase
 
             _activity.Add(null, "info", "maintenance", "Orphaned posters cleaned",
                 dataJson: $"{{\"scanned\":{scanned},\"orphaned\":{orphaned},\"deleted\":{deleted},\"freedBytes\":{freedBytes},\"storeDirsDeleted\":{storeDirsDeleted},\"storeFreedBytes\":{storeFreedBytes}}}");
+
+            _log.LogInformation(
+                "Maintenance CleanupPosters completed scanned={Scanned} orphaned={Orphaned} deleted={Deleted} freedBytes={FreedBytes} storeDirsDeleted={StoreDirsDeleted} storeFreedBytes={StoreFreedBytes}",
+                scanned,
+                orphaned,
+                deleted,
+                freedBytes,
+                storeDirsDeleted,
+                storeFreedBytes);
 
             return Ok(new { ok = true, scanned, orphaned, deleted, freedBytes, storeDirsDeleted, storeFreedBytes });
         }
@@ -722,6 +748,13 @@ public sealed class MaintenanceController : ControllerBase
                 ? DateTimeOffset.UtcNow.AddDays(-safeOlderThanDays.Value).ToUnixTimeSeconds()
                 : null;
 
+            _log.LogInformation(
+                "Maintenance RepairMissingPosters started dryRun={DryRun} limit={Limit} offset={Offset} olderThanDays={OlderThanDays}",
+                dryRun,
+                safeLimit,
+                safeOffset,
+                safeOlderThanDays ?? 0);
+
             var candidates = _releases.GetPosterRepairCandidates(olderThanTs, safeLimit, safeOffset);
             var resolver = new PosterPathResolver(_posterFetch.PostersDirPath);
 
@@ -764,6 +797,14 @@ public sealed class MaintenanceController : ControllerBase
                 _activity.Add(null, "info", "maintenance", "Missing posters repaired",
                     dataJson: $"{{\"checked\":{checkedCount},\"missing\":{missing},\"invalidated\":{invalidated},\"errors\":{errors},\"limit\":{safeLimit},\"offset\":{safeOffset},\"olderThanDays\":{safeOlderThanDays ?? 0}}}");
             }
+
+            _log.LogInformation(
+                "Maintenance RepairMissingPosters completed dryRun={DryRun} checked={Checked} missing={Missing} invalidated={Invalidated} errors={Errors}",
+                dryRun,
+                checkedCount,
+                missing,
+                invalidated,
+                errors);
 
             return Ok(new
             {
@@ -873,12 +914,26 @@ public sealed class MaintenanceController : ControllerBase
             var result = _releases.DetectDuplicates();
 
             if (!purge)
+            {
+                _log.LogInformation(
+                    "Maintenance DetectDuplicates completed groupsFound={GroupsFound} duplicatesCount={DuplicatesCount} purged={Purged}",
+                    result.GroupsFound,
+                    result.DuplicatesCount,
+                    false);
                 return Ok(new { ok = true, groupsFound = result.GroupsFound, duplicatesCount = result.DuplicatesCount, purged = false });
+            }
 
             var deleted = _releases.PurgeDuplicates(result.DuplicateIds);
 
             _activity.Add(null, "info", "maintenance", "Duplicates purged",
                 dataJson: $"{{\"groupsFound\":{result.GroupsFound},\"duplicatesCount\":{result.DuplicatesCount},\"deleted\":{deleted}}}");
+
+            _log.LogInformation(
+                "Maintenance DetectDuplicates completed groupsFound={GroupsFound} duplicatesCount={DuplicatesCount} purged={Purged} deleted={Deleted}",
+                result.GroupsFound,
+                result.DuplicatesCount,
+                true,
+                deleted);
 
             return Ok(new { ok = true, groupsFound = result.GroupsFound, duplicatesCount = result.DuplicatesCount, purged = true, deleted });
         }

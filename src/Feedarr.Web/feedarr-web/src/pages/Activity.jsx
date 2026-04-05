@@ -6,6 +6,7 @@ import { apiGet, apiPost, resolveApiUrl } from "../api/client.js";
 import Loader from "../ui/Loader.jsx";
 import Modal from "../ui/Modal.jsx";
 import AppIcon from "../ui/AppIcon.jsx";
+import ErrorBoundary from "../ui/ErrorBoundary.jsx";
 import { getActiveUiLanguage } from "../app/locale.js";
 import { tr } from "../app/uiText.js";
 
@@ -178,6 +179,7 @@ export default function Activity() {
   }
 
   return (
+    <ErrorBoundary label="Activite">
     <div className="page">
       <div className="pagehead">
         <div>
@@ -295,5 +297,6 @@ export default function Activity() {
         </div>
       </Modal>
     </div>
+    </ErrorBoundary>
   );
 }

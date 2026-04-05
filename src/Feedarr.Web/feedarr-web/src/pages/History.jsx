@@ -5,6 +5,7 @@ import { apiGet, apiPost } from "../api/client.js";
 import Loader from "../ui/Loader.jsx";
 import Modal from "../ui/Modal.jsx";
 import AppIcon from "../ui/AppIcon.jsx";
+import ErrorBoundary from "../ui/ErrorBoundary.jsx";
 import { buildIndexerPillStyle, getSourceColor } from "../utils/sourceColors.js";
 import { getActiveUiLanguage } from "../app/locale.js";
 import { tr } from "../app/uiText.js";
@@ -323,6 +324,7 @@ export default function History() {
   }, [page, currentPage]);
 
   return (
+    <ErrorBoundary label="Historique">
     <div className="page">
       <div className="pagehead">
         <div>
@@ -494,5 +496,6 @@ export default function History() {
         </div>
       </Modal>
     </div>
+    </ErrorBoundary>
   );
 }

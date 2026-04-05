@@ -450,6 +450,151 @@ public sealed class ReleaseRepositoryUpsertManyPreparedTests
     }
 
     [Fact]
+    public void UpsertMany_LargeMixedBatch_ReturnsOnlyNewInsertCount()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var sourceId = CreateSource(db);
+        var repository = CreateRepository(db);
+
+        var existing = Enumerable.Range(1, 600)
+            .Select(i => CreateItem($"guid-mixed-{i}", $"Mixed Existing {i}", 2000))
+            .ToList();
+        repository.UpsertMany(sourceId, "TEST", existing);
+
+        var mixed = Enumerable.Range(1, 620)
+            .Select(i => CreateItem($"guid-mixed-{i}", $"Mixed Payload {i}", 2000))
+            .ToList();
+
+        var insertedNew = repository.UpsertMany(sourceId, "TEST", mixed);
+
+        using var conn = db.Open();
+        var total = conn.ExecuteScalar<int>(
+            "SELECT COUNT(1) FROM releases WHERE source_id = @sourceId;",
+            new { sourceId });
+
+        Assert.Equal(20, insertedNew);
+        Assert.Equal(620, total);
+    }
+
+    [Fact]
+    public void UpsertMany_UsesLinkAsGuid_WhenGuidMatchesTitleAndNoBetterIdentifier()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var sourceId = CreateSource(db);
+        var repository = CreateRepository(db);
+
+        var title = "Fallback Link 2024 1080p";
+        repository.UpsertMany(sourceId, "TEST", new[]
+        {
+            new TorznabItem
+            {
+                Guid = title,
+                Title = title,
+                InfoHash = null,
+                DownloadUrl = null,
+                Link = "https://example.test/fallback-link",
+                CategoryId = 2000,
+                CategoryIds = new List<int> { 2000 }
+            }
+        });
+
+        using var conn = db.Open();
+        var storedGuid = conn.ExecuteScalar<string>(
+            "SELECT guid FROM releases WHERE source_id = @sourceId LIMIT 1;",
+            new { sourceId });
+
+        Assert.Equal("https://example.test/fallback-link", storedGuid);
+    }
+
+    [Fact]
+    public void UpsertMany_KeepsOriginalGuid_WhenItDiffersFromTitle()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var sourceId = CreateSource(db);
+        var repository = CreateRepository(db);
+
+        repository.UpsertMany(sourceId, "TEST", new[]
+        {
+            new TorznabItem
+            {
+                Guid = "original-guid",
+                Title = "Original Title 2024 1080p",
+                InfoHash = "ignored-info-hash",
+                DownloadUrl = "https://example.test/ignored-download",
+                Link = "https://example.test/ignored-link",
+                CategoryId = 2000,
+                CategoryIds = new List<int> { 2000 }
+            }
+        });
+
+        using var conn = db.Open();
+        var storedGuid = conn.ExecuteScalar<string>(
+            "SELECT guid FROM releases WHERE source_id = @sourceId LIMIT 1;",
+            new { sourceId });
+
+        Assert.Equal("original-guid", storedGuid);
+    }
+
+    [Fact]
+    public void UpsertMany_ComputedGuid_RoundsPublishedTimestampToHour()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var sourceId = CreateSource(db);
+        var repository = CreateRepository(db);
+
+        var baseItem = new TorznabItem
+        {
+            Guid = "",
+            Title = "",
+            CategoryId = 2000,
+            CategoryIds = new List<int> { 2000 },
+            SizeBytes = 9_999
+        };
+
+        var insertedNew = repository.UpsertMany(sourceId, "TEST", new[]
+        {
+            new TorznabItem
+            {
+                Guid = baseItem.Guid,
+                Title = baseItem.Title,
+                CategoryId = baseItem.CategoryId,
+                CategoryIds = new List<int>(baseItem.CategoryIds),
+                SizeBytes = baseItem.SizeBytes,
+                PublishedAtTs = 1_700_000_200
+            },
+            new TorznabItem
+            {
+                Guid = baseItem.Guid,
+                Title = baseItem.Title,
+                CategoryId = baseItem.CategoryId,
+                CategoryIds = new List<int>(baseItem.CategoryIds),
+                SizeBytes = baseItem.SizeBytes,
+                PublishedAtTs = 1_700_000_999
+            }
+        });
+
+        using var conn = db.Open();
+        var count = conn.ExecuteScalar<int>(
+            "SELECT COUNT(1) FROM releases WHERE source_id = @sourceId;",
+            new { sourceId });
+
+        Assert.Equal(1, insertedNew);
+        Assert.Equal(1, count);
+    }
+
+    [Fact]
     public void UpsertMany_PopulatesEntityId_AfterInsert()
     {
         using var workspace = new TestWorkspace();

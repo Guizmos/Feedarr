@@ -4,6 +4,10 @@ import { useVirtualGrid } from "../hooks/useVirtualGrid.js";
 
 /** Matches .grid { gap: 20px } in styles.css */
 const GAP = 20;
+const MOBILE_MAX_WIDTH = 768;
+
+/** On mobile (containerWidth <= 768px), enforce at least 3 columns. */
+const GRID_MIN_COLS_FN = (w) => (w > 0 && w <= MOBILE_MAX_WIDTH ? 3 : 1);
 
 /**
  * Vue grille de la bibliothèque (cartes poster virtualisées)
@@ -43,7 +47,7 @@ function LibraryGrid({
   const { containerRef, rows, numCols, scrollMargin, virtualizer } = useVirtualGrid(
     items,
     cardSize,
-    { gap: GAP, estimatedCardHeight },
+    { gap: GAP, estimatedCardHeight, minColsFn: GRID_MIN_COLS_FN },
   );
 
   // --card-scale drives all scaled dimensions inside PosterCard.
