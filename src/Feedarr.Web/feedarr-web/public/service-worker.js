@@ -1,4 +1,4 @@
-const CACHE_NAME = "feedarr-pwa-v3";
+const CACHE_NAME = "feedarr-pwa-v4";
 const SCOPE_PATH = (() => {
   const scopePath = new URL(self.registration.scope).pathname;
   return scopePath !== "/" && scopePath.endsWith("/")
