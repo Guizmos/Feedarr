@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.3](https://github.com/Guizmos/Feedarr/compare/v2.5.2...v2.5.3) (2026-04-05)
+
+
+### Bug Fixes
+
+* download fix & push script correction ([c99ec79](https://github.com/Guizmos/Feedarr/commit/c99ec799f1ed32651db15df1ad66b634b8f84e80))
+
 ## [2.5.2](https://github.com/Guizmos/Feedarr/compare/v2.5.1...v2.5.2) (2026-04-05)
 
 
