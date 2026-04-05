@@ -305,6 +305,59 @@ public sealed class SmartAuthMiddlewareTests
     }
 
     [Fact]
+    public async Task BootstrapToken_ValidButOutOfScopePath_ReturnsScopeExceeded()
+    {
+        using var fixture = new MiddlewareFixture();
+        fixture.SetupState.MarkSetupCompleted();
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        {
+            AuthMode = "smart",
+            PublicBaseUrl = "https://feedarr.example.com"
+        });
+
+        var token = fixture.BootstrapTokens.IssueToken();
+
+        var (nextCalled, context) = await fixture.InvokeAsync(
+            path: "/api/sources",
+            method: "GET",
+            host: "feedarr.example.com",
+            remoteIp: IPAddress.Parse("203.0.113.46"),
+            headers: new Dictionary<string, string>
+            {
+                [SmartAuthPolicy.BootstrapTokenHeader] = token
+            });
+
+        Assert.False(nextCalled);
+        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        Assert.Contains("bootstrap_token_scope_exceeded", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task BootstrapTokenRoute_AcceptsLegacyBootstrapSecretHeader()
+    {
+        using var fixture = new MiddlewareFixture(new Dictionary<string, string?>
+        {
+            ["App:Security:BootstrapSecret"] = "test-bootstrap-secret"
+        });
+        fixture.SetupState.MarkSetupCompleted();
+        fixture.Settings.SaveSecurity(new SecuritySettings { AuthMode = "smart" });
+
+        var (nextCalled, context) = await fixture.InvokeAsync(
+            path: "/api/setup/bootstrap-token",
+            method: "POST",
+            host: "feedarr.example.com",
+            remoteIp: IPAddress.Parse("203.0.113.23"),
+            headers: new Dictionary<string, string>
+            {
+                [SmartAuthPolicy.LegacyBootstrapSecretHeader] = "test-bootstrap-secret"
+            });
+
+        Assert.True(nextCalled);
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+    }
+
+    [Fact]
     public async Task BasicAuth_ThrottleAfterSixFailures_Returns429WithRetryAfter()
     {
         using var fixture = new MiddlewareFixture();
@@ -501,6 +554,140 @@ public sealed class SmartAuthMiddlewareTests
 
         Assert.False(nextCalled);
         Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task StrictMode_InvalidAuthorizationHeader_Returns401WithChallenge()
+    {
+        using var fixture = new MiddlewareFixture();
+        fixture.SetupState.MarkSetupCompleted();
+        var (hash, salt) = HashPassword("StrongP@ssw0rd!");
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        {
+            AuthMode = "strict",
+            Username = "admin",
+            PasswordHash = hash,
+            PasswordSalt = salt
+        });
+
+        var (nextCalled, context) = await fixture.InvokeAsync(
+            path: "/api/sources",
+            host: "feedarr.example.com",
+            remoteIp: IPAddress.Parse("203.0.113.88"),
+            headers: new Dictionary<string, string>
+            {
+                ["Authorization"] = "Basic !!!not-base64!!!"
+            });
+
+        Assert.False(nextCalled);
+        Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
+        Assert.Equal("Basic realm=\"Feedarr\"", context.Response.Headers.WWWAuthenticate.ToString());
+    }
+
+    [Fact]
+    public async Task StrictMode_BearerAuthorization_IsRejectedWithBasicChallenge()
+    {
+        using var fixture = new MiddlewareFixture();
+        fixture.SetupState.MarkSetupCompleted();
+        var (hash, salt) = HashPassword("StrongP@ssw0rd!");
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        {
+            AuthMode = "strict",
+            Username = "admin",
+            PasswordHash = hash,
+            PasswordSalt = salt
+        });
+
+        var (nextCalled, context) = await fixture.InvokeAsync(
+            path: "/api/sources",
+            host: "feedarr.example.com",
+            remoteIp: IPAddress.Parse("203.0.113.89"),
+            headers: new Dictionary<string, string>
+            {
+                ["Authorization"] = "Bearer token"
+            });
+
+        Assert.False(nextCalled);
+        Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
+        Assert.Equal("Basic realm=\"Feedarr\"", context.Response.Headers.WWWAuthenticate.ToString());
+    }
+
+    [Fact]
+    public async Task StrictMode_HeadStaticAsset_DoesNotRequireAuth()
+    {
+        using var fixture = new MiddlewareFixture();
+        fixture.SetupState.MarkSetupCompleted();
+        var (hash, salt) = HashPassword("StrongP@ssw0rd!");
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        {
+            AuthMode = "strict",
+            Username = "admin",
+            PasswordHash = hash,
+            PasswordSalt = salt
+        });
+
+        var (nextCalled, context) = await fixture.InvokeAsync(
+            path: "/favicon.ico",
+            method: "HEAD",
+            host: "feedarr.example.com",
+            remoteIp: IPAddress.Parse("203.0.113.90"));
+
+        Assert.True(nextCalled);
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task StrictMode_PostOnAssetsPath_DoesNotBypassAuth()
+    {
+        using var fixture = new MiddlewareFixture();
+        fixture.SetupState.MarkSetupCompleted();
+        var (hash, salt) = HashPassword("StrongP@ssw0rd!");
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        {
+            AuthMode = "strict",
+            Username = "admin",
+            PasswordHash = hash,
+            PasswordSalt = salt
+        });
+
+        var (nextCalled, context) = await fixture.InvokeAsync(
+            path: "/assets/main.js",
+            method: "POST",
+            host: "feedarr.example.com",
+            remoteIp: IPAddress.Parse("203.0.113.91"));
+
+        Assert.False(nextCalled);
+        Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task StrictMode_ValidBootstrapSecretHeader_BypassesCredentialCheck()
+    {
+        using var fixture = new MiddlewareFixture(new Dictionary<string, string?>
+        {
+            ["App:Security:BootstrapSecret"] = "secret-123"
+        });
+        fixture.SetupState.MarkSetupCompleted();
+        var (hash, salt) = HashPassword("StrongP@ssw0rd!");
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        {
+            AuthMode = "strict",
+            Username = "admin",
+            PasswordHash = hash,
+            PasswordSalt = salt
+        });
+
+        var (nextCalled, context) = await fixture.InvokeAsync(
+            path: "/api/sources",
+            host: "feedarr.example.com",
+            remoteIp: IPAddress.Parse("203.0.113.92"),
+            headers: new Dictionary<string, string>
+            {
+                [SmartAuthPolicy.BootstrapSecretHeader] = "secret-123"
+            });
+
+        Assert.True(nextCalled);
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
     }
 
     private static (string hash, string salt) HashPassword(string password)

@@ -108,6 +108,13 @@ export default function SettingsUsers({
     normalizedSecurityMessageLower.includes(credentialsWarningAltFrLower);
 
   const notices = [];
+  if (security.authMode === "smart" && security.authConfigured) {
+    notices.push({
+      key: "warn-smart-local-bypass",
+      variant: "warning",
+      message: t("settings.security.warning.smartLocalBypass"),
+    });
+  }
   if (credentialsWarningInline) {
     notices.push({ key: "warn-required", variant: "warning", message: CREDENTIALS_REQUIRED_MESSAGE });
   }

@@ -32,6 +32,8 @@ import { useGridLayout } from "./useGridLayout.js";
  *   colWidth-based formula. Use this for cards whose height depends on cardSize
  *   (fixed scaling) rather than on column width (aspect-ratio).
  * @param {number}   [opts.overscan=5]          - Off-screen rows to keep mounted.
+ * @param {Function} [opts.minColsFn=null]       - Optional function (containerWidth) => minCols.
+ *   Use this to enforce a minimum column count at specific breakpoints (e.g. mobile).
  * @returns {{ containerRef, rows, numCols, scrollMargin, virtualizer }}
  */
 export function useVirtualGrid(items, cardSize, {
@@ -40,16 +42,20 @@ export function useVirtualGrid(items, cardSize, {
   titleAreaPx = 44,
   estimatedCardHeight = null,
   overscan = 5,
+  minColsFn = null,
 } = {}) {
   const scrollRef = useScrollContainer();
   const containerRef = useRef(null);
   const containerWidth = useContainerWidth(containerRef);
   const [scrollMargin, setScrollMargin] = useState(0);
 
+  const minCols = minColsFn ? minColsFn(containerWidth) : 1;
+
   const { numCols, estimatedRowHeight } = useGridLayout(containerWidth, cardSize, {
     gap,
     cardHeightRatio,
     titleAreaPx,
+    minCols,
   });
 
   // Chunk flat items into rows of numCols.

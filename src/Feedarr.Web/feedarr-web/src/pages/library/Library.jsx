@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { apiGet, apiPost } from "@api/client.js";
 import Loader from "@ui/Loader.jsx";
+import ErrorBoundary from "@ui/ErrorBoundary.jsx";
 import ReleaseModal from "@ui/ReleaseModal.jsx";
 import { getSourceColor } from "@utils/sourceColors.js";
 import { openDownloadPath } from "@utils/downloadPath.js";
@@ -1084,6 +1085,7 @@ export default function Library() {
   }, [setContent, subbarProps]);
 
   return (
+    <ErrorBoundary label="Bibliothèque">
     <div className="page page--library">
       <div className="pagehead">
         <div>
@@ -1221,5 +1223,6 @@ export default function Library() {
         mediaType={manualMediaType}
       />
     </div>
+    </ErrorBoundary>
   );
 }

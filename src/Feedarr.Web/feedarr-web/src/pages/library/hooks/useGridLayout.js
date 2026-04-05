@@ -16,14 +16,15 @@ import { useMemo } from "react";
  * @param {number} [opts.gap=20]              - Column gap in pixels (matches CSS .grid { gap: 20px }).
  * @param {number} [opts.cardHeightRatio=1.5] - Poster height-to-width ratio (height = width * ratio).
  * @param {number} [opts.titleAreaPx=44]      - Extra height below poster for title/badges area.
+ * @param {number} [opts.minCols=1]           - Minimum number of columns (e.g. enforce 3 on mobile).
  * @returns {{ numCols: number, colWidth: number, estimatedRowHeight: number }}
  */
-export function computeGridLayout(containerWidth, cardSize, { gap = 20, cardHeightRatio = 1.5, titleAreaPx = 44 } = {}) {
+export function computeGridLayout(containerWidth, cardSize, { gap = 20, cardHeightRatio = 1.5, titleAreaPx = 44, minCols = 1 } = {}) {
   if (containerWidth <= 0 || cardSize <= 0) {
     return { numCols: 1, colWidth: 0, estimatedRowHeight: 0 };
   }
 
-  const numCols = Math.max(1, Math.floor((containerWidth + gap) / (cardSize + gap)));
+  const numCols = Math.max(minCols, Math.max(1, Math.floor((containerWidth + gap) / (cardSize + gap))));
   const colWidth = (containerWidth - (numCols - 1) * gap) / numCols;
   const estimatedRowHeight = Math.round(colWidth * cardHeightRatio + titleAreaPx);
 
@@ -44,10 +45,10 @@ export function computeGridLayout(containerWidth, cardSize, { gap = 20, cardHeig
  * @returns {{ numCols: number, colWidth: number, estimatedRowHeight: number }}
  */
 export function useGridLayout(containerWidth, cardSize, opts = {}) {
-  const { gap = 20, cardHeightRatio = 1.5, titleAreaPx = 44 } = opts;
+  const { gap = 20, cardHeightRatio = 1.5, titleAreaPx = 44, minCols = 1 } = opts;
 
   return useMemo(
-    () => computeGridLayout(containerWidth, cardSize, { gap, cardHeightRatio, titleAreaPx }),
-    [containerWidth, cardSize, gap, cardHeightRatio, titleAreaPx],
+    () => computeGridLayout(containerWidth, cardSize, { gap, cardHeightRatio, titleAreaPx, minCols }),
+    [containerWidth, cardSize, gap, cardHeightRatio, titleAreaPx, minCols],
   );
 }

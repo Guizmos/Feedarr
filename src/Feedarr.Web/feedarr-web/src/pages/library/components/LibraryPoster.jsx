@@ -199,6 +199,9 @@ function getIndexerClass(value) {
 /** Matches .grid.grid--poster { gap: 10px } in styles.css */
 const GAP = 10;
 
+/** On mobile (containerWidth < 600px), enforce at least 3 columns. */
+const POSTER_MIN_COLS_FN = (w) => (w > 0 && w < 600 ? 3 : 1);
+
 /**
  * Vue poster de la bibliothèque (PosterViewCard virtualisées)
  *
@@ -225,7 +228,7 @@ function LibraryPoster({
   const { containerRef, rows, numCols, scrollMargin, virtualizer } = useVirtualGrid(
     items,
     cardSize,
-    { gap: GAP, cardHeightRatio: 1.5, titleAreaPx: 0 },
+    { gap: GAP, cardHeightRatio: 1.5, titleAreaPx: 0, minColsFn: POSTER_MIN_COLS_FN },
   );
 
   const scaleStyle = useMemo(

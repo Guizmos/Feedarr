@@ -618,6 +618,236 @@ public sealed class FeedTopByCategoryTests
     }
 
     [Fact]
+    public void Top_UsesIndexerIdAlias_AsSourceFilter()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var sourceA = InsertSource(db, "source-indexer-alias-a");
+        var sourceB = InsertSource(db, "source-indexer-alias-b");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        InsertSourceCategory(db, sourceA, 2000, "Movies", unifiedKey: "films", unifiedLabel: "Films");
+        InsertSourceCategory(db, sourceB, 2000, "Movies", unifiedKey: "films", unifiedLabel: "Films");
+        InsertRelease(db, sourceA, "alias-a-1", 2000, "Film", 40, "2000", title: "From A", publishedAt: now - 30);
+        InsertRelease(db, sourceB, "alias-b-1", 2000, "Film", 90, "2000", title: "From B", publishedAt: now - 10);
+
+        var controller = CreateController(db);
+        var action = controller.Top(hours: 24, take: 5, perCategoryTake: 5, sort: "recent", dedupe: "none", limit: null, sourceId: null, indexerId: sourceA);
+        var ok = Assert.IsType<OkObjectResult>(action);
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var titles = doc.RootElement.GetProperty("globalTop").EnumerateArray().Select(x => x.GetProperty("Title").GetString()).ToList();
+        Assert.Single(titles);
+        Assert.Equal("From A", titles[0]);
+    }
+
+    [Fact]
+    public void Top_SourceId_HasPriorityOverIndexerId()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var sourceA = InsertSource(db, "source-priority-a");
+        var sourceB = InsertSource(db, "source-priority-b");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        InsertSourceCategory(db, sourceA, 2000, "Movies", unifiedKey: "films", unifiedLabel: "Films");
+        InsertSourceCategory(db, sourceB, 2000, "Movies", unifiedKey: "films", unifiedLabel: "Films");
+        InsertRelease(db, sourceA, "prio-a-1", 2000, "Film", 40, "2000", title: "From SourceId", publishedAt: now - 20);
+        InsertRelease(db, sourceB, "prio-b-1", 2000, "Film", 90, "2000", title: "From IndexerId", publishedAt: now - 10);
+
+        var controller = CreateController(db);
+        var action = controller.Top(hours: 24, take: 5, perCategoryTake: 5, sort: "recent", dedupe: "none", limit: null, sourceId: sourceA, indexerId: sourceB);
+        var ok = Assert.IsType<OkObjectResult>(action);
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var titles = doc.RootElement.GetProperty("globalTop").EnumerateArray().Select(x => x.GetProperty("Title").GetString()).ToList();
+        Assert.Single(titles);
+        Assert.Equal("From SourceId", titles[0]);
+    }
+
+    [Fact]
+    public void Top_ClampsWindowAndTakeParameters()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var sourceId = InsertSource(db, "source-clamp");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        InsertSourceCategory(db, sourceId, 2000, "Movies", unifiedKey: "films", unifiedLabel: "Films");
+        InsertRelease(db, sourceId, "clamp-1", 2000, "Film", 10, "2000", title: "Clamp", publishedAt: now - 60);
+
+        var controller = CreateController(db);
+        var action = controller.Top(hours: 9999, take: 999, perCategoryTake: 999, sort: "recent", dedupe: "none", limit: null, sourceId: null, indexerId: null);
+        var ok = Assert.IsType<OkObjectResult>(action);
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        Assert.Equal(24 * 7, doc.RootElement.GetProperty("window").GetProperty("hours").GetInt32());
+        Assert.Equal(50, doc.RootElement.GetProperty("takeUsed").GetInt32());
+        Assert.Equal(50, doc.RootElement.GetProperty("perCategoryTakeUsed").GetInt32());
+    }
+
+    [Fact]
+    public void Top_UsesLimitQueryParam_WhenTakeIsNotProvided()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var sourceId = InsertSource(db, "source-limit-alias");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        InsertSourceCategory(db, sourceId, 2000, "Movies", unifiedKey: "films", unifiedLabel: "Films");
+        InsertRelease(db, sourceId, "limit-a", 2000, "Film", 10, "2000", title: "Limit A", publishedAt: now - 180);
+        InsertRelease(db, sourceId, "limit-b", 2000, "Film", 20, "2000", title: "Limit B", publishedAt: now - 120);
+        InsertRelease(db, sourceId, "limit-c", 2000, "Film", 30, "2000", title: "Limit C", publishedAt: now - 60);
+
+        var controller = CreateController(db);
+        var action = controller.Top(hours: 24, take: null, perCategoryTake: null, sort: "recent", dedupe: "none", limit: 2, sourceId: null, indexerId: null);
+        var ok = Assert.IsType<OkObjectResult>(action);
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var globalTop = doc.RootElement.GetProperty("globalTop").EnumerateArray().ToList();
+        Assert.Equal(2, globalTop.Count);
+        Assert.Equal(2, doc.RootElement.GetProperty("takeUsed").GetInt32());
+    }
+
+    [Fact]
+    public void Top_NormalizesInvalidSortAndDedupe_ToSafeDefaults()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var sourceId = InsertSource(db, "source-invalid-params");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        InsertSourceCategory(db, sourceId, 2000, "Movies", unifiedKey: "films", unifiedLabel: "Films");
+        InsertRelease(db, sourceId, "invalid-params-1", 2000, "Film", 10, "2000", title: "Param Test", publishedAt: now - 60);
+
+        var controller = CreateController(db);
+        var action = controller.Top(hours: 24, take: 5, perCategoryTake: null, sort: "not-a-sort", dedupe: "not-a-dedupe", limit: null, sourceId: null, indexerId: null);
+        var ok = Assert.IsType<OkObjectResult>(action);
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        Assert.Equal("recent", doc.RootElement.GetProperty("sortUsed").GetString());
+        Assert.Equal("entity", doc.RootElement.GetProperty("dedupeUsed").GetString());
+    }
+
+    [Fact]
+    public void Top_CacheHit_DoesNotRecomputeSharedQuery()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var sourceId = InsertSource(db, "source-cache-hit");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        InsertSourceCategory(db, sourceId, 2000, "Movies", unifiedKey: "films", unifiedLabel: "Films");
+        InsertRelease(db, sourceId, "cache-hit-1", 2000, "Film", 22, "2000", title: "Cache Hit", publishedAt: now - 60);
+
+        var computeCalls = 0;
+        var controller = CreateController(db, onTopCacheMissCompute: () => Interlocked.Increment(ref computeCalls));
+
+        var first = controller.Top(hours: 24, take: 5, perCategoryTake: 5, sort: "recent", dedupe: "none", limit: null, sourceId: null, indexerId: null);
+        var second = controller.Top(hours: 24, take: 5, perCategoryTake: 5, sort: "recent", dedupe: "none", limit: null, sourceId: null, indexerId: null);
+
+        Assert.IsType<OkObjectResult>(first);
+        Assert.IsType<OkObjectResult>(second);
+        Assert.Equal(1, Volatile.Read(ref computeCalls));
+    }
+
+    [Fact]
+    public void Top_ThrowsWhenRequestIsAlreadyCancelled()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var sourceId = InsertSource(db, "source-cancelled");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        InsertSourceCategory(db, sourceId, 2000, "Movies", unifiedKey: "films", unifiedLabel: "Films");
+        InsertRelease(db, sourceId, "cancelled-1", 2000, "Film", 10, "2000", title: "Cancelled", publishedAt: now - 60);
+
+        var controller = CreateController(db);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() =>
+            controller.Top(
+                hours: 24,
+                take: 5,
+                perCategoryTake: 5,
+                sort: "recent",
+                dedupe: "none",
+                limit: null,
+                sourceId: null,
+                indexerId: null,
+                ct: cts.Token));
+    }
+
+    [Fact]
+    public void Top_DefaultsTakeToFive_WhenTakeAndLimitAreMissing()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var sourceId = InsertSource(db, "source-default-take");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        InsertSourceCategory(db, sourceId, 2000, "Movies", unifiedKey: "films", unifiedLabel: "Films");
+
+        for (var i = 1; i <= 7; i++)
+            InsertRelease(db, sourceId, $"default-take-{i}", 2000, "Film", 10 + i, "2000", title: $"Default Take {i}", publishedAt: now - i);
+
+        var controller = CreateController(db);
+        var action = controller.Top(hours: 24, take: null, perCategoryTake: null, sort: "recent", dedupe: "none", limit: null, sourceId: null, indexerId: null);
+        var ok = Assert.IsType<OkObjectResult>(action);
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        Assert.Equal(5, doc.RootElement.GetProperty("takeUsed").GetInt32());
+        Assert.Equal(5, doc.RootElement.GetProperty("perCategoryTakeUsed").GetInt32());
+        Assert.Equal(5, doc.RootElement.GetProperty("globalTop").EnumerateArray().Count());
+    }
+
+    [Fact]
+    public void Top_GlobalCanContainRows_WhenCategoriesAreEmpty()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var sourceId = InsertSource(db, "source-empty-categories");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        InsertSourceCategory(db, sourceId, 9999, "Unknown", unifiedKey: null, unifiedLabel: null);
+        InsertRelease(
+            db,
+            sourceId,
+            guid: "empty-cat-1",
+            categoryId: 9999,
+            unifiedCategory: "",
+            seeders: 80,
+            categoryIds: "9999",
+            title: "No category hints",
+            titleClean: "xyzqv",
+            publishedAt: now - 60,
+            createdAt: now - 60);
+
+        var controller = CreateController(db);
+        var action = controller.Top(hours: 24, take: 5, perCategoryTake: 5, sort: "recent", dedupe: "none", limit: null, sourceId: null, indexerId: null);
+        var ok = Assert.IsType<OkObjectResult>(action);
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var global = doc.RootElement.GetProperty("globalTop").EnumerateArray().ToList();
+        var categories = doc.RootElement.GetProperty("categories").EnumerateArray().ToList();
+        Assert.Single(global);
+        Assert.Empty(categories);
+    }
+
+    [Fact]
     public void Latest_KeepsReleaseVisible_WhenSourceCategoryRowIsMissing()
     {
         using var workspace = new TestWorkspace();
