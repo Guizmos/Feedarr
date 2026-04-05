@@ -188,12 +188,27 @@ public sealed class BasicAuthMiddleware
             await RejectThrottledAsync(context, retryAfter).ConfigureAwait(false);            return;
         }
 
+        // Fast path: skip the PBKDF2 computation if this credential pair was recently validated.
+        // The cache key is an HMAC-SHA256 of (user:pass) keyed with the stored password salt,
+        // so it auto-invalidates whenever the password (and therefore the salt) changes.
+        var credCacheKey = ComputeCredCacheKey(user, pass, security);
+        if (credCacheKey is not null && cache.TryGetValue<bool>(credCacheKey, out var cachedValid) && cachedValid)
+        {
+            authThrottle.RegisterSuccess(remoteIp, user);
+            context.Items[AuthPassedKey] = true;
+            await _next(context).ConfigureAwait(false);            return;
+        }
+
         if (!Validate(user, pass, security))
         {
             authThrottle.RegisterFailure(remoteIp, user);
             Challenge(context);
             return;
         }
+
+        // Only cache successes — caching failures would block re-login after a password change.
+        if (credCacheKey is not null)
+            cache.Set(credCacheKey, true, TimeSpan.FromMinutes(5));
 
         authThrottle.RegisterSuccess(remoteIp, user);
         context.Items[AuthPassedKey] = true;
@@ -264,6 +279,25 @@ public sealed class BasicAuthMiddleware
             error = "bootstrap_secret_required",
             message = "Bootstrap token requires loopback access or a valid X-Bootstrap-Secret header"
         });
+    }
+
+    /// <summary>
+    /// Computes a short-lived cache key that represents a validated credential pair.
+    /// Using HMAC keyed with the password salt means the key changes automatically when
+    /// the password (and therefore the salt) is updated — no explicit cache invalidation needed.
+    /// Returns null if the salt is unavailable or malformed.
+    /// </summary>
+    private static string? ComputeCredCacheKey(string user, string pass, SecuritySettings settings)
+    {
+        if (string.IsNullOrWhiteSpace(settings.PasswordSalt)) return null;
+        try
+        {
+            var saltBytes = Convert.FromBase64String(settings.PasswordSalt);
+            var input = Encoding.UTF8.GetBytes(user + ":" + pass);
+            using var hmac = new HMACSHA256(saltBytes);
+            return "auth:ok:" + Convert.ToBase64String(hmac.ComputeHash(input));
+        }
+        catch { return null; }
     }
 
     private static bool TryGetBasicCredentials(HttpContext context, out string user, out string pass)

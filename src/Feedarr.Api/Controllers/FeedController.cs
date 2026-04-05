@@ -587,7 +587,10 @@ public sealed class FeedController : ControllerBase
                     effectiveDedupe,
                     supportsEntityDedupe,
                     sinceTs,
-                    ct),
+                    // CancellationToken.None: the Lazy is shared across concurrent requests.
+                    // Passing the first caller's CT would fault the Lazy if that request is
+                    // cancelled, propagating the cancellation to all waiting callers.
+                    CancellationToken.None),
                 LazyThreadSafetyMode.ExecutionAndPublication));
 
         try

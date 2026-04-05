@@ -8,14 +8,14 @@ public sealed class RetentionService
     private const long FullScanIntervalSeconds = 3600; // at most once per hour
 
     private readonly ReleaseRepository _releases;
-    private readonly PosterFetchService _posters;
+    private readonly PosterFetchService? _posters;
     private readonly IPosterFileStore _fileStore;
     private readonly ILogger<RetentionService> _log;
     private long _lastFullScanTs;
 
     public RetentionService(
         ReleaseRepository releases,
-        PosterFetchService posters,
+        PosterFetchService? posters,
         IPosterFileStore fileStore,
         ILogger<RetentionService> log)
     {
@@ -51,6 +51,7 @@ public sealed class RetentionService
     private (int purged, int failedDeletes) CleanupOrphanPosters(IEnumerable<string> posterFiles)
     {
         if (posterFiles is null) return (0, 0);
+        if (_posters is null) return (0, 0);
         var unique = posterFiles
             .Where(f => !string.IsNullOrWhiteSpace(f))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -107,6 +108,8 @@ public sealed class RetentionService
     /// </summary>
     private void TryRunPeriodicFullScanGc()
     {
+        if (_posters is null) return;
+
         var nowTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var lastScan = Interlocked.Read(ref _lastFullScanTs);
         if (nowTs - lastScan < FullScanIntervalSeconds) return;
@@ -143,6 +146,7 @@ public sealed class RetentionService
     private (int purged, int failedDeletes) CleanupOrphanStoreDirs(IEnumerable<string> candidateStoreDirs)
     {
         if (candidateStoreDirs is null) return (0, 0);
+        if (_posters is null) return (0, 0);
 
         var unique = candidateStoreDirs
             .Where(dir => !string.IsNullOrWhiteSpace(dir))

@@ -19,18 +19,20 @@ public sealed class ReleasesController : ControllerBase
     private readonly Db _db;
     private readonly TitleParser _parser;
     private readonly IgdbClient _igdb;
+    private readonly IHttpClientFactory _httpFactory;
 
-    public ReleasesController(ReleaseRepository releases, Db db, TitleParser parser, IgdbClient igdb)
+    public ReleasesController(ReleaseRepository releases, Db db, TitleParser parser, IgdbClient igdb, IHttpClientFactory httpFactory)
     {
         _releases = releases;
         _db = db;
         _parser = parser;
         _igdb = igdb;
+        _httpFactory = httpFactory;
     }
 
     // GET /api/releases/{id}/download
     [HttpGet("{id:long}/download")]
-    public IActionResult Download([FromRoute] long id)
+    public async Task<IActionResult> Download([FromRoute] long id, CancellationToken ct)
     {
         var url = _releases.GetDownloadUrl(id);
 
@@ -39,8 +41,38 @@ public sealed class ReleasesController : ControllerBase
         if (!OutboundUrlGuard.TryNormalizeDownloadUrl(url, out var normalizedUrl, out _))
             return BadRequest(new { error = "invalid download_url" });
 
-        // 🔐 le front ne voit jamais jackett_apikey
-        return Redirect(normalizedUrl);
+        // Magnet links are handled directly by the browser's OS protocol handler
+        if (normalizedUrl.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase))
+            return Redirect(normalizedUrl);
+
+        // 🔐 Proxy the torrent: the browser never sees the internal Jackett/Prowlarr URL or API key.
+        // Redirecting would fail when the indexer host is only reachable from the server (e.g. Docker network).
+        try
+        {
+            var client = _httpFactory.CreateClient("torrent-download");
+            using var response = await client.GetAsync(normalizedUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+
+            if (!response.IsSuccessStatusCode)
+                return StatusCode(502, new { error = "indexer returned an error", status = (int)response.StatusCode });
+
+            var contentType = response.Content.Headers.ContentType?.ToString()
+                              ?? "application/x-bittorrent";
+
+            var filename = response.Content.Headers.ContentDisposition?.FileNameStar
+                           ?? response.Content.Headers.ContentDisposition?.FileName;
+            filename = string.IsNullOrWhiteSpace(filename) ? "download.torrent" : filename.Trim('"');
+
+            var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+            return File(bytes, contentType, filename);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return StatusCode(502, new { error = "could not fetch torrent from indexer" });
+        }
     }
 
     // POST /api/releases/{id}/seen

@@ -220,6 +220,18 @@ builder.Services.AddHttpClient("github-updates", c =>
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
 });
 
+builder.Services.AddHttpClient("torrent-download", c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(60);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AllowAutoRedirect = true,
+    ServerCertificateCustomValidationCallback = allowInvalidCerts
+        ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+        : null
+});
+
 // Resilience: transient retry handler for external HTTP clients
 builder.Services.AddTransient<TransientHttpRetryHandler>();
 builder.Services.AddTransient<ProtocolDowngradeRedirectHandler>();

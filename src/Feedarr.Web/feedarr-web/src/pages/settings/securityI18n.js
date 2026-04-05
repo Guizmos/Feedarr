@@ -36,6 +36,10 @@ const SECURITY_TEXT = {
     fr: "Identifiants déjà configurés. Laisse vide pour conserver le mot de passe actuel.",
     en: "Credentials already configured. Leave blank to keep the current password.",
   },
+  "settings.security.warning.smartLocalBypass": {
+    fr: "Mode Smart avec identifiants configurés : les accès depuis localhost contournent l'authentification. Passez en mode Stricte pour imposer l'authentification partout.",
+    en: "Smart mode with credentials configured: requests from localhost bypass authentication. Switch to Strict mode to enforce authentication everywhere.",
+  },
   "settings.security.warning.downgradeOpen": {
     fr: "Passer en mode Open désactive l'authentification. Confirme la désactivation pour enregistrer.",
     en: "Switching to Open mode disables authentication. Confirm the downgrade to save.",

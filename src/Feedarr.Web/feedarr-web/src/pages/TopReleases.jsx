@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom";
 import { apiGet, apiPost } from "../api/client.js";
 import Loader from "../ui/Loader.jsx";
+import ErrorBoundary from "../ui/ErrorBoundary.jsx";
 import { useSubbarSetter } from "../layout/useSubbar.js";
 import ReleaseModal from "../ui/ReleaseModal.jsx";
 import Modal from "../ui/Modal.jsx";
@@ -663,6 +664,7 @@ export default function TopReleases() {
 
   const globalTitle = `🏆 Top ${takeUsed} Global${selectedSourceName ? ` • ${selectedSourceName}` : ""}`;
   return (
+    <ErrorBoundary label="Top releases">
     <div className="page page--top24h">
       <div className="pagehead">
         <div>
@@ -875,5 +877,6 @@ export default function TopReleases() {
         </form>
       </Modal>
     </div>
+    </ErrorBoundary>
   );
 }
