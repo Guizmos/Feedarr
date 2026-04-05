@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "../api/client.js";
 import Loader from "../ui/Loader.jsx";
+import ErrorBoundary from "../ui/ErrorBoundary.jsx";
 import { useSubbarSetter } from "../layout/useSubbar.js";
 import SubAction from "../ui/SubAction.jsx";
 import Modal from "../ui/Modal.jsx";
@@ -647,6 +648,7 @@ export default function Indexers() {
   }, [isEditing, torznabUrl, selectedProviderId, isManualIndexer, selectedIndexerId, apiKey, name]);
 
   return (
+    <ErrorBoundary label="Indexeurs">
     <div className="page page--indexers">
       <div className="pagehead">
         <div>
@@ -1164,5 +1166,6 @@ export default function Indexers() {
         </form>
       </Modal>
     </div>
+    </ErrorBoundary>
   );
 }

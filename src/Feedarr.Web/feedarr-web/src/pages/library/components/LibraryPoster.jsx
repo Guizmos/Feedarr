@@ -198,9 +198,10 @@ function getIndexerClass(value) {
 
 /** Matches .grid.grid--poster { gap: 10px } in styles.css */
 const GAP = 10;
+const MOBILE_MAX_WIDTH = 768;
 
-/** On mobile (containerWidth < 600px), enforce at least 3 columns. */
-const POSTER_MIN_COLS_FN = (w) => (w > 0 && w < 600 ? 3 : 1);
+/** On mobile (containerWidth <= 768px), enforce at least 3 columns. */
+const POSTER_MIN_COLS_FN = (w) => (w > 0 && w <= MOBILE_MAX_WIDTH ? 3 : 1);
 
 /**
  * Vue poster de la bibliothèque (PosterViewCard virtualisées)

@@ -8,6 +8,7 @@ using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services.Igdb;
 using Feedarr.Api.Services.Titles;
 using Feedarr.Api.Services.Security;
+using Microsoft.Extensions.Logging;
 
 namespace Feedarr.Api.Controllers;
 
@@ -20,14 +21,22 @@ public sealed class ReleasesController : ControllerBase
     private readonly TitleParser _parser;
     private readonly IgdbClient _igdb;
     private readonly IHttpClientFactory _httpFactory;
+    private readonly ILogger<ReleasesController> _log;
 
-    public ReleasesController(ReleaseRepository releases, Db db, TitleParser parser, IgdbClient igdb, IHttpClientFactory httpFactory)
+    public ReleasesController(
+        ReleaseRepository releases,
+        Db db,
+        TitleParser parser,
+        IgdbClient igdb,
+        IHttpClientFactory httpFactory,
+        ILogger<ReleasesController> log)
     {
         _releases = releases;
         _db = db;
         _parser = parser;
         _igdb = igdb;
         _httpFactory = httpFactory;
+        _log = log;
     }
 
     // GET /api/releases/{id}/download
@@ -37,13 +46,24 @@ public sealed class ReleasesController : ControllerBase
         var url = _releases.GetDownloadUrl(id);
 
         if (string.IsNullOrWhiteSpace(url))
+        {
+            _log.LogWarning("Download rejected: missing download_url for releaseId={ReleaseId}", id);
             return NotFound(new { error = "release not found or no download_url" });
+        }
         if (!OutboundUrlGuard.TryNormalizeDownloadUrl(url, out var normalizedUrl, out _))
+        {
+            _log.LogWarning("Download rejected: invalid download_url for releaseId={ReleaseId}", id);
             return BadRequest(new { error = "invalid download_url" });
+        }
+
+        var indexerHost = ExtractHostForLog(normalizedUrl);
 
         // Magnet links are handled directly by the browser's OS protocol handler
         if (normalizedUrl.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase))
+        {
+            _log.LogInformation("Download magnet redirect for releaseId={ReleaseId}", id);
             return Redirect(normalizedUrl);
+        }
 
         // 🔐 Proxy the torrent: the browser never sees the internal Jackett/Prowlarr URL or API key.
         // Redirecting would fail when the indexer host is only reachable from the server (e.g. Docker network).
@@ -53,7 +73,14 @@ public sealed class ReleasesController : ControllerBase
             using var response = await client.GetAsync(normalizedUrl, HttpCompletionOption.ResponseHeadersRead, ct);
 
             if (!response.IsSuccessStatusCode)
+            {
+                _log.LogWarning(
+                    "Download proxy upstream error for releaseId={ReleaseId} host={IndexerHost} status={StatusCode}",
+                    id,
+                    indexerHost,
+                    (int)response.StatusCode);
                 return StatusCode(502, new { error = "indexer returned an error", status = (int)response.StatusCode });
+            }
 
             var contentType = response.Content.Headers.ContentType?.ToString()
                               ?? "application/x-bittorrent";
@@ -63,14 +90,21 @@ public sealed class ReleasesController : ControllerBase
             filename = string.IsNullOrWhiteSpace(filename) ? "download.torrent" : filename.Trim('"');
 
             var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+            _log.LogInformation(
+                "Download proxy success for releaseId={ReleaseId} host={IndexerHost} bytes={ByteCount}",
+                id,
+                indexerHost,
+                bytes.Length);
             return File(bytes, contentType, filename);
         }
         catch (OperationCanceledException)
         {
+            _log.LogInformation("Download canceled for releaseId={ReleaseId}", id);
             throw;
         }
-        catch
+        catch (Exception ex)
         {
+            _log.LogWarning(ex, "Download proxy failed for releaseId={ReleaseId} host={IndexerHost}", id, indexerHost);
             return StatusCode(502, new { error = "could not fetch torrent from indexer" });
         }
     }
@@ -112,10 +146,19 @@ public sealed class ReleasesController : ControllerBase
     public IActionResult BulkSeen([FromBody] BulkSeenDto dto)
     {
         if (dto?.Ids == null || dto.Ids.Count == 0)
+        {
+            _log.LogWarning("BulkSeen rejected: ids missing");
             return BadRequest(new { error = "ids missing" });
+        }
 
         if (dto.Ids.Count > MaxBulkIds)
+        {
+            _log.LogWarning(
+                "BulkSeen rejected: too many ids count={Count} max={MaxBulkIds}",
+                dto.Ids.Count,
+                MaxBulkIds);
             return BadRequest(new { error = $"maximum {MaxBulkIds} ids allowed" });
+        }
 
         using var conn = _db.Open();
         var distinctIds = dto.Ids.Distinct().ToArray();
@@ -130,7 +173,23 @@ public sealed class ReleasesController : ControllerBase
             );
         }
 
+        _log.LogInformation(
+            "BulkSeen applied seen={Seen} requested={RequestedCount} distinct={DistinctCount} updated={UpdatedCount}",
+            dto.Seen,
+            dto.Ids.Count,
+            distinctIds.Length,
+            totalUpdated);
+
         return Ok(new { ok = true, updated = totalUpdated });
+    }
+
+    private static string ExtractHostForLog(string? url)
+    {
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+            !string.IsNullOrWhiteSpace(uri.Host))
+            return uri.Host;
+
+        return "unknown";
     }
 
     public sealed class UpdateTitleDto

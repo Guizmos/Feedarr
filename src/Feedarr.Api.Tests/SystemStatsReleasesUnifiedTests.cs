@@ -93,7 +93,7 @@ public sealed class SystemStatsReleasesUnifiedTests
         }
     }
 
-    private static SystemController CreateController(Db db, TestWorkspace workspace)
+    private static SystemStatsController CreateController(Db db, TestWorkspace workspace)
     {
         var options = OptionsFactory.Create(new AppOptions
         {
@@ -122,7 +122,7 @@ public sealed class SystemStatsReleasesUnifiedTests
             appLifetime,
             NullLogger<StorageUsageCacheService>.Instance);
 
-        return new SystemController(
+        var core = new SystemApiCore(
             db,
             new TestWebHostEnvironment(workspace.RootDir),
             settings,
@@ -137,7 +137,9 @@ public sealed class SystemStatsReleasesUnifiedTests
             new MemoryCache(new MemoryCacheOptions()),
             new SetupStateService(settings, new MemoryCache(new MemoryCacheOptions())),
             storageCache,
-            NullLogger<SystemController>.Instance);
+            NullLogger<SystemApiCore>.Instance);
+
+        return new SystemStatsController(core);
     }
 
     private static Db CreateDb(TestWorkspace workspace)

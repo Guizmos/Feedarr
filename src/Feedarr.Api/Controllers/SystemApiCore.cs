@@ -18,9 +18,7 @@ using Feedarr.Api.Services.Updates;
 
 namespace Feedarr.Api.Controllers;
 
-[ApiController]
-[Route("api/system")]
-public sealed class SystemController : ControllerBase
+public sealed class SystemApiCore : ControllerBase
 {
     private sealed class SourceStatsRow
     {
@@ -53,9 +51,9 @@ public sealed class SystemController : ControllerBase
     private readonly IMemoryCache _cache;
     private readonly SetupStateService _setupState;
     private readonly StorageUsageCacheService _storageCache;
-    private readonly ILogger<SystemController> _log;
+    private readonly ILogger<SystemApiCore> _log;
 
-    public SystemController(
+    public SystemApiCore(
         Db db,
         IWebHostEnvironment env,
         SettingsRepository settings,
@@ -66,7 +64,7 @@ public sealed class SystemController : ControllerBase
         IMemoryCache cache,
         SetupStateService setupState,
         StorageUsageCacheService storageCache,
-        ILogger<SystemController> log)
+        ILogger<SystemApiCore> log)
     {
         _db = db;
         _env = env;

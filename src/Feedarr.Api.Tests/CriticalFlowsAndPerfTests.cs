@@ -169,7 +169,7 @@ public sealed class CriticalFlowsAndPerfTests
             appLifetime,
             NullLogger<StorageUsageCacheService>.Instance);
 
-        var system = new SystemController(
+        var systemCore = new SystemApiCore(
             db,
             new TestWebHostEnvironment(workspace.RootDir),
             settings,
@@ -184,7 +184,8 @@ public sealed class CriticalFlowsAndPerfTests
             new MemoryCache(new MemoryCacheOptions()),
             new SetupStateService(settings, new MemoryCache(new MemoryCacheOptions())),
             storageCache,
-            NullLogger<SystemController>.Instance);
+            NullLogger<SystemApiCore>.Instance);
+        var system = new SystemStatusController(systemCore);
 
         var before = Assert.IsType<OkObjectResult>(system.Onboarding());
         using (var beforeDoc = JsonDocument.Parse(JsonSerializer.Serialize(before.Value)))

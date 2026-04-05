@@ -1,13 +1,18 @@
-import React, { memo, useLayoutEffect, useRef, useState } from "react";
+import React, { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { resolveApiUrl } from "../../../api/client.js";
 import { formatSeasonEpisode, getSizeLabel, getMediaTypeLabel } from "../utils/formatters.js";
 import { getIndexerClass } from "../utils/helpers.js";
 import { buildIndexerPillStyle } from "../../../utils/sourceColors.js";
 import { useScrollContainer } from "../../../context/ScrollContainerContext.js";
+import { useContainerWidth } from "../../../hooks/useContainerWidth.js";
 
-/** Banner row height (135px poster + 16px padding + 2px border) + 8px gap = 161px */
-const ITEM_SIZE = 161;
+/** Desktop: 135px poster + 16px padding + 2px border + 8px row spacing. */
+const BANNER_ITEM_SIZE_DESKTOP = 161;
+/** Tablet/mobile: compact row dimensions (@media max-width: 768px). */
+const BANNER_ITEM_SIZE_TABLET = 137;
+/** Small phones: extra compact row dimensions (@media max-width: 480px). */
+const BANNER_ITEM_SIZE_MOBILE = 92;
 
 /**
  * Vue banner de la bibliothèque (virtualisée)
@@ -29,7 +34,13 @@ function LibraryBanner({
 }) {
   const scrollRef = useScrollContainer();
   const containerRef = useRef(null);
+  const containerWidth = useContainerWidth(containerRef);
   const [scrollMargin, setScrollMargin] = useState(0);
+  const itemSize = useMemo(() => {
+    if (containerWidth > 0 && containerWidth <= 480) return BANNER_ITEM_SIZE_MOBILE;
+    if (containerWidth > 0 && containerWidth <= 768) return BANNER_ITEM_SIZE_TABLET;
+    return BANNER_ITEM_SIZE_DESKTOP;
+  }, [containerWidth]);
 
   // Distance from the scroll container's top to the virtual container's top.
   useLayoutEffect(() => {
@@ -43,7 +54,7 @@ function LibraryBanner({
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollRef?.current ?? null,
-    estimateSize: () => ITEM_SIZE,
+    estimateSize: () => itemSize,
     overscan: 5,
     scrollMargin,
   });

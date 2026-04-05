@@ -213,6 +213,7 @@ builder.Services.AddSingleton<RetentionService>();
 builder.Services.AddSingleton<ReleaseInfoService>();
 builder.Services.AddSingleton<SetupStateService>();
 builder.Services.AddSingleton<StorageUsageCacheService>();
+builder.Services.AddSingleton<Feedarr.Api.Controllers.SystemApiCore>();
 
 builder.Services.AddHttpClient("github-updates", c =>
 {

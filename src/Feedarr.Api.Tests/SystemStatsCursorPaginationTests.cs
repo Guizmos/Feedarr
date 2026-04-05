@@ -290,7 +290,7 @@ public sealed class SystemStatsCursorPaginationTests
 
     // ─── Controller factory (mirrors SystemStatsReleasesUnifiedTests) ────────
 
-    private static SystemController CreateController(Db db, TestWorkspace workspace)
+    private static SystemStatsController CreateController(Db db, TestWorkspace workspace)
     {
         var options = OptionsFactory.Create(new AppOptions
         {
@@ -319,7 +319,7 @@ public sealed class SystemStatsCursorPaginationTests
             appLifetime,
             NullLogger<StorageUsageCacheService>.Instance);
 
-        return new SystemController(
+        var core = new SystemApiCore(
             db,
             new TestWebHostEnvironment(workspace.RootDir),
             settings,
@@ -334,7 +334,9 @@ public sealed class SystemStatsCursorPaginationTests
             new MemoryCache(new MemoryCacheOptions()),
             new SetupStateService(settings, new MemoryCache(new MemoryCacheOptions())),
             storageCache,
-            NullLogger<SystemController>.Instance);
+            NullLogger<SystemApiCore>.Instance);
+
+        return new SystemStatsController(core);
     }
 
     private static Db CreateDb(TestWorkspace workspace) =>
