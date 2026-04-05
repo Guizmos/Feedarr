@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.5.4](https://github.com/Guizmos/Feedarr/compare/v2.5.3...v2.5.4) (2026-04-05)
+
+
+### Bug Fixes
+
+* UI library view ([c864cbc](https://github.com/Guizmos/Feedarr/commit/c864cbc3e32fec2263d2305acaa1c8c125c4d2cc))
+* UI view card & optimisation ([4b59f46](https://github.com/Guizmos/Feedarr/commit/4b59f46d5a2a0db7c718276e19f46daaa942d9bd))
+
 ## [2.5.3](https://github.com/Guizmos/Feedarr/compare/v2.5.2...v2.5.3) (2026-04-05)
 
 
