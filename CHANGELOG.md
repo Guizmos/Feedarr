@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.5.2](https://github.com/Guizmos/Feedarr/compare/v2.5.1...v2.5.2) (2026-04-05)
+
+
+### Bug Fixes
+
+* download fix & push script correction ([c99ec79](https://github.com/Guizmos/Feedarr/commit/c99ec799f1ed32651db15df1ad66b634b8f84e80))
+* ui library view mobile version ([b51f840](https://github.com/Guizmos/Feedarr/commit/b51f840956bc45bb3fde5a816602e988312595e6))
+
 ## [2.5.0](https://github.com/Guizmos/Feedarr/compare/v2.4.6...v2.5.0) (2026-03-16)
 
 
