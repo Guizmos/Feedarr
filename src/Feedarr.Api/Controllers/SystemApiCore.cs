@@ -103,7 +103,6 @@ public sealed class SystemApiCore : ControllerBase
             Environment = _env.EnvironmentName,
             UptimeSeconds = (long)(DateTimeOffset.UtcNow - _startedAt).TotalSeconds,
             DataDir = "hidden",
-            DbPath = Path.GetFileName(_db.DbPath),
             DbSizeMB = snapshot.DbSizeMb,
             SourcesCount = snapshot.SourcesCount,
             ReleasesCount = snapshot.ReleasesCount,

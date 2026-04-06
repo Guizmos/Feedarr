@@ -136,10 +136,6 @@ export default function System() {
                       <span className="card-meta__label">Dossier data</span>
                       <span className="card-meta__value">{status?.dataDir || "-"}</span>
                     </div>
-                    <div className="card-meta__row">
-                      <span className="card-meta__label">Chemin DB</span>
-                      <span className="card-meta__value">{status?.dbPath || "-"}</span>
-                    </div>
                   </div>
                 </div>
                 <div className="card card-fourth">

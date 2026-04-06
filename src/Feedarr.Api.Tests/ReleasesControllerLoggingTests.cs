@@ -94,6 +94,100 @@ public sealed class ReleasesControllerLoggingTests
     }
 
     [Fact]
+    public async Task Download_WhenIndexerReturnsOk_ReturnsFileContentResult_WithProxiedBytes()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var releaseId = context.CreateRelease(downloadUrl: "https://indexer.example/download.torrent");
+        var payload = new byte[] { 0x64, 0x33, 0x3A, 0x66, 0x6F, 0x6F }; // minimal torrent-like bytes
+        var logger = new ListLogger<ReleasesController>();
+        var controller = context.CreateController(
+            handler: new StaticResponseHandler(HttpStatusCode.OK, payload),
+            logger: logger);
+
+        var result = await controller.Download(releaseId, CancellationToken.None);
+
+        var fileResult = Assert.IsType<FileContentResult>(result);
+        Assert.Equal(payload, fileResult.FileContents);
+        Assert.Equal("application/x-bittorrent", fileResult.ContentType);
+        Assert.True(logger.Contains(LogLevel.Information, "proxy success"));
+    }
+
+    [Fact]
+    public void BulkSeen_WhenTooManyIds_ReturnsBadRequest_AndLogsWarning()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var logger = new ListLogger<ReleasesController>();
+        var controller = context.CreateController(logger: logger);
+        var ids = Enumerable.Range(1, 1001).Select(i => (long)i).ToList();
+
+        var result = controller.BulkSeen(new ReleasesController.BulkSeenDto { Ids = ids });
+
+        Assert.IsType<BadRequestObjectResult>(result);
+        Assert.True(logger.Contains(LogLevel.Warning, "too many ids"));
+    }
+
+    [Fact]
+    public void MarkSeen_WhenReleaseExists_Returns204AndPersistsSeen()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var releaseId = context.CreateRelease(downloadUrl: null);
+        var controller = context.CreateController();
+
+        var result = controller.MarkSeen(releaseId);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Equal(1, context.GetSeen(releaseId));
+    }
+
+    [Fact]
+    public void MarkSeen_WhenReleaseDoesNotExist_Returns404()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var controller = context.CreateController();
+
+        var result = controller.MarkSeen(999_999L);
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public void MarkUnseen_AfterSeen_Returns204AndResetsSeenToZero()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var releaseId = context.CreateRelease(downloadUrl: null);
+        var controller = context.CreateController();
+        controller.MarkSeen(releaseId); // set seen=1 first
+
+        var result = controller.MarkUnseen(releaseId);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Equal(0, context.GetSeen(releaseId));
+    }
+
+    [Fact]
+    public void BulkSeen_WhenSeenFalse_MarksReleasesAsUnseen()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var first = context.CreateRelease(downloadUrl: null);
+        var second = context.CreateRelease(downloadUrl: null);
+        var controller = context.CreateController();
+
+        // Mark both seen first
+        controller.BulkSeen(new ReleasesController.BulkSeenDto { Seen = true, Ids = [first, second] });
+        Assert.Equal(1, context.GetSeen(first));
+        Assert.Equal(1, context.GetSeen(second));
+
+        // Now un-mark
+        var result = controller.BulkSeen(new ReleasesController.BulkSeenDto { Seen = false, Ids = [first, second] });
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        using var doc = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(ok.Value));
+        Assert.Equal(2, doc.RootElement.GetProperty("updated").GetInt32());
+        Assert.Equal(0, context.GetSeen(first));
+        Assert.Equal(0, context.GetSeen(second));
+    }
+
+    [Fact]
     public void BulkSeen_WhenIdsMissing_ReturnsBadRequest_AndLogsWarning()
     {
         using var context = new ReleasesControllerTestContext();
