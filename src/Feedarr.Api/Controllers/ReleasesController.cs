@@ -265,7 +265,15 @@ public sealed class ReleasesController : ControllerBase
             }
         );
 
-        if (rows == 0) return NotFound(new { error = "release not found" });
+        if (rows == 0)
+        {
+            _log.LogWarning("UpdateTitle: release not found releaseId={ReleaseId}", id);
+            return NotFound(new { error = "release not found" });
+        }
+
+        _log.LogInformation(
+            "UpdateTitle: applied releaseId={ReleaseId} title={Title} mediaType={MediaType}",
+            id, title, parsed.MediaType);
 
         return Ok(new
         {
@@ -293,7 +301,11 @@ public sealed class ReleasesController : ControllerBase
             return BadRequest(new { error = "title missing" });
 
         var row = _releases.RenameAndRebindEntity(id, title) as ReleaseRepository.RenameRebindResult;
-        if (row is null) return NotFound(new { error = "release not found" });
+        if (row is null)
+        {
+            _log.LogWarning("Rename: release not found releaseId={ReleaseId}", id);
+            return NotFound(new { error = "release not found" });
+        }
 
         var entityId = row.EntityId;
         var posterUpdatedAtTs = row.PosterUpdatedAtTs ?? 0;
@@ -307,6 +319,10 @@ public sealed class ReleasesController : ControllerBase
         {
             posterUrl = $"/api/posters/release/{row.ReleaseId}?v={posterUpdatedAtTs}";
         }
+
+        _log.LogInformation(
+            "Rename: applied releaseId={ReleaseId} title={Title} entityId={EntityId} mediaType={MediaType}",
+            row.ReleaseId, row.Title, entityId, row.MediaType);
 
         return Ok(new
         {
@@ -414,6 +430,12 @@ public sealed class ReleasesController : ControllerBase
         {
             return StatusCode(429, new { error = "igdb rate limit exceeded, retry later" });
         }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "FetchIgdbDetails: igdb search failed for releaseId={ReleaseId}", id);
+            return StatusCode(502, new { error = "igdb search unavailable" });
+        }
 
         IgdbClient.DetailsResult? details;
         try
@@ -423,6 +445,12 @@ public sealed class ReleasesController : ControllerBase
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
         {
             return StatusCode(429, new { error = "igdb rate limit exceeded, retry later" });
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "FetchIgdbDetails: igdb details failed for igdbId={IgdbId}", igdbId!.Value);
+            return StatusCode(502, new { error = "igdb details unavailable" });
         }
         if (details is null)
             return StatusCode(502, new { error = "igdb details not available" });
