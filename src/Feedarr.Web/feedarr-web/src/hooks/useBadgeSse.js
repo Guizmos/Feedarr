@@ -207,6 +207,13 @@ export function createBadgeSseConnector({
   };
 }
 
+export function canUseBadgeSseEnvironment(
+  globalWindow = typeof window === "undefined" ? undefined : window,
+  eventSourceCtor = typeof EventSource === "undefined" ? undefined : EventSource
+) {
+  return typeof globalWindow !== "undefined" && typeof eventSourceCtor !== "undefined";
+}
+
 /**
  * Manages the EventSource connection to `/api/badges/stream`.
  *
@@ -222,7 +229,7 @@ export default function useBadgeSse(refreshRef) {
   const [sseConnected, setSseConnected] = useState(false);
 
   useEffect(() => {
-    if (typeof window === "undefined" || typeof EventSource === "undefined") return undefined;
+    if (!canUseBadgeSseEnvironment()) return undefined;
 
     const url = resolveApiUrl("/api/badges/stream");
     const scheduler = createBadgeSseRefreshScheduler(
@@ -243,7 +250,7 @@ export default function useBadgeSse(refreshRef) {
       scheduler.dispose();
       connector.dispose();
     };
-  }, []); // stable: EventSource connection created once, never recreated
+  }, [refreshRef]); // stable ref from caller; keep effect tied to that reference
 
   return { sseConnected };
 }

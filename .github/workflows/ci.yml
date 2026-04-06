@@ -24,6 +24,29 @@ jobs:
           cache: npm
           cache-dependency-path: src/Feedarr.Web/feedarr-web/package-lock.json
 
+      - name: Check backend vulnerable packages
+        run: |
+          dotnet list Feedarr.sln package --vulnerable --include-transitive --format json > dotnet-vuln.json
+          node <<'NODE'
+          const fs = require("fs");
+          const report = JSON.parse(fs.readFileSync("dotnet-vuln.json", "utf8"));
+          const hits = [];
+          for (const project of report.projects || []) {
+            for (const framework of project.frameworks || []) {
+              for (const pkg of [...(framework.topLevelPackages || []), ...(framework.transitivePackages || [])]) {
+                if ((pkg.vulnerabilities || []).length) {
+                  hits.push(`${project.path} [${framework.framework}] ${pkg.id}@${pkg.resolvedVersion}`);
+                }
+              }
+            }
+          }
+          if (hits.length) {
+            console.error("NuGet vulnerabilities detected:\n" + hits.join("\n"));
+            process.exit(1);
+          }
+          console.log("No NuGet vulnerabilities detected.");
+          NODE
+
       - name: Run backend tests
         run: dotnet test src/Feedarr.Api.Tests/Feedarr.Api.Tests.csproj -c Release
 
@@ -31,9 +54,13 @@ jobs:
         working-directory: src/Feedarr.Web/feedarr-web
         run: npm ci
 
+      - name: Check frontend vulnerabilities
+        working-directory: src/Feedarr.Web/feedarr-web
+        run: npm audit --audit-level=high
+
       - name: Run frontend lint
         working-directory: src/Feedarr.Web/feedarr-web
-        run: npm run lint
+        run: npm run lint -- --max-warnings=0
 
       - name: Run frontend tests
         working-directory: src/Feedarr.Web/feedarr-web

@@ -64,7 +64,7 @@ public sealed class SyncOrchestrationServiceConcurrencyTests
         Assert.Equal(2, result.SuccessCount);
         Assert.Equal(1, result.FailureCount);
 
-        var failed = Assert.Single(result.Sources.Where(source => !source.Success));
+        var failed = Assert.Single(result.Sources, source => !source.Success);
         Assert.Equal(nameof(InvalidOperationException), failed.ErrorType);
         Assert.Contains("boom", failed.ErrorMessage, StringComparison.OrdinalIgnoreCase);
 

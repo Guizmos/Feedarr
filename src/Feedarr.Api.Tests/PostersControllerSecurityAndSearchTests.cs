@@ -223,6 +223,20 @@ public sealed class PostersControllerSecurityAndSearchTests
     }
 
     [Fact]
+    public async Task Search_AudioMediaType_NullProviders_Returns200WithProvidersErroredTrueAndEmptyResults()
+    {
+        // TheAudioDb and MusicBrainz are null! in this controller — NRE triggers the error path for both
+        using var context = new PosterControllerContext();
+        var controller = context.CreateController();
+
+        var result = await controller.Search("Pink Floyd – The Wall", "audio", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.True(GetBoolProp(ok.Value!, "providersErrored"));
+        Assert.Empty(GetListProp(ok.Value!, "results"));
+    }
+
+    [Fact]
     public async Task Search_SeriesMediaType_TmdbOk_Returns200WithProvidersErroredFalse()
     {
         var handler = new SucceedingTmdbHandler();

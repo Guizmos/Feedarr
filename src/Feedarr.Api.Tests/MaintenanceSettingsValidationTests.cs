@@ -121,7 +121,7 @@ public sealed class MaintenanceSettingsValidationTests
         var payload = SerializeToElement(ok.Value);
         var providers = GetPropertyInsensitive(payload, "configuredProviders")
             .EnumerateArray()
-            .Select(item => item.GetString())
+            .Select(item => item.GetString() ?? string.Empty)
             .ToArray();
 
         Assert.Equal(["igdb", "tmdb"], providers);

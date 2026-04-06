@@ -27,6 +27,7 @@ import {
   normalizeTitleKey,
   sortManualResultsBySize,
 } from "./utils/helpers.js";
+import { buildFeedParams } from "./utils/feedParams.js";
 import { ARR_STATUS_TTL_MS, ARR_STATUS_BATCH_SIZE } from "./utils/constants.js";
 import useLibraryFilters from "./hooks/useLibraryFilters.js";
 import useLibrarySelection from "./hooks/useLibrarySelection.js";
@@ -98,19 +99,6 @@ function libraryUiReducer(state, action) {
     default:
       return state;
   }
-}
-
-/**
- * Construit les URLSearchParams communs pour les requêtes /api/feed/{id}.
- * Centralisé ici pour garantir que le mode source unique et le mode multi-source
- * envoient exactement les mêmes filtres au backend.
- */
-function buildFeedParams(filters, fetchLimit) {
-  const params = new URLSearchParams();
-  params.set("limit", String(fetchLimit));
-  if (filters.q?.trim()) params.set("q", filters.q.trim());
-  if (filters.seen) params.set("seen", filters.seen);
-  return params;
 }
 
 export default function Library() {
@@ -366,7 +354,7 @@ export default function Library() {
           if (isLatestRequest()) setItems([]);
           return;
         }
-        const params = buildFeedParams(filters, fetchLimit);
+        const params = buildFeedParams(filters.q, filters.seen, fetchLimit);
 
         const all = await Promise.allSettled(
           enabledSources.map(async (s) => {
@@ -394,7 +382,7 @@ export default function Library() {
         merged.sort((a, b) => Number(b.publishedAt || 0) - Number(a.publishedAt || 0));
         if (isLatestRequest()) setItems(merged);
       } else {
-        const params = buildFeedParams(filters, fetchLimit);
+        const params = buildFeedParams(filters.q, filters.seen, fetchLimit);
 
         const data = await apiGet(`/api/feed/${sid}?${params.toString()}`, {
           signal: abortController.signal,

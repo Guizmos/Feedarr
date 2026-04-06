@@ -188,6 +188,46 @@ public sealed class ReleasesControllerLoggingTests
     }
 
     [Fact]
+    public void UpdateTitle_WhenReleaseExists_Returns200WithParsedFields()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var releaseId = context.CreateRelease(downloadUrl: null);
+        var controller = context.CreateController();
+
+        var result = controller.UpdateTitle(releaseId, new ReleasesController.UpdateTitleDto { Title = "The.Matrix.1999.1080p.BluRay.x264-GROUP" });
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var root = doc.RootElement;
+        Assert.Equal(releaseId, root.GetProperty("id").GetInt64());
+        Assert.Equal(1999, root.GetProperty("year").GetInt32());
+        Assert.Equal("movie", root.GetProperty("mediaType").GetString());
+    }
+
+    [Fact]
+    public void UpdateTitle_WhenReleaseDoesNotExist_Returns404()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var controller = context.CreateController();
+
+        var result = controller.UpdateTitle(999_999L, new ReleasesController.UpdateTitleDto { Title = "Some Title" });
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public void UpdateTitle_WhenTitleIsEmpty_Returns400()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var releaseId = context.CreateRelease(downloadUrl: null);
+        var controller = context.CreateController();
+
+        var result = controller.UpdateTitle(releaseId, new ReleasesController.UpdateTitleDto { Title = "   " });
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
     public void BulkSeen_WhenIdsMissing_ReturnsBadRequest_AndLogsWarning()
     {
         using var context = new ReleasesControllerTestContext();

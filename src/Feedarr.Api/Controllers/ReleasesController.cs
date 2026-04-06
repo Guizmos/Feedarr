@@ -89,7 +89,27 @@ public sealed class ReleasesController : ControllerBase
                            ?? response.Content.Headers.ContentDisposition?.FileName;
             filename = string.IsNullOrWhiteSpace(filename) ? "download.torrent" : filename.Trim('"');
 
+            // Guard against runaway responses: reject anything over 100 MB before reading.
+            const long MaxTorrentBytes = 100 * 1024 * 1024;
+            var declaredLength = response.Content.Headers.ContentLength;
+            if (declaredLength.HasValue && declaredLength.Value > MaxTorrentBytes)
+            {
+                _log.LogWarning(
+                    "Download proxy rejected oversized response for releaseId={ReleaseId} host={IndexerHost} bytes={Bytes}",
+                    id, indexerHost, declaredLength.Value);
+                return StatusCode(502, new { error = "indexer response too large" });
+            }
+
             var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+
+            if (bytes.Length > MaxTorrentBytes)
+            {
+                _log.LogWarning(
+                    "Download proxy rejected oversized payload for releaseId={ReleaseId} host={IndexerHost} bytes={Bytes}",
+                    id, indexerHost, bytes.Length);
+                return StatusCode(502, new { error = "indexer response too large" });
+            }
+
             _log.LogInformation(
                 "Download proxy success for releaseId={ReleaseId} host={IndexerHost} bytes={ByteCount}",
                 id,

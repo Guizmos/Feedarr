@@ -191,7 +191,7 @@ public sealed class BasicAuthMiddleware
         // Fast path: skip the PBKDF2 computation if this credential pair was recently validated.
         // The cache key is an HMAC-SHA256 of (user:pass) keyed with the stored password salt,
         // so it auto-invalidates whenever the password (and therefore the salt) changes.
-        var credCacheKey = ComputeCredCacheKey(user, pass, security);
+        var credCacheKey = ComputeCredCacheKey(user, pass, security, log);
         if (credCacheKey is not null && cache.TryGetValue<bool>(credCacheKey, out var cachedValid) && cachedValid)
         {
             authThrottle.RegisterSuccess(remoteIp, user);
@@ -287,7 +287,7 @@ public sealed class BasicAuthMiddleware
     /// the password (and therefore the salt) is updated — no explicit cache invalidation needed.
     /// Returns null if the salt is unavailable or malformed.
     /// </summary>
-    private static string? ComputeCredCacheKey(string user, string pass, SecuritySettings settings)
+    private static string? ComputeCredCacheKey(string user, string pass, SecuritySettings settings, ILogger log)
     {
         if (string.IsNullOrWhiteSpace(settings.PasswordSalt)) return null;
         try
@@ -297,7 +297,17 @@ public sealed class BasicAuthMiddleware
             using var hmac = new HMACSHA256(saltBytes);
             return "auth:ok:" + Convert.ToBase64String(hmac.ComputeHash(input));
         }
-        catch { return null; }
+        catch (FormatException)
+        {
+            // Salt in DB is not valid Base64 — credential cache unavailable, fall through to PBKDF2.
+            log.LogWarning("Auth credential cache unavailable: PasswordSalt is not valid Base64");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Auth credential cache unavailable: unexpected error computing cache key");
+            return null;
+        }
     }
 
     private static bool TryGetBasicCredentials(HttpContext context, out string user, out string pass)

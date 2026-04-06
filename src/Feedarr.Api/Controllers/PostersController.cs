@@ -446,8 +446,10 @@ public sealed class PostersController : ControllerBase
 
         mediaType = (mediaType ?? "").Trim().ToLowerInvariant();
 
-        var providersErrored = false;
-        void MarkError() { providersErrored = true; }
+        // volatile: MarkError() may be called from parallel tasks; the field must be
+        // visible across threads without a lock (only ever written true, never toggled).
+        var providersErrored = 0;
+        void MarkError() { Volatile.Write(ref providersErrored, 1); }
 
         var results = new List<PosterSearchResult>();
         if (mediaType == "game")
@@ -654,7 +656,7 @@ public sealed class PostersController : ControllerBase
                 .First())
             .ToList();
 
-        return Ok(new { results = deduped, providersErrored });
+        return Ok(new { results = deduped, providersErrored = Volatile.Read(ref providersErrored) == 1 });
     }
 
     public sealed class BulkDto { public List<long> Ids { get; set; } = new(); }
