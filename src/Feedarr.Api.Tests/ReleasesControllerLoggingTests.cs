@@ -17,6 +17,27 @@ namespace Feedarr.Api.Tests;
 
 public sealed class ReleasesControllerLoggingTests
 {
+    [Theory]
+    [InlineData("../../etc/passwd", ".._.._etc_passwd")]
+    [InlineData("my torrent.torrent", "my_torrent.torrent")]
+    [InlineData("\"my file.torrent\"", "my_file.torrent")]
+    [InlineData("", "download.torrent")]
+    [InlineData(null, "download.torrent")]
+    [InlineData(".", "download.torrent")]
+    [InlineData("hello%20world.torrent", "hello_20world.torrent")]
+    public async Task Download_FilenameFromIndexer_IsSanitized(string? rawFilename, string expectedFilename)
+    {
+        using var context = new ReleasesControllerTestContext();
+        var releaseId = context.CreateRelease(downloadUrl: "https://indexer.example/download.torrent");
+        var controller = context.CreateController(
+            handler: new ContentDispositionHandler(rawFilename));
+
+        var result = await controller.Download(releaseId, CancellationToken.None);
+
+        var fileResult = Assert.IsType<FileContentResult>(result);
+        Assert.Equal(expectedFilename, fileResult.FileDownloadName);
+    }
+
     [Fact]
     public async Task Download_WhenReleaseHasNoDownloadUrl_ReturnsNotFound_AndLogsWarning()
     {
@@ -228,6 +249,63 @@ public sealed class ReleasesControllerLoggingTests
     }
 
     [Fact]
+    public void Rename_WhenReleaseExists_Returns200WithParsedFields()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var releaseId = context.CreateRelease(downloadUrl: null);
+        var controller = context.CreateController();
+
+        var result = controller.Rename(releaseId, new ReleasesController.UpdateTitleDto { Title = "The.Matrix.1999.1080p.BluRay.x264-GROUP" });
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        using var doc = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(ok.Value));
+        var root = doc.RootElement;
+        Assert.Equal(releaseId, root.GetProperty("releaseId").GetInt64());
+        Assert.Contains("matrix", root.GetProperty("titleClean").GetString()!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1999, root.GetProperty("year").GetInt32());
+    }
+
+    [Fact]
+    public void Rename_WhenReleaseDoesNotExist_Returns404()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var controller = context.CreateController();
+
+        var result = controller.Rename(999_999L, new ReleasesController.UpdateTitleDto { Title = "Some Title" });
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public void Rename_WhenTitleIsEmpty_Returns400()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var releaseId = context.CreateRelease(downloadUrl: null);
+        var controller = context.CreateController();
+
+        var result = controller.Rename(releaseId, new ReleasesController.UpdateTitleDto { Title = "   " });
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task Download_WhenContentLengthExceedsLimit_Returns502()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var releaseId = context.CreateRelease(downloadUrl: "https://indexer.example/huge.torrent");
+        var logger = new ListLogger<ReleasesController>();
+        var controller = context.CreateController(
+            handler: new OversizedContentLengthHandler(101 * 1024 * 1024L),
+            logger: logger);
+
+        var result = await controller.Download(releaseId, CancellationToken.None);
+
+        var objectResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(502, objectResult.StatusCode);
+        Assert.True(logger.Contains(LogLevel.Warning, "oversized"));
+    }
+
+    [Fact]
     public void BulkSeen_WhenIdsMissing_ReturnsBadRequest_AndLogsWarning()
     {
         using var context = new ReleasesControllerTestContext();
@@ -372,6 +450,46 @@ public sealed class ReleasesControllerLoggingTests
             };
             response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-bittorrent");
             return Task.FromResult(response);
+        }
+    }
+
+    private sealed class ContentDispositionHandler : HttpMessageHandler
+    {
+        private readonly string? _filename;
+
+        public ContentDispositionHandler(string? filename)
+        {
+            _filename = filename;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var content = new ByteArrayContent([0x64, 0x33, 0x3A, 0x66]);
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-bittorrent");
+            if (_filename is not null)
+                content.Headers.ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("attachment")
+                {
+                    FileName = _filename
+                };
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+        }
+    }
+
+    private sealed class OversizedContentLengthHandler : HttpMessageHandler
+    {
+        private readonly long _contentLength;
+
+        public OversizedContentLengthHandler(long contentLength)
+        {
+            _contentLength = contentLength;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var content = new ByteArrayContent([]);
+            content.Headers.ContentLength = _contentLength;
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-bittorrent");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
         }
     }
 

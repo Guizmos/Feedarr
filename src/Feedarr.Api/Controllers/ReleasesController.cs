@@ -85,9 +85,9 @@ public sealed class ReleasesController : ControllerBase
             var contentType = response.Content.Headers.ContentType?.ToString()
                               ?? "application/x-bittorrent";
 
-            var filename = response.Content.Headers.ContentDisposition?.FileNameStar
-                           ?? response.Content.Headers.ContentDisposition?.FileName;
-            filename = string.IsNullOrWhiteSpace(filename) ? "download.torrent" : filename.Trim('"');
+            var rawFilename = response.Content.Headers.ContentDisposition?.FileNameStar
+                              ?? response.Content.Headers.ContentDisposition?.FileName;
+            var filename = SanitizeDownloadFilename(rawFilename);
 
             // Guard against runaway responses: reject anything over 100 MB before reading.
             const long MaxTorrentBytes = 100 * 1024 * 1024;
@@ -201,6 +201,17 @@ public sealed class ReleasesController : ControllerBase
             totalUpdated);
 
         return Ok(new { ok = true, updated = totalUpdated });
+    }
+
+    private static string SanitizeDownloadFilename(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "download.torrent";
+        // Strip surrounding quotes added by some indexers
+        var name = raw.Trim().Trim('"').Trim();
+        // Keep only safe characters; replace everything else with _
+        name = System.Text.RegularExpressions.Regex.Replace(name, @"[^\w\.\-]", "_");
+        // Prevent reserved Windows filenames and empty results
+        return string.IsNullOrWhiteSpace(name) || name == "." ? "download.torrent" : name;
     }
 
     private static string ExtractHostForLog(string? url)

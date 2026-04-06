@@ -249,6 +249,47 @@ public sealed class PostersControllerSecurityAndSearchTests
         Assert.False(GetBoolProp(ok.Value!, "providersErrored"));
     }
 
+    [Fact]
+    public async Task Search_BookMediaType_NullProviders_Returns200WithProvidersErroredTrue()
+    {
+        using var context = new PosterControllerContext();
+        var controller = context.CreateController();
+
+        var result = await controller.Search("Harry Potter", "book", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.True(GetBoolProp(ok.Value!, "providersErrored"));
+        Assert.Empty(GetListProp(ok.Value!, "results"));
+    }
+
+    [Fact]
+    public async Task Search_ComicMediaType_NullProviders_Returns200WithProvidersErroredTrue()
+    {
+        using var context = new PosterControllerContext();
+        var controller = context.CreateController();
+
+        var result = await controller.Search("Spider-Man", "comic", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.True(GetBoolProp(ok.Value!, "providersErrored"));
+        Assert.Empty(GetListProp(ok.Value!, "results"));
+    }
+
+    [Fact]
+    public void GetEntityPoster_WhenFileExists_ReturnsPhysicalFileResult()
+    {
+        using var context = new PosterControllerContext();
+        var entityId = context.CreateEntity("safe-entity.jpg");
+        context.CreatePosterFile("safe-entity.jpg");
+        var controller = context.CreateController();
+
+        var result = controller.GetEntityPoster(entityId);
+
+        var fileResult = Assert.IsType<PhysicalFileResult>(result);
+        Assert.Equal(Path.Combine(context.PostersDir, "safe-entity.jpg"), fileResult.FileName);
+        Assert.Equal("image/jpeg", fileResult.ContentType);
+    }
+
     private static bool GetBoolProp(object obj, string name)
         => (bool)obj.GetType().GetProperty(name)!.GetValue(obj)!;
 

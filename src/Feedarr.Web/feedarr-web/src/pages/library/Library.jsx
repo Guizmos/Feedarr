@@ -56,6 +56,7 @@ const initialLibraryUiState = {
   manualLoading: false,
   manualErr: "",
   manualTarget: null,
+  manualProvidersErrored: false,
 };
 
 function libraryUiReducer(state, action) {
@@ -96,6 +97,8 @@ function libraryUiReducer(state, action) {
       return { ...state, manualErr: action.payload || "" };
     case "set_manual_target":
       return { ...state, manualTarget: action.payload || null };
+    case "set_manual_providers_errored":
+      return { ...state, manualProvidersErrored: Boolean(action.payload) };
     default:
       return state;
   }
@@ -118,6 +121,7 @@ export default function Library() {
   const manualLoading = uiState.manualLoading;
   const manualErr = uiState.manualErr;
   const manualTarget = uiState.manualTarget;
+  const manualProvidersErrored = uiState.manualProvidersErrored;
 
   const setLoading = useCallback((value) => {
     dispatchUi({ type: "set_loading", payload: value });
@@ -163,6 +167,9 @@ export default function Library() {
   }, []);
   const setManualTarget = useCallback((value) => {
     dispatchUi({ type: "set_manual_target", payload: value });
+  }, []);
+  const setManualProvidersErrored = useCallback((value) => {
+    dispatchUi({ type: "set_manual_providers_errored", payload: value });
   }, []);
 
   const setContent = useSubbarSetter();
@@ -830,11 +837,13 @@ export default function Library() {
     searchManualTimerRef.current = setTimeout(async () => {
       setManualLoading(true);
       setManualErr("");
+      setManualProvidersErrored(false);
       try {
         const mt = (mediaType || "").trim();
         const res = await apiGet(`/api/posters/search?q=${encodeURIComponent(q)}&mediaType=${encodeURIComponent(mt)}`);
         const rows = Array.isArray(res?.results) ? res.results : [];
         setManualResults(sortManualResultsBySize(rows));
+        setManualProvidersErrored(Boolean(res?.providersErrored));
       } catch (e) {
         setManualErr(e?.message || "Erreur recherche posters");
       } finally {
@@ -1209,6 +1218,7 @@ export default function Library() {
         onSearch={searchManual}
         onApply={applyManualPoster}
         mediaType={manualMediaType}
+        providersErrored={manualProvidersErrored}
       />
     </div>
     </ErrorBoundary>
