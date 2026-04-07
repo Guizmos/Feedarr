@@ -26,4 +26,4 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
-        run: ./.github/scripts/create-stable-release.sh patch
+        run: bash ./.github/scripts/create-stable-release.sh patch
