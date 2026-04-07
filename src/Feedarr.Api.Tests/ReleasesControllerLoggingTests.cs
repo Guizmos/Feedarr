@@ -17,6 +17,8 @@ namespace Feedarr.Api.Tests;
 
 public sealed class ReleasesControllerLoggingTests
 {
+    private const string PublicDownloadUrl = "https://93.184.216.34/download.torrent";
+
     [Theory]
     [InlineData("../../etc/passwd", ".._.._etc_passwd")]
     [InlineData("my torrent.torrent", "my_torrent.torrent")]
@@ -28,13 +30,13 @@ public sealed class ReleasesControllerLoggingTests
     public async Task Download_FilenameFromIndexer_IsSanitized(string? rawFilename, string expectedFilename)
     {
         using var context = new ReleasesControllerTestContext();
-        var releaseId = context.CreateRelease(downloadUrl: "https://indexer.example/download.torrent");
+        var releaseId = context.CreateRelease(downloadUrl: PublicDownloadUrl);
         var controller = context.CreateController(
             handler: new ContentDispositionHandler(rawFilename));
 
         var result = await controller.Download(releaseId, CancellationToken.None);
 
-        var fileResult = Assert.IsType<FileContentResult>(result);
+        var fileResult = Assert.IsType<FileStreamResult>(result);
         Assert.Equal(expectedFilename, fileResult.FileDownloadName);
     }
 
@@ -86,7 +88,7 @@ public sealed class ReleasesControllerLoggingTests
     public async Task Download_WhenIndexerReturnsError_ReturnsBadGateway_AndLogsWarning()
     {
         using var context = new ReleasesControllerTestContext();
-        var releaseId = context.CreateRelease(downloadUrl: "https://indexer.example/download.torrent");
+        var releaseId = context.CreateRelease(downloadUrl: PublicDownloadUrl);
         var logger = new ListLogger<ReleasesController>();
         var controller = context.CreateController(
             handler: new StaticResponseHandler(HttpStatusCode.Forbidden, Encoding.UTF8.GetBytes("forbidden")),
@@ -103,7 +105,7 @@ public sealed class ReleasesControllerLoggingTests
     public async Task Download_WhenProxyThrows_ReturnsBadGateway_AndLogsWarning()
     {
         using var context = new ReleasesControllerTestContext();
-        var releaseId = context.CreateRelease(downloadUrl: "https://indexer.example/download.torrent");
+        var releaseId = context.CreateRelease(downloadUrl: PublicDownloadUrl);
         var logger = new ListLogger<ReleasesController>();
         var controller = context.CreateController(handler: new ThrowingHandler(), logger: logger);
 
@@ -118,7 +120,7 @@ public sealed class ReleasesControllerLoggingTests
     public async Task Download_WhenIndexerReturnsOk_ReturnsFileContentResult_WithProxiedBytes()
     {
         using var context = new ReleasesControllerTestContext();
-        var releaseId = context.CreateRelease(downloadUrl: "https://indexer.example/download.torrent");
+        var releaseId = context.CreateRelease(downloadUrl: PublicDownloadUrl);
         var payload = new byte[] { 0x64, 0x33, 0x3A, 0x66, 0x6F, 0x6F }; // minimal torrent-like bytes
         var logger = new ListLogger<ReleasesController>();
         var controller = context.CreateController(
@@ -127,10 +129,45 @@ public sealed class ReleasesControllerLoggingTests
 
         var result = await controller.Download(releaseId, CancellationToken.None);
 
-        var fileResult = Assert.IsType<FileContentResult>(result);
-        Assert.Equal(payload, fileResult.FileContents);
+        var fileResult = Assert.IsType<FileStreamResult>(result);
+        await using var stream = fileResult.FileStream;
+        using var ms = new MemoryStream();
+        await stream.CopyToAsync(ms);
+        Assert.Equal(payload, ms.ToArray());
         Assert.Equal("application/x-bittorrent", fileResult.ContentType);
         Assert.True(logger.Contains(LogLevel.Information, "proxy success"));
+    }
+
+    [Fact]
+    public async Task Download_WhenDownloadUrlHostIsBlocked_ReturnsBadRequest_AndSkipsProxy()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var releaseId = context.CreateRelease(downloadUrl: "http://127.0.0.1/file.torrent");
+        var logger = new ListLogger<ReleasesController>();
+        var handler = new CountingHandler();
+        var controller = context.CreateController(handler: handler, logger: logger);
+
+        var result = await controller.Download(releaseId, CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal(0, handler.CallCount);
+        Assert.True(logger.Contains(LogLevel.Warning, "invalid download_url"));
+    }
+
+    [Fact]
+    public async Task Download_WhenDownloadUrlHostIsMetadataService_ReturnsBadRequest_AndSkipsProxy()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var releaseId = context.CreateRelease(downloadUrl: "http://metadata.google.internal/file.torrent");
+        var logger = new ListLogger<ReleasesController>();
+        var handler = new CountingHandler();
+        var controller = context.CreateController(handler: handler, logger: logger);
+
+        var result = await controller.Download(releaseId, CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal(0, handler.CallCount);
+        Assert.True(logger.Contains(LogLevel.Warning, "invalid download_url"));
     }
 
     [Fact]
@@ -292,7 +329,7 @@ public sealed class ReleasesControllerLoggingTests
     public async Task Download_WhenContentLengthExceedsLimit_Returns502()
     {
         using var context = new ReleasesControllerTestContext();
-        var releaseId = context.CreateRelease(downloadUrl: "https://indexer.example/huge.torrent");
+        var releaseId = context.CreateRelease(downloadUrl: "https://93.184.216.34/huge.torrent");
         var logger = new ListLogger<ReleasesController>();
         var controller = context.CreateController(
             handler: new OversizedContentLengthHandler(101 * 1024 * 1024L),
@@ -498,6 +535,20 @@ public sealed class ReleasesControllerLoggingTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             throw new HttpRequestException("indexer unreachable");
+        }
+    }
+
+    private sealed class CountingHandler : HttpMessageHandler
+    {
+        public int CallCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            CallCount++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(Encoding.UTF8.GetBytes("torrent"))
+            });
         }
     }
 

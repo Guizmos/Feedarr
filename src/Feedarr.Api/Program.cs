@@ -36,6 +36,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using System.Data;
 using System.Diagnostics;
 using System.Globalization;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading.RateLimiting;
@@ -55,6 +56,7 @@ var globalRateLimitPermit = Math.Max(10, builder.Configuration.GetValue("App:Rat
 var globalRateLimitWindowSeconds = Math.Clamp(builder.Configuration.GetValue("App:RateLimit:Global:WindowSeconds", 60), 10, 3600);
 var postersRateLimitPermit = Math.Max(30, builder.Configuration.GetValue("App:RateLimit:Posters:PermitLimit", 600));
 var postersRateLimitWindowSeconds = Math.Clamp(builder.Configuration.GetValue("App:RateLimit:Posters:WindowSeconds", 60), 10, 3600);
+var transportSecurityOptions = builder.Configuration.GetSection("Security").Get<BasicAuthTransportSecurityOptions>() ?? new BasicAuthTransportSecurityOptions();
 
 // Data Protection pour le chiffrement des clés API
 var configuredDataDir = builder.Configuration.GetValue<string>("App:DataDir") ?? "data";
@@ -75,8 +77,22 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
         ForwardedHeaders.XForwardedFor |
         ForwardedHeaders.XForwardedProto |
         ForwardedHeaders.XForwardedHost;
-    options.KnownNetworks.Clear();
-    options.KnownProxies.Clear();
+
+    foreach (var proxy in transportSecurityOptions.KnownProxies ?? [])
+    {
+        if (!IPAddress.TryParse(proxy, out var address))
+            throw new InvalidOperationException($"Invalid Security:KnownProxies entry '{proxy}'.");
+
+        options.KnownProxies.Add(address);
+    }
+
+    foreach (var network in transportSecurityOptions.KnownNetworks ?? [])
+    {
+        if (!TryParseKnownNetwork(network, out var parsedNetwork))
+            throw new InvalidOperationException($"Invalid Security:KnownNetworks entry '{network}'.");
+
+        options.KnownNetworks.Add(parsedNetwork);
+    }
 });
 
 // Chiffrement des master keys selon la plateforme
@@ -227,11 +243,12 @@ builder.Services.AddHttpClient("torrent-download", c =>
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
 {
-    AllowAutoRedirect = true,
+    AllowAutoRedirect = false,
     ServerCertificateCustomValidationCallback = allowInvalidCerts
         ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
         : null
-});
+}).AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
+  .AddHttpMessageHandler<SsrfGuardHandler>();
 
 // Resilience: transient retry handler for external HTTP clients
 builder.Services.AddTransient<TransientHttpRetryHandler>();
@@ -913,6 +930,20 @@ static void MigrateLegacyDataProtectionKeys(string legacyPath, string targetPath
             Directory.CreateDirectory(destinationDir);
 
         File.Copy(sourceFile, destinationFile, overwrite: false);
+    }
+}
+
+static bool TryParseKnownNetwork(string value, out Microsoft.AspNetCore.HttpOverrides.IPNetwork network)
+{
+    try
+    {
+        network = Microsoft.AspNetCore.HttpOverrides.IPNetwork.Parse(value);
+        return true;
+    }
+    catch
+    {
+        network = null!;
+        return false;
     }
 }
 

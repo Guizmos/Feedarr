@@ -206,6 +206,12 @@ public static class OutboundUrlGuard
                 error = "download_url host missing";
                 return false;
             }
+
+            if (IsBlockedHost(uri.Host))
+            {
+                error = "download_url host not allowed";
+                return false;
+            }
         }
 
         normalizedUrl = trimmed;

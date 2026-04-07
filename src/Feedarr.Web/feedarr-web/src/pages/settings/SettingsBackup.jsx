@@ -26,6 +26,8 @@ export default function SettingsBackup({
   backupRestoreOpen,
   backupRestoreTarget,
   backupRestoreLoading,
+  backupRestorePreview,
+  backupRestorePreviewLoading,
   backupDeleteOpen,
   backupDeleteTarget,
   backupDeleteLoading,
@@ -45,6 +47,9 @@ export default function SettingsBackup({
   const operationBusy = !!backupState?.isBusy;
   const restartRequired = !!backupState?.needsRestart;
   const isBusy = restartRequired || operationBusy || backupCreateLoading || backupRestoreLoading || backupDeleteLoading || !!backupDownloadName;
+  const wouldReencrypt = Number(backupRestorePreview?.wouldReencrypt ?? 0);
+  const wouldClear = Number(backupRestorePreview?.wouldClear ?? 0);
+  const restoreReady = !!backupRestorePreview?.dryRun && !backupRestorePreviewLoading;
 
   return (
     <>
@@ -167,14 +172,37 @@ export default function SettingsBackup({
             <strong className="backup-confirm-modal__name">{backupRestoreTarget?.name || "-"}</strong>
             Un redémarrage de l'application sera requis après restauration.
           </div>
+          {backupRestorePreviewLoading ? (
+            <div className="muted backup-confirm-modal__text">
+              Analyse de la sauvegarde en cours...
+            </div>
+          ) : backupRestorePreview ? (
+            <>
+              <div className="backup-confirm-modal__text">
+                <strong>{wouldReencrypt}</strong> credential(s) seront re-chiffrees avec le trousseau courant.
+              </div>
+              <div className="backup-confirm-modal__text">
+                <strong>{wouldClear}</strong> credential(s) indechiffrables seront effacees.
+              </div>
+              {backupRestorePreview?.warning ? (
+                <div className="onboarding__warn" style={{ marginBottom: 12 }}>
+                  {backupRestorePreview.warning}
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <div className="muted backup-confirm-modal__text">
+              Analyse de la sauvegarde indisponible. La restauration reste bloquee tant que la previsualisation n&apos;est pas chargee.
+            </div>
+          )}
           <div className="formactions">
             <button
               className="btn btn-danger"
               type="button"
               onClick={handleBackupRestore}
-              disabled={backupRestoreLoading || isBusy}
+              disabled={backupRestoreLoading || backupRestorePreviewLoading || isBusy || !restoreReady}
             >
-              {backupRestoreLoading ? "Restauration..." : "Restaurer"}
+              {backupRestoreLoading ? "Restauration..." : "Confirmer la restauration"}
             </button>
             <button className="btn" type="button" onClick={closeBackupRestore} disabled={backupRestoreLoading}>
               Annuler

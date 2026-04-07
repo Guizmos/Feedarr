@@ -6,6 +6,7 @@ using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Models;
 using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services.Igdb;
+using Feedarr.Api.Services.Resilience;
 using Feedarr.Api.Services.Titles;
 using Feedarr.Api.Services.Security;
 using Microsoft.Extensions.Logging;
@@ -70,52 +71,74 @@ public sealed class ReleasesController : ControllerBase
         try
         {
             var client = _httpFactory.CreateClient("torrent-download");
-            using var response = await client.GetAsync(normalizedUrl, HttpCompletionOption.ResponseHeadersRead, ct);
-
-            if (!response.IsSuccessStatusCode)
+            HttpResponseMessage? response = null;
+            try
             {
-                _log.LogWarning(
-                    "Download proxy upstream error for releaseId={ReleaseId} host={IndexerHost} status={StatusCode}",
+                var downloadUri = new Uri(normalizedUrl, UriKind.Absolute);
+                if (downloadUri.Scheme is "http" or "https")
+                {
+                    var (allowed, _) = await OutboundUrlGuard.ValidateOutboundHostAsync(downloadUri.Host, ct);
+                    if (!allowed)
+                    {
+                        _log.LogWarning(
+                            "Download rejected: blocked host for releaseId={ReleaseId} host={IndexerHost}",
+                            id,
+                            indexerHost);
+                        return BadRequest(new { error = "download_url host not allowed" });
+                    }
+                }
+
+                using var request = new HttpRequestMessage(HttpMethod.Get, normalizedUrl);
+                request.Options.Set(ProtocolDowngradeRedirectHandler.AllowHttpsToHttpDowngradeOption, true);
+                response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _log.LogWarning(
+                        "Download proxy upstream error for releaseId={ReleaseId} host={IndexerHost} status={StatusCode}",
+                        id,
+                        indexerHost,
+                        (int)response.StatusCode);
+                    response.Dispose();
+                    return StatusCode(502, new { error = "indexer returned an error", status = (int)response.StatusCode });
+                }
+
+                var contentType = response.Content.Headers.ContentType?.ToString()
+                                  ?? "application/x-bittorrent";
+
+                var rawFilename = response.Content.Headers.ContentDisposition?.FileNameStar
+                                  ?? response.Content.Headers.ContentDisposition?.FileName;
+                var filename = SanitizeDownloadFilename(rawFilename);
+
+                const long MaxTorrentBytes = 100 * 1024 * 1024;
+                var declaredLength = response.Content.Headers.ContentLength;
+                if (declaredLength.HasValue && declaredLength.Value > MaxTorrentBytes)
+                {
+                    _log.LogWarning(
+                        "Download proxy rejected oversized response for releaseId={ReleaseId} host={IndexerHost} bytes={Bytes}",
+                        id, indexerHost, declaredLength.Value);
+                    response.Dispose();
+                    return StatusCode(502, new { error = "indexer response too large" });
+                }
+
+                var stream = new BoundedResponseStream(
+                    await response.Content.ReadAsStreamAsync(ct),
+                    response,
+                    MaxTorrentBytes);
+                response = null;
+
+                _log.LogInformation(
+                    "Download proxy success for releaseId={ReleaseId} host={IndexerHost} declaredBytes={DeclaredByteCount}",
                     id,
                     indexerHost,
-                    (int)response.StatusCode);
-                return StatusCode(502, new { error = "indexer returned an error", status = (int)response.StatusCode });
+                    declaredLength);
+                return File(stream, contentType, filename);
             }
-
-            var contentType = response.Content.Headers.ContentType?.ToString()
-                              ?? "application/x-bittorrent";
-
-            var rawFilename = response.Content.Headers.ContentDisposition?.FileNameStar
-                              ?? response.Content.Headers.ContentDisposition?.FileName;
-            var filename = SanitizeDownloadFilename(rawFilename);
-
-            // Guard against runaway responses: reject anything over 100 MB before reading.
-            const long MaxTorrentBytes = 100 * 1024 * 1024;
-            var declaredLength = response.Content.Headers.ContentLength;
-            if (declaredLength.HasValue && declaredLength.Value > MaxTorrentBytes)
+            catch
             {
-                _log.LogWarning(
-                    "Download proxy rejected oversized response for releaseId={ReleaseId} host={IndexerHost} bytes={Bytes}",
-                    id, indexerHost, declaredLength.Value);
-                return StatusCode(502, new { error = "indexer response too large" });
+                response?.Dispose();
+                throw;
             }
-
-            var bytes = await response.Content.ReadAsByteArrayAsync(ct);
-
-            if (bytes.Length > MaxTorrentBytes)
-            {
-                _log.LogWarning(
-                    "Download proxy rejected oversized payload for releaseId={ReleaseId} host={IndexerHost} bytes={Bytes}",
-                    id, indexerHost, bytes.Length);
-                return StatusCode(502, new { error = "indexer response too large" });
-            }
-
-            _log.LogInformation(
-                "Download proxy success for releaseId={ReleaseId} host={IndexerHost} bytes={ByteCount}",
-                id,
-                indexerHost,
-                bytes.Length);
-            return File(bytes, contentType, filename);
         }
         catch (OperationCanceledException)
         {
@@ -221,6 +244,102 @@ public sealed class ReleasesController : ControllerBase
             return uri.Host;
 
         return "unknown";
+    }
+
+    private sealed class BoundedResponseStream : Stream
+    {
+        private readonly Stream _inner;
+        private readonly HttpResponseMessage _response;
+        private readonly long _maxBytes;
+        private long _bytesRead;
+        private bool _disposed;
+
+        public BoundedResponseStream(Stream inner, HttpResponseMessage response, long maxBytes)
+        {
+            _inner = inner;
+            _response = response;
+            _maxBytes = maxBytes;
+        }
+
+        public override bool CanRead => _inner.CanRead;
+        public override bool CanSeek => _inner.CanSeek;
+        public override bool CanWrite => false;
+        public override long Length => _inner.Length;
+        public override long Position
+        {
+            get => _inner.Position;
+            set => _inner.Position = value;
+        }
+
+        public override void Flush() => _inner.Flush();
+        public override long Seek(long offset, SeekOrigin origin) => _inner.Seek(offset, origin);
+        public override void SetLength(long value) => _inner.SetLength(value);
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var read = _inner.Read(buffer, offset, count);
+            CountBytes(read);
+            return read;
+        }
+
+        public override int Read(Span<byte> buffer)
+        {
+            var read = _inner.Read(buffer);
+            CountBytes(read);
+            return read;
+        }
+
+        public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        {
+            var read = await _inner.ReadAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false);
+            CountBytes(read);
+            return read;
+        }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            var read = await _inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            CountBytes(read);
+            return read;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (_disposed)
+                return;
+
+            if (disposing)
+            {
+                _inner.Dispose();
+                _response.Dispose();
+            }
+
+            _disposed = true;
+            base.Dispose(disposing);
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            if (_disposed)
+                return;
+
+            await _inner.DisposeAsync().ConfigureAwait(false);
+            _response.Dispose();
+            _disposed = true;
+            await base.DisposeAsync().ConfigureAwait(false);
+        }
+
+        private void CountBytes(int read)
+        {
+            if (read <= 0)
+                return;
+
+            _bytesRead += read;
+            if (_bytesRead > _maxBytes)
+                throw new IOException("indexer response too large");
+        }
     }
 
     public sealed class UpdateTitleDto

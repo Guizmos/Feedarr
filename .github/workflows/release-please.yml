@@ -1,4 +1,4 @@
-name: release-please
+name: Release (main)
 
 on:
   push:
@@ -6,13 +6,24 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
-  release-please:
+  release:
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
-          config-file: release-please-config.json
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create stable tag and GitHub release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: ./.github/scripts/create-stable-release.sh patch

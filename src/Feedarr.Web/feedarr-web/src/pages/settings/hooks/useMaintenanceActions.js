@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { apiDelete, apiGet, apiPost, resolveApiUrl } from "../../../api/client.js";
 import { triggerPosterPolling } from "../../../hooks/usePosterPollingService.js";
 
@@ -56,12 +56,15 @@ export default function useMaintenanceActions() {
   const [backupRestoreOpen, setBackupRestoreOpen] = useState(false);
   const [backupRestoreTarget, setBackupRestoreTarget] = useState(null);
   const [backupRestoreLoading, setBackupRestoreLoading] = useState(false);
+  const [backupRestorePreview, setBackupRestorePreview] = useState(null);
+  const [backupRestorePreviewLoading, setBackupRestorePreviewLoading] = useState(false);
   const [backupDeleteOpen, setBackupDeleteOpen] = useState(false);
   const [backupDeleteTarget, setBackupDeleteTarget] = useState(null);
   const [backupDeleteLoading, setBackupDeleteLoading] = useState(false);
   const [backupError, setBackupError] = useState("");
   const [backupNotice, setBackupNotice] = useState("");
   const [backupState, setBackupState] = useState(null);
+  const backupRestorePreviewRequestRef = useRef(0);
   const restartRequired = !!backupState?.needsRestart;
   const backupLockedByRestartMessage = "Redemarrage requis apres restauration. Action impossible avant redemarrage.";
 
@@ -327,21 +330,53 @@ export default function useMaintenanceActions() {
   }
 
   // Backup restore functions
+  const loadBackupRestorePreview = useCallback(async (name) => {
+    const requestId = ++backupRestorePreviewRequestRef.current;
+    setBackupRestorePreviewLoading(true);
+    setBackupRestorePreview(null);
+    try {
+      const res = await apiPost(
+        `/api/system/backups/${encodeURIComponent(name)}/restore`,
+        {}
+      );
+      if (backupRestorePreviewRequestRef.current !== requestId) return;
+      setBackupRestorePreview(res || null);
+    } catch (e) {
+      if (backupRestorePreviewRequestRef.current !== requestId) return;
+      setBackupError(e?.message || "Erreur analyse sauvegarde");
+      setBackupRestorePreview(null);
+    } finally {
+      if (backupRestorePreviewRequestRef.current === requestId) {
+        setBackupRestorePreviewLoading(false);
+      }
+    }
+  }, []);
+
   function openBackupRestore(item) {
     if (restartRequired || backupState?.isBusy) return;
+    backupRestorePreviewRequestRef.current += 1;
+    setBackupError("");
+    setBackupNotice("");
     setBackupRestoreTarget(item);
+    setBackupRestorePreview(null);
+    setBackupRestorePreviewLoading(false);
     setBackupRestoreOpen(true);
+    void loadBackupRestorePreview(item.name);
   }
 
   function closeBackupRestore() {
     if (backupRestoreLoading) return;
+    backupRestorePreviewRequestRef.current += 1;
     setBackupRestoreOpen(false);
     setBackupRestoreTarget(null);
+    setBackupRestorePreview(null);
+    setBackupRestorePreviewLoading(false);
   }
 
   async function handleBackupRestore() {
     if (!backupRestoreTarget) return;
     if (backupState?.isBusy) return;
+    if (backupRestorePreviewLoading || !backupRestorePreview?.dryRun) return;
     if (restartRequired) {
       setBackupError(backupLockedByRestartMessage);
       return;
@@ -351,7 +386,7 @@ export default function useMaintenanceActions() {
     setBackupNotice("");
     try {
       const res = await apiPost(
-        `/api/system/backups/${encodeURIComponent(backupRestoreTarget.name)}/restore`,
+        `/api/system/backups/${encodeURIComponent(backupRestoreTarget.name)}/restore?confirm=true`,
         {}
       );
       const notices = [];
@@ -364,6 +399,7 @@ export default function useMaintenanceActions() {
       setBackupNotice(notices.join(" "));
       setBackupRestoreOpen(false);
       setBackupRestoreTarget(null);
+      setBackupRestorePreview(null);
       await loadBackups();
       await loadBackupState();
     } catch (e) {
@@ -481,6 +517,8 @@ export default function useMaintenanceActions() {
     backupRestoreOpen,
     backupRestoreTarget,
     backupRestoreLoading,
+    backupRestorePreview,
+    backupRestorePreviewLoading,
     openBackupRestore,
     closeBackupRestore,
     handleBackupRestore,

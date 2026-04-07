@@ -13,6 +13,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -32,20 +34,27 @@ jobs:
         run: |
           SHA7="${GITHUB_SHA::7}"
 
-          # récupère les tags (sinon runner n'a rien)
+          git fetch origin main --force
           git fetch --tags --force
 
-          # dernier tag stable vX.Y.Z
-          LAST_TAG="$(git tag -l 'v*' --sort=-v:refname | head -n 1)"
+          # dernier tag stable present sur main uniquement
+          LAST_TAG="$(git tag --merged origin/main -l 'v*' --sort=-v:refname | head -n 1)"
 
           if [[ -z "$LAST_TAG" ]]; then
             echo "No v* tag found. Fallback to 0.0.0" >&2
             BASE_VERSION="0.0.0"
           else
-            BASE_VERSION="${LAST_TAG#v}"  # enlève le v
+            BASE_VERSION="${LAST_TAG#v}"
           fi
 
-          echo "version=${BASE_VERSION}-beta-sha.${SHA7}" >> "$GITHUB_OUTPUT"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE_VERSION"
+          MAJOR="${MAJOR:-0}"
+          MINOR="${MINOR:-0}"
+          PATCH="${PATCH:-0}"
+          PATCH="$((PATCH + 1))"
+          NEXT_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+
+          echo "version=${NEXT_VERSION}-beta-sha.${SHA7}" >> "$GITHUB_OUTPUT"
           echo "docker_tag=beta-${SHA7}" >> "$GITHUB_OUTPUT"
 
       - name: Docker meta

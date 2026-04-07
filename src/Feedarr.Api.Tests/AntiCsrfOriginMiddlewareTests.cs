@@ -49,10 +49,8 @@ public sealed class AntiCsrfOriginMiddlewareTests
 
         var (nextCalled, context) = await InvokeAsync(configuration, new Dictionary<string, string>
         {
-            ["Origin"] = "https://feedarr.dalg.ovh",
-            ["X-Forwarded-Proto"] = "https",
-            ["X-Forwarded-Host"] = "feedarr.dalg.ovh"
-        });
+            ["Origin"] = "https://feedarr.dalg.ovh"
+        }, scheme: "https", host: new HostString("feedarr.dalg.ovh"));
 
         Assert.True(nextCalled);
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
@@ -65,10 +63,8 @@ public sealed class AntiCsrfOriginMiddlewareTests
 
         var (nextCalled, context) = await InvokeAsync(configuration, new Dictionary<string, string>
         {
-            ["Referer"] = "https://feedarr.dalg.ovh/settings/security",
-            ["X-Forwarded-Proto"] = "https",
-            ["X-Forwarded-Host"] = "feedarr.dalg.ovh"
-        });
+            ["Referer"] = "https://feedarr.dalg.ovh/settings/security"
+        }, scheme: "https", host: new HostString("feedarr.dalg.ovh"));
 
         Assert.True(nextCalled);
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
@@ -126,7 +122,9 @@ public sealed class AntiCsrfOriginMiddlewareTests
     private static async Task<(bool nextCalled, DefaultHttpContext context)> InvokeAsync(
         IConfiguration configuration,
         Dictionary<string, string>? headers,
-        string path = "/api/sources")
+        string path = "/api/sources",
+        string scheme = "http",
+        HostString? host = null)
     {
         var nextCalled = false;
         var middleware = new AntiCsrfOriginMiddleware(context =>
@@ -139,8 +137,8 @@ public sealed class AntiCsrfOriginMiddlewareTests
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Post;
         context.Request.Path = path;
-        context.Request.Scheme = "http";
-        context.Request.Host = new HostString("localhost", 5003);
+        context.Request.Scheme = scheme;
+        context.Request.Host = host ?? new HostString("localhost", 5003);
         context.Response.Body = new MemoryStream();
 
         if (headers is not null)
