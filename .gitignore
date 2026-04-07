@@ -62,3 +62,4 @@ docker/*.env
 src/Feedarr.Api/wwwroot/assets/
 src/Feedarr.Api/wwwroot/index.html
 .tmp-build/
+.tmp-test-obj/
