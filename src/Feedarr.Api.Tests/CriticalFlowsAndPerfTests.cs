@@ -112,7 +112,7 @@ public sealed class CriticalFlowsAndPerfTests
     }
 
     [Fact]
-    public void SetupAndSystem_OnboardingFlow_CompletesAndPersistsProvider()
+    public async Task SetupAndSystem_OnboardingFlow_CompletesAndPersistsProvider()
     {
         using var workspace = new TestWorkspace();
         var db = CreateDb(workspace);
@@ -186,6 +186,13 @@ public sealed class CriticalFlowsAndPerfTests
             storageCache,
             NullLogger<SystemApiCore>.Instance);
         var system = new SystemStatusController(systemCore);
+
+        var status = Assert.IsType<OkObjectResult>(await system.Status());
+        using (var statusDoc = JsonDocument.Parse(JsonSerializer.Serialize(status.Value)))
+        {
+            Assert.False(statusDoc.RootElement.TryGetProperty("dbPath", out _));
+            Assert.False(statusDoc.RootElement.TryGetProperty("DbPath", out _));
+        }
 
         var before = Assert.IsType<OkObjectResult>(system.Onboarding());
         using (var beforeDoc = JsonDocument.Parse(JsonSerializer.Serialize(before.Value)))

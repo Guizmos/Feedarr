@@ -11,7 +11,7 @@
         "projectName": "Feedarr.Api",
         "projectPath": "C:\\Users\\GuIzMoS\\Downloads\\Feedarr\\src\\Feedarr.Api\\Feedarr.Api.csproj",
         "packagesPath": "C:\\Users\\GuIzMoS\\.nuget\\packages\\",
-        "outputPath": "C:\\Users\\GuIzMoS\\Downloads\\Feedarr\\src\\Feedarr.Api\\.tmp-test-obj/",
+        "outputPath": "C:\\Users\\GuIzMoS\\Downloads\\Feedarr\\src\\Feedarr.Api\\.tmp-test-obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "C:\\Users\\GuIzMoS\\Downloads\\Feedarr\\src\\Feedarr.Api\\NuGet.Config",
@@ -50,11 +50,29 @@
             },
             "Microsoft.Data.Sqlite": {
               "target": "Package",
-              "version": "[8.0.8, )"
+              "version": "[8.0.25, )"
+            },
+            "Microsoft.Extensions.ApiDescription.Server": {
+              "include": "Runtime, Build, Native, ContentFiles, Analyzers",
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[8.0.25, )"
+            },
+            "SQLitePCLRaw.bundle_e_sqlite3": {
+              "target": "Package",
+              "version": "[2.1.11, )"
+            },
+            "SixLabors.ImageSharp": {
+              "target": "Package",
+              "version": "[3.1.12, )"
             },
             "Swashbuckle.AspNetCore": {
               "target": "Package",
               "version": "[6.9.0, )"
+            },
+            "System.Memory": {
+              "target": "Package",
+              "version": "[4.6.3, )"
             }
           },
           "imports": [
@@ -76,7 +94,7 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.418/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.419/PortableRuntimeIdentifierGraph.json"
         }
       }
     }

@@ -20,6 +20,46 @@ namespace Feedarr.Api.Tests;
 
 public sealed class MaintenanceControllerLockTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(3651)]
+    [InlineData(int.MaxValue)]
+    public void PurgeLogs_WhenOlderThanDaysOutOfRange_ReturnsBadRequest(int days)
+    {
+        using var context = new MaintenanceControllerTestContext();
+        var controller = context.CreateController();
+
+        var result = controller.PurgeLogs(new MaintenanceController.PurgeLogsDto { Scope = "all", OlderThanDays = days });
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public void PurgeLogs_WhenOlderThanDaysIsNull_ReturnsOk()
+    {
+        using var context = new MaintenanceControllerTestContext();
+        var controller = context.CreateController();
+
+        var result = controller.PurgeLogs(new MaintenanceController.PurgeLogsDto { Scope = "all", OlderThanDays = null });
+
+        Assert.IsType<OkObjectResult>(result);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(30)]
+    [InlineData(3650)]
+    public void PurgeLogs_WhenOlderThanDaysInRange_ReturnsOk(int days)
+    {
+        using var context = new MaintenanceControllerTestContext();
+        var controller = context.CreateController();
+
+        var result = controller.PurgeLogs(new MaintenanceController.PurgeLogsDto { Scope = "all", OlderThanDays = days });
+
+        Assert.IsType<OkObjectResult>(result);
+    }
+
     [Fact]
     public void ReparseTitles_WhenAnotherMaintenanceIsRunning_ReturnsConflict()
     {

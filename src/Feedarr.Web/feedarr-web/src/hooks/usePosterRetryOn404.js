@@ -3,6 +3,7 @@ import { apiPost, resolveApiUrl } from "../api/client.js";
 
 const RETRY_DELAYS_MS = [1000, 2000, 3000, 5000, 8000, 12000, 18000, 30000, 60000, 120000];
 const LOADER_MAX_MS = 20000;
+const HEAD_PROBE_TIMEOUT_MS = 8000;
 
 function isLocalPosterUrl(url) {
   if (!url) return false;
@@ -25,6 +26,37 @@ function appendCacheBust(url, token) {
   return `${url}${sep}cb=${token}`;
 }
 
+export async function probePosterHead404(
+  basePosterUrl,
+  controller,
+  timeoutMs = HEAD_PROBE_TIMEOUT_MS,
+  fetchImpl = fetch
+) {
+  const timeout = Math.max(1, Number(timeoutMs) || HEAD_PROBE_TIMEOUT_MS);
+  const timeoutHandle = setTimeout(() => {
+    try {
+      controller.abort();
+    } catch {
+      // no-op
+    }
+  }, timeout);
+
+  try {
+    const head = await fetchImpl(resolveApiUrl(basePosterUrl), {
+      method: "HEAD",
+      cache: "no-store",
+      credentials: "include",
+      signal: controller.signal,
+    });
+
+    return head.status === 404;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
 export default function usePosterRetryOn404(itemId, posterUrl) {
   const [cacheBust, setCacheBust] = useState(0);
   const [imgError, setImgError] = useState(false);
@@ -35,6 +67,7 @@ export default function usePosterRetryOn404(itemId, posterUrl) {
   const loaderTimerRef = useRef(null);
   const hasRefreshedRef = useRef(false);
   const mountedRef = useRef(true);
+  const headProbeAbortRef = useRef(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -62,6 +95,14 @@ export default function usePosterRetryOn404(itemId, posterUrl) {
     if (loaderTimerRef.current) {
       clearTimeout(loaderTimerRef.current);
       loaderTimerRef.current = null;
+    }
+    if (headProbeAbortRef.current) {
+      try {
+        headProbeAbortRef.current.abort();
+      } catch {
+        // no-op
+      }
+      headProbeAbortRef.current = null;
     }
   }, []);
 
@@ -105,15 +146,17 @@ export default function usePosterRetryOn404(itemId, posterUrl) {
       refreshInFlightRef.current = true;
 
       let shouldRefresh = false;
+      let headProbeAbort = null;
       try {
-        const head = await fetch(resolveApiUrl(basePosterUrl), {
-          method: "HEAD",
-          cache: "no-store",
-          credentials: "include",
-        });
-        shouldRefresh = head.status === 404;
+        headProbeAbort = new AbortController();
+        headProbeAbortRef.current = headProbeAbort;
+        shouldRefresh = await probePosterHead404(basePosterUrl, headProbeAbort);
       } catch {
         shouldRefresh = false;
+      } finally {
+        if (headProbeAbort && headProbeAbortRef.current === headProbeAbort) {
+          headProbeAbortRef.current = null;
+        }
       }
 
       if (!mountedRef.current) {

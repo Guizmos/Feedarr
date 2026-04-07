@@ -17,6 +17,7 @@ export default function ManualPosterModal({
   onSearch,
   onApply,
   mediaType,
+  providersErrored,
 }) {
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -99,6 +100,11 @@ export default function ManualPosterModal({
             );
           })}
 
+          {!loading && providersErrored && results.length === 0 && (
+            <div className="warningbox" style={{ marginTop: 10 }}>
+              Certains fournisseurs sont indisponibles — les résultats peuvent être incomplets.
+            </div>
+          )}
           {!loading && results.length === 0 && (
             <div className="muted" style={{ padding: 12 }}>Aucun résultat.</div>
           )}

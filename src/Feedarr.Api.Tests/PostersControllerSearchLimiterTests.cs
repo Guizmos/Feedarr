@@ -38,6 +38,53 @@ public sealed class PostersControllerSearchLimiterTests
         Assert.Equal(2, limiter.Kinds.Count(kind => kind == ProviderKind.Tmdb));
     }
 
+    [Fact]
+    public async Task Search_SeriesMediaType_UsesLimiterWithExactlyOneTmdbCall()
+    {
+        using var ctx = new SearchLimiterContext();
+        var limiter = new RecordingLimiter();
+        var controller = ctx.CreateController(limiter);
+
+        var result = await controller.Search("Matrix", "series", CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(1, limiter.Kinds.Count(kind => kind == ProviderKind.Tmdb));
+        Assert.DoesNotContain(ProviderKind.Igdb, limiter.Kinds);
+        Assert.DoesNotContain(ProviderKind.Others, limiter.Kinds);
+    }
+
+    [Fact]
+    public async Task Search_MovieMediaType_UsesLimiterWithExactlyOneTmdbCall()
+    {
+        using var ctx = new SearchLimiterContext();
+        var limiter = new RecordingLimiter();
+        var controller = ctx.CreateController(limiter);
+
+        var result = await controller.Search("Inception", "movie", CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(1, limiter.Kinds.Count(kind => kind == ProviderKind.Tmdb));
+        Assert.DoesNotContain(ProviderKind.Igdb, limiter.Kinds);
+        Assert.DoesNotContain(ProviderKind.Others, limiter.Kinds);
+    }
+
+    [Fact]
+    public async Task Search_GameMediaType_UsesLimiterForIgdbAndOthers()
+    {
+        // IGDB and RAWG clients are null in the test controller — NRE is caught by SafeSearchAsync,
+        // but the limiter still records the ProviderKind before the action is called.
+        using var ctx = new SearchLimiterContext();
+        var limiter = new RecordingLimiter();
+        var controller = ctx.CreateController(limiter);
+
+        var result = await controller.Search("Elden Ring", "game", CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(1, limiter.Kinds.Count(kind => kind == ProviderKind.Igdb));
+        Assert.Equal(1, limiter.Kinds.Count(kind => kind == ProviderKind.Others));
+        Assert.DoesNotContain(ProviderKind.Tmdb, limiter.Kinds);
+    }
+
     private sealed class SearchLimiterContext : IDisposable
     {
         private readonly TestWorkspace _workspace;

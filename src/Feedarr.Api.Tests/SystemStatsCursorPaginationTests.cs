@@ -1,20 +1,9 @@
 using System.Text;
 using System.Text.Json;
 using Dapper;
-using Feedarr.Api.Controllers;
 using Feedarr.Api.Data;
-using Feedarr.Api.Data.Repositories;
-using Feedarr.Api.Options;
-using Feedarr.Api.Services;
-using Feedarr.Api.Services.Backup;
-using Feedarr.Api.Services.Diagnostics;
-using Feedarr.Api.Services.Security;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
-using OptionsFactory = Microsoft.Extensions.Options.Options;
 
 namespace Feedarr.Api.Tests;
 
@@ -32,14 +21,14 @@ public sealed class SystemStatsCursorPaginationTests
     [Fact]
     public void StatsIndexers_CursorNext_NoDuplicatesAcrossPages()
     {
-        using var workspace = new TestWorkspace();
-        var db = CreateDb(workspace);
+        using var workspace = new StatsTestWorkspace();
+        var db = SystemStatsTestFactory.CreateDb(workspace);
         new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
 
         // 2 sources × 3 categories each = 6 (sourceName, unifiedCategory) pairs
         SeedIndexerReleases(db);
 
-        var ctrl = CreateController(db, workspace);
+        var ctrl = SystemStatsTestFactory.CreateController(db, workspace);
 
         // ── Page 1: no cursor → offset fallback, but cursor mode kicks in on first page too
         // Actually: no cursor → offset mode first page. We use limit=3 to split 6 rows into 2 pages.
@@ -92,8 +81,8 @@ public sealed class SystemStatsCursorPaginationTests
     [Fact]
     public void StatsProviders_CursorPrev_RoundTrip()
     {
-        using var workspace = new TestWorkspace();
-        var db = CreateDb(workspace);
+        using var workspace = new StatsTestWorkspace();
+        var db = SystemStatsTestFactory.CreateDb(workspace);
         new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
 
         // 4 providers: extra1(20) > extra2(15) > tmdb(10) > tvmaze(8)
@@ -106,7 +95,7 @@ public sealed class SystemStatsCursorPaginationTests
             ("tvmaze",  8),
         });
 
-        var ctrl = CreateController(db, workspace);
+        var ctrl = SystemStatsTestFactory.CreateController(db, workspace);
 
         // ── Get all 4 providers in offset mode to know the stable sort order
         var rAll = Assert.IsType<OkObjectResult>(ctrl.StatsProviders(limit: 100));
@@ -169,10 +158,10 @@ public sealed class SystemStatsCursorPaginationTests
     [Fact]
     public void CursorInvalid_Returns400()
     {
-        using var workspace = new TestWorkspace();
-        var db = CreateDb(workspace);
+        using var workspace = new StatsTestWorkspace();
+        var db = SystemStatsTestFactory.CreateDb(workspace);
         new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
-        var ctrl = CreateController(db, workspace);
+        var ctrl = SystemStatsTestFactory.CreateController(db, workspace);
 
         // Garbled non-base64 input
         Assert.IsType<BadRequestObjectResult>(ctrl.StatsProviders(cursor: "!!not-base64!!"));
@@ -288,113 +277,4 @@ public sealed class SystemStatsCursorPaginationTests
     private static long GetProviderCount(JsonDocument doc, string key) =>
         doc.RootElement.GetProperty("_matchingByProvider").GetProperty(key).GetInt64();
 
-    // ─── Controller factory (mirrors SystemStatsReleasesUnifiedTests) ────────
-
-    private static SystemStatsController CreateController(Db db, TestWorkspace workspace)
-    {
-        var options = OptionsFactory.Create(new AppOptions
-        {
-            DataDir = workspace.DataDir,
-            DbFileName = "feedarr.db"
-        });
-
-        var settings = new SettingsRepository(db);
-        var backup = new BackupService(
-            db,
-            new TestWebHostEnvironment(workspace.RootDir),
-            options,
-            settings,
-            new BackupValidationService(),
-            new BackupExecutionCoordinator(),
-            new PassthroughProtectionService(),
-            NullLogger<BackupService>.Instance);
-        backup.InitializeForStartup();
-
-        using var appLifetime = new TestHostApplicationLifetime();
-        var storageCache = new StorageUsageCacheService(
-            new MemoryCache(new MemoryCacheOptions()),
-            new TestWebHostEnvironment(workspace.RootDir),
-            options,
-            db,
-            appLifetime,
-            NullLogger<StorageUsageCacheService>.Instance);
-
-        var core = new SystemApiCore(
-            db,
-            new TestWebHostEnvironment(workspace.RootDir),
-            settings,
-            new ProviderStatsService(new StatsRepository(db, new MemoryCache(new MemoryCacheOptions()))),
-            new ApiRequestMetricsService(),
-            backup,
-            new SystemStatusCacheService(
-                new MemoryCache(new MemoryCacheOptions()),
-                new SystemStatusSnapshotProvider(db, NullLogger<SystemStatusSnapshotProvider>.Instance),
-                options,
-                NullLogger<SystemStatusCacheService>.Instance),
-            new MemoryCache(new MemoryCacheOptions()),
-            new SetupStateService(settings, new MemoryCache(new MemoryCacheOptions())),
-            storageCache,
-            NullLogger<SystemApiCore>.Instance);
-
-        return new SystemStatsController(core);
-    }
-
-    private static Db CreateDb(TestWorkspace workspace) =>
-        new Db(OptionsFactory.Create(new AppOptions
-        {
-            DataDir = workspace.DataDir,
-            DbFileName = "feedarr.db"
-        }));
-
-    // ─── Infrastructure (same as other test classes) ─────────────────────────
-
-    private sealed class PassthroughProtectionService : IApiKeyProtectionService
-    {
-        public string Protect(string plainText) => plainText;
-        public string Unprotect(string protectedText) => protectedText;
-        public bool TryUnprotect(string protectedText, out string plainText)
-        {
-            plainText = protectedText;
-            return true;
-        }
-        public bool IsProtected(string value) => false;
-    }
-
-    private sealed class TestWebHostEnvironment : IWebHostEnvironment
-    {
-        public TestWebHostEnvironment(string rootDir)
-        {
-            ApplicationName = "Feedarr.Api.Tests";
-            EnvironmentName = "Test";
-            ContentRootPath = rootDir;
-            ContentRootFileProvider = new NullFileProvider();
-            WebRootPath = rootDir;
-            WebRootFileProvider = new NullFileProvider();
-        }
-
-        public string ApplicationName { get; set; }
-        public IFileProvider WebRootFileProvider { get; set; }
-        public string WebRootPath { get; set; }
-        public string EnvironmentName { get; set; }
-        public string ContentRootPath { get; set; }
-        public IFileProvider ContentRootFileProvider { get; set; }
-    }
-
-    private sealed class TestWorkspace : IDisposable
-    {
-        public TestWorkspace()
-        {
-            RootDir = Path.Combine(Path.GetTempPath(), "feedarr-tests", Guid.NewGuid().ToString("N"));
-            DataDir = Path.Combine(RootDir, "data");
-            Directory.CreateDirectory(DataDir);
-        }
-
-        public string RootDir { get; }
-        public string DataDir { get; }
-
-        public void Dispose()
-        {
-            try { if (Directory.Exists(RootDir)) Directory.Delete(RootDir, true); } catch { }
-        }
-    }
 }

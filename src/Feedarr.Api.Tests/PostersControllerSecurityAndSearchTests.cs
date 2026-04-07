@@ -131,6 +131,19 @@ public sealed class PostersControllerSecurityAndSearchTests
     }
 
     [Fact]
+    public async Task Search_EmptyQuery_Returns200WithProvidersErroredFalse_AndEmptyResults()
+    {
+        using var context = new PosterControllerContext();
+        var controller = context.CreateController();
+
+        var result = await controller.Search("   ", "movie", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.False(GetBoolProp(ok.Value!, "providersErrored"));
+        Assert.Empty(GetListProp(ok.Value!, "results"));
+    }
+
+    [Fact]
     public async Task Search_WithoutMediaType_StartsMovieAndTvQueriesInParallel()
     {
         var handler = new ParallelTmdbHandler();
@@ -151,6 +164,137 @@ public sealed class PostersControllerSecurityAndSearchTests
         var result = await searchTask;
         Assert.IsType<OkObjectResult>(result);
     }
+
+    [Fact]
+    public async Task Search_SeriesMediaType_TmdbDown_Returns200WithProvidersErroredTrueAndEmptyResults()
+    {
+        var handler = new FailingHttpHandler();
+        using var context = new PosterControllerContext(handler);
+        var controller = context.CreateController(context.TmdbClient);
+
+        var result = await controller.Search("Matrix", "series", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.True(GetBoolProp(ok.Value!, "providersErrored"));
+        Assert.Empty(GetListProp(ok.Value!, "results"));
+    }
+
+    [Fact]
+    public async Task Search_MovieMediaType_TmdbDown_Returns200WithProvidersErroredTrueAndEmptyResults()
+    {
+        var handler = new FailingHttpHandler();
+        using var context = new PosterControllerContext(handler);
+        var controller = context.CreateController(context.TmdbClient);
+
+        var result = await controller.Search("Inception", "movie", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.True(GetBoolProp(ok.Value!, "providersErrored"));
+        Assert.Empty(GetListProp(ok.Value!, "results"));
+    }
+
+    [Fact]
+    public async Task Search_DefaultMediaType_TmdbDown_Returns200WithProvidersErroredTrueAndEmptyResults()
+    {
+        var handler = new FailingHttpHandler();
+        using var context = new PosterControllerContext(handler);
+        var controller = context.CreateController(context.TmdbClient);
+
+        // No mediaType → default branch: SearchMovieListAsync + SearchTvListAsync in parallel
+        var result = await controller.Search("Matrix", null, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.True(GetBoolProp(ok.Value!, "providersErrored"));
+        Assert.Empty(GetListProp(ok.Value!, "results"));
+    }
+
+    [Fact]
+    public async Task Search_GameMediaType_NullProviders_Returns200WithProvidersErroredTrueAndEmptyResults()
+    {
+        // Controller created without IGDB/RAWG clients (null!) — NullReferenceException triggers the error path
+        using var context = new PosterControllerContext();
+        var controller = context.CreateController();
+
+        var result = await controller.Search("Elden Ring", "game", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.True(GetBoolProp(ok.Value!, "providersErrored"));
+        Assert.Empty(GetListProp(ok.Value!, "results"));
+    }
+
+    [Fact]
+    public async Task Search_AudioMediaType_NullProviders_Returns200WithProvidersErroredTrueAndEmptyResults()
+    {
+        // TheAudioDb and MusicBrainz are null! in this controller — NRE triggers the error path for both
+        using var context = new PosterControllerContext();
+        var controller = context.CreateController();
+
+        var result = await controller.Search("Pink Floyd – The Wall", "audio", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.True(GetBoolProp(ok.Value!, "providersErrored"));
+        Assert.Empty(GetListProp(ok.Value!, "results"));
+    }
+
+    [Fact]
+    public async Task Search_SeriesMediaType_TmdbOk_Returns200WithProvidersErroredFalse()
+    {
+        var handler = new SucceedingTmdbHandler();
+        using var context = new PosterControllerContext(handler);
+        var controller = context.CreateController(context.TmdbClient);
+
+        var result = await controller.Search("Matrix", "series", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.False(GetBoolProp(ok.Value!, "providersErrored"));
+    }
+
+    [Fact]
+    public async Task Search_BookMediaType_NullProviders_Returns200WithProvidersErroredTrue()
+    {
+        using var context = new PosterControllerContext();
+        var controller = context.CreateController();
+
+        var result = await controller.Search("Harry Potter", "book", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.True(GetBoolProp(ok.Value!, "providersErrored"));
+        Assert.Empty(GetListProp(ok.Value!, "results"));
+    }
+
+    [Fact]
+    public async Task Search_ComicMediaType_NullProviders_Returns200WithProvidersErroredTrue()
+    {
+        using var context = new PosterControllerContext();
+        var controller = context.CreateController();
+
+        var result = await controller.Search("Spider-Man", "comic", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.True(GetBoolProp(ok.Value!, "providersErrored"));
+        Assert.Empty(GetListProp(ok.Value!, "results"));
+    }
+
+    [Fact]
+    public void GetEntityPoster_WhenFileExists_ReturnsPhysicalFileResult()
+    {
+        using var context = new PosterControllerContext();
+        var entityId = context.CreateEntity("safe-entity.jpg");
+        context.CreatePosterFile("safe-entity.jpg");
+        var controller = context.CreateController();
+
+        var result = controller.GetEntityPoster(entityId);
+
+        var fileResult = Assert.IsType<PhysicalFileResult>(result);
+        Assert.Equal(Path.Combine(context.PostersDir, "safe-entity.jpg"), fileResult.FileName);
+        Assert.Equal("image/jpeg", fileResult.ContentType);
+    }
+
+    private static bool GetBoolProp(object obj, string name)
+        => (bool)obj.GetType().GetProperty(name)!.GetValue(obj)!;
+
+    private static System.Collections.IEnumerable GetListProp(object obj, string name)
+        => (System.Collections.IEnumerable)obj.GetType().GetProperty(name)!.GetValue(obj)!;
 
     private sealed class PosterControllerContext : IDisposable
     {
@@ -523,6 +667,24 @@ public sealed class PostersControllerSecurityAndSearchTests
         public string EnvironmentName { get; set; }
         public string ContentRootPath { get; set; }
         public IFileProvider ContentRootFileProvider { get; set; }
+    }
+
+    private sealed class FailingHttpHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+    }
+
+    private sealed class SucceedingTmdbHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var json = """{"results":[{"id":1,"name":"The Matrix","original_name":"The Matrix","poster_path":"/matrix.jpg","first_air_date":"1999-01-01","original_language":"en"}]}""";
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
+        }
     }
 
     private sealed class TestWorkspace : IDisposable

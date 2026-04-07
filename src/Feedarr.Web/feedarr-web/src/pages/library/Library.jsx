@@ -27,6 +27,7 @@ import {
   normalizeTitleKey,
   sortManualResultsBySize,
 } from "./utils/helpers.js";
+import { buildFeedParams } from "./utils/feedParams.js";
 import { ARR_STATUS_TTL_MS, ARR_STATUS_BATCH_SIZE } from "./utils/constants.js";
 import useLibraryFilters from "./hooks/useLibraryFilters.js";
 import useLibrarySelection from "./hooks/useLibrarySelection.js";
@@ -55,6 +56,7 @@ const initialLibraryUiState = {
   manualLoading: false,
   manualErr: "",
   manualTarget: null,
+  manualProvidersErrored: false,
 };
 
 function libraryUiReducer(state, action) {
@@ -95,22 +97,11 @@ function libraryUiReducer(state, action) {
       return { ...state, manualErr: action.payload || "" };
     case "set_manual_target":
       return { ...state, manualTarget: action.payload || null };
+    case "set_manual_providers_errored":
+      return { ...state, manualProvidersErrored: Boolean(action.payload) };
     default:
       return state;
   }
-}
-
-/**
- * Construit les URLSearchParams communs pour les requêtes /api/feed/{id}.
- * Centralisé ici pour garantir que le mode source unique et le mode multi-source
- * envoient exactement les mêmes filtres au backend.
- */
-function buildFeedParams(filters, fetchLimit) {
-  const params = new URLSearchParams();
-  params.set("limit", String(fetchLimit));
-  if (filters.q?.trim()) params.set("q", filters.q.trim());
-  if (filters.seen) params.set("seen", filters.seen);
-  return params;
 }
 
 export default function Library() {
@@ -130,6 +121,7 @@ export default function Library() {
   const manualLoading = uiState.manualLoading;
   const manualErr = uiState.manualErr;
   const manualTarget = uiState.manualTarget;
+  const manualProvidersErrored = uiState.manualProvidersErrored;
 
   const setLoading = useCallback((value) => {
     dispatchUi({ type: "set_loading", payload: value });
@@ -175,6 +167,9 @@ export default function Library() {
   }, []);
   const setManualTarget = useCallback((value) => {
     dispatchUi({ type: "set_manual_target", payload: value });
+  }, []);
+  const setManualProvidersErrored = useCallback((value) => {
+    dispatchUi({ type: "set_manual_providers_errored", payload: value });
   }, []);
 
   const setContent = useSubbarSetter();
@@ -366,7 +361,7 @@ export default function Library() {
           if (isLatestRequest()) setItems([]);
           return;
         }
-        const params = buildFeedParams(filters, fetchLimit);
+        const params = buildFeedParams(filters.q, filters.seen, fetchLimit);
 
         const all = await Promise.allSettled(
           enabledSources.map(async (s) => {
@@ -394,7 +389,7 @@ export default function Library() {
         merged.sort((a, b) => Number(b.publishedAt || 0) - Number(a.publishedAt || 0));
         if (isLatestRequest()) setItems(merged);
       } else {
-        const params = buildFeedParams(filters, fetchLimit);
+        const params = buildFeedParams(filters.q, filters.seen, fetchLimit);
 
         const data = await apiGet(`/api/feed/${sid}?${params.toString()}`, {
           signal: abortController.signal,
@@ -842,18 +837,20 @@ export default function Library() {
     searchManualTimerRef.current = setTimeout(async () => {
       setManualLoading(true);
       setManualErr("");
+      setManualProvidersErrored(false);
       try {
         const mt = (mediaType || "").trim();
         const res = await apiGet(`/api/posters/search?q=${encodeURIComponent(q)}&mediaType=${encodeURIComponent(mt)}`);
         const rows = Array.isArray(res?.results) ? res.results : [];
         setManualResults(sortManualResultsBySize(rows));
+        setManualProvidersErrored(Boolean(res?.providersErrored));
       } catch (e) {
         setManualErr(e?.message || "Erreur recherche posters");
       } finally {
         setManualLoading(false);
       }
     }, 350);
-  }, [setManualErr, setManualLoading, setManualResults]);
+  }, [setManualErr, setManualLoading, setManualProvidersErrored, setManualResults]);
 
   // Manual poster
   const openManualPoster = useCallback(() => {
@@ -1221,6 +1218,7 @@ export default function Library() {
         onSearch={searchManual}
         onApply={applyManualPoster}
         mediaType={manualMediaType}
+        providersErrored={manualProvidersErrored}
       />
     </div>
     </ErrorBoundary>

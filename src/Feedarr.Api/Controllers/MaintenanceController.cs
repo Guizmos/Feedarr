@@ -136,6 +136,9 @@ public sealed class MaintenanceController : ControllerBase
         if (scope is not ("all" or "history" or "logs"))
             return BadRequest(new { error = "invalid scope" });
 
+        if (dto?.OlderThanDays is < 1 or > 3650)
+            return BadRequest(new { error = "olderThanDays must be between 1 and 3650" });
+
         _log.LogInformation(
             "Maintenance PurgeLogs started scope={Scope} olderThanDays={OlderThanDays}",
             scope,
@@ -416,14 +419,16 @@ public sealed class MaintenanceController : ControllerBase
         {
             if (Directory.Exists(postersDir))
             {
-                var files = Directory.GetFiles(postersDir, "*.*", SearchOption.TopDirectoryOnly);
-                posterCount = files.Length;
-                posterSizeMB = Math.Round(files.Sum(f => new FileInfo(f).Length) / 1024d / 1024d, 2);
-                var localPosterFiles = files
-                    .Select(Path.GetFileName)
-                    .Where(name => !string.IsNullOrWhiteSpace(name))
-                    .Select(name => name!)
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                long totalBytes = 0;
+                var localPosterFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var f in Directory.EnumerateFiles(postersDir, "*.*", SearchOption.TopDirectoryOnly))
+                {
+                    try { totalBytes += new FileInfo(f).Length; } catch { /* skip locked/deleted */ }
+                    var name = Path.GetFileName(f);
+                    if (!string.IsNullOrWhiteSpace(name)) localPosterFiles.Add(name);
+                }
+                posterCount = localPosterFiles.Count;
+                posterSizeMB = Math.Round(totalBytes / 1024d / 1024d, 2);
                 var referencedPosterFiles = _releases.GetReferencedPosterFiles();
                 orphanedPosterCount = localPosterFiles.Count(file => !referencedPosterFiles.Contains(file));
             }

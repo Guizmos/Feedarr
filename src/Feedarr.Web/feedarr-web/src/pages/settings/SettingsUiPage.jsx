@@ -1,11 +1,12 @@
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useSubbarSetter } from "../../layout/useSubbar.js";
 import SubAction from "../../ui/SubAction.jsx";
 import Loader from "../../ui/Loader.jsx";
 import SettingsUI from "./SettingsUI.jsx";
 import useUiSettings from "./hooks/useUiSettings.js";
 import { sleep } from "./settingsUtils.js";
+import { getSaveActionVisualState } from "./settingsUiPageModel.js";
 
 export default function SettingsUiPage() {
   const setContent = useSubbarSetter();
@@ -32,15 +33,15 @@ export default function SettingsUiPage() {
     handleThemeChange,
   } = uiSettings;
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     try {
       await loadUiSettings();
     } catch {
       // Inline error state is already managed by the hook.
     }
-  };
+  }, [loadUiSettings]);
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     if (!isDirty || saveState === "loading") return;
 
     const startedAt = Date.now();
@@ -60,7 +61,7 @@ export default function SettingsUiPage() {
       setSaveState(ok ? "success" : "error");
       setTimeout(() => setSaveState("idle"), 1000);
     }
-  };
+  }, [isDirty, saveState, saveUiSettings]);
 
   handleSaveRef.current = handleSave;
   handleRefreshRef.current = handleRefresh;
@@ -69,34 +70,19 @@ export default function SettingsUiPage() {
     if (hasLoadedRef.current) return;
     hasLoadedRef.current = true;
     void handleRefresh();
-  }, []);
+  }, [handleRefresh]);
 
   useEffect(() => {
+    const saveActionVisualState = getSaveActionVisualState(saveState);
     setContent(
       <div className="settings-subbar-content">
         <SubAction icon="refresh" label="Rafraîchir" onClick={() => handleRefreshRef.current?.()} />
         <SubAction
-          icon={
-            saveState === "loading"
-              ? "progress_activity"
-              : saveState === "success"
-              ? "check_circle"
-              : saveState === "error"
-              ? "cancel"
-              : "save"
-          }
+          icon={saveActionVisualState.icon}
           label="Enregistrer"
           onClick={() => handleSaveRef.current?.()}
           disabled={loading || saveState === "loading" || !isDirty}
-          className={
-            saveState === "loading"
-              ? "is-loading"
-              : saveState === "success"
-              ? "is-success"
-              : saveState === "error"
-              ? "is-error"
-              : ""
-          }
+          className={saveActionVisualState.className}
         />
       </div>
     );

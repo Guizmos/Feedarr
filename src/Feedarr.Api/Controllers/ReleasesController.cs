@@ -85,11 +85,31 @@ public sealed class ReleasesController : ControllerBase
             var contentType = response.Content.Headers.ContentType?.ToString()
                               ?? "application/x-bittorrent";
 
-            var filename = response.Content.Headers.ContentDisposition?.FileNameStar
-                           ?? response.Content.Headers.ContentDisposition?.FileName;
-            filename = string.IsNullOrWhiteSpace(filename) ? "download.torrent" : filename.Trim('"');
+            var rawFilename = response.Content.Headers.ContentDisposition?.FileNameStar
+                              ?? response.Content.Headers.ContentDisposition?.FileName;
+            var filename = SanitizeDownloadFilename(rawFilename);
+
+            // Guard against runaway responses: reject anything over 100 MB before reading.
+            const long MaxTorrentBytes = 100 * 1024 * 1024;
+            var declaredLength = response.Content.Headers.ContentLength;
+            if (declaredLength.HasValue && declaredLength.Value > MaxTorrentBytes)
+            {
+                _log.LogWarning(
+                    "Download proxy rejected oversized response for releaseId={ReleaseId} host={IndexerHost} bytes={Bytes}",
+                    id, indexerHost, declaredLength.Value);
+                return StatusCode(502, new { error = "indexer response too large" });
+            }
 
             var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+
+            if (bytes.Length > MaxTorrentBytes)
+            {
+                _log.LogWarning(
+                    "Download proxy rejected oversized payload for releaseId={ReleaseId} host={IndexerHost} bytes={Bytes}",
+                    id, indexerHost, bytes.Length);
+                return StatusCode(502, new { error = "indexer response too large" });
+            }
+
             _log.LogInformation(
                 "Download proxy success for releaseId={ReleaseId} host={IndexerHost} bytes={ByteCount}",
                 id,
@@ -183,6 +203,17 @@ public sealed class ReleasesController : ControllerBase
         return Ok(new { ok = true, updated = totalUpdated });
     }
 
+    private static string SanitizeDownloadFilename(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "download.torrent";
+        // Strip surrounding quotes added by some indexers
+        var name = raw.Trim().Trim('"').Trim();
+        // Keep only safe characters; replace everything else with _
+        name = System.Text.RegularExpressions.Regex.Replace(name, @"[^\w\.\-]", "_");
+        // Prevent reserved Windows filenames and empty results
+        return string.IsNullOrWhiteSpace(name) || name == "." ? "download.torrent" : name;
+    }
+
     private static string ExtractHostForLog(string? url)
     {
         if (Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
@@ -245,7 +276,15 @@ public sealed class ReleasesController : ControllerBase
             }
         );
 
-        if (rows == 0) return NotFound(new { error = "release not found" });
+        if (rows == 0)
+        {
+            _log.LogWarning("UpdateTitle: release not found releaseId={ReleaseId}", id);
+            return NotFound(new { error = "release not found" });
+        }
+
+        _log.LogInformation(
+            "UpdateTitle: applied releaseId={ReleaseId} title={Title} mediaType={MediaType}",
+            id, title, parsed.MediaType);
 
         return Ok(new
         {
@@ -273,7 +312,11 @@ public sealed class ReleasesController : ControllerBase
             return BadRequest(new { error = "title missing" });
 
         var row = _releases.RenameAndRebindEntity(id, title) as ReleaseRepository.RenameRebindResult;
-        if (row is null) return NotFound(new { error = "release not found" });
+        if (row is null)
+        {
+            _log.LogWarning("Rename: release not found releaseId={ReleaseId}", id);
+            return NotFound(new { error = "release not found" });
+        }
 
         var entityId = row.EntityId;
         var posterUpdatedAtTs = row.PosterUpdatedAtTs ?? 0;
@@ -287,6 +330,10 @@ public sealed class ReleasesController : ControllerBase
         {
             posterUrl = $"/api/posters/release/{row.ReleaseId}?v={posterUpdatedAtTs}";
         }
+
+        _log.LogInformation(
+            "Rename: applied releaseId={ReleaseId} title={Title} entityId={EntityId} mediaType={MediaType}",
+            row.ReleaseId, row.Title, entityId, row.MediaType);
 
         return Ok(new
         {
@@ -394,6 +441,12 @@ public sealed class ReleasesController : ControllerBase
         {
             return StatusCode(429, new { error = "igdb rate limit exceeded, retry later" });
         }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "FetchIgdbDetails: igdb search failed for releaseId={ReleaseId}", id);
+            return StatusCode(502, new { error = "igdb search unavailable" });
+        }
 
         IgdbClient.DetailsResult? details;
         try
@@ -403,6 +456,12 @@ public sealed class ReleasesController : ControllerBase
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
         {
             return StatusCode(429, new { error = "igdb rate limit exceeded, retry later" });
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "FetchIgdbDetails: igdb details failed for igdbId={IgdbId}", igdbId!.Value);
+            return StatusCode(502, new { error = "igdb details unavailable" });
         }
         if (details is null)
             return StatusCode(502, new { error = "igdb details not available" });

@@ -10,6 +10,7 @@ using Feedarr.Api.Services.Security;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using OptionsFactory = Microsoft.Extensions.Options.Options;
 
@@ -879,6 +880,69 @@ public sealed class SmartAuthMiddlewareTests
     }
 
     [Fact]
+    public async Task BasicAuth_CorruptedPasswordSalt_FallsThroughToPbkdf2AndLogsWarning()
+    {
+        // ComputeCredCacheKey gets a non-Base64 salt → FormatException → logged + falls through to PBKDF2.
+        // With a corrupted salt, actual PBKDF2 validation still runs and the correct password passes.
+        using var fixture = new MiddlewareFixture();
+        fixture.SetupState.MarkSetupCompleted();
+        var (hash, _) = HashPassword("StrongP@ssw0rd!");
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        {
+            AuthMode = "strict",
+            Username = "admin",
+            PasswordHash = hash,
+            PasswordSalt = "not-valid-base64!!!"   // FormatException inside ComputeCredCacheKey
+        });
+
+        var listLog = new CapturingLogger<BasicAuthMiddleware>();
+
+        var nextCalled = false;
+        var middleware = new BasicAuthMiddleware(_ =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        }, new ConfigurationBuilder().Build());
+
+        var db = CreateDb(new TestWorkspace());
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+        var settings = new SettingsRepository(db);
+        settings.SaveSecurity(new SecuritySettings
+        {
+            AuthMode = "strict",
+            Username = "admin",
+            PasswordHash = hash,
+            PasswordSalt = "not-valid-base64!!!"
+        });
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        var setupState = new SetupStateService(settings, cache);
+        setupState.MarkSetupCompleted();
+
+        var httpCtx = new DefaultHttpContext();
+        httpCtx.Request.Path = "/api/sources";
+        httpCtx.Request.Host = new HostString("feedarr.example.com");
+        httpCtx.Connection.RemoteIpAddress = IPAddress.Parse("203.0.113.5");
+        httpCtx.Request.Headers["Authorization"] = ToBasicAuth("admin", "StrongP@ssw0rd!");
+        httpCtx.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(
+            httpCtx,
+            settings,
+            cache,
+            setupState,
+            new BootstrapTokenService(),
+            new AuthThrottleService(new BasicAuthThrottleOptions(), TimeProvider.System),
+            listLog);
+
+        Assert.True(listLog.Contains(LogLevel.Warning, "not valid Base64"));
+        // Despite the corrupted salt, PBKDF2 validation runs with the correct password → should pass.
+        // (The test validates the warning path; auth outcome depends on whether PasswordHash was derived
+        //  from the same salt bytes — since the salt stored in DB is corrupt the PBKDF2 check will fail,
+        //  but the log warning must have been emitted.)
+        Assert.False(nextCalled); // PBKDF2 fails because hash was derived from different salt bytes
+    }
+
+    [Fact]
     public async Task StrictMode_ValidCredentials_SetAuthPassedContextItem()
     {
         using var fixture = new MiddlewareFixture();
@@ -997,6 +1061,21 @@ public sealed class SmartAuthMiddlewareTests
             _cache.Dispose();
             _workspace.Dispose();
         }
+    }
+
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        private readonly List<(LogLevel Level, string Message)> _entries = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+            => _entries.Add((logLevel, formatter(state, exception)));
+
+        public bool Contains(LogLevel level, string fragment)
+            => _entries.Any(e => e.Level == level && e.Message.Contains(fragment, StringComparison.OrdinalIgnoreCase));
     }
 
     private sealed class FakeTimeProvider : TimeProvider

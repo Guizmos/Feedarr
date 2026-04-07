@@ -442,15 +442,20 @@ public sealed class PostersController : ControllerBase
     public async Task<IActionResult> Search([FromQuery] string? q, [FromQuery] string? mediaType, CancellationToken ct)
     {
         var query = (q ?? "").Trim();
-        if (string.IsNullOrWhiteSpace(query)) return Ok(new { results = Array.Empty<object>() });
+        if (string.IsNullOrWhiteSpace(query)) return Ok(new { results = Array.Empty<object>(), providersErrored = false });
 
         mediaType = (mediaType ?? "").Trim().ToLowerInvariant();
+
+        // volatile: MarkError() may be called from parallel tasks; the field must be
+        // visible across threads without a lock (only ever written true, never toggled).
+        var providersErrored = 0;
+        void MarkError() { Volatile.Write(ref providersErrored, 1); }
 
         var results = new List<PosterSearchResult>();
         if (mediaType == "game")
         {
-            var igdbTask = RunProviderAsync(ProviderKind.Igdb, innerCt => _igdb.SearchGameListAsync(query, null, innerCt), ct);
-            var rawgTask = RunProviderAsync(ProviderKind.Others, innerCt => _rawg.SearchGameListAsync(query, innerCt), ct);
+            var igdbTask = SafeSearchAsync(ProviderKind.Igdb, innerCt => _igdb.SearchGameListAsync(query, null, innerCt), new List<(int igdbId, string title, int? year, string coverUrl)>(), ct, MarkError);
+            var rawgTask = SafeSearchAsync(ProviderKind.Others, innerCt => _rawg.SearchGameListAsync(query, innerCt), new List<(int rawgId, string title, int? year, string coverUrl)>(), ct, MarkError);
             await Task.WhenAll(igdbTask, rawgTask);
 
             results.AddRange(igdbTask.Result.Select(r => new PosterSearchResult
@@ -484,8 +489,8 @@ public sealed class PostersController : ControllerBase
             var (artist, title) = ParseAudioSearchQuery(query);
 
             // Run TheAudioDB and MusicBrainz searches in parallel
-            var audioDbTask = RunProviderAsync(ProviderKind.Others, innerCt => _theAudioDb.SearchAudioListAsync(title, artist, null, innerCt), ct);
-            var mbTask = RunProviderAsync(ProviderKind.Others, innerCt => _musicBrainz.SearchReleaseListAsync(title, artist, innerCt), ct);
+            var audioDbTask = SafeSearchAsync(ProviderKind.Others, innerCt => _theAudioDb.SearchAudioListAsync(title, artist, null, innerCt), new List<TheAudioDbClient.AudioResult>(), ct, MarkError);
+            var mbTask = SafeSearchAsync(ProviderKind.Others, innerCt => _musicBrainz.SearchReleaseListAsync(title, artist, innerCt), new List<MusicBrainzClient.MusicResult>(), ct, MarkError);
             await Task.WhenAll(audioDbTask, mbTask);
 
             results.AddRange(audioDbTask.Result.Select(audio =>
@@ -525,11 +530,11 @@ public sealed class PostersController : ControllerBase
         }
         else if (mediaType == "book")
         {
-            var gbTask = RunProviderAsync(ProviderKind.Others, innerCt => _googleBooks.SearchBookAsync(query, null, innerCt), ct);
-            var olTask = RunProviderAsync(ProviderKind.Others, innerCt => _openLibrary.SearchBookListAsync(query, innerCt), ct);
+            var gbTask = SafeSearchAsync<GoogleBooksClient.BookResult?>(ProviderKind.Others, innerCt => _googleBooks.SearchBookAsync(query, null, innerCt), null, ct, MarkError);
+            var olTask = SafeSearchAsync(ProviderKind.Others, innerCt => _openLibrary.SearchBookListAsync(query, innerCt), new List<OpenLibraryClient.BookResult>(), ct, MarkError);
             await Task.WhenAll(gbTask, olTask);
-            var gbBook = await gbTask;
-            var olBooks = await olTask;
+            var gbBook = gbTask.Result;
+            var olBooks = olTask.Result;
 
             if (gbBook is not null)
             {
@@ -563,7 +568,7 @@ public sealed class PostersController : ControllerBase
         }
         else if (mediaType == "comic")
         {
-            var comic = await RunProviderAsync(ProviderKind.Others, innerCt => _comicVine.SearchComicAsync(query, null, innerCt), ct);
+            var comic = await SafeSearchAsync<ComicVineClient.ComicResult?>(ProviderKind.Others, innerCt => _comicVine.SearchComicAsync(query, null, innerCt), null, ct, MarkError);
             if (comic is not null)
             {
                 results.Add(new PosterSearchResult
@@ -581,7 +586,7 @@ public sealed class PostersController : ControllerBase
         }
         else if (mediaType == "series")
         {
-            var tv = await RunProviderAsync(ProviderKind.Tmdb, innerCt => _tmdb.SearchTvListAsync(query, null, innerCt), ct);
+            var tv = await SafeSearchAsync(ProviderKind.Tmdb, innerCt => _tmdb.SearchTvListAsync(query, null, innerCt), new List<TmdbClient.SearchResult>(), ct, MarkError);
             results.AddRange(tv.Select(r => new PosterSearchResult
             {
                 Provider = "tmdb",
@@ -597,7 +602,7 @@ public sealed class PostersController : ControllerBase
         }
         else if (mediaType == "movie")
         {
-            var movies = await RunProviderAsync(ProviderKind.Tmdb, innerCt => _tmdb.SearchMovieListAsync(query, null, innerCt), ct);
+            var movies = await SafeSearchAsync(ProviderKind.Tmdb, innerCt => _tmdb.SearchMovieListAsync(query, null, innerCt), new List<TmdbClient.SearchResult>(), ct, MarkError);
             results.AddRange(movies.Select(r => new PosterSearchResult
             {
                 Provider = "tmdb",
@@ -613,8 +618,8 @@ public sealed class PostersController : ControllerBase
         }
         else
         {
-            var moviesTask = RunProviderAsync(ProviderKind.Tmdb, innerCt => _tmdb.SearchMovieListAsync(query, null, innerCt), ct);
-            var tvTask = RunProviderAsync(ProviderKind.Tmdb, innerCt => _tmdb.SearchTvListAsync(query, null, innerCt), ct);
+            var moviesTask = SafeSearchAsync(ProviderKind.Tmdb, innerCt => _tmdb.SearchMovieListAsync(query, null, innerCt), new List<TmdbClient.SearchResult>(), ct, MarkError);
+            var tvTask = SafeSearchAsync(ProviderKind.Tmdb, innerCt => _tmdb.SearchTvListAsync(query, null, innerCt), new List<TmdbClient.SearchResult>(), ct, MarkError);
             await Task.WhenAll(moviesTask, tvTask);
             var movies = moviesTask.Result;
             var tv = tvTask.Result;
@@ -651,7 +656,7 @@ public sealed class PostersController : ControllerBase
                 .First())
             .ToList();
 
-        return Ok(new { results = deduped });
+        return Ok(new { results = deduped, providersErrored = Volatile.Read(ref providersErrored) == 1 });
     }
 
     public sealed class BulkDto { public List<long> Ids { get; set; } = new(); }
@@ -1039,6 +1044,24 @@ public sealed class PostersController : ControllerBase
 
     private Task<T> RunProviderAsync<T>(ProviderKind kind, Func<CancellationToken, Task<T>> action, CancellationToken ct)
         => _externalProviderLimiter.RunAsync(kind, action, ct);
+
+    private async Task<T> SafeSearchAsync<T>(ProviderKind kind, Func<CancellationToken, Task<T>> action, T fallback, CancellationToken ct, Action onError)
+    {
+        try
+        {
+            return await _externalProviderLimiter.RunAsync(kind, action, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Search: provider call failed");
+            onError();
+            return fallback;
+        }
+    }
 
     private PosterPathResolver CreatePosterPathResolver()
         => new(_posterFetch.PostersDirPath);

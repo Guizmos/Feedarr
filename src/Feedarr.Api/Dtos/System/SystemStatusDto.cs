@@ -8,7 +8,6 @@ public sealed class SystemStatusDto
     public long UptimeSeconds { get; set; }
 
     public string DataDir { get; set; } = "";
-    public string DbPath { get; set; } = "";
     public double DbSizeMB { get; set; }
 
     public int SourcesCount { get; set; }

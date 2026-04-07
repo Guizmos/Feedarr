@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "parameters": "--vulnerable --include-transitive",
+  "sources": [
+    "https://api.nuget.org/v3/index.json"
+  ],
+  "projects": [
+    {
+      "path": "C:/Users/GuIzMoS/Downloads/Feedarr/src/Feedarr.Api/Feedarr.Api.csproj"
+    },
+    {
+      "path": "C:/Users/GuIzMoS/Downloads/Feedarr/src/Feedarr.Api.Tests/Feedarr.Api.Tests.csproj"
+    }
+  ]
+}

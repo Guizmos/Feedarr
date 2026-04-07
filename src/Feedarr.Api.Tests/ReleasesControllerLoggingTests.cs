@@ -17,6 +17,27 @@ namespace Feedarr.Api.Tests;
 
 public sealed class ReleasesControllerLoggingTests
 {
+    [Theory]
+    [InlineData("../../etc/passwd", ".._.._etc_passwd")]
+    [InlineData("my torrent.torrent", "my_torrent.torrent")]
+    [InlineData("\"my file.torrent\"", "my_file.torrent")]
+    [InlineData("", "download.torrent")]
+    [InlineData(null, "download.torrent")]
+    [InlineData(".", "download.torrent")]
+    [InlineData("hello%20world.torrent", "hello_20world.torrent")]
+    public async Task Download_FilenameFromIndexer_IsSanitized(string? rawFilename, string expectedFilename)
+    {
+        using var context = new ReleasesControllerTestContext();
+        var releaseId = context.CreateRelease(downloadUrl: "https://indexer.example/download.torrent");
+        var controller = context.CreateController(
+            handler: new ContentDispositionHandler(rawFilename));
+
+        var result = await controller.Download(releaseId, CancellationToken.None);
+
+        var fileResult = Assert.IsType<FileContentResult>(result);
+        Assert.Equal(expectedFilename, fileResult.FileDownloadName);
+    }
+
     [Fact]
     public async Task Download_WhenReleaseHasNoDownloadUrl_ReturnsNotFound_AndLogsWarning()
     {
@@ -91,6 +112,197 @@ public sealed class ReleasesControllerLoggingTests
         var objectResult = Assert.IsType<ObjectResult>(result);
         Assert.Equal(502, objectResult.StatusCode);
         Assert.True(logger.Contains(LogLevel.Warning, "proxy failed"));
+    }
+
+    [Fact]
+    public async Task Download_WhenIndexerReturnsOk_ReturnsFileContentResult_WithProxiedBytes()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var releaseId = context.CreateRelease(downloadUrl: "https://indexer.example/download.torrent");
+        var payload = new byte[] { 0x64, 0x33, 0x3A, 0x66, 0x6F, 0x6F }; // minimal torrent-like bytes
+        var logger = new ListLogger<ReleasesController>();
+        var controller = context.CreateController(
+            handler: new StaticResponseHandler(HttpStatusCode.OK, payload),
+            logger: logger);
+
+        var result = await controller.Download(releaseId, CancellationToken.None);
+
+        var fileResult = Assert.IsType<FileContentResult>(result);
+        Assert.Equal(payload, fileResult.FileContents);
+        Assert.Equal("application/x-bittorrent", fileResult.ContentType);
+        Assert.True(logger.Contains(LogLevel.Information, "proxy success"));
+    }
+
+    [Fact]
+    public void BulkSeen_WhenTooManyIds_ReturnsBadRequest_AndLogsWarning()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var logger = new ListLogger<ReleasesController>();
+        var controller = context.CreateController(logger: logger);
+        var ids = Enumerable.Range(1, 1001).Select(i => (long)i).ToList();
+
+        var result = controller.BulkSeen(new ReleasesController.BulkSeenDto { Ids = ids });
+
+        Assert.IsType<BadRequestObjectResult>(result);
+        Assert.True(logger.Contains(LogLevel.Warning, "too many ids"));
+    }
+
+    [Fact]
+    public void MarkSeen_WhenReleaseExists_Returns204AndPersistsSeen()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var releaseId = context.CreateRelease(downloadUrl: null);
+        var controller = context.CreateController();
+
+        var result = controller.MarkSeen(releaseId);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Equal(1, context.GetSeen(releaseId));
+    }
+
+    [Fact]
+    public void MarkSeen_WhenReleaseDoesNotExist_Returns404()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var controller = context.CreateController();
+
+        var result = controller.MarkSeen(999_999L);
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public void MarkUnseen_AfterSeen_Returns204AndResetsSeenToZero()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var releaseId = context.CreateRelease(downloadUrl: null);
+        var controller = context.CreateController();
+        controller.MarkSeen(releaseId); // set seen=1 first
+
+        var result = controller.MarkUnseen(releaseId);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Equal(0, context.GetSeen(releaseId));
+    }
+
+    [Fact]
+    public void BulkSeen_WhenSeenFalse_MarksReleasesAsUnseen()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var first = context.CreateRelease(downloadUrl: null);
+        var second = context.CreateRelease(downloadUrl: null);
+        var controller = context.CreateController();
+
+        // Mark both seen first
+        controller.BulkSeen(new ReleasesController.BulkSeenDto { Seen = true, Ids = [first, second] });
+        Assert.Equal(1, context.GetSeen(first));
+        Assert.Equal(1, context.GetSeen(second));
+
+        // Now un-mark
+        var result = controller.BulkSeen(new ReleasesController.BulkSeenDto { Seen = false, Ids = [first, second] });
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        using var doc = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(ok.Value));
+        Assert.Equal(2, doc.RootElement.GetProperty("updated").GetInt32());
+        Assert.Equal(0, context.GetSeen(first));
+        Assert.Equal(0, context.GetSeen(second));
+    }
+
+    [Fact]
+    public void UpdateTitle_WhenReleaseExists_Returns200WithParsedFields()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var releaseId = context.CreateRelease(downloadUrl: null);
+        var controller = context.CreateController();
+
+        var result = controller.UpdateTitle(releaseId, new ReleasesController.UpdateTitleDto { Title = "The.Matrix.1999.1080p.BluRay.x264-GROUP" });
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var root = doc.RootElement;
+        Assert.Equal(releaseId, root.GetProperty("id").GetInt64());
+        Assert.Equal(1999, root.GetProperty("year").GetInt32());
+        Assert.Equal("movie", root.GetProperty("mediaType").GetString());
+    }
+
+    [Fact]
+    public void UpdateTitle_WhenReleaseDoesNotExist_Returns404()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var controller = context.CreateController();
+
+        var result = controller.UpdateTitle(999_999L, new ReleasesController.UpdateTitleDto { Title = "Some Title" });
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public void UpdateTitle_WhenTitleIsEmpty_Returns400()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var releaseId = context.CreateRelease(downloadUrl: null);
+        var controller = context.CreateController();
+
+        var result = controller.UpdateTitle(releaseId, new ReleasesController.UpdateTitleDto { Title = "   " });
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public void Rename_WhenReleaseExists_Returns200WithParsedFields()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var releaseId = context.CreateRelease(downloadUrl: null);
+        var controller = context.CreateController();
+
+        var result = controller.Rename(releaseId, new ReleasesController.UpdateTitleDto { Title = "The.Matrix.1999.1080p.BluRay.x264-GROUP" });
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        using var doc = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(ok.Value));
+        var root = doc.RootElement;
+        Assert.Equal(releaseId, root.GetProperty("releaseId").GetInt64());
+        Assert.Contains("matrix", root.GetProperty("titleClean").GetString()!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1999, root.GetProperty("year").GetInt32());
+    }
+
+    [Fact]
+    public void Rename_WhenReleaseDoesNotExist_Returns404()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var controller = context.CreateController();
+
+        var result = controller.Rename(999_999L, new ReleasesController.UpdateTitleDto { Title = "Some Title" });
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public void Rename_WhenTitleIsEmpty_Returns400()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var releaseId = context.CreateRelease(downloadUrl: null);
+        var controller = context.CreateController();
+
+        var result = controller.Rename(releaseId, new ReleasesController.UpdateTitleDto { Title = "   " });
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task Download_WhenContentLengthExceedsLimit_Returns502()
+    {
+        using var context = new ReleasesControllerTestContext();
+        var releaseId = context.CreateRelease(downloadUrl: "https://indexer.example/huge.torrent");
+        var logger = new ListLogger<ReleasesController>();
+        var controller = context.CreateController(
+            handler: new OversizedContentLengthHandler(101 * 1024 * 1024L),
+            logger: logger);
+
+        var result = await controller.Download(releaseId, CancellationToken.None);
+
+        var objectResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(502, objectResult.StatusCode);
+        Assert.True(logger.Contains(LogLevel.Warning, "oversized"));
     }
 
     [Fact]
@@ -238,6 +450,46 @@ public sealed class ReleasesControllerLoggingTests
             };
             response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-bittorrent");
             return Task.FromResult(response);
+        }
+    }
+
+    private sealed class ContentDispositionHandler : HttpMessageHandler
+    {
+        private readonly string? _filename;
+
+        public ContentDispositionHandler(string? filename)
+        {
+            _filename = filename;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var content = new ByteArrayContent([0x64, 0x33, 0x3A, 0x66]);
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-bittorrent");
+            if (_filename is not null)
+                content.Headers.ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("attachment")
+                {
+                    FileName = _filename
+                };
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+        }
+    }
+
+    private sealed class OversizedContentLengthHandler : HttpMessageHandler
+    {
+        private readonly long _contentLength;
+
+        public OversizedContentLengthHandler(long contentLength)
+        {
+            _contentLength = contentLength;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var content = new ByteArrayContent([]);
+            content.Headers.ContentLength = _contentLength;
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-bittorrent");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
         }
     }
 
