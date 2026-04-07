@@ -1,2 +1,15 @@
-error: Une opération a été tentée sur un réseau impossible à atteindre. (api.nuget.org:443)
-error:   Une opération a été tentée sur un réseau impossible à atteindre.
+{
+  "version": 1,
+  "parameters": "--vulnerable --include-transitive",
+  "sources": [
+    "https://api.nuget.org/v3/index.json"
+  ],
+  "projects": [
+    {
+      "path": "C:/Users/GuIzMoS/Downloads/Feedarr/src/Feedarr.Api/Feedarr.Api.csproj"
+    },
+    {
+      "path": "C:/Users/GuIzMoS/Downloads/Feedarr/src/Feedarr.Api.Tests/Feedarr.Api.Tests.csproj"
+    }
+  ]
+}

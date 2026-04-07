@@ -686,7 +686,7 @@
       "projectName": "Feedarr.Api",
       "projectPath": "C:\\Users\\GuIzMoS\\Downloads\\Feedarr\\src\\Feedarr.Api\\Feedarr.Api.csproj",
       "packagesPath": "C:\\Users\\GuIzMoS\\.nuget\\packages\\",
-      "outputPath": "C:\\Users\\GuIzMoS\\Downloads\\Feedarr\\src\\Feedarr.Api\\.tmp-test-obj\\",
+      "outputPath": "C:\\Users\\GuIzMoS\\Downloads\\Feedarr\\.tmp-test-obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "C:\\Users\\GuIzMoS\\Downloads\\Feedarr\\src\\Feedarr.Api\\NuGet.Config",
