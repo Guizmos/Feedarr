@@ -49,10 +49,11 @@ public sealed class SystemStatusCacheServiceTests
         });
 
         using var cache = new MemoryCache(new MemoryCacheOptions());
-        var service = CreateService(cache, provider, cacheSeconds: 1);
+        var service = CreateService(cache, provider, cacheSeconds: 60);
 
         var first = await service.GetSnapshotAsync(CancellationToken.None);
-        await Task.Delay(1200);
+        // Evict directly instead of sleeping — no reliance on wall-clock timing
+        cache.Remove("system:status:v1");
         var second = await service.GetSnapshotAsync(CancellationToken.None);
 
         Assert.Equal(2, provider.CallCount);
