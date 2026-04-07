@@ -1,3 +1,4 @@
+using System.Net;
 using Feedarr.Api.Data;
 using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Models.Settings;
@@ -76,7 +77,7 @@ public sealed class BasicAuthTransportSecurityStartupServiceTests
     }
 
     [Fact]
-    public async Task Production_BasicAuthWithPermissiveForwardedProxyTls_AllowsStartup()
+    public async Task Production_BasicAuthWithPermissiveForwardedProxyTls_FailsStartup()
     {
         using var workspace = new TestWorkspace();
         var db = CreateDb(workspace);
@@ -97,6 +98,43 @@ public sealed class BasicAuthTransportSecurityStartupServiceTests
         };
         forwardedHeadersOptions.KnownNetworks.Clear();
         forwardedHeadersOptions.KnownProxies.Clear();
+
+        var service = CreateService(
+            environmentName: "Production",
+            settings,
+            new Dictionary<string, string?>
+            {
+                ["Security:RequireHttpsForBasicAuth"] = "true",
+                ["Security:TrustedReverseProxyTls"] = "true",
+                ["App:Security:EnforceHttps"] = "false"
+            },
+            forwardedHeadersOptions);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => service.StartAsync(CancellationToken.None));
+        Assert.Contains("known proxy", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Production_BasicAuthWithKnownForwardedProxyTls_AllowsStartup()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+
+        var settings = new SettingsRepository(db);
+        settings.SaveSecurity(new SecuritySettings
+        {
+            AuthMode = "strict",
+            Username = "admin",
+            PasswordHash = "hash",
+            PasswordSalt = "salt"
+        });
+
+        var forwardedHeadersOptions = new ForwardedHeadersOptions
+        {
+            ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost
+        };
+        forwardedHeadersOptions.KnownProxies.Add(IPAddress.Parse("203.0.113.10"));
 
         var service = CreateService(
             environmentName: "Production",

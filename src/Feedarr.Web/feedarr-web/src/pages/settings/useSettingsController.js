@@ -469,6 +469,8 @@ export default function useSettingsController(section = "general") {
       backupRestoreOpen: maintenance.backupRestoreOpen,
       backupRestoreTarget: maintenance.backupRestoreTarget,
       backupRestoreLoading: maintenance.backupRestoreLoading,
+      backupRestorePreview: maintenance.backupRestorePreview,
+      backupRestorePreviewLoading: maintenance.backupRestorePreviewLoading,
       backupDeleteOpen: maintenance.backupDeleteOpen,
       backupDeleteTarget: maintenance.backupDeleteTarget,
       backupDeleteLoading: maintenance.backupDeleteLoading,

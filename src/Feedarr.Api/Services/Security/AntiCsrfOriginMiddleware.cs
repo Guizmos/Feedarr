@@ -140,28 +140,10 @@ public sealed class AntiCsrfOriginMiddleware
     }
 
     private static string GetPublicScheme(HttpRequest request)
-    {
-        if (request.Headers.TryGetValue("X-Forwarded-Proto", out var values))
-        {
-            var forwarded = values.ToString().Split(',')[0].Trim();
-            if (!string.IsNullOrWhiteSpace(forwarded))
-                return forwarded;
-        }
-
-        return request.Scheme;
-    }
+        => request.Scheme;
 
     private static HostString GetPublicHost(HttpRequest request)
-    {
-        if (request.Headers.TryGetValue("X-Forwarded-Host", out var values))
-        {
-            var forwarded = values.ToString().Split(',')[0].Trim();
-            if (!string.IsNullOrWhiteSpace(forwarded))
-                return new HostString(forwarded);
-        }
-
-        return request.Host;
-    }
+        => request.Host;
 
     private static int DefaultPort(string scheme)
         => string.Equals(scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ? 443 : 80;

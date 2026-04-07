@@ -250,6 +250,8 @@ export default function Library() {
   const arrRequestIdRef = useRef(0);
   const loadAbortRef = useRef(null);
   const loadRequestIdRef = useRef(0);
+  const manualSearchAbortRef = useRef(null);
+  const manualSearchRequestIdRef = useRef(0);
 
   // Items
   const [items, setItems] = useState([]);
@@ -289,6 +291,8 @@ export default function Library() {
       arrStatusFetched.clear();
       gameDetailsFetch.clear();
       if (loadAbortRef.current) loadAbortRef.current.abort();
+      if (manualSearchAbortRef.current) manualSearchAbortRef.current.abort();
+      clearTimeout(searchManualTimerRef.current);
       if (posterRefresh.timer) clearTimeout(posterRefresh.timer);
     };
   }, []);
@@ -829,25 +833,47 @@ export default function Library() {
   const searchManualTimerRef = useRef(null);
   const searchManual = useCallback((query, mediaType) => {
     const q = (query || "").trim();
+    clearTimeout(searchManualTimerRef.current);
+    if (manualSearchAbortRef.current) {
+      manualSearchAbortRef.current.abort();
+      manualSearchAbortRef.current = null;
+    }
     if (!q) {
+      manualSearchRequestIdRef.current += 1;
       setManualResults([]);
+      setManualProvidersErrored(false);
+      setManualErr("");
+      setManualLoading(false);
       return;
     }
-    clearTimeout(searchManualTimerRef.current);
+
+    const requestId = ++manualSearchRequestIdRef.current;
     searchManualTimerRef.current = setTimeout(async () => {
+      const abortController = new AbortController();
+      manualSearchAbortRef.current = abortController;
       setManualLoading(true);
       setManualErr("");
       setManualProvidersErrored(false);
       try {
         const mt = (mediaType || "").trim();
-        const res = await apiGet(`/api/posters/search?q=${encodeURIComponent(q)}&mediaType=${encodeURIComponent(mt)}`);
+        const res = await apiGet(`/api/posters/search?q=${encodeURIComponent(q)}&mediaType=${encodeURIComponent(mt)}`, {
+          signal: abortController.signal,
+        });
+        if (manualSearchRequestIdRef.current !== requestId || abortController.signal.aborted) return;
         const rows = Array.isArray(res?.results) ? res.results : [];
         setManualResults(sortManualResultsBySize(rows));
         setManualProvidersErrored(Boolean(res?.providersErrored));
       } catch (e) {
+        if (e?.name === "AbortError") return;
+        if (manualSearchRequestIdRef.current !== requestId) return;
         setManualErr(e?.message || "Erreur recherche posters");
       } finally {
-        setManualLoading(false);
+        if (manualSearchAbortRef.current === abortController) {
+          manualSearchAbortRef.current = null;
+        }
+        if (manualSearchRequestIdRef.current === requestId) {
+          setManualLoading(false);
+        }
       }
     }, 350);
   }, [setManualErr, setManualLoading, setManualProvidersErrored, setManualResults]);
@@ -881,13 +907,21 @@ export default function Library() {
   }, [selectionSelectedIds, items, searchManual, setManualErr, setManualMediaType, setManualOpen, setManualQuery, setManualResults, setManualTarget]);
 
   const closeManualPoster = useCallback(() => {
+    manualSearchRequestIdRef.current += 1;
+    clearTimeout(searchManualTimerRef.current);
+    if (manualSearchAbortRef.current) {
+      manualSearchAbortRef.current.abort();
+      manualSearchAbortRef.current = null;
+    }
     setManualOpen(false);
     setManualQuery("");
     setManualResults([]);
     setManualErr("");
     setManualTarget(null);
     setManualMediaType("");
-  }, [setManualErr, setManualMediaType, setManualOpen, setManualQuery, setManualResults, setManualTarget]);
+    setManualProvidersErrored(false);
+    setManualLoading(false);
+  }, [setManualErr, setManualLoading, setManualMediaType, setManualOpen, setManualProvidersErrored, setManualQuery, setManualResults, setManualTarget]);
 
   const applyManualPoster = useCallback(async (result) => {
     if (!manualTarget || !result) return;
