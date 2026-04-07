@@ -2,6 +2,7 @@ using Feedarr.Api.Options;
 using Feedarr.Api.Services;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Primitives;
 using OptionsFactory = Microsoft.Extensions.Options.Options;
 
 namespace Feedarr.Api.Tests;
@@ -48,12 +49,11 @@ public sealed class SystemStatusCacheServiceTests
                 DbSizeMb: 1.0);
         });
 
-        using var cache = new MemoryCache(new MemoryCacheOptions());
-        var service = CreateService(cache, provider, cacheSeconds: 60);
+        // NullMemoryCache never retains entries — every call is a guaranteed cache miss,
+        // which is exactly what happens after a real expiration. No timing dependency.
+        var service = CreateService(new NullMemoryCache(), provider, cacheSeconds: 60);
 
         var first = await service.GetSnapshotAsync(CancellationToken.None);
-        // Evict directly instead of sleeping — no reliance on wall-clock timing
-        cache.Remove("system:status:v1");
         var second = await service.GetSnapshotAsync(CancellationToken.None);
 
         Assert.Equal(2, provider.CallCount);
@@ -129,5 +129,36 @@ public sealed class SystemStatusCacheServiceTests
             return await _factory(ct);
         }
     }
-}
 
+    /// <summary>
+    /// A memory cache that never retains any entry. Every TryGetValue call returns false,
+    /// simulating a permanently-expired cache for deterministic tests.
+    /// </summary>
+    private sealed class NullMemoryCache : IMemoryCache
+    {
+        public bool TryGetValue(object key, out object? value)
+        {
+            value = null;
+            return false;
+        }
+
+        public ICacheEntry CreateEntry(object key) => new NullCacheEntry(key);
+        public void Remove(object key) { }
+        public void Dispose() { }
+
+        private sealed class NullCacheEntry : ICacheEntry
+        {
+            public NullCacheEntry(object key) { Key = key; }
+            public object Key { get; }
+            public object? Value { get; set; }
+            public DateTimeOffset? AbsoluteExpiration { get; set; }
+            public TimeSpan? AbsoluteExpirationRelativeToNow { get; set; }
+            public TimeSpan? SlidingExpiration { get; set; }
+            public IList<IChangeToken> ExpirationTokens { get; } = [];
+            public IList<PostEvictionCallbackRegistration> PostEvictionCallbacks { get; } = [];
+            public CacheItemPriority Priority { get; set; }
+            public long? Size { get; set; }
+            public void Dispose() { }
+        }
+    }
+}
