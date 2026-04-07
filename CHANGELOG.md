@@ -1,5 +1,35 @@
 # Changelog
 
+## [2.5.5](https://github.com/Guizmos/Feedarr/compare/v2.5.4...v2.5.5) (2026-04-05)
+
+
+### Bug Fixes
+
+* UI library view ([c864cbc](https://github.com/Guizmos/Feedarr/commit/c864cbc3e32fec2263d2305acaa1c8c125c4d2cc))
+
+## [2.5.4](https://github.com/Guizmos/Feedarr/compare/v2.5.3...v2.5.4) (2026-04-05)
+
+
+### Bug Fixes
+
+* UI library view ([c864cbc](https://github.com/Guizmos/Feedarr/commit/c864cbc3e32fec2263d2305acaa1c8c125c4d2cc))
+* UI view card & optimisation ([4b59f46](https://github.com/Guizmos/Feedarr/commit/4b59f46d5a2a0db7c718276e19f46daaa942d9bd))
+
+## [2.5.3](https://github.com/Guizmos/Feedarr/compare/v2.5.2...v2.5.3) (2026-04-05)
+
+
+### Bug Fixes
+
+* download fix & push script correction ([c99ec79](https://github.com/Guizmos/Feedarr/commit/c99ec799f1ed32651db15df1ad66b634b8f84e80))
+
+## [2.5.2](https://github.com/Guizmos/Feedarr/compare/v2.5.1...v2.5.2) (2026-04-05)
+
+
+### Bug Fixes
+
+* download fix & push script correction ([c99ec79](https://github.com/Guizmos/Feedarr/commit/c99ec799f1ed32651db15df1ad66b634b8f84e80))
+* ui library view mobile version ([b51f840](https://github.com/Guizmos/Feedarr/commit/b51f840956bc45bb3fde5a816602e988312595e6))
+
 ## [2.5.0](https://github.com/Guizmos/Feedarr/compare/v2.4.6...v2.5.0) (2026-03-16)
 
 
