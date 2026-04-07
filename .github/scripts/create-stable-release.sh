@@ -3,6 +3,7 @@
 set -euo pipefail
 
 BUMP="${1:-patch}"
+PROJECT_FILE="src/Feedarr.Api/Feedarr.Api.csproj"
 
 write_step() {
   echo "[stable-release] $1"
@@ -44,6 +45,7 @@ case "${BUMP}" in
 esac
 
 tag="v${major}.${minor}.${patch}"
+version="${tag#v}"
 
 write_step "Dernier tag stable sur main: ${latest_tag}"
 write_step "Nouveau tag stable: ${tag}"
@@ -60,6 +62,18 @@ fi
 
 : "${GITHUB_REPOSITORY:?Variable GITHUB_REPOSITORY absente.}"
 : "${GITHUB_TOKEN:?Variable GITHUB_TOKEN absente.}"
+
+write_step "Mise a jour de la version source: ${version}"
+bash ./.github/scripts/set-app-version.sh "${version}" "${PROJECT_FILE}"
+
+if ! git diff --quiet -- "${PROJECT_FILE}"; then
+  git add "${PROJECT_FILE}"
+  git commit -m "chore: sync app version ${version} [skip ci]"
+  git push origin HEAD:main
+  write_step "Version source poussee sur main."
+else
+  write_step "Version source deja a jour."
+fi
 
 git tag -a "${tag}" -m "Release ${tag}"
 git push origin "refs/tags/${tag}"

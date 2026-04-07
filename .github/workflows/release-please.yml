@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   release:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -21,6 +22,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          chmod +x ./.github/scripts/create-stable-release.sh ./.github/scripts/set-app-version.sh
 
       - name: Create stable tag and GitHub release
         shell: bash
