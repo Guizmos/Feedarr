@@ -39,12 +39,13 @@ public sealed class BadgesSummaryCacheServiceTests
             return SampleSummary() with { ReleasesCount = 10 + next };
         });
 
-        // NullMemoryCache never retains entries — every call is a guaranteed cache miss,
-        // which is exactly what happens after a real expiration. No timing dependency.
-        var service = CreateService(new NullMemoryCache(), provider, cacheSeconds: 60);
-
-        var first = await service.GetBaseSummaryAsync(CancellationToken.None);
-        var second = await service.GetBaseSummaryAsync(CancellationToken.None);
+        // Two independent service instances each backed by a NullMemoryCache simulate
+        // "first request" and "request after cache expiry" without any shared in-flight
+        // state. This removes all platform-specific async scheduling races on Linux CI.
+        var first = await CreateService(new NullMemoryCache(), provider, cacheSeconds: 60)
+            .GetBaseSummaryAsync(CancellationToken.None);
+        var second = await CreateService(new NullMemoryCache(), provider, cacheSeconds: 60)
+            .GetBaseSummaryAsync(CancellationToken.None);
 
         Assert.Equal(2, provider.CallCount);
         Assert.NotEqual(first.ReleasesCount, second.ReleasesCount);
