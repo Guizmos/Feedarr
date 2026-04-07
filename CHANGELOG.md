@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.5.6](https://github.com/Guizmos/Feedarr/compare/v2.5.5...v2.5.6) (2026-04-07)
+
+
+### Bug Fixes
+
+* optimisation ([d67d1d6](https://github.com/Guizmos/Feedarr/commit/d67d1d6a888f3c6f9cbac91d5cce0fc601b6ef02))
+* optimisation + more test ([99a455a](https://github.com/Guizmos/Feedarr/commit/99a455a2fdc3b7ce03fc5cbb0acad8436850e029))
+* optimisation + more test - patch ci ([ff45370](https://github.com/Guizmos/Feedarr/commit/ff453703dbab239818e82c0bbb0ad6883280d7fa))
+* optimisation + more tests PR2 ([e25c18a](https://github.com/Guizmos/Feedarr/commit/e25c18ae5daa7b200db1c9684e0462b0a85d8f94))
+* optimisation + more tests PR2 + fix CI ([397611a](https://github.com/Guizmos/Feedarr/commit/397611a23b1e205ba2c8d23e7c61b4ea3b12d490))
+* optimisation + more tests PR2 + fix CI v2 ([57adf8c](https://github.com/Guizmos/Feedarr/commit/57adf8ca3b9b68a3ff63357e33677eb97367174a))
+* optimisation + more tests PR2 + fix CI v3 ([0cde64e](https://github.com/Guizmos/Feedarr/commit/0cde64e4b3e4ee266a75fe509c4abfde78e9fb62))
+* **tests:** replace timing-based cache expiry with NullMemoryCache ([974e2fc](https://github.com/Guizmos/Feedarr/commit/974e2fca965553b0e773cfe06302ea07f723f63d))
+* **tests:** use two service instances to eliminate Linux async race ([326676e](https://github.com/Guizmos/Feedarr/commit/326676e09396a837d833a3a77a25943c3e68a82e))
+
 ## [2.5.5](https://github.com/Guizmos/Feedarr/compare/v2.5.4...v2.5.5) (2026-04-05)
 
 
