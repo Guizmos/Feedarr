@@ -850,7 +850,7 @@ export default function Library() {
         setManualLoading(false);
       }
     }, 350);
-  }, [setManualErr, setManualLoading, setManualResults]);
+  }, [setManualErr, setManualLoading, setManualProvidersErrored, setManualResults]);
 
   // Manual poster
   const openManualPoster = useCallback(() => {
