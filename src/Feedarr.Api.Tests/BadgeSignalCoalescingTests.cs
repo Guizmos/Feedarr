@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Feedarr.Api.Options;
 using Feedarr.Api.Services;
 using Microsoft.Extensions.Logging;
@@ -45,10 +46,11 @@ public sealed class BadgeSignalCoalescingTests
 
     private static async Task WaitUntilAsync(Func<bool> predicate, TimeSpan timeout)
     {
-        var started = DateTime.UtcNow;
+        var started = Stopwatch.GetTimestamp();
+        var timeoutTicks = timeout.TotalSeconds * Stopwatch.Frequency;
         while (!predicate())
         {
-            if (DateTime.UtcNow - started > timeout)
+            if (Stopwatch.GetTimestamp() - started > timeoutTicks)
                 throw new TimeoutException("Condition not reached before timeout.");
             await Task.Delay(10);
         }
@@ -56,10 +58,11 @@ public sealed class BadgeSignalCoalescingTests
 
     private sealed class CapturingBadgeLogger : ILogger<BadgeSignal>
     {
-        private readonly object _gate = new();
+        private int _flushCount;
+        private int _maxCoalescedCount;
 
-        public int FlushCount { get; private set; }
-        public int MaxCoalescedCount { get; private set; }
+        public int FlushCount => Volatile.Read(ref _flushCount);
+        public int MaxCoalescedCount => Volatile.Read(ref _maxCoalescedCount);
 
         public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
 
@@ -76,10 +79,7 @@ public sealed class BadgeSignalCoalescingTests
             if (!message.Contains("BadgeSignal flush", StringComparison.Ordinal))
                 return;
 
-            lock (_gate)
-            {
-                FlushCount++;
-            }
+            Interlocked.Increment(ref _flushCount);
 
             if (state is IEnumerable<KeyValuePair<string, object?>> kvps)
             {
@@ -89,13 +89,22 @@ public sealed class BadgeSignalCoalescingTests
                         continue;
 
                     var parsed = kv.Value is null ? 0 : Convert.ToInt32(kv.Value);
-                    lock (_gate)
-                    {
-                        if (parsed > MaxCoalescedCount)
-                            MaxCoalescedCount = parsed;
-                    }
+                    UpdateMaxCoalescedCount(parsed);
                     break;
                 }
+            }
+        }
+
+        private void UpdateMaxCoalescedCount(int parsed)
+        {
+            while (true)
+            {
+                var current = Volatile.Read(ref _maxCoalescedCount);
+                if (parsed <= current)
+                    return;
+
+                if (Interlocked.CompareExchange(ref _maxCoalescedCount, parsed, current) == current)
+                    return;
             }
         }
 
@@ -106,4 +115,3 @@ public sealed class BadgeSignalCoalescingTests
         }
     }
 }
-

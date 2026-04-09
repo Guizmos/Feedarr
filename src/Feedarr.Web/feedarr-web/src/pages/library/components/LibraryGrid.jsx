@@ -1,13 +1,33 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import PosterCard from "../../../ui/PosterCard.jsx";
 import { useVirtualGrid } from "../hooks/useVirtualGrid.js";
 
-/** Matches .grid { gap: 20px } in styles.css */
-const GAP = 20;
+/** Desktop gap matches .grid { gap: 20px } in styles.css */
+const DESKTOP_GAP = 20;
+const DESKTOP_MIN_GAP = 10;
 const MOBILE_MAX_WIDTH = 768;
+const SMALL_MOBILE_MAX_WIDTH = 480;
 
-/** On mobile (containerWidth <= 768px), enforce at least 3 columns. */
-const GRID_MIN_COLS_FN = (w) => (w > 0 && w <= MOBILE_MAX_WIDTH ? 3 : 1);
+/** On mobile (containerWidth <= 768px), enforce 2 columns. */
+const GRID_MIN_COLS_FN = (w) => (w > 0 && w <= MOBILE_MAX_WIDTH ? 2 : 1);
+const getDesktopGridGap = (cardSize) => {
+  if (!(cardSize > 0)) return DESKTOP_GAP;
+  const scaledGap = Math.round((DESKTOP_GAP * cardSize) / 190);
+  return Math.max(DESKTOP_MIN_GAP, Math.min(DESKTOP_GAP, scaledGap));
+};
+const getDesktopGridRowGap = (cardSize) => {
+  const desktopGap = getDesktopGridGap(cardSize);
+  return Math.max(8, desktopGap - 6);
+};
+const GRID_ESTIMATED_CARD_HEIGHT_FN = ({ containerWidth, cardSize, colWidth }) => {
+  if (containerWidth > 0 && containerWidth <= SMALL_MOBILE_MAX_WIDTH) {
+    return Math.round(colWidth * 1.5 + 48);
+  }
+  if (containerWidth > 0 && containerWidth <= MOBILE_MAX_WIDTH) {
+    return Math.round(colWidth * 1.5 + 50);
+  }
+  return Math.round((350 * cardSize) / 190);
+};
 
 /**
  * Vue grille de la bibliothèque (cartes poster virtualisées)
@@ -33,21 +53,42 @@ function LibraryGrid({
   integrationMode,
   cardSize,
 }) {
+  const [hoveredRowIndex, setHoveredRowIndex] = useState(null);
+  const desktopGap = useMemo(() => getDesktopGridGap(cardSize), [cardSize]);
+  const desktopRowGap = useMemo(() => getDesktopGridRowGap(cardSize), [cardSize]);
+  const gridGapFn = useMemo(
+    () => (w) => {
+      if (w > 0 && w <= SMALL_MOBILE_MAX_WIDTH) return 5;
+      if (w > 0 && w <= MOBILE_MAX_WIDTH) return 6;
+      return desktopGap;
+    },
+    [desktopGap],
+  );
+  const gridRowGapFn = useMemo(
+    () => (w) => {
+      if (w > 0 && w <= SMALL_MOBILE_MAX_WIDTH) return 5;
+      if (w > 0 && w <= MOBILE_MAX_WIDTH) return 5;
+      return desktopRowGap;
+    },
+    [desktopRowGap],
+  );
+
   // PosterCard height is fixed by --card-scale, not proportional to colWidth.
   // Base geometry @ cardSize=190 (scale=1):
   //   poster 240 + statusline 5 + meta ~94 = ~326px at rest (posterSubAlt collapsed).
   //   On hover, posterSubAlt expands by 20px (non-scaled, fixed px).
   //   360 = 326(rest) + 20(hover) + 14(safety buffer for subpixel/line-height variance).
   // This ensures virtual row height absorbs both states at all cardSize values.
-  const estimatedCardHeight = useMemo(
-    () => Math.round((360 * cardSize) / 190),
-    [cardSize],
-  );
-
-  const { containerRef, rows, numCols, scrollMargin, virtualizer } = useVirtualGrid(
+  const { containerRef, rows, numCols, scrollMargin, virtualizer, gap, rowGap } = useVirtualGrid(
     items,
     cardSize,
-    { gap: GAP, estimatedCardHeight, minColsFn: GRID_MIN_COLS_FN },
+    {
+      gap: DESKTOP_GAP,
+      gapFn: gridGapFn,
+      rowGapFn: gridRowGapFn,
+      estimatedCardHeightFn: GRID_ESTIMATED_CARD_HEIGHT_FN,
+      minColsFn: GRID_MIN_COLS_FN,
+    },
   );
 
   // --card-scale drives all scaled dimensions inside PosterCard.
@@ -79,7 +120,10 @@ function LibraryGrid({
               transform: `translateY(${virtualRow.start - scrollMargin}px)`,
               display: "grid",
               gridTemplateColumns: `repeat(${numCols}, 1fr)`,
-              gap: `${GAP}px`,
+              columnGap: `${gap}px`,
+              rowGap: `${rowGap}px`,
+              alignItems: "start",
+              zIndex: hoveredRowIndex === virtualRow.index ? 2 : 1,
             }}
           >
             {rowItems.map((it, colIndex) => (
@@ -101,6 +145,10 @@ function LibraryGrid({
                 indexerPillPosition="left"
                 integrationMode={integrationMode}
                 arrStatus={arrStatusMap[it.id]}
+                onHoverStart={() => setHoveredRowIndex(virtualRow.index)}
+                onHoverEnd={() => {
+                  setHoveredRowIndex((current) => (current === virtualRow.index ? null : current));
+                }}
               />
             ))}
           </div>

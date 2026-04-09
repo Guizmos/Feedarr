@@ -40,6 +40,20 @@ import LibrarySubbar from "./components/LibrarySubbar.jsx";
 import RenameModal from "./components/RenameModal.jsx";
 import ManualPosterModal from "./components/ManualPosterModal.jsx";
 
+const SLIDER_MIN = 20;
+const SLIDER_MAX = 100;
+const SLIDER_STEP = 1;
+const DEFAULT_CARD_SLIDER = 50;
+const GRID_MIN = 95;
+const GRID_MAX = 285; // grid: 95px → 190px → 285px
+const POSTER_MIN = 90;
+const POSTER_MAX = 270; // poster: 90px → 180px → 270px
+
+function clampCardSliderValue(value) {
+  if (!Number.isFinite(value)) return DEFAULT_CARD_SLIDER;
+  return Math.min(SLIDER_MAX, Math.max(SLIDER_MIN, Math.round(value)));
+}
+
 const initialLibraryUiState = {
   loading: true,
   err: "",
@@ -174,34 +188,43 @@ export default function Library() {
 
   const setContent = useSubbarSetter();
 
-  // Card size slider (20-100, default 50 = current size)
-  const SLIDER_MIN = 20;
-  const GRID_MIN = 95, GRID_MAX = 285;   // grid: 95px → 190px → 285px
-  const POSTER_MIN = 90, POSTER_MAX = 270; // poster: 90px → 180px → 270px
-
   const [gridCardSlider, setGridCardSlider] = useState(() => {
     const v = Number(localStorage.getItem("feedarr.library.cardSize.grid"));
-    return Number.isFinite(v) && v >= SLIDER_MIN && v <= 100 ? v : 50;
+    return clampCardSliderValue(v);
   });
   const [posterCardSlider, setPosterCardSlider] = useState(() => {
     const v = Number(localStorage.getItem("feedarr.library.cardSize.poster"));
-    return Number.isFinite(v) && v >= SLIDER_MIN && v <= 100 ? v : 50;
+    return clampCardSliderValue(v);
   });
 
   const gridCardSize = GRID_MIN + (gridCardSlider / 100) * (GRID_MAX - GRID_MIN);
   const posterCardSize = POSTER_MIN + (posterCardSlider / 100) * (POSTER_MAX - POSTER_MIN);
 
-  const handleGridSlider = useCallback((e) => {
-    const v = Number(e.target.value);
-    setGridCardSlider(v);
-    localStorage.setItem("feedarr.library.cardSize.grid", String(v));
+  const updateGridCardSlider = useCallback((valueOrUpdater) => {
+    setGridCardSlider((prev) => {
+      const nextValue = typeof valueOrUpdater === "function" ? valueOrUpdater(prev) : valueOrUpdater;
+      const next = clampCardSliderValue(Number(nextValue));
+      localStorage.setItem("feedarr.library.cardSize.grid", String(next));
+      return next;
+    });
   }, []);
 
-  const handlePosterSlider = useCallback((e) => {
-    const v = Number(e.target.value);
-    setPosterCardSlider(v);
-    localStorage.setItem("feedarr.library.cardSize.poster", String(v));
+  const updatePosterCardSlider = useCallback((valueOrUpdater) => {
+    setPosterCardSlider((prev) => {
+      const nextValue = typeof valueOrUpdater === "function" ? valueOrUpdater(prev) : valueOrUpdater;
+      const next = clampCardSliderValue(Number(nextValue));
+      localStorage.setItem("feedarr.library.cardSize.poster", String(next));
+      return next;
+    });
   }, []);
+
+  const handleGridSlider = useCallback((e) => {
+    updateGridCardSlider(e.target.value);
+  }, [updateGridCardSlider]);
+
+  const handlePosterSlider = useCallback((e) => {
+    updatePosterCardSlider(e.target.value);
+  }, [updatePosterCardSlider]);
 
   // Sources
   const [sources, setSources] = useState([]);
@@ -1046,6 +1069,26 @@ export default function Library() {
     defaultLimit,
   } = filters;
 
+  const activeCardSlider = viewMode === "poster" ? posterCardSlider : gridCardSlider;
+  const canDecreaseCardZoom = activeCardSlider > SLIDER_MIN;
+  const canIncreaseCardZoom = activeCardSlider < SLIDER_MAX;
+
+  const handleDecreaseCardZoom = useCallback(() => {
+    if (viewMode === "poster") {
+      updatePosterCardSlider((prev) => prev - SLIDER_STEP);
+      return;
+    }
+    updateGridCardSlider((prev) => prev - SLIDER_STEP);
+  }, [viewMode, updateGridCardSlider, updatePosterCardSlider]);
+
+  const handleIncreaseCardZoom = useCallback(() => {
+    if (viewMode === "poster") {
+      updatePosterCardSlider((prev) => prev + SLIDER_STEP);
+      return;
+    }
+    updateGridCardSlider((prev) => prev + SLIDER_STEP);
+  }, [viewMode, updateGridCardSlider, updatePosterCardSlider]);
+
   const handleSelectAllVisible = useCallback(() => {
     selectAllVisible(visibleItems);
   }, [selectAllVisible, visibleItems]);
@@ -1127,15 +1170,35 @@ export default function Library() {
         </div>
         {(viewMode === "grid" || viewMode === "missing" || viewMode === "poster") && (
           <div className="library-size-slider">
-            <LayoutGrid className="library-size-slider__icon" />
+            <button
+              type="button"
+              className="library-size-slider__button"
+              onClick={handleDecreaseCardZoom}
+              disabled={!canDecreaseCardZoom}
+              aria-label="Réduire la taille des cartes"
+              title="Réduire la taille des cartes"
+            >
+              <LayoutGrid className="library-size-slider__icon" />
+            </button>
             <input
               type="range"
               min={SLIDER_MIN}
-              max={100}
-              value={viewMode === "poster" ? posterCardSlider : gridCardSlider}
+              max={SLIDER_MAX}
+              step={SLIDER_STEP}
+              value={activeCardSlider}
               onChange={viewMode === "poster" ? handlePosterSlider : handleGridSlider}
+              aria-label="Taille des cartes"
             />
-            <LayoutGrid className="library-size-slider__icon library-size-slider__icon--lg" />
+            <button
+              type="button"
+              className="library-size-slider__button library-size-slider__button--lg"
+              onClick={handleIncreaseCardZoom}
+              disabled={!canIncreaseCardZoom}
+              aria-label="Augmenter la taille des cartes"
+              title="Augmenter la taille des cartes"
+            >
+              <LayoutGrid className="library-size-slider__icon library-size-slider__icon--lg" />
+            </button>
           </div>
         )}
       </div>

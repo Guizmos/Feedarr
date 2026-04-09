@@ -22,6 +22,8 @@ function PosterCard({
   indexerPillPosition = "left",
   integrationMode = "arr",
   arrStatus = null, // { inSonarr, inRadarr, inOverseerr, inJellyseerr, inSeer }
+  onHoverStart,
+  onHoverEnd,
 }) {
   const seen = !!item.seen;
   const mode = normalizeRequestMode(integrationMode);
@@ -67,6 +69,8 @@ function PosterCard({
         if (selectionMode) onToggleSelect?.(item);
         else onOpen?.(item);
       }}
+      onMouseEnter={() => onHoverStart?.(item)}
+      onMouseLeave={() => onHoverEnd?.(item)}
       style={selectionMode || onOpen ? { cursor: "pointer" } : undefined}
       title={selectionMode ? "Cliquer pour sélectionner" : "Ouvrir les détails"}
     >

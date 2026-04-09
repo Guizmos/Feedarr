@@ -38,9 +38,13 @@ import { useGridLayout } from "./useGridLayout.js";
  */
 export function useVirtualGrid(items, cardSize, {
   gap = 20,
+  gapFn = null,
+  rowGap = null,
+  rowGapFn = null,
   cardHeightRatio = 1.5,
   titleAreaPx = 44,
   estimatedCardHeight = null,
+  estimatedCardHeightFn = null,
   overscan = 5,
   minColsFn = null,
 } = {}) {
@@ -50,13 +54,27 @@ export function useVirtualGrid(items, cardSize, {
   const [scrollMargin, setScrollMargin] = useState(0);
 
   const minCols = minColsFn ? minColsFn(containerWidth) : 1;
+  const resolvedGap = gapFn ? gapFn(containerWidth) : gap;
+  const resolvedRowGap = rowGapFn
+    ? rowGapFn(containerWidth)
+    : (rowGap != null ? rowGap : resolvedGap);
 
-  const { numCols, estimatedRowHeight } = useGridLayout(containerWidth, cardSize, {
-    gap,
+  const { numCols, colWidth, estimatedRowHeight } = useGridLayout(containerWidth, cardSize, {
+    gap: resolvedGap,
     cardHeightRatio,
     titleAreaPx,
     minCols,
   });
+  const resolvedEstimatedCardHeight = estimatedCardHeightFn
+    ? estimatedCardHeightFn({
+        containerWidth,
+        cardSize,
+        numCols,
+        colWidth,
+        gap: resolvedGap,
+        rowGap: resolvedRowGap,
+      })
+    : estimatedCardHeight;
 
   // Chunk flat items into rows of numCols.
   const rows = useMemo(() => {
@@ -82,9 +100,9 @@ export function useVirtualGrid(items, cardSize, {
   // between rows in the CSS grid. Fallback to 200 before first measurement.
   // When estimatedCardHeight is provided (fixed-scale cards like PosterCard),
   // it takes precedence over the colWidth-based estimatedRowHeight.
-  const rowHeight = estimatedCardHeight != null
-    ? Math.max(1, estimatedCardHeight) + gap
-    : (estimatedRowHeight > 0 ? estimatedRowHeight + gap : 200);
+  const rowHeight = resolvedEstimatedCardHeight != null
+    ? Math.max(1, resolvedEstimatedCardHeight) + resolvedRowGap
+    : (estimatedRowHeight > 0 ? estimatedRowHeight + resolvedRowGap : 200);
 
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -94,5 +112,13 @@ export function useVirtualGrid(items, cardSize, {
     scrollMargin,
   });
 
-  return { containerRef, rows, numCols, scrollMargin, virtualizer };
+  return {
+    containerRef,
+    rows,
+    numCols,
+    scrollMargin,
+    virtualizer,
+    gap: resolvedGap,
+    rowGap: resolvedRowGap,
+  };
 }

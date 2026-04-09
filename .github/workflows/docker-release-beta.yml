@@ -5,10 +5,11 @@ on:
     branches: ["beta"]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   publish:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -21,6 +22,12 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          chmod +x ./.github/scripts/set-app-version.sh
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -55,7 +62,22 @@ jobs:
           NEXT_VERSION="${MAJOR}.${MINOR}.${PATCH}"
 
           echo "version=${NEXT_VERSION}-beta-sha.${SHA7}" >> "$GITHUB_OUTPUT"
+          echo "source_version=${NEXT_VERSION}-beta" >> "$GITHUB_OUTPUT"
           echo "docker_tag=beta-${SHA7}" >> "$GITHUB_OUTPUT"
+
+      - name: Sync source version for beta
+        shell: bash
+        run: |
+          bash ./.github/scripts/set-app-version.sh "${{ steps.app_version.outputs.source_version }}"
+
+          if git diff --quiet -- src/Feedarr.Api/Feedarr.Api.csproj; then
+            echo "Beta source version already up to date."
+            exit 0
+          fi
+
+          git add src/Feedarr.Api/Feedarr.Api.csproj
+          git commit -m "chore: sync beta app version ${{ steps.app_version.outputs.source_version }} [skip ci]"
+          git push origin HEAD:beta
 
       - name: Docker meta
         id: meta
