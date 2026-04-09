@@ -731,6 +731,29 @@ body{
   gap: 8px;
   padding-bottom: 6px;
 }
+.library-size-slider__button{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: opacity .15s ease;
+}
+.library-size-slider__button:hover:not(:disabled) .library-size-slider__icon,
+.library-size-slider__button:focus-visible .library-size-slider__icon{
+  color: var(--text);
+}
+.library-size-slider__button:focus-visible{
+  outline: 2px solid var(--topbar, #2493b5);
+  outline-offset: 2px;
+}
+.library-size-slider__button:disabled{
+  cursor: default;
+  opacity: .45;
+}
 .library-size-slider__icon{
   width: 14px;
   height: 14px;
@@ -804,6 +827,24 @@ body{
 .page--library .grid-virtualized:not(.grid--poster) .posterFallback__icon{
   width: calc(40px * var(--card-scale, 1));
   height: calc(40px * var(--card-scale, 1));
+}
+
+@media (min-width: 769px){
+  .page--library .grid:not(.grid--poster) .posterTitle,
+  .page--library .grid-virtualized:not(.grid--poster) .posterTitle{
+    line-height: 1.15;
+    min-height: calc(24px * var(--card-scale, 1));
+    max-height: calc(28px * var(--card-scale, 1));
+    height: auto;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+  .page--library .grid:not(.grid--poster) .posterSub,
+  .page--library .grid-virtualized:not(.grid--poster) .posterSub{
+    margin-top: calc(2px * var(--card-scale, 1));
+  }
 }
 .page--library .grid:not(.grid--poster) .posterLoader,
 .page--library .grid-virtualized:not(.grid--poster) .posterLoader{
@@ -6611,7 +6652,7 @@ body.nav-open{ overflow: hidden; }
       overscroll-behavior-x: none;
     }
     .page{ padding: 12px 10px; }
-    .page.page--library{ padding-left: 8px; padding-right: 8px; }
+    .page.page--library{ padding-left: 10px; padding-right: 10px; }
     .page.page--system{ padding: 10px 6px; }
     .grid{ grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
     .poster,
@@ -6619,12 +6660,30 @@ body.nav-open{ overflow: hidden; }
     .page--library .grid-virtualized:not(.grid--poster) .poster{ height: auto; aspect-ratio: 2 / 3; }
     .posterTitle{ white-space: nowrap; text-overflow: ellipsis; font-size: 12px; height: 18px; overflow: hidden; }
     .page--library .grid:not(.grid--poster) .posterTitle,
-    .page--library .grid-virtualized:not(.grid--poster) .posterTitle{ height: auto; }
+    .page--library .grid-virtualized:not(.grid--poster) .posterTitle{
+      height: auto;
+      font-size: 11.5px;
+      line-height: 1.15;
+    }
     .posterSub{ flex-wrap: wrap; max-height: 18px; overflow: hidden; font-size: 9px; gap: 6px; }
     .page--library .grid:not(.grid--poster) .posterSub,
-    .page--library .grid-virtualized:not(.grid--poster) .posterSub{ margin-top: 0; }
+    .page--library .grid-virtualized:not(.grid--poster) .posterSub{
+      margin-top: 0;
+      font-size: 8.5px;
+      gap: 4px;
+      max-height: 12px;
+    }
     .posterSubAlt{ display: none; }
     .posterMeta{ padding: 6px 6px 4px; gap: 2px; }
+    .page--library .grid:not(.grid--poster) .posterMeta,
+    .page--library .grid-virtualized:not(.grid--poster) .posterMeta{
+      padding: 5px 6px 4px;
+      gap: 1px;
+      text-align: center;
+      align-items: center;
+    }
+    .page--library .grid:not(.grid--poster) .posterSub,
+    .page--library .grid-virtualized:not(.grid--poster) .posterSub{ justify-content: center; }
     .posterCard:hover{ transform: none; }
     .posterFallback__icon{ width: 28px; height: 28px; }
     .grid.grid--compact{ grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
@@ -6913,16 +6972,34 @@ body.nav-open{ overflow: hidden; }
     align-self: end;
     width: max-content;
   }
-  .page.page--library{ padding-left: 6px; padding-right: 6px; }
+  .page.page--library{ padding-left: 8px; padding-right: 8px; }
   .grid{ grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
   .poster{ height: auto; aspect-ratio: 2 / 3; }
   .posterTitle{ font-size: 11px; line-height: 1.2; height: 15px; }
   .page--library .grid:not(.grid--poster) .posterTitle,
-  .page--library .grid-virtualized:not(.grid--poster) .posterTitle{ height: auto; }
+  .page--library .grid-virtualized:not(.grid--poster) .posterTitle{
+    height: auto;
+    font-size: 10.5px;
+    line-height: 1.1;
+  }
   .posterSub{ font-size: 10px; max-height: 14px; gap: 4px; }
   .page--library .grid:not(.grid--poster) .posterSub,
-  .page--library .grid-virtualized:not(.grid--poster) .posterSub{ margin-top: 0; }
+  .page--library .grid-virtualized:not(.grid--poster) .posterSub{
+    margin-top: 0;
+    font-size: 8px;
+    gap: 3px;
+    max-height: 11px;
+  }
   .posterMeta{ padding: 4px 5px 3px; gap: 1px; }
+  .page--library .grid:not(.grid--poster) .posterMeta,
+  .page--library .grid-virtualized:not(.grid--poster) .posterMeta{
+    padding: 4px 5px 3px;
+    gap: 1px;
+    text-align: center;
+    align-items: center;
+  }
+  .page--library .grid:not(.grid--poster) .posterSub,
+  .page--library .grid-virtualized:not(.grid--poster) .posterSub{ justify-content: center; }
   .grid.grid--compact{ grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
   .grid.grid--compact .poster{ height: auto; aspect-ratio: 2 / 3; }
   .grid.grid--compact .posterTitle{ font-size: 10px; height: 13px; }

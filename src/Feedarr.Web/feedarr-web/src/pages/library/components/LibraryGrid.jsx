@@ -4,29 +4,29 @@ import { useVirtualGrid } from "../hooks/useVirtualGrid.js";
 
 /** Desktop gap matches .grid { gap: 20px } in styles.css */
 const DESKTOP_GAP = 20;
+const DESKTOP_MIN_GAP = 10;
 const MOBILE_MAX_WIDTH = 768;
 const SMALL_MOBILE_MAX_WIDTH = 480;
 
 /** On mobile (containerWidth <= 768px), enforce 2 columns. */
 const GRID_MIN_COLS_FN = (w) => (w > 0 && w <= MOBILE_MAX_WIDTH ? 2 : 1);
-const GRID_GAP_FN = (w) => {
-  if (w > 0 && w <= SMALL_MOBILE_MAX_WIDTH) return 5;
-  if (w > 0 && w <= MOBILE_MAX_WIDTH) return 6;
-  return DESKTOP_GAP;
+const getDesktopGridGap = (cardSize) => {
+  if (!(cardSize > 0)) return DESKTOP_GAP;
+  const scaledGap = Math.round((DESKTOP_GAP * cardSize) / 190);
+  return Math.max(DESKTOP_MIN_GAP, Math.min(DESKTOP_GAP, scaledGap));
 };
-const GRID_ROW_GAP_FN = (w) => {
-  if (w > 0 && w <= SMALL_MOBILE_MAX_WIDTH) return 7;
-  if (w > 0 && w <= MOBILE_MAX_WIDTH) return 7;
-  return DESKTOP_GAP;
+const getDesktopGridRowGap = (cardSize) => {
+  const desktopGap = getDesktopGridGap(cardSize);
+  return Math.max(8, desktopGap - 6);
 };
 const GRID_ESTIMATED_CARD_HEIGHT_FN = ({ containerWidth, cardSize, colWidth }) => {
   if (containerWidth > 0 && containerWidth <= SMALL_MOBILE_MAX_WIDTH) {
-    return Math.round(colWidth * 1.5 + 52);
+    return Math.round(colWidth * 1.5 + 48);
   }
   if (containerWidth > 0 && containerWidth <= MOBILE_MAX_WIDTH) {
-    return Math.round(colWidth * 1.5 + 54);
+    return Math.round(colWidth * 1.5 + 50);
   }
-  return Math.round((360 * cardSize) / 190);
+  return Math.round((350 * cardSize) / 190);
 };
 
 /**
@@ -54,6 +54,24 @@ function LibraryGrid({
   cardSize,
 }) {
   const [hoveredRowIndex, setHoveredRowIndex] = useState(null);
+  const desktopGap = useMemo(() => getDesktopGridGap(cardSize), [cardSize]);
+  const desktopRowGap = useMemo(() => getDesktopGridRowGap(cardSize), [cardSize]);
+  const gridGapFn = useMemo(
+    () => (w) => {
+      if (w > 0 && w <= SMALL_MOBILE_MAX_WIDTH) return 5;
+      if (w > 0 && w <= MOBILE_MAX_WIDTH) return 6;
+      return desktopGap;
+    },
+    [desktopGap],
+  );
+  const gridRowGapFn = useMemo(
+    () => (w) => {
+      if (w > 0 && w <= SMALL_MOBILE_MAX_WIDTH) return 5;
+      if (w > 0 && w <= MOBILE_MAX_WIDTH) return 5;
+      return desktopRowGap;
+    },
+    [desktopRowGap],
+  );
 
   // PosterCard height is fixed by --card-scale, not proportional to colWidth.
   // Base geometry @ cardSize=190 (scale=1):
@@ -66,8 +84,8 @@ function LibraryGrid({
     cardSize,
     {
       gap: DESKTOP_GAP,
-      gapFn: GRID_GAP_FN,
-      rowGapFn: GRID_ROW_GAP_FN,
+      gapFn: gridGapFn,
+      rowGapFn: gridRowGapFn,
       estimatedCardHeightFn: GRID_ESTIMATED_CARD_HEIGHT_FN,
       minColsFn: GRID_MIN_COLS_FN,
     },
