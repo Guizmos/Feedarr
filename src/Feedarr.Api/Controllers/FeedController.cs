@@ -4,8 +4,11 @@ using Dapper;
 using Feedarr.Api.Data;
 using Feedarr.Api.Models;
 using Feedarr.Api.Services.Categories;
+using Feedarr.Api.Helpers;
 using Microsoft.Extensions.Caching.Memory;
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Feedarr.Api.Controllers;
@@ -27,6 +30,15 @@ public sealed class FeedController : ControllerBase
     private const int MaxFtsTokenLength = 64;
     private const int TopMaxHours = 24 * 7;
     private const int TopMaxTake = 50;
+    private const int PagedFeedDefaultLimit = 50;
+    private const int PagedFeedMaxLimit = 200;
+    private const int PagedFeedCursorVersion = 1;
+    private const int PagedFeedMaxCursorLength = 2048;
+    private const string PagedPublishedAtSql =
+        "CASE WHEN releases.published_at_ts IS NULL OR releases.published_at_ts < 0 THEN 0 ELSE releases.published_at_ts END";
+    private const string PagedSeedersSql = "CAST(COALESCE(releases.seeders, 0) AS INTEGER)";
+    private const string PagedGrabsSql = "CAST(COALESCE(releases.grabs, 0) AS INTEGER)";
+    private const string PagedScoreSql = $"(({PagedGrabsSql}) * 5 + ({PagedSeedersSql}))";
     private const string TopWindowField = "published_at_ts";
     private const string UnifiedCategoryToKeySql =
         "CASE releases.unified_category " +
@@ -187,6 +199,18 @@ public sealed class FeedController : ControllerBase
     private sealed class TopCategoryRow : FeedRow
     {
         public int CatCount { get; set; }
+    }
+
+    private sealed class PagedFeedCursor
+    {
+        public int Version { get; set; }
+        public string? Sort { get; set; }
+        public long LastPublishedAt { get; set; }
+        public long LastId { get; set; }
+        public long SnapshotMaxId { get; set; }
+        public string? QueryFingerprint { get; set; }
+        public long? LastPrimaryValue { get; set; }
+        public long? LastSecondaryValue { get; set; }
     }
 
     private static string? CanonicalizeUnifiedCategoryKey(string? key)
@@ -543,6 +567,350 @@ public sealed class FeedController : ControllerBase
         }
 
         return Ok(rows);
+    }
+
+    // GET /api/feed/releases?limit=50&sort=date&sourceId=1&sourceId=2
+    [HttpGet("releases")]
+    public IActionResult Releases(
+        [FromQuery] int? limit,
+        [FromQuery] string? cursor,
+        [FromQuery] string? sort,
+        [FromQuery] string? q,
+        [FromQuery] string? unifiedCategory,
+        [FromQuery] int? seen,
+        [FromQuery] int? minSeeders,
+        [FromQuery(Name = "sourceId")] long[]? sourceIds,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var effectiveLimit = limit ?? PagedFeedDefaultLimit;
+        if (effectiveLimit is < 1 or > PagedFeedMaxLimit)
+            return BadRequest(new { error = "invalid_limit", message = $"limit must be between 1 and {PagedFeedMaxLimit}" });
+
+        var effectiveSort = string.IsNullOrWhiteSpace(sort) ? "date" : sort.Trim().ToLowerInvariant();
+        if (effectiveSort is not ("date" or "seeders" or "grabs" or "score"))
+            return BadRequest(new { error = "invalid_sort", message = "sort must be date, seeders, grabs, or score" });
+
+        if (seen is not null && seen is not 0 and not 1)
+            return BadRequest(new { error = "invalid_seen", message = "seen must be 0 or 1" });
+
+        if (minSeeders is < 0)
+            return BadRequest(new { error = "invalid_min_seeders", message = "minSeeders must be greater than or equal to 0" });
+
+        var normalizedSourceIds = (sourceIds ?? [])
+            .Distinct()
+            .OrderBy(id => id)
+            .ToArray();
+        if (normalizedSourceIds.Any(id => id <= 0))
+            return BadRequest(new { error = "invalid_source_id", message = "sourceId values must be positive" });
+
+        var normalizedQuery = string.IsNullOrWhiteSpace(q) ? null : q.Trim();
+        string? normalizedCategory = null;
+        if (!string.IsNullOrWhiteSpace(unifiedCategory))
+        {
+            if (!CategoryGroupCatalog.TryNormalizeKey(unifiedCategory, out var canonicalCategory))
+                return BadRequest(new { error = "invalid_unified_category", message = "unifiedCategory is not supported" });
+            normalizedCategory = canonicalCategory;
+        }
+
+        var fingerprint = BuildPagedFeedFingerprint(
+            effectiveSort,
+            normalizedQuery,
+            normalizedCategory,
+            seen,
+            minSeeders,
+            normalizedSourceIds);
+
+        PagedFeedCursor? decodedCursor = null;
+        if (!string.IsNullOrWhiteSpace(cursor))
+        {
+            if (cursor.Length > PagedFeedMaxCursorLength ||
+                !CursorHelper.TryDecode(cursor, out decodedCursor) ||
+                decodedCursor is null ||
+                decodedCursor.Version != PagedFeedCursorVersion ||
+                !string.Equals(decodedCursor.Sort, effectiveSort, StringComparison.Ordinal) ||
+                decodedCursor.LastId <= 0 ||
+                decodedCursor.LastPublishedAt < 0 ||
+                decodedCursor.SnapshotMaxId <= 0 ||
+                decodedCursor.LastId > decodedCursor.SnapshotMaxId ||
+                decodedCursor.QueryFingerprint?.Length != 64 ||
+                (effectiveSort != "date" && decodedCursor.LastPrimaryValue is null) ||
+                (effectiveSort == "grabs" && decodedCursor.LastSecondaryValue is null))
+            {
+                return BadRequest(new { error = "invalid_cursor", message = "cursor is invalid or unsupported" });
+            }
+
+            if (!CryptographicOperations.FixedTimeEquals(
+                    Encoding.UTF8.GetBytes(decodedCursor.QueryFingerprint ?? string.Empty),
+                    Encoding.UTF8.GetBytes(fingerprint)))
+            {
+                return BadRequest(new { error = "cursor_query_mismatch", message = "cursor does not match the current filters" });
+            }
+        }
+
+        using var conn = _db.Open();
+        var hasCategories = SchemaProbe(conn, ref _schemaHasCategories, "source_categories");
+        var hasFts = SchemaProbe(conn, ref _schemaHasFts, "releases_fts");
+        // Use the same effective category for filtering and projection. The persisted
+        // top key remains authoritative, with the established Top-feed fallbacks for
+        // older or incomplete rows.
+        var resolvedCategoryKeySql = hasCategories
+            ? ResolvedTopCategoryKeySql
+            : $"COALESCE(NULLIF(releases.top_category_key, ''), {UnifiedCategoryToKeySql}, {TitleHeuristicTopCategoryKeySql})";
+
+        var sourceWhere = new List<string> { "sources.enabled = 1" };
+        var args = new DynamicParameters();
+        if (normalizedSourceIds.Length > 0)
+        {
+            sourceWhere.Add("releases.source_id IN @sourceIds");
+            args.Add("sourceIds", normalizedSourceIds);
+        }
+
+        var snapshotMaxId = decodedCursor?.SnapshotMaxId ?? conn.ExecuteScalar<long?>($"""
+            SELECT MAX(releases.id)
+            FROM releases
+            INNER JOIN sources ON sources.id = releases.source_id
+            WHERE {string.Join(" AND ", sourceWhere)};
+            """, args) ?? 0;
+
+        var where = new List<string>(sourceWhere) { "releases.id <= @snapshotMaxId" };
+        args.Add("snapshotMaxId", snapshotMaxId);
+        args.Add("lim", effectiveLimit + 1);
+
+        if (normalizedQuery is not null)
+        {
+            if (hasFts)
+            {
+                var ftsQuery = BuildFtsQuery(normalizedQuery);
+                if (!string.IsNullOrWhiteSpace(ftsQuery))
+                {
+                    where.Add("releases.id IN (SELECT rowid FROM releases_fts WHERE releases_fts MATCH @qfts)");
+                    args.Add("qfts", ftsQuery);
+                }
+                else
+                {
+                    where.Add("(releases.title LIKE @q OR releases.title_clean LIKE @q)");
+                    args.Add("q", $"%{normalizedQuery}%");
+                }
+            }
+            else
+            {
+                where.Add("(releases.title LIKE @q OR releases.title_clean LIKE @q)");
+                args.Add("q", $"%{normalizedQuery}%");
+            }
+        }
+
+        if (normalizedCategory is not null)
+        {
+            where.Add($"({resolvedCategoryKeySql}) = @unifiedCategory");
+            args.Add("unifiedCategory", normalizedCategory);
+        }
+
+        if (seen is not null)
+        {
+            where.Add("releases.seen = @seen");
+            args.Add("seen", seen.Value);
+        }
+
+        if (minSeeders is not null)
+        {
+            where.Add("(releases.seeders IS NOT NULL AND releases.seeders >= @minSeeders)");
+            args.Add("minSeeders", minSeeders.Value);
+        }
+
+        if (decodedCursor is not null)
+        {
+            where.Add(BuildPagedFeedKeysetSql(effectiveSort));
+            args.Add("lastPublishedAt", decodedCursor.LastPublishedAt);
+            args.Add("lastId", decodedCursor.LastId);
+            if (decodedCursor.LastPrimaryValue is not null)
+                args.Add("lastPrimaryValue", decodedCursor.LastPrimaryValue.Value);
+            if (decodedCursor.LastSecondaryValue is not null)
+                args.Add("lastSecondaryValue", decodedCursor.LastSecondaryValue.Value);
+        }
+
+        var categoryColumns = hasCategories
+            ? $"sc.name as categoryName, ({resolvedCategoryKeySql}) as unifiedCategoryKey, ({ResolvedTopCategoryLabelSql}) as unifiedCategoryLabel,"
+            : $"NULL as categoryName, ({resolvedCategoryKeySql}) as unifiedCategoryKey, NULL as unifiedCategoryLabel,";
+        var categoryJoin = hasCategories
+            ? """
+              LEFT JOIN source_categories sc ON sc.source_id = releases.source_id AND sc.cat_id = releases.category_id
+              LEFT JOIN source_category_mappings scm ON scm.source_id = releases.source_id AND scm.cat_id = releases.category_id
+              """
+            : string.Empty;
+
+        var sql = $"""
+        SELECT
+          releases.id as id,
+          releases.source_id as sourceId,
+          releases.title,
+          releases.title_clean as titleClean,
+          releases.year,
+          releases.season,
+          releases.episode,
+          releases.resolution,
+          releases.source,
+          releases.codec,
+          releases.release_group as releaseGroup,
+          releases.media_type as mediaType,
+          releases.seeders,
+          releases.leechers,
+          releases.grabs,
+          releases.size_bytes as sizeBytes,
+          releases.published_at_ts as publishedAt,
+          releases.category_id as categoryId,
+          {categoryColumns}
+          releases.std_category_id as stdCategoryId,
+          releases.spec_category_id as specCategoryId,
+          releases.category_ids as categoryIds,
+          releases.unified_category as unifiedCategory,
+          releases.seen,
+          ('/api/releases/' || releases.id || '/download') as downloadPath,
+          releases.entity_id as entityId,
+          CASE
+            WHEN COALESCE(releases.poster_file, me.poster_file) IS NOT NULL
+             AND COALESCE(releases.poster_file, me.poster_file) <> ''
+            THEN ('/api/posters/release/' || releases.id || '?v=' || COALESCE(releases.poster_updated_at_ts, me.poster_updated_at_ts, 0))
+            ELSE NULL
+          END as posterUrl,
+          COALESCE(releases.poster_updated_at_ts, me.poster_updated_at_ts, 0) as posterUpdatedAtTs,
+          releases.poster_provider as posterProvider,
+          releases.poster_lang as posterLang,
+          releases.poster_size as posterSize,
+          releases.poster_last_error as posterLastError,
+          releases.poster_last_attempt_ts as posterLastAttemptTs,
+          COALESCE(me.ext_overview, releases.ext_overview) as overview,
+          COALESCE(me.ext_tagline, releases.ext_tagline) as tagline,
+          COALESCE(me.ext_genres, releases.ext_genres) as genres,
+          COALESCE(me.ext_release_date, releases.ext_release_date) as releaseDate,
+          CAST(COALESCE(me.ext_runtime_minutes, releases.ext_runtime_minutes) AS INTEGER) as runtimeMinutes,
+          COALESCE(me.ext_rating, releases.ext_rating) as rating,
+          CAST(COALESCE(me.ext_votes, releases.ext_votes) AS INTEGER) as ratingVotes,
+          COALESCE(me.ext_provider, releases.ext_provider) as detailsProvider,
+          COALESCE(me.ext_provider_id, releases.ext_provider_id) as detailsProviderId,
+          COALESCE(me.ext_updated_at_ts, releases.ext_updated_at_ts) as detailsUpdatedAtTs,
+          COALESCE(me.ext_directors, releases.ext_directors) as directors,
+          COALESCE(me.ext_writers, releases.ext_writers) as writers,
+          COALESCE(me.ext_cast, releases.ext_cast) as cast,
+          CAST(COALESCE(me.tmdb_id, releases.tmdb_id) AS INTEGER) as tmdbId,
+          CAST(COALESCE(me.tvdb_id, releases.tvdb_id) AS INTEGER) as tvdbId,
+          ras.in_sonarr as isInSonarr,
+          ras.in_radarr as isInRadarr,
+          ras.sonarr_url as sonarrUrl,
+          ras.radarr_url as radarrUrl,
+          COALESCE(ras.sonarr_url, ras.radarr_url) as openUrl,
+          ras.checked_at_ts as arrCheckedAtTs
+        FROM releases
+        INNER JOIN sources ON sources.id = releases.source_id
+        LEFT JOIN media_entities me ON me.id = releases.entity_id
+        {categoryJoin}
+        LEFT JOIN release_arr_status ras ON ras.release_id = releases.id
+        WHERE {string.Join(" AND ", where)}
+        ORDER BY {BuildPagedFeedOrderSql(effectiveSort)}
+        LIMIT @lim;
+        """;
+
+        var rows = conn.Query<FeedRow>(sql, args).ToList();
+        var hasMore = rows.Count > effectiveLimit;
+        if (hasMore)
+            rows.RemoveAt(rows.Count - 1);
+
+        foreach (var row in rows)
+            PopulateUnifiedCategoryMetadata(row);
+
+        string? nextCursor = null;
+        if (hasMore && rows.Count > 0)
+        {
+            var last = rows[^1];
+            nextCursor = CursorHelper.Encode(new PagedFeedCursor
+            {
+                Version = PagedFeedCursorVersion,
+                Sort = effectiveSort,
+                LastPublishedAt = Math.Max(last.PublishedAt ?? 0, 0),
+                LastId = last.Id,
+                SnapshotMaxId = snapshotMaxId,
+                QueryFingerprint = fingerprint,
+                LastPrimaryValue = GetPagedFeedPrimaryValue(effectiveSort, last),
+                LastSecondaryValue = effectiveSort == "grabs" ? last.Seeders ?? 0 : null
+            });
+        }
+
+        return Ok(new
+        {
+            items = rows,
+            pagination = new
+            {
+                limit = effectiveLimit,
+                hasMore,
+                nextCursor,
+                snapshotMaxId
+            },
+            query = new
+            {
+                sort = effectiveSort,
+                direction = "desc",
+                q = normalizedQuery,
+                sourceIds = normalizedSourceIds,
+                unifiedCategory = normalizedCategory,
+                seen,
+                minSeeders
+            }
+        });
+    }
+
+    private static string BuildPagedFeedOrderSql(string sort)
+    {
+        return sort switch
+        {
+            "seeders" => $"{PagedSeedersSql} DESC, {PagedPublishedAtSql} DESC, releases.id DESC",
+            "grabs" => $"{PagedGrabsSql} DESC, {PagedSeedersSql} DESC, {PagedPublishedAtSql} DESC, releases.id DESC",
+            "score" => $"{PagedScoreSql} DESC, {PagedPublishedAtSql} DESC, releases.id DESC",
+            _ => $"{PagedPublishedAtSql} DESC, releases.id DESC"
+        };
+    }
+
+    private static string BuildPagedFeedKeysetSql(string sort)
+    {
+        var dateAndId = $"({PagedPublishedAtSql} < @lastPublishedAt OR ({PagedPublishedAtSql} = @lastPublishedAt AND releases.id < @lastId))";
+        return sort switch
+        {
+            "seeders" => $"({PagedSeedersSql} < @lastPrimaryValue OR ({PagedSeedersSql} = @lastPrimaryValue AND {dateAndId}))",
+            "grabs" => $"({PagedGrabsSql} < @lastPrimaryValue OR ({PagedGrabsSql} = @lastPrimaryValue AND ({PagedSeedersSql} < @lastSecondaryValue OR ({PagedSeedersSql} = @lastSecondaryValue AND {dateAndId}))))",
+            "score" => $"({PagedScoreSql} < @lastPrimaryValue OR ({PagedScoreSql} = @lastPrimaryValue AND {dateAndId}))",
+            _ => dateAndId
+        };
+    }
+
+    private static long? GetPagedFeedPrimaryValue(string sort, FeedRow row)
+    {
+        return sort switch
+        {
+            "seeders" => row.Seeders ?? 0,
+            "grabs" => row.Grabs ?? 0,
+            "score" => ((long)(row.Grabs ?? 0) * 5L) + (row.Seeders ?? 0),
+            _ => null
+        };
+    }
+
+    private static string BuildPagedFeedFingerprint(
+        string sort,
+        string? query,
+        string? unifiedCategory,
+        int? seen,
+        int? minSeeders,
+        IReadOnlyList<long> sourceIds)
+    {
+        var canonical = string.Join("\n", new[]
+        {
+            $"sort={sort}",
+            $"q={query ?? string.Empty}",
+            $"unifiedCategory={unifiedCategory ?? string.Empty}",
+            $"seen={seen?.ToString() ?? string.Empty}",
+            $"minSeeders={minSeeders?.ToString() ?? string.Empty}",
+            $"sourceIds={string.Join(',', sourceIds)}"
+        });
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
 
     // GET /api/feed/top?hours=24&take=5&sourceId=1
