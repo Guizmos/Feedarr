@@ -158,6 +158,7 @@ public sealed class FeedController : ControllerBase
         public string? CategoryName { get; set; }
         public int? Seen { get; set; }
         public string? DownloadPath { get; set; }
+        public string? TrackerPageUrl { get; set; }
         public string? PosterUrl { get; set; }
         public long? PosterUpdatedAtTs { get; set; }
         public long? EntityId { get; set; }
@@ -440,6 +441,7 @@ public sealed class FeedController : ControllerBase
           sc.unified_key as unifiedCategoryKey,
           sc.unified_label as unifiedCategoryLabel,
           seen,
+          releases.tracker_page_url as trackerPageUrl,
 
           ('/api/releases/' || releases.id || '/download') as downloadPath,
           releases.entity_id as entityId,
@@ -514,6 +516,7 @@ public sealed class FeedController : ControllerBase
           releases.unified_category as unifiedCategory,
           NULL as categoryName,
           seen,
+          releases.tracker_page_url as trackerPageUrl,
 
           ('/api/releases/' || releases.id || '/download') as downloadPath,
           releases.entity_id as entityId,
@@ -766,6 +769,7 @@ public sealed class FeedController : ControllerBase
           releases.category_ids as categoryIds,
           releases.unified_category as unifiedCategory,
           releases.seen,
+          releases.tracker_page_url as trackerPageUrl,
           ('/api/releases/' || releases.id || '/download') as downloadPath,
           releases.entity_id as entityId,
           CASE
@@ -1026,6 +1030,7 @@ public sealed class FeedController : ControllerBase
             ({ResolvedTopCategoryKeySql}) as unifiedCategoryKey,
             ({ResolvedTopCategoryLabelSql}) as unifiedCategoryLabel,
             seen,
+            releases.tracker_page_url as trackerPageUrl,
             ('/api/releases/' || releases.id || '/download') as downloadPath,
             releases.entity_id as entityId,
             CASE

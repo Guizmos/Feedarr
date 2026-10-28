@@ -4,6 +4,7 @@ using Feedarr.Api.Dtos.Sources;
 using Feedarr.Api.Models;
 using Feedarr.Api.Services.Categories;
 using Feedarr.Api.Services.Matching;
+using Feedarr.Api.Services.Security;
 using Feedarr.Api.Services.Torznab;
 using Feedarr.Api.Services.Titles;
 using Microsoft.Data.Sqlite;
@@ -101,7 +102,7 @@ public sealed class ReleaseRepository
 
         var sql = $"""
         INSERT INTO releases(
-          source_id, guid, title, link, published_at_ts,
+          source_id, guid, title, link, tracker_page_url, published_at_ts,
                     size_bytes, seeders, leechers, grabs, info_hash, download_url, category_id,
                     std_category_id, spec_category_id, unified_category, category_ids,
                     title_normalized, dedupe_key, top_category_key,
@@ -110,7 +111,7 @@ public sealed class ReleaseRepository
           title_clean, year, season, episode, resolution, source, codec, release_group, media_type
         )
         VALUES(
-          @sourceId, @guid, @title, @link, @pub,
+          @sourceId, @guid, @title, @link, @trackerPageUrl, @pub,
                     @size, @seed, @leech, @grabs, @hash, @dl, @cat,
                     @stdCat, @specCat, @unifiedCat, @catIds,
                     @titleNormalized, @dedupeKey, @topCategoryKey,
@@ -124,6 +125,7 @@ public sealed class ReleaseRepository
                     ELSE excluded.title
                   END,
           link = excluded.link,
+          tracker_page_url = COALESCE(excluded.tracker_page_url, releases.tracker_page_url),
           published_at_ts = excluded.published_at_ts,
           size_bytes = COALESCE(excluded.size_bytes, releases.size_bytes),
           seeders = COALESCE(excluded.seeders, releases.seeders),
@@ -222,6 +224,7 @@ public sealed class ReleaseRepository
                     Guid = stableGuid,
                     Title = it.Title,
                     Link = it.Link,
+                    TrackerPageUrl = TrackerPageUrlQualifier.Qualify(it.TrackerPageUrl),
                     PublishedAtTs = it.PublishedAtTs,
                     SizeBytes = it.SizeBytes,
                     Seeders = it.Seeders,
@@ -319,6 +322,7 @@ public sealed class ReleaseRepository
         AddParameter(cmd, "@guid", SqliteType.Text);
         AddParameter(cmd, "@title", SqliteType.Text);
         AddParameter(cmd, "@link", SqliteType.Text);
+        AddParameter(cmd, "@trackerPageUrl", SqliteType.Text);
         AddParameter(cmd, "@pub", SqliteType.Integer);
         AddParameter(cmd, "@size", SqliteType.Integer);
         AddParameter(cmd, "@seed", SqliteType.Integer);
@@ -353,6 +357,7 @@ public sealed class ReleaseRepository
             SetParameterValue(cmd, "@guid", row.Guid);
             SetParameterValue(cmd, "@title", row.Title);
             SetParameterValue(cmd, "@link", row.Link);
+            SetParameterValue(cmd, "@trackerPageUrl", row.TrackerPageUrl);
             SetParameterValue(cmd, "@pub", row.PublishedAtTs);
             SetParameterValue(cmd, "@size", row.SizeBytes);
             SetParameterValue(cmd, "@seed", row.Seeders);
@@ -401,6 +406,7 @@ public sealed class ReleaseRepository
         public string Guid { get; init; } = "";
         public string? Title { get; init; }
         public string? Link { get; init; }
+        public string? TrackerPageUrl { get; init; }
         public long? PublishedAtTs { get; init; }
         public long? SizeBytes { get; init; }
         public int? Seeders { get; init; }

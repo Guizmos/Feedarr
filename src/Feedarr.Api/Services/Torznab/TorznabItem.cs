@@ -6,6 +6,7 @@ public sealed class TorznabItem
     public string Title { get; set; } = "";
     public string? Link { get; set; }
     public string? DownloadUrl { get; set; }
+    public string? TrackerPageUrl { get; set; }
 
     public long? PublishedAtTs { get; set; }
 

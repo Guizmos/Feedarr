@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Xml.Linq;
+using Feedarr.Api.Services.Security;
 
 namespace Feedarr.Api.Services.Torznab;
 
@@ -33,6 +34,7 @@ public sealed class TorznabRssParser
             var title = (string?)it.Element("title") ?? "";
             var guid = (string?)it.Element("guid");
             var link = (string?)it.Element("link");
+            var trackerPageUrl = TrackerPageUrlQualifier.Qualify(GetElementValueByLocalName(it, "comments"));
 
             // guid fallback (certains flux ont guid vide ou inutile)
             if (string.IsNullOrWhiteSpace(guid))
@@ -71,6 +73,7 @@ public sealed class TorznabRssParser
                 Title = title,
                 Link = link,
                 DownloadUrl = downloadUrl,
+                TrackerPageUrl = trackerPageUrl,
                 PublishedAtTs = pubTs,
 
                 SizeBytes = sizeBytes,
