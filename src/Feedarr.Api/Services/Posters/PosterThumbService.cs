@@ -1,6 +1,4 @@
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Webp;
-using SixLabors.ImageSharp.Processing;
+using SkiaSharp;
 
 namespace Feedarr.Api.Services.Posters;
 
@@ -36,7 +34,8 @@ public sealed class PosterThumbService
 
         try
         {
-            using var image = Image.Load(sourceBytes);
+            using var image = SKBitmap.Decode(sourceBytes)
+                ?? throw new InvalidDataException("Unsupported or invalid source image.");
             return await GenerateThumbsAsync(image, storeDir, SupportedWidths, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -67,8 +66,10 @@ public sealed class PosterThumbService
 
         try
         {
-            await using var stream = File.OpenRead(sourceFile);
-            using var image = await Image.LoadAsync(stream, ct).ConfigureAwait(false);
+            var sourceBytes = await File.ReadAllBytesAsync(sourceFile, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            using var image = SKBitmap.Decode(sourceBytes)
+                ?? throw new InvalidDataException("Unsupported or invalid source image.");
             return await GenerateThumbsAsync(image, storeDir, NormalizeWidths(targetWidths), ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -93,7 +94,9 @@ public sealed class PosterThumbService
         try
         {
             var sourceBytes = await File.ReadAllBytesAsync(sourceFile, ct).ConfigureAwait(false);
-            using var image = Image.Load(sourceBytes);
+            ct.ThrowIfCancellationRequested();
+            using var image = SKBitmap.Decode(sourceBytes)
+                ?? throw new InvalidDataException("Unsupported or invalid source image.");
             var effectiveWidth = Math.Min(targetWidth, image.Width);
             return await ResizeToWebPAsync(image, effectiveWidth, ct).ConfigureAwait(false);
         }
@@ -108,19 +111,23 @@ public sealed class PosterThumbService
         }
     }
 
-    private static async Task<byte[]> ResizeToWebPAsync(Image image, int targetWidth, CancellationToken ct)
+    private static Task<byte[]> ResizeToWebPAsync(SKBitmap image, int targetWidth, CancellationToken ct)
     {
-        // Clone so the original image is not mutated between widths
-        using var clone = image.Clone(ctx => ctx.Resize(new ResizeOptions
-        {
-            Mode = ResizeMode.Max,
-            Size = new Size(targetWidth, 0), // height = 0 → auto (keep aspect ratio)
-        }));
+        ct.ThrowIfCancellationRequested();
 
-        using var ms = new MemoryStream();
-        var encoder = new WebpEncoder { Quality = 80, Method = WebpEncodingMethod.Default };
-        await clone.SaveAsync(ms, encoder, ct).ConfigureAwait(false);
-        return ms.ToArray();
+        var targetHeight = Math.Max(
+            1,
+            (int)Math.Round(image.Height * (targetWidth / (double)image.Width), MidpointRounding.AwayFromZero));
+        var targetInfo = new SKImageInfo(targetWidth, targetHeight, image.ColorType, image.AlphaType, image.ColorSpace);
+        using var resized = image.Resize(targetInfo, new SKSamplingOptions(SKCubicResampler.Mitchell))
+            ?? throw new InvalidOperationException($"Failed to resize image to {targetWidth}x{targetHeight}.");
+
+        ct.ThrowIfCancellationRequested();
+        using var encodedImage = SKImage.FromBitmap(resized);
+        using var encodedData = encodedImage.Encode(SKEncodedImageFormat.Webp, 80)
+            ?? throw new InvalidOperationException("Failed to encode WebP thumbnail.");
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult(encodedData.ToArray());
     }
 
     private static async Task WriteAtomicAsync(string targetPath, byte[] bytes, CancellationToken ct)
@@ -139,7 +146,7 @@ public sealed class PosterThumbService
     }
 
     private async Task<IReadOnlyList<int>> GenerateThumbsAsync(
-        Image image,
+        SKBitmap image,
         string storeDir,
         IReadOnlyList<int> targetWidths,
         CancellationToken ct)

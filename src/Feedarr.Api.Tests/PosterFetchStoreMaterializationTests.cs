@@ -18,9 +18,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.PixelFormats;
+using SkiaSharp;
 using OptionsFactory = Microsoft.Extensions.Options.Options;
 
 namespace Feedarr.Api.Tests;
@@ -423,10 +421,11 @@ public sealed class PosterFetchStoreMaterializationTests
 
         public static byte[] CreateValidImageBytes()
         {
-            using var image = new Image<Rgba32>(600, 900, new Rgba32(220, 20, 60));
-            using var ms = new MemoryStream();
-            image.Save(ms, new JpegEncoder());
-            return ms.ToArray();
+            using var bitmap = new SKBitmap(600, 900);
+            bitmap.Erase(new SKColor(220, 20, 60));
+            using var image = SKImage.FromBitmap(bitmap);
+            using var data = image.Encode(SKEncodedImageFormat.Jpeg, 90);
+            return data.ToArray();
         }
 
         public void Dispose()
