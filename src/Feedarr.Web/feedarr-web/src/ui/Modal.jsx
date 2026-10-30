@@ -11,6 +11,7 @@ export default function Modal({
   width = 560,
   titleClassName = "",
   modalClassName = "",
+  modalStyle,
 }) {
   useEffect(() => {
     if (!open) return;
@@ -75,7 +76,7 @@ export default function Modal({
     <div className="modal-overlay" onClick={onClose}>
       <div
         className={`modal${modalClassName ? ` ${modalClassName}` : ""}`}
-        style={{ width }}
+        style={{ width, ...modalStyle }}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"

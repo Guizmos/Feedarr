@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Download, Plus, Loader2, FileText } from "lucide-react";
 import { apiPost, resolveApiUrl } from "../api/client.js";
 import Modal from "./Modal.jsx";
@@ -6,6 +6,7 @@ import { buildIndexerPillStyle } from "../utils/sourceColors.js";
 import AppIcon from "./AppIcon.jsx";
 import { getAppLabel, normalizeRequestMode } from "../utils/appTypes.js";
 import { normalizeCategoryGroupKey } from "../domain/categories/index.js";
+import { extractArtworkAccent } from "../utils/artworkAccent.js";
 
 /**
  * Determines if item should go to Sonarr (series/tv/anime/shows)
@@ -210,8 +211,11 @@ export default function ReleaseModal({
   const [arrAdding, setArrAdding] = useState(false);
   const [arrError, setArrError] = useState("");
   const [arrResult, setArrResult] = useState(null); // { status, openUrl, appName }
+  const [artworkAccent, setArtworkAccent] = useState({ key: "", value: "" });
+  const activePosterRef = useRef("");
   const title = item?.titleClean?.trim() || item?.title || "Details";
   const posterSrc = resolveApiUrl(item?.posterUrl || "");
+  activePosterRef.current = posterSrc;
 
   const seasonEpisode = useMemo(() => formatSeasonEpisode(item), [item]);
   const mediaTypeLabel = useMemo(() => getMediaTypeLabel(item), [item]);
@@ -271,6 +275,20 @@ export default function ReleaseModal({
     setArrError("");
     setArrResult(null);
   }, [open, item?.id]);
+
+  const handlePosterLoad = useCallback((event) => {
+    const loadedPoster = event.currentTarget;
+    const loadedSrc = loadedPoster.getAttribute("src") || "";
+    const accent = extractArtworkAccent(loadedPoster, loadedSrc);
+    if (activePosterRef.current !== loadedSrc) return;
+    setArtworkAccent({ key: loadedSrc, value: accent || "" });
+  }, []);
+
+  const handlePosterError = useCallback((event) => {
+    const failedSrc = event.currentTarget.getAttribute("src") || "";
+    if (activePosterRef.current !== failedSrc) return;
+    setArtworkAccent({ key: failedSrc, value: "" });
+  }, []);
 
   const mode = normalizeRequestMode(integrationMode);
 
@@ -419,13 +437,30 @@ export default function ReleaseModal({
   }
 
   return (
-    <Modal open={open} onClose={onClose} title={title} width={920} modalClassName="modal--details">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={title}
+      width={920}
+      modalClassName="modal--details"
+      modalStyle={
+        artworkAccent.key === posterSrc && artworkAccent.value
+          ? { "--release-artwork-accent": artworkAccent.value }
+          : undefined
+      }
+    >
       {!item ? null : (
         <div className="releaseModal">
           <div className="releaseModal__grid">
             <div className="releaseModal__poster">
               {posterSrc ? (
-                <img src={posterSrc} alt={title} loading="lazy" />
+                <img
+                  src={posterSrc}
+                  alt={title}
+                  loading="lazy"
+                  onLoad={handlePosterLoad}
+                  onError={handlePosterError}
+                />
               ) : (
                 <div className="releaseModal__posterFallback">??</div>
               )}

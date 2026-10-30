@@ -2438,8 +2438,119 @@ html.display-mode-standalone body {
   flex-direction: column;
 }
 .modal--details{
+  --release-artwork-accent: var(--accent, #2493b5);
+  --release-surface: var(--panel, #fff);
+  --release-surface-translucent: rgba(255,255,255,.88);
+  --release-surface-soft: rgba(255,255,255,.72);
+  --release-surface-card: rgba(255,255,255,.58);
+  --release-border-luminous: rgba(255,255,255,.78);
+  --release-divider: rgba(31,42,68,.13);
+  --release-reflection: rgba(255,255,255,.44);
+  background: var(--release-surface);
+  border-color: var(--release-border-luminous);
   border-radius: 15px;
+  box-shadow:
+    0 24px 64px rgba(15,23,42,.26),
+    0 8px 24px rgba(15,23,42,.14),
+    inset 0 1px 0 var(--release-reflection);
   height: min(560px, calc(100dvh - 32px));
+}
+.modal--details .modal-head{
+  background:
+    radial-gradient(
+      ellipse 70% 130% at 15% 0%,
+      rgba(36,147,181,.08) 0%,
+      transparent 72%
+    ),
+    var(--release-surface);
+  border-bottom-color: var(--release-divider);
+  box-shadow: inset 0 1px 0 var(--release-reflection);
+}
+.modal--details .modal-body{
+  background:
+    radial-gradient(
+      ellipse 82% 58% at 15% 0%,
+      rgba(36,147,181,.10) 0%,
+      transparent 68%
+    ),
+    var(--release-surface);
+}
+:root[data-theme="dark"] .modal--details{
+  --release-surface: var(--panel, #2a2a2a);
+  --release-surface-translucent: rgba(42,42,42,.90);
+  --release-surface-soft: rgba(42,42,42,.76);
+  --release-surface-card: rgba(255,255,255,.055);
+  --release-border-luminous: rgba(255,255,255,.16);
+  --release-divider: rgba(255,255,255,.11);
+  --release-reflection: rgba(255,255,255,.10);
+  box-shadow:
+    0 26px 68px rgba(0,0,0,.54),
+    0 8px 26px rgba(0,0,0,.34),
+    inset 0 1px 0 var(--release-reflection);
+}
+:root[data-theme="dark"] .modal--details .modal-head{
+  background:
+    radial-gradient(
+      ellipse 70% 130% at 15% 0%,
+      rgba(61,142,212,.10) 0%,
+      transparent 72%
+    ),
+    var(--release-surface);
+  border-bottom-color: var(--release-divider);
+}
+:root[data-theme="dark"] .modal--details .modal-body{
+  background:
+    radial-gradient(
+      ellipse 82% 58% at 15% 0%,
+      rgba(61,142,212,.13) 0%,
+      transparent 68%
+    ),
+    var(--release-surface);
+}
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)){
+  .modal--details{
+    background: var(--release-surface-translucent);
+    -webkit-backdrop-filter: blur(10px) saturate(125%);
+    backdrop-filter: blur(10px) saturate(125%);
+  }
+  .modal--details .modal-head{
+    background:
+      radial-gradient(
+        ellipse 70% 130% at 15% 0%,
+        color-mix(in srgb, var(--release-artwork-accent) 10%, transparent) 0%,
+        transparent 72%
+      ),
+      linear-gradient(180deg, var(--release-reflection), transparent 72%),
+      var(--release-surface-soft);
+  }
+  .modal--details .modal-body{
+    background:
+      radial-gradient(
+        ellipse 82% 58% at 15% 0%,
+        color-mix(in srgb, var(--release-artwork-accent) 14%, transparent) 0%,
+        transparent 68%
+      ),
+      var(--release-surface-soft);
+  }
+  :root[data-theme="dark"] .modal--details .modal-head{
+    background:
+      radial-gradient(
+        ellipse 70% 130% at 15% 0%,
+        color-mix(in srgb, var(--release-artwork-accent) 12%, transparent) 0%,
+        transparent 72%
+      ),
+      linear-gradient(180deg, var(--release-reflection), transparent 72%),
+      var(--release-surface-soft);
+  }
+  :root[data-theme="dark"] .modal--details .modal-body{
+    background:
+      radial-gradient(
+        ellipse 82% 58% at 15% 0%,
+        color-mix(in srgb, var(--release-artwork-accent) 17%, transparent) 0%,
+        transparent 68%
+      ),
+      var(--release-surface-soft);
+  }
 }
 .modal--details .modal-body{
   display: flex;
@@ -2710,7 +2821,12 @@ body.modal-open .content{
 }
 .releaseModal__bottom{
   margin-top: 0;
-  background: var(--panel, #fff);
+  background: var(--release-surface);
+}
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)){
+  .releaseModal__bottom{
+    background: var(--release-surface-soft);
+  }
 }
 .releaseModal__poster{
   background: #e6e9f2;
@@ -2787,9 +2903,12 @@ body.modal-open .content{
   font-size: 10px;
 }
 .releaseModal__overview{
-  border: 1px solid var(--panel-border);
-  background: rgba(0,0,0,.03);
+  border: 1px solid var(--release-border-luminous, var(--panel-border));
+  background: var(--release-surface, var(--panel, #fff));
   border-radius: 8px;
+  box-shadow:
+    0 8px 22px rgba(15,23,42,.08),
+    inset 0 1px 0 var(--release-reflection, rgba(255,255,255,.4));
   padding: 10px 12px;
   margin-bottom: 10px;
   font-size: 12px;
@@ -2798,10 +2917,22 @@ body.modal-open .content{
   overflow: auto;
   max-height: none;
 }
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)){
+  .releaseModal__overview{
+    background:
+      linear-gradient(145deg, var(--release-reflection), transparent 38%),
+      var(--release-surface-card);
+  }
+}
+:root[data-theme="dark"] .releaseModal__overview{
+  box-shadow:
+    0 10px 26px rgba(0,0,0,.22),
+    inset 0 1px 0 var(--release-reflection);
+}
 .releaseModal__overview .releaseModal__info{
   margin-bottom: 8px;
   padding-bottom: 8px;
-  border-bottom: 1px dashed rgba(0,0,0,.12);
+  border-bottom: 1px dashed var(--release-divider, rgba(0,0,0,.12));
 }
 .releaseModal__info{
   display: grid;
@@ -2834,7 +2965,7 @@ body.modal-open .content{
 .releaseModal__footer{
   margin-top: 0;
   padding-bottom: 10px;
-  border-bottom: 1px solid rgba(0,0,0,.12);
+  border-bottom: 1px solid var(--release-divider, rgba(0,0,0,.12));
   display:flex;
   align-items:center;
   justify-content: space-between;
