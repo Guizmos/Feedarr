@@ -164,3 +164,44 @@ test("the initial diagnostic lookup race never retries the native download", asy
   assert.equal(env.lookups.length, 2);
   assert.deepEqual(env.errors, []);
 });
+
+for (const origin of ["http://10.10.1.100:8888", "https://feedarr.example"]) {
+  test(`download uses a cryptographic UUID v4 fallback without randomUUID at ${origin}`, async (t) => {
+    const env = environment(t, () => json({ state: "completed", statusCode: 200 }));
+    globalThis.window.location.origin = origin;
+    let randomCalls = 0;
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis.crypto, "randomUUID");
+    Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: undefined });
+    t.after(() => {
+      if (descriptor) Object.defineProperty(globalThis.crypto, "randomUUID", descriptor);
+      else delete globalThis.crypto.randomUUID;
+    });
+    t.mock.method(globalThis.crypto, "getRandomValues", (bytes) => {
+      randomCalls++;
+      assert.equal(bytes.length, 16);
+      bytes.fill(255);
+      return bytes;
+    });
+    assert.equal(await openDownloadPath("/api/releases/7/download", env), true);
+    const url = new URL(env.frames[0].src);
+    const attempt = url.searchParams.get("downloadAttempt");
+    assert.equal(url.origin, origin);
+    assert.equal(attempt, "ffffffff-ffff-4fff-bfff-ffffffffffff");
+    assert.match(attempt, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.equal(randomCalls, 1);
+    assert.equal(env.frames.length, 1);
+    assert.equal(env.preparations.length, 1);
+    assert.equal(env.lookups[0].path, `/api/releases/7/download-status/${attempt}`);
+    assert.deepEqual(env.errors, []);
+  });
+}
+
+test("HTTPS keeps randomUUID when available without using the fallback", async (t) => {
+  const env = environment(t, () => json({ state: "completed", statusCode: 200 }));
+  const attempt = "12345678-1234-4123-8123-123456789abc";
+  const native = t.mock.method(globalThis.crypto, "randomUUID", () => attempt);
+  t.mock.method(globalThis.crypto, "getRandomValues", () => { throw new Error("fallback must not run"); });
+  assert.equal(await openDownloadPath("/api/releases/7/download", env), true);
+  assert.equal(native.mock.callCount(), 1);
+  assert.equal(new URL(env.frames[0].src).searchParams.get("downloadAttempt"), attempt);
+});
