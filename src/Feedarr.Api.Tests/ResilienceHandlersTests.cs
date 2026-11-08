@@ -1,3 +1,4 @@
+using Feedarr.Api.Services.Security;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -66,9 +67,7 @@ public sealed class ResilienceHandlersTests
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "secret-token");
         request.Headers.TryAddWithoutValidation("X-Api-Key", "super-secret");
 
-        using var response = await invoker.SendAsync(request, CancellationToken.None);
-
-        Assert.Equal(HttpStatusCode.Found, response.StatusCode);
+        await Assert.ThrowsAsync<SsrfBlockedException>(() => invoker.SendAsync(request, CancellationToken.None));
         Assert.Single(transport.Requests);
         Assert.Equal("source.test", transport.Requests[0].Uri?.Host);
     }
@@ -77,7 +76,7 @@ public sealed class ResilienceHandlersTests
     public async Task ProtocolRedirect_SameHostDowngradeAllowed_StripsSensitiveHeaders()
     {
         var transport = new RecordingSequenceHandler(
-            _ => Redirect("http://source.test/next"),
+            _ => Redirect("http://source.test:443/next"),
             _ => new HttpResponseMessage(HttpStatusCode.OK));
 
         using var handler = new ProtocolDowngradeRedirectHandler
@@ -116,15 +115,13 @@ public sealed class ResilienceHandlersTests
     [InlineData("http://10.0.0.1/api")]
     [InlineData("http://127.0.0.1/api")]
     [InlineData("http://169.254.169.254/latest/meta-data")]
-    public async Task SsrfGuard_BlocksPrivateAndLoopbackIps_ReturnsForbidden(string url)
+    public async Task SsrfGuard_BlocksPrivateAndLoopbackIps_ThrowsSecurityError(string url)
     {
         var inner = new NeverCallHandler();
         using var handler = new SsrfGuardHandler { InnerHandler = inner };
         using var http = new HttpClient(handler);
 
-        var response = await http.GetAsync(url);
-
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        await Assert.ThrowsAsync<SsrfBlockedException>(() => http.GetAsync(url));
         Assert.False(inner.Called, "Inner handler must not be reached for blocked IPs");
     }
 

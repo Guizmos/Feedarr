@@ -142,6 +142,45 @@ Guide détaillé:
 
 ---
 
+### Intégrations Docker/LAN privées et protection SSRF
+
+Feedarr n'accorde **aucune exception SSRF par défaut**. Pour joindre Jackett, Prowlarr, Torznab, Sonarr, Radarr, Overseerr, Jellyseerr ou Seer auto-hébergé sur un réseau Docker/LAN privé, configurez l'environnement du conteneur **avant le setup initial**.
+
+**Mode recommandé : destinations exactes (`TrustedHosts`)**
+
+```yaml
+environment:
+  App__Security__TrustedHosts__Prowlarr: "prowlarr:9696"
+  App__Security__TrustedHosts__Sonarr: "sonarr:8989"
+  App__Security__TrustedHosts__Radarr: "radarr:7878"
+  App__Security__TrustedHosts__Jackett: "jackett:9117"
+  App__Security__TrustedHosts__Seer: "10.50.0.15:5055"
+```
+
+Chaque valeur exige un nom d'hôte/IP **et un port exacts**. Les jokers et les ports implicites sont refusés. Les libellés comme `Prowlarr` sont descriptifs ; ajoutez autant d'entrées nommées distinctement que nécessaire.
+
+**Mode avancé : sous-réseaux privés (`TrustedNetworks`)**
+
+```yaml
+environment:
+  App__Security__TrustedNetworks__0: "10.50.0.0/24"
+  App__Security__TrustedNetworks__1: "192.168.1.0/24"
+```
+
+**Attention : le mode réseau est moins restrictif.** Il autorise les communications des intégrations concernées vers toute destination et tout port du sous-réseau configuré. Préférez les hôtes explicites lorsque c'est possible.
+
+Les deux modes sont cumulables dans le même bloc `environment`. Les listes sont extensibles, sans limite fixe de nombre d'entrées. Les réseaux doivent être des CIDR IPv4 RFC1918 canoniques entièrement inclus dans `10.0.0.0/8`, `172.16.0.0/12` ou `192.168.0.0/16`. Les plages publiques, les CIDR IPv6 et les CIDR contenant des bits d'hôte sont refusés au démarrage. Par exemple, utilisez `10.50.0.0/24`, pas `10.50.0.15/24`. **N'utilisez pas `172.50.0.0/24` pour créer un réseau Docker privé : cette plage est publique.**
+
+Après modification des variables, recréez le conteneur Feedarr avec `docker compose up -d --force-recreate feedarr` (adaptez le nom du service). Un simple redémarrage du conteneur n'applique pas les variables d'environnement modifiées. Les services doivent être réellement accessibles depuis le conteneur Feedarr : réseau Docker partagé pour les noms de services, routage et pare-feu adaptés pour les IP LAN. `localhost` désigne le conteneur Feedarr lui-même et reste bloqué. Une configuration invalide empêche le démarrage ; consultez les logs du conteneur.
+
+Les exceptions sont limitées aux clients de ces intégrations. Loopback, link-local, métadonnées cloud et destinations spéciales dangereuses restent bloqués. Les réponses DNS et les nouvelles connexions sont validées ; une redirection ne peut changer ni l'hôte ni le port. La vérification des certificats TLS reste activée par défaut. Ces options nécessitent un redémarrage de Feedarr après application du nouvel environnement du conteneur.
+
+Un `403` portant le code `ssrf_blocked` est un refus de sécurité, pas un échec de découverte : l'ajout manuel d'un indexeur ne le contourne pas. Une source ou une application peut déjà être enregistrée avant l'échec des CAPS ou de la synchronisation initiale. Actualisez la liste, corrigez l'environnement, recréez le conteneur, puis retestez l'entrée existante plutôt que d'en créer une seconde.
+
+**Limitation des téléchargements de releases :** ces exceptions ne s'appliquent jamais aux téléchargements, posters, métadonnées ou URL arbitraires. Feedarr relaie les téléchargements HTTP de torrents avec un client strict. Si l'URL de téléchargement d'une release pointe vers Jackett/Prowlarr privé (y compris un nom Docker résolvant vers une IP privée), son téléchargement dans Feedarr reste bloqué même si la découverte, les CAPS et le RSS fonctionnent. Aucun fallback automatique vers le navigateur n'est prévu. Une IP privée littérale est refusée à la validation de l'URL ; une réponse DNS privée est refusée avant la requête proxy. Les URL HTTP publiques restent soumises aux contrôles stricts ; les liens magnet continuent de s'ouvrir via le navigateur et le gestionnaire système. Utilisez l'interface du fournisseur pour les torrents privés lorsque disponible. Ajouter un hôte ou un sous-réseau de confiance ne supprime pas cette limitation.
+
+---
+
 ## Développement
 
 ### Prérequis

@@ -17,6 +17,7 @@ namespace Feedarr.Api.Controllers;
 [Route("api/sources")]
 public sealed class SourcesController : ControllerBase
 {
+    private readonly OutboundDestinationPolicy _outboundPolicy;
     private readonly TorznabClient _torznab;
     private readonly SourceRepository _sources;
     private readonly ProviderRepository _providers;
@@ -36,8 +37,9 @@ public sealed class SourcesController : ControllerBase
         CategoryRecommendationService caps,
         BackupExecutionCoordinator backupCoordinator,
         SyncOrchestrationService syncOrchestration,
-        ILogger<SourcesController> log)
+        ILogger<SourcesController> log, OutboundDestinationPolicy? outboundPolicy = null)
     {
+        _outboundPolicy = outboundPolicy ?? new OutboundDestinationPolicy(new Feedarr.Api.Options.OutboundSecurityOptions());
         _torznab = torznab;
         _sources = sources;
         _providers = providers;
@@ -76,7 +78,7 @@ public sealed class SourcesController : ControllerBase
 
             return false;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "caps/rss fallback failed");
             _activity.Add(sourceId, "error", "source", $"Caps failed and RSS fallback failed: {safeError}");
@@ -112,7 +114,7 @@ public sealed class SourcesController : ControllerBase
                 rawUrl,
                 allowImplicitHttp: true,
                 out normalizedUrl,
-                out var urlError))
+                out var urlError, policy: _outboundPolicy, context: OutboundDestinationContext.TrustedIntegration))
         {
             _log.LogWarning(
                 "Rejected source torznab URL for {Operation}: host={Host} reason={Reason}",
@@ -232,7 +234,7 @@ public sealed class SourcesController : ControllerBase
 
             res.Ok = true;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             res.Ok = false;
             res.Error = ErrorMessageSanitizer.ToOperationalMessage(ex, "source test failed");
@@ -356,7 +358,7 @@ public sealed class SourcesController : ControllerBase
                         _activity.Add(id, "error", "source", "Caps returned 0 categories (apiKey? url?)");
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
             {
                 _log.LogWarning(ex, "Caps refresh failed during source creation for sourceId={SourceId}", id);
                 var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "caps refresh failed");
@@ -388,6 +390,7 @@ public sealed class SourcesController : ControllerBase
         if (src is null) return NotFound(new { error = "source not found" });
 
         var result = await _syncOrchestration.ExecuteManualSyncAsync(src, rssOnly ?? false, ct);
+        if (result.Error == SsrfBlockedException.Code) throw new SsrfBlockedException();
         if (!result.Ok)
             return StatusCode(500, new { ok = false, error = "internal server error" });
 
@@ -508,7 +511,7 @@ public sealed class SourcesController : ControllerBase
                         "Caps returned 0 categories - keeping previous categories (check apiKey/url)");
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             _log.LogWarning(ex, "Caps refresh failed during source update for sourceId={SourceId}", id);
             var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "caps refresh failed");
@@ -761,7 +764,7 @@ public sealed class SourcesController : ControllerBase
                 rebound
             });
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             _log.LogError(ex, "Source reclassify failed for sourceId={SourceId}", id);
             return StatusCode(500, new { ok = false, error = "internal server error" });
@@ -868,7 +871,7 @@ public sealed class SourcesController : ControllerBase
                 "CategoryPreviewLive timed out: sourceId={SourceId} catId={CatId}", id, catId.Value);
             return StatusCode(504, new { error = "indexer timed out" });
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "live preview failed");
             _log.LogWarning(ex,
@@ -975,7 +978,7 @@ public sealed class SourcesController : ControllerBase
             _log.LogWarning("CategoryPreviewLiveTemp timed out: catId={CatId}", dto.CatId);
             return StatusCode(504, new { error = "indexer timed out" });
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "live preview failed");
             _log.LogWarning(ex,

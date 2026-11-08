@@ -8,12 +8,14 @@ namespace Feedarr.Api.Services.Torznab;
 public sealed class TorznabClient
 {
     private readonly HttpClient _http;
+    private readonly OutboundDestinationPolicy _outboundPolicy;
     private readonly TorznabRssParser _parser;
     private readonly ILogger<TorznabClient> _log;
 
-    public TorznabClient(HttpClient http, TorznabRssParser parser, ILogger<TorznabClient> log)
+    public TorznabClient(HttpClient http, TorznabRssParser parser, ILogger<TorznabClient> log, OutboundDestinationPolicy? outboundPolicy = null)
     {
         _http = http;
+        _outboundPolicy = outboundPolicy ?? new OutboundDestinationPolicy(new Feedarr.Api.Options.OutboundSecurityOptions());
         _parser = parser;
         _log = log;
     }
@@ -24,9 +26,15 @@ public sealed class TorznabClient
         return mode == "header" ? "header" : "query";
     }
 
-    private static string BuildUrl(string baseUrl, string authMode, string apiKey, Dictionary<string, string> query)
+    private string BuildUrl(string baseUrl, string authMode, string apiKey, Dictionary<string, string> query)
     {
-        var uri = new Uri(baseUrl);
+        if (!OutboundUrlGuard.TryNormalizeTorznabUrl(baseUrl, out var normalizedUrl, out var error,
+                _outboundPolicy, OutboundDestinationContext.TrustedIntegration))
+        {
+            if (error == SsrfBlockedException.Code) throw new SsrfBlockedException();
+            throw new ArgumentException(error, nameof(baseUrl));
+        }
+        var uri = new Uri(normalizedUrl);
         var q = new List<string>();
 
         if (!string.IsNullOrWhiteSpace(uri.Query))
@@ -208,7 +216,7 @@ public sealed class TorznabClient
                 if (items.Count > 0)
                     return (items, mode);
             }
-            catch (HttpRequestException ex) when (!isProwlarr && mode != "search")
+            catch (HttpRequestException ex) when (!SsrfBlockedException.IsBlocked(ex) && !isProwlarr && mode != "search")
             {
                 // For Jackett, if recent/rss fails, try next mode
                 _log.LogDebug("Torznab mode={Mode} failed: {Error}, trying next", mode, ex.Message);
@@ -424,7 +432,7 @@ public sealed class TorznabClient
                     modeUsed = "search_aggregated+percat_all";
                 }
             }
-            catch (HttpRequestException)
+            catch (HttpRequestException ex) when (!SsrfBlockedException.IsBlocked(ex))
             {
                 // fallback to per-category
             }

@@ -16,6 +16,7 @@ namespace Feedarr.Api.Controllers;
 [Route("api/providers")]
 public sealed class ProvidersController : ControllerBase
 {
+    private readonly OutboundDestinationPolicy _outboundPolicy;
     private static readonly TimeSpan CacheTtl = TimeSpan.FromHours(6);
     private readonly ProviderRepository _providers;
     private readonly SourceRepository _sources;
@@ -30,8 +31,9 @@ public sealed class ProvidersController : ControllerBase
         JackettClient jackett,
         ProwlarrClient prowlarr,
         IMemoryCache cache,
-        ILogger<ProvidersController> log)
+        ILogger<ProvidersController> log, OutboundDestinationPolicy? outboundPolicy = null)
     {
+        _outboundPolicy = outboundPolicy ?? new OutboundDestinationPolicy(new Feedarr.Api.Options.OutboundSecurityOptions());
         _providers = providers;
         _sources = sources;
         _jackett = jackett;
@@ -72,7 +74,7 @@ public sealed class ProvidersController : ControllerBase
         if (type is null)
             return Problem(title: "provider type invalid", statusCode: StatusCodes.Status400BadRequest);
 
-        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl(type, dto.BaseUrl, out var baseUrl, out var baseUrlError))
+        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl(type, dto.BaseUrl, out var baseUrl, out var baseUrlError, policy: _outboundPolicy, context: OutboundDestinationContext.TrustedIntegration))
             return Problem(title: baseUrlError, statusCode: StatusCodes.Status400BadRequest);
 
         var apiKey = (dto.ApiKey ?? "").Trim();
@@ -94,7 +96,7 @@ public sealed class ProvidersController : ControllerBase
         if (type is null)
             return Problem(title: "provider type invalid", statusCode: StatusCodes.Status400BadRequest);
 
-        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl(type, dto.BaseUrl, out var baseUrl, out var baseUrlError))
+        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl(type, dto.BaseUrl, out var baseUrl, out var baseUrlError, policy: _outboundPolicy, context: OutboundDestinationContext.TrustedIntegration))
             return Problem(title: baseUrlError, statusCode: StatusCodes.Status400BadRequest);
 
         var apiKey = (dto.ApiKey ?? "").Trim();
@@ -118,7 +120,7 @@ public sealed class ProvidersController : ControllerBase
             }
             return Ok(new { ok = true, count = list.Count });
         }
-        catch (HttpRequestException ex)
+        catch (HttpRequestException ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             _log.LogWarning(ex, "Provider test failed (inline, type={ProviderType}): {Message}", type, ex.Message);
             return Problem(title: "provider test failed", detail: "upstream provider unreachable", statusCode: StatusCodes.Status502BadGateway);
@@ -127,7 +129,7 @@ public sealed class ProvidersController : ControllerBase
         {
             return Problem(title: "provider test failed", detail: "timeout", statusCode: StatusCodes.Status504GatewayTimeout);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             _log.LogWarning(ex, "Provider test failed (inline, type={ProviderType}): {Message}", type, ex.Message);
             return Problem(title: "provider test failed", detail: "unexpected error", statusCode: StatusCodes.Status502BadGateway);
@@ -152,7 +154,7 @@ public sealed class ProvidersController : ControllerBase
         var rawBaseUrl = string.IsNullOrWhiteSpace(dto.BaseUrl)
             ? current.BaseUrl ?? ""
             : dto.BaseUrl!;
-        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl(type, rawBaseUrl, out var baseUrl, out var baseUrlError))
+        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl(type, rawBaseUrl, out var baseUrl, out var baseUrlError, policy: _outboundPolicy, context: OutboundDestinationContext.TrustedIntegration))
             return Problem(title: baseUrlError, statusCode: StatusCodes.Status400BadRequest);
 
         string? apiKeyMaybe = null;
@@ -220,8 +222,8 @@ public sealed class ProvidersController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(apiKey))
             return Problem(title: "provider configuration incomplete", statusCode: StatusCodes.Status400BadRequest);
-        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl(type, baseUrl, out var normalizedBaseUrl, out _))
-            return Problem(title: "provider baseUrl invalid", statusCode: StatusCodes.Status400BadRequest);
+        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl(type, baseUrl, out var normalizedBaseUrl, out var baseUrlError, policy: _outboundPolicy, context: OutboundDestinationContext.TrustedIntegration))
+            return Problem(title: baseUrlError, statusCode: StatusCodes.Status400BadRequest);
 
         try
         {
@@ -241,7 +243,7 @@ public sealed class ProvidersController : ControllerBase
             _providers.UpdateLastTestOk(id);
             return Ok(new { ok = true, count = list.Count });
         }
-        catch (HttpRequestException ex)
+        catch (HttpRequestException ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             _log.LogWarning(ex, "Provider test failed: {Id} (type={ProviderType}): {Message}", id, type, ex.Message);
             return Problem(title: "provider test failed", detail: "upstream provider unreachable", statusCode: StatusCodes.Status502BadGateway);
@@ -250,7 +252,7 @@ public sealed class ProvidersController : ControllerBase
         {
             return Problem(title: "provider test failed", detail: "timeout", statusCode: StatusCodes.Status504GatewayTimeout);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             _log.LogWarning(ex, "Provider test failed: {Id} (type={ProviderType}): {Message}", id, type, ex.Message);
             return Problem(title: "provider test failed", detail: "unexpected error", statusCode: StatusCodes.Status502BadGateway);
@@ -270,8 +272,8 @@ public sealed class ProvidersController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(apiKey))
             return Problem(title: "provider configuration incomplete", statusCode: StatusCodes.Status400BadRequest);
-        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl(type, baseUrl, out var normalizedBaseUrl, out _))
-            return Problem(title: "provider baseUrl invalid", statusCode: StatusCodes.Status400BadRequest);
+        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl(type, baseUrl, out var normalizedBaseUrl, out var baseUrlError, policy: _outboundPolicy, context: OutboundDestinationContext.TrustedIntegration))
+            return Problem(title: baseUrlError, statusCode: StatusCodes.Status400BadRequest);
 
         if (!type.Equals("jackett", StringComparison.OrdinalIgnoreCase) &&
             !type.Equals("prowlarr", StringComparison.OrdinalIgnoreCase))
@@ -287,7 +289,7 @@ public sealed class ProvidersController : ControllerBase
             }
             return Ok(result);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             _log.LogWarning(ex, "Provider indexers fetch failed: {Id} (type={ProviderType})", id, type);
             return Problem(title: "provider indexers fetch failed", detail: "upstream provider unavailable", statusCode: StatusCodes.Status502BadGateway);

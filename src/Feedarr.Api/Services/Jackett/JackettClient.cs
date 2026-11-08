@@ -7,23 +7,28 @@ namespace Feedarr.Api.Services.Jackett;
 
 public sealed class JackettClient
 {
+    private readonly OutboundDestinationPolicy _outboundPolicy;
     private readonly HttpClient _http;
 
-    public JackettClient(HttpClient http)
+    public JackettClient(HttpClient http, OutboundDestinationPolicy? outboundPolicy = null)
     {
+        _outboundPolicy = outboundPolicy ?? new OutboundDestinationPolicy(new Feedarr.Api.Options.OutboundSecurityOptions());
         _http = http;
     }
 
-    private static string NormalizeBaseUrl(string baseUrl)
+    private string NormalizeBaseUrl(string baseUrl)
     {
-        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl("jackett", baseUrl, out var normalizedBaseUrl, out var error))
+        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl("jackett", baseUrl, out var normalizedBaseUrl, out var error, policy: _outboundPolicy, context: OutboundDestinationContext.TrustedIntegration))
+        {
+            if (error == SsrfBlockedException.Code) throw new SsrfBlockedException();
             throw new ArgumentException(error, nameof(baseUrl));
+        }
         return normalizedBaseUrl;
     }
 
     // ── URL builders ────────────────────────────────────────────────
 
-    private static string BuildIndexersUrl(string baseUrl, string apiKey)
+    private string BuildIndexersUrl(string baseUrl, string apiKey)
     {
         var baseTrim = NormalizeBaseUrl(baseUrl);
         var url = $"{baseTrim}/api/v2.0/indexers";
@@ -39,7 +44,7 @@ public sealed class JackettClient
         return uri.ToString();
     }
 
-    private static string BuildTorznabIndexersUrl(string baseUrl, string apiKey)
+    private string BuildTorznabIndexersUrl(string baseUrl, string apiKey)
     {
         var baseTrim = NormalizeBaseUrl(baseUrl);
         return $"{baseTrim}/api/v2.0/indexers/all/results/torznab/api?t=indexers&apikey={Uri.EscapeDataString(apiKey ?? "")}";
@@ -156,7 +161,7 @@ public sealed class JackettClient
         try
         {
             return await ListViaManagementApiAsync(baseUrl, apiKey, ct).ConfigureAwait(false);        }
-        catch
+        catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             // Management API failed (redirect to login, 404, non-JSON, etc.)
             // Fall back to torznab t=indexers which works behind reverse proxies

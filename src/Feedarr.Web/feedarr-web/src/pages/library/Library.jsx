@@ -728,8 +728,11 @@ export default function Library() {
   const download = useCallback((it) => {
     const path = it.downloadPath || (it.id ? `/api/releases/${it.id}/download` : "");
     if (!path) return;
-    openDownloadPath(path, { onError: setErr });
-  }, [setErr]);
+    openDownloadPath(path, { onError: (message) => {
+      setErr(message);
+      setSelectedItem(null);
+    } });
+  }, [setErr, setSelectedItem]);
 
   const fetchGameDetails = useCallback(async (it) => {
     if (!it?.id) return;

@@ -1,3 +1,4 @@
+using Feedarr.Api.Services.Security;
 using Feedarr.Api.Options;
 using Microsoft.Extensions.Options;
 
@@ -58,7 +59,7 @@ internal abstract class CircuitBreakerHandler : DelegatingHandler
 
             return response;
         }
-        catch (HttpRequestException) when (!cancellationToken.IsCancellationRequested)
+        catch (HttpRequestException ex) when (!SsrfBlockedException.IsBlocked(ex) && !cancellationToken.IsCancellationRequested)
         {
             TryOpen(_state.RecordFailure(_threshold, _breakDurationSeconds));
             throw;

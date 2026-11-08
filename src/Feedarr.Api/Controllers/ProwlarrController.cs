@@ -9,6 +9,7 @@ namespace Feedarr.Api.Controllers;
 [Route("api/prowlarr")]
 public sealed class ProwlarrController : ControllerBase
 {
+    private readonly OutboundDestinationPolicy _outboundPolicy;
     private readonly ProwlarrClient _prowlarr;
     private readonly SourceRepository _sources;
     private readonly ILogger<ProwlarrController> _log;
@@ -16,8 +17,9 @@ public sealed class ProwlarrController : ControllerBase
     public ProwlarrController(
         ProwlarrClient prowlarr,
         SourceRepository sources,
-        ILogger<ProwlarrController> log)
+        ILogger<ProwlarrController> log, OutboundDestinationPolicy? outboundPolicy = null)
     {
+        _outboundPolicy = outboundPolicy ?? new OutboundDestinationPolicy(new Feedarr.Api.Options.OutboundSecurityOptions());
         _prowlarr = prowlarr;
         _sources = sources;
         _log = log;
@@ -49,7 +51,7 @@ public sealed class ProwlarrController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(baseUrl))
             return BadRequest(new { error = "baseUrl missing" });
-        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl("prowlarr", baseUrl, out var normalizedBaseUrl, out var baseUrlError))
+        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl("prowlarr", baseUrl, out var normalizedBaseUrl, out var baseUrlError, policy: _outboundPolicy, context: OutboundDestinationContext.TrustedIntegration))
             return BadRequest(new { error = baseUrlError });
         if (string.IsNullOrWhiteSpace(apiKey))
             return BadRequest(new { error = "apiKey missing" });
@@ -65,7 +67,7 @@ public sealed class ProwlarrController : ControllerBase
             }).ToList();
             return Ok(result);
         }
-        catch (HttpRequestException ex)
+        catch (HttpRequestException ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             _log.LogWarning(ex, "Prowlarr upstream error for sourceId={SourceId}", dto?.SourceId);
             return StatusCode(502, new { error = "upstream provider unavailable" });
@@ -74,7 +76,7 @@ public sealed class ProwlarrController : ControllerBase
         {
             return StatusCode(504, new { error = "upstream provider timeout" });
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             _log.LogError(ex, "Prowlarr indexers listing failed for sourceId={SourceId}", dto?.SourceId);
             return StatusCode(500, new { error = "internal server error" });

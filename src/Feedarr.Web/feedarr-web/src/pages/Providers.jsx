@@ -1,3 +1,4 @@
+import { shouldRetryDiscovery } from "../utils/ssrfErrors.js";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { apiDelete, apiGet, apiPost, apiPut } from "../api/client.js";
 import Loader from "../ui/Loader.jsx";
@@ -15,8 +16,7 @@ import {
 const PROVIDER_TYPES = ["jackett", "prowlarr"];
 
 function shouldRetryJackett(error) {
-  const msg = String(error?.message || "");
-  return /invalid start of a value|unexpected token\s*</i.test(msg);
+  return shouldRetryDiscovery(error, 0);
 }
 
 export default function Providers() {

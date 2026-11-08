@@ -1,3 +1,5 @@
+import { findPersistedIntegration } from "../../utils/persistedIntegration.js";
+import { isSsrfBlocked, integrationSaveErrorMessage } from "../../utils/ssrfErrors.js";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiDelete, apiGet, apiPost, apiPut } from "../../api/client.js";
 import ItemRow from "../../ui/ItemRow.jsx";
@@ -58,7 +60,9 @@ export default function Step4ArrApps() {
     setErr("");
     try {
       const list = await apiGet("/api/apps");
-      setApps(Array.isArray(list) ? list : []);
+      const loaded = Array.isArray(list) ? list : [];
+      setApps(loaded);
+      return loaded;
     } catch (e) {
       setErr(e?.message || tr("Erreur chargement applications", "Applications loading error"));
       setApps([]);
@@ -79,7 +83,7 @@ export default function Step4ArrApps() {
   }, [modalBaseUrl, modalApiKey, modalType, modalOpen]);
 
   useEffect(() => {
-    if (!modalOpen || modalMode !== "add") return;
+    if (!modalOpen || modalMode !== "add" || modalSaving) return;
     if (availableAddTypes.length === 0) {
       setModalType("");
       return;
@@ -87,7 +91,7 @@ export default function Step4ArrApps() {
     if (!availableAddTypes.includes(modalType)) {
       setModalType(availableAddTypes[0]);
     }
-  }, [modalMode, modalOpen, modalType, availableAddTypes]);
+  }, [modalMode, modalOpen, modalType, availableAddTypes, modalSaving]);
 
   function resetModal() {
     setModalMode("add");
@@ -158,8 +162,9 @@ export default function Step4ArrApps() {
     try {
       const cfg = await apiGet(`/api/apps/${appId}/config`);
       setConfig(cfg);
-    } catch {
+    } catch (e) {
       setConfig(null);
+      if (isSsrfBlocked(e)) setModalError(e.message);
     } finally {
       setConfigLoading(false);
     }
@@ -222,6 +227,7 @@ export default function Step4ArrApps() {
   async function saveModal() {
     setModalSaving(true);
     setModalError("");
+    let persistedAppId = modalApp?.id;
     try {
       if (modalMode === "add" && !modalType) {
         throw new Error(tr("Toutes les applications sont deja ajoutees.", "All applications are already added."));
@@ -252,7 +258,8 @@ export default function Step4ArrApps() {
       }
 
       if (modalMode === "add") {
-        await apiPost("/api/apps", payload);
+        const created = await apiPost("/api/apps", payload);
+        persistedAppId = created?.id ?? persistedAppId;
       } else if (modalApp) {
         await apiPut(`/api/apps/${modalApp.id}`, payload);
       }
@@ -260,7 +267,20 @@ export default function Step4ArrApps() {
       closeModal();
       await loadApps();
     } catch (e) {
-      setModalError(e?.message || tr("Erreur sauvegarde", "Save error"));
+      if (isSsrfBlocked(e)) {
+        setModalTestState("error");
+        const loaded = await loadApps();
+        const savedApp = findPersistedIntegration(loaded, {
+          id: persistedAppId,
+          type: modalType,
+          url: modalBaseUrl,
+        });
+        if (savedApp) {
+          setModalMode("edit");
+          setModalApp(savedApp);
+        }
+      }
+      setModalError(integrationSaveErrorMessage(e, "application") || tr("Erreur sauvegarde", "Save error"));
     } finally {
       setModalSaving(false);
     }

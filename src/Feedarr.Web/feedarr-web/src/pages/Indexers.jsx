@@ -1,3 +1,5 @@
+import { findPersistedIntegration } from "../utils/persistedIntegration.js";
+import { isSsrfBlocked, integrationSaveErrorMessage } from "../utils/ssrfErrors.js";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "../api/client.js";
 import Loader from "../ui/Loader.jsx";
@@ -133,6 +135,7 @@ export default function Indexers() {
         );
       }
       setCategoriesById(catsMap);
+      return sources;
     } catch (e) {
       setErr(e?.message || "Erreur chargement sources");
     } finally {
@@ -324,6 +327,7 @@ export default function Indexers() {
   }, []);
 
   async function testIndexer() {
+    setTestPassed(false);
     setCapsError("");
     setCapsWarning("");
     setErr("");
@@ -428,6 +432,7 @@ export default function Indexers() {
       color: normalizedColor,
     };
 
+    let persistedSourceId = editing?.id ?? testSourceId;
     try {
       const normalizedMappings = new Map(
         [...categoryMappings.entries()]
@@ -469,6 +474,7 @@ export default function Indexers() {
             ...payload,
           });
           sourceId = Number(created?.id) || null;
+          persistedSourceId = sourceId;
         }
 
         if (sourceId) {
@@ -488,7 +494,19 @@ export default function Indexers() {
       }
       closeModal();
     } catch (e2) {
-      setErr(e2?.message || "Erreur sauvegarde");
+      if (isSsrfBlocked(e2)) {
+        const savedSources = await load();
+        const savedSource = findPersistedIntegration(savedSources, {
+          id: persistedSourceId,
+          url: payload.torznabUrl,
+          urlField: "torznabUrl",
+        });
+        if (savedSource) setTestSourceId(savedSource.id);
+        setTestPassed(false);
+        setCapsWarning("");
+        setCapsError(integrationSaveErrorMessage(e2));
+      }
+      setErr(integrationSaveErrorMessage(e2) || "Erreur sauvegarde");
     } finally {
       setSaving(false);
     }

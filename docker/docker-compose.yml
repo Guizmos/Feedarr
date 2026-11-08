@@ -9,6 +9,20 @@ services:
       ASPNETCORE_URLS: http://+:8080
       App__DataDir: /app/data
 
+      # Optional SSRF exceptions — configure before setup, then recreate the container.
+      # No exceptions are enabled by default. See README.md / README.fr.md.
+      # Exact host + port (recommended); add more named entries as needed:
+      # App__Security__TrustedHosts__Prowlarr: "prowlarr:9696"
+      # App__Security__TrustedHosts__Sonarr: "sonarr:8989"
+      # App__Security__TrustedHosts__Radarr: "radarr:7878"
+      # App__Security__TrustedHosts__Jackett: "jackett:9117"
+      # App__Security__TrustedHosts__Seer: "10.50.0.15:5055"
+      # Advanced, less restrictive: any integration host/port in each RFC1918 subnet.
+      # Can be combined with TrustedHosts; add indexed entries as needed.
+      # App__Security__TrustedNetworks__0: "10.50.0.0/24"
+      # App__Security__TrustedNetworks__1: "192.168.1.0/24"
+      # Never use public space such as 172.50.0.0/24 as a private Docker network.
+
       # PUID/PGID : UID/GID du compte qui doit posséder les fichiers sur l'hôte.
       # Adapter à votre environnement (id -u / id -g sur le NAS).
       # Par défaut : 10001 (utilisateur interne feedarr).

@@ -82,3 +82,40 @@ test("apiGet does not force anti-csrf header on safe methods", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+for (const contentType of ["application/json", "application/problem+json; charset=utf-8"]) {
+  test(`SSRF code survives ${contentType} for reads and writes`, async () => {
+    const originalFetch = globalThis.fetch;
+    const payload = { title: "ssrf_blocked", status: 403, code: "ssrf_blocked", detail: "server detail" };
+    globalThis.fetch = async () => new Response(JSON.stringify(payload), {
+      status: 403, headers: { "content-type": contentType },
+    });
+    try {
+      for (const request of [() => apiGet("/api/providers/1/indexers"), () => apiPost("/api/sources", {})]) {
+        await assert.rejects(request, (error) => {
+          assert.equal(error.status, 403);
+          assert.equal(error.code, "ssrf_blocked");
+          assert.equal(error.extensions.code, "ssrf_blocked");
+          assert.deepEqual(error.payload, payload);
+          assert.equal(error.detail, "server detail");
+          assert.match(error.message, /TrustedHosts.*TrustedNetworks/);
+          return true;
+        });
+      }
+    } finally { globalThis.fetch = originalFetch; }
+  });
+}
+
+test("ordinary provider HTTP 403 stays distinct from a local SSRF refusal", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ title: "provider refused credentials" }), {
+    status: 403, headers: { "content-type": "application/problem+json" },
+  });
+  try {
+    await assert.rejects(() => apiPost("/api/prowlarr/indexers", {}), (error) => {
+      assert.equal(error.code, undefined);
+      assert.equal(error.message, "provider refused credentials");
+      return true;
+    });
+  } finally { globalThis.fetch = originalFetch; }
+});

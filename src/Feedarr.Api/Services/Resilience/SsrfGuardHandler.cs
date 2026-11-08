@@ -3,21 +3,20 @@ using Feedarr.Api.Services.Security;
 namespace Feedarr.Api.Services.Resilience;
 
 /// <summary>
-/// DelegatingHandler that resolves the target hostname via DNS before every outbound
-/// HTTP request and blocks the call if any resolved IP falls within a private or
-/// restricted range (RFC 1918, link-local, loopback, ULA, etc.).
-///
-/// This guards against DNS-rebinding SSRF attacks: a URL that passes static validation
-/// at save time (because the host looked public) but later resolves to an internal IP.
-///
-/// Apply to HTTP clients whose base URL is user-configured:
-///   TorznabClient, JackettClient, ProwlarrClient, SonarrClient, RadarrClient, EerrRequestClient.
-///
-/// Do NOT apply to clients with a hardcoded base address (TMDB, TVmaze, etc.) — there is
-/// no user-controlled URL to rebind.
+/// Checks every request, including redirects, against the transport's fixed policy.
+/// The primary transport must also use ValidatedOutboundConnector: preflight DNS
+/// checks alone cannot prevent rebinding between validation and connection.
 /// </summary>
 internal sealed class SsrfGuardHandler : DelegatingHandler
 {
+    private readonly OutboundDestinationPolicy _policy;
+    private readonly IOutboundDnsResolver _dns;
+    private readonly OutboundDestinationContext _context;
+
+    public SsrfGuardHandler() : this(new OutboundDestinationPolicy(new Feedarr.Api.Options.OutboundSecurityOptions()), new OutboundDnsResolver(), OutboundDestinationContext.Strict) { }
+    public SsrfGuardHandler(OutboundDestinationPolicy policy, IOutboundDnsResolver dns, OutboundDestinationContext context)
+    { _policy = policy; _dns = dns; _context = context; }
+
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
         CancellationToken cancellationToken)
@@ -27,24 +26,9 @@ internal sealed class SsrfGuardHandler : DelegatingHandler
             (uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
              uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
         {
-            var (allowed, error) = await OutboundUrlGuard
-                .ValidateOutboundHostAsync(uri.Host, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (!allowed)
-            {
-                // Return a synthetic 403 so callers get a clear, loggable failure
-                // rather than a misleading network error.
-                var blocked = new HttpResponseMessage(System.Net.HttpStatusCode.Forbidden)
-                {
-                    ReasonPhrase = "SSRF blocked",
-                    Content = new StringContent(
-                        $"Request to '{uri.Host}' was blocked by the SSRF guard: {error}",
-                        System.Text.Encoding.UTF8,
-                        "text/plain")
-                };
-                return blocked;
-            }
+            var addresses = await _dns.ResolveAsync(uri.IdnHost, cancellationToken).ConfigureAwait(false);
+            if (addresses.Length == 0 || addresses.Any(ip => !_policy.Allows(uri.IdnHost, uri.Port, ip, _context)))
+                throw new SsrfBlockedException();
         }
 
         return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);

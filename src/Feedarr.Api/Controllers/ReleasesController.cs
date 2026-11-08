@@ -1,3 +1,4 @@
+using Feedarr.Api.Services.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using System.Globalization;
 using Dapper;
@@ -40,6 +41,40 @@ public sealed class ReleasesController : ControllerBase
         _log = log;
     }
 
+    // Local browser-session preparation only: no torrent or provider request.
+    [HttpPost("{id:long}/download-session")]
+    public IActionResult PrepareDownloadSession(long id, [FromServices] DownloadBrowserSession sessions)
+    {
+        Response.Headers.CacheControl = "no-store";
+        if (HttpContext.Items[BasicAuthMiddleware.AuthPassedKey] is not true) return Unauthorized();
+        if (!sessions.Prepare(HttpContext))
+            return StatusCode(403, new { code = "download_session_invalid", error = "download session invalid or expired" });
+        return NoContent();
+    }
+
+    [HttpGet("{id:long}/download-status/{attempt:guid}")]
+    public IActionResult DownloadStatus(long id, Guid attempt, [FromServices] DownloadDiagnostics diagnostics,
+        [FromServices] DownloadBrowserSession sessions)
+    {
+        Response.Headers.CacheControl = "no-store";
+        if (HttpContext.Items[BasicAuthMiddleware.AuthPassedKey] is not true) return Unauthorized();
+        if (!sessions.TryGet(HttpContext, out var session))
+        {
+            sessions.Clear(HttpContext);
+            return StatusCode(403, new { code = "download_session_invalid", error = "download session invalid or expired" });
+        }
+        var diagnostic = diagnostics.Get(session, id, attempt);
+        return diagnostic is null
+            ? NotFound(new { code = "download_status_unavailable", error = "download status unavailable" })
+            : Ok(diagnostic);
+    }
+
+    private void RecordDownloadFailure(string code)
+    {
+        if (ControllerContext.HttpContext is { } context)
+            context.Items[DownloadDiagnostics.FailureCodeKey] = code;
+    }
+
     // GET /api/releases/{id}/download
     [HttpGet("{id:long}/download")]
     public async Task<IActionResult> Download([FromRoute] long id, CancellationToken ct)
@@ -51,8 +86,9 @@ public sealed class ReleasesController : ControllerBase
             _log.LogWarning("Download rejected: missing download_url for releaseId={ReleaseId}", id);
             return NotFound(new { error = "release not found or no download_url" });
         }
-        if (!OutboundUrlGuard.TryNormalizeDownloadUrl(url, out var normalizedUrl, out _))
+        if (!OutboundUrlGuard.TryNormalizeDownloadUrl(url, out var normalizedUrl, out var validationError))
         {
+            if (validationError == "download_url host not allowed") RecordDownloadFailure(SsrfBlockedException.Code);
             _log.LogWarning("Download rejected: invalid download_url for releaseId={ReleaseId}", id);
             return BadRequest(new { error = "invalid download_url" });
         }
@@ -77,9 +113,11 @@ public sealed class ReleasesController : ControllerBase
                 var downloadUri = new Uri(normalizedUrl, UriKind.Absolute);
                 if (downloadUri.Scheme is "http" or "https")
                 {
-                    var (allowed, _) = await OutboundUrlGuard.ValidateOutboundHostAsync(downloadUri.Host, ct);
+                    var (allowed, hostError) = await OutboundUrlGuard.ValidateOutboundHostAsync(downloadUri.Host, ct);
                     if (!allowed)
                     {
+                        RecordDownloadFailure(hostError?.Contains("blocked IP address", StringComparison.Ordinal) == true
+                            ? SsrfBlockedException.Code : "network_error");
                         _log.LogWarning(
                             "Download rejected: blocked host for releaseId={ReleaseId} host={IndexerHost}",
                             id,
@@ -147,6 +185,7 @@ public sealed class ReleasesController : ControllerBase
         }
         catch (Exception ex)
         {
+            RecordDownloadFailure(SsrfBlockedException.IsBlocked(ex) ? SsrfBlockedException.Code : "network_error");
             _log.LogWarning(ex, "Download proxy failed for releaseId={ReleaseId} host={IndexerHost}", id, indexerHost);
             return StatusCode(502, new { error = "could not fetch torrent from indexer" });
         }

@@ -1,3 +1,5 @@
+import { isSsrfBlocked, ssrfBlockedMessage } from "../utils/ssrfErrors.js";
+
 const API_BASE = ((import.meta.env?.VITE_API_BASE) || "").replace(/\/+$/, "");
 const TRUSTED_REQUEST_HEADER = "X-Feedarr-Request";
 
@@ -23,7 +25,7 @@ function extractExtensions(payload) {
 async function parseError(res) {
   let msg = `HTTP ${res.status}`;
   const ct = res.headers.get("content-type") || "";
-  if (ct.includes("application/json")) {
+  if (ct.includes("application/json") || ct.includes("+json")) {
     try {
       const data = await res.json();
       const detail = typeof data?.detail === "string" ? data.detail : "";
@@ -37,6 +39,7 @@ async function parseError(res) {
         title,
         detail,
         error,
+        code: typeof data?.code === "string" ? data.code : undefined,
         requirements: data?.requirements,
         extensions: extractExtensions(data),
         payload: data,
@@ -58,6 +61,7 @@ async function parseError(res) {
 function createApiError(parsed) {
   const error = new Error(parsed.message || "HTTP error");
   error.status = parsed.status;
+  if (parsed.code) error.code = parsed.code;
   if (parsed.title) error.title = parsed.title;
   if (parsed.detail) error.detail = parsed.detail;
   if (parsed.error) error.error = parsed.error;
@@ -66,6 +70,7 @@ function createApiError(parsed) {
     error.extensions = parsed.extensions;
   }
   if (parsed.payload) error.payload = parsed.payload;
+  if (isSsrfBlocked(error)) error.message = ssrfBlockedMessage();
   return error;
 }
 
@@ -103,7 +108,7 @@ async function apiSend(method, path, body, { signal, timeoutMs } = {}) {
     if (!res.ok) throw createApiError(await parseError(res));
 
     const ct = res.headers.get("content-type") || "";
-    if (!ct.includes("application/json")) return null;
+    if (!ct.includes("application/json") && !ct.includes("+json")) return null;
     return res.json();
   } finally {
     clear();
@@ -121,7 +126,7 @@ export async function apiGet(path, { signal, timeoutMs } = {}) {
 
     if (!res.ok) throw createApiError(await parseError(res));
     const ct = res.headers.get("content-type") || "";
-    if (!ct.includes("application/json")) return null;
+    if (!ct.includes("application/json") && !ct.includes("+json")) return null;
     return res.json();
   } finally {
     clear();

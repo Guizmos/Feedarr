@@ -92,7 +92,7 @@ export default function SettingsArrPage() {
     setContent,
   ]);
 
-  const effectiveLoadError = pageError || arrSettingsLoadError;
+  const effectiveLoadError = pageError || applications.arrActionError || arrSettingsLoadError;
   const loading = pageLoading || arrSettingsLoading;
 
   return (

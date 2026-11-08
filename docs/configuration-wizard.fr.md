@@ -7,6 +7,9 @@ Ce guide décrit les 6 étapes du wizard Feedarr et explique:
 - ce que chaque étape modifie dans l’application,
 - comment créer ou récupérer les clés API pour chaque provider.
 
+
+> **Services Docker/LAN privés :** configurez `TrustedHosts` ou `TrustedNetworks` avant le setup et recréez le conteneur après modification de l'environnement. Voir [la configuration SSRF et les limites des téléchargements](../README.fr.md#intégrations-dockerlan-privées-et-protection-ssrf). L'ajout manuel ne contourne pas un blocage réseau ; vérifiez la source/application existante après un échec d'enregistrement.
+
 ## Prérequis
 
 Avant de lancer `/setup`, prépare:

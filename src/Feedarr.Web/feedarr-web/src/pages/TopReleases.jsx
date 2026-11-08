@@ -437,7 +437,10 @@ export default function TopReleases() {
     const path =
       it.downloadPath || (it.id ? `/api/releases/${it.id}/download` : "");
     if (!path) return;
-    openDownloadPath(path, { onError: setErr });
+    openDownloadPath(path, { onError: (message) => {
+      setErr(message);
+      setSelectedItem(null);
+    } });
   }
 
   function openDetails(it) {

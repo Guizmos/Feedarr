@@ -1,3 +1,6 @@
+using Feedarr.Api.Services.Diagnostics;
+using Feedarr.Api.Middleware;
+using Microsoft.AspNetCore.DataProtection;
 using System.IO;
 using System.Net;
 using System.Security.Cryptography;
@@ -18,6 +21,115 @@ namespace Feedarr.Api.Tests;
 
 public sealed class SmartAuthMiddlewareTests
 {
+    [Theory]
+    [InlineData("strict", false)]
+    [InlineData("strict", true)]
+    [InlineData("smart", false)]
+    [InlineData("smart", true)]
+    public async Task DownloadDiagnostics_OnlyRunAfterBasicOrSmartAuthorization(string mode, bool credentials)
+    {
+        using var fixture = new MiddlewareFixture();
+        fixture.SetupState.MarkSetupCompleted();
+        var (hash, salt) = HashPassword("DownloadSessionPassword!");
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        { AuthMode = mode, Username = "admin", PasswordHash = hash, PasswordSalt = salt });
+        var sessions = new DownloadBrowserSession(new EphemeralDataProtectionProvider());
+        using var diagnostics = new DownloadDiagnostics();
+        var attempt = Guid.NewGuid();
+        var headers = new Dictionary<string, string>();
+        if (credentials) headers["Authorization"] = ToBasicAuth("admin", "DownloadSessionPassword!");
+        var (called, context) = await fixture.InvokeAsync("/api/releases/7/download", host: "feedarr.example.com",
+            headers: headers, onNext: async ctx =>
+            {
+                Assert.True(sessions.Prepare(ctx));
+                ctx.Request.Headers.Cookie = ctx.Response.Headers.SetCookie.ToString().Split(';')[0];
+                ctx.Request.QueryString = new QueryString($"?downloadAttempt={attempt}");
+                await new DownloadDiagnosticsMiddleware(_ => Task.CompletedTask).InvokeAsync(ctx, diagnostics, sessions);
+            });
+        Assert.Equal(credentials, called);
+        Assert.Equal(credentials ? 200 : 401, context.Response.StatusCode);
+        Assert.Equal(credentials ? 1 : 0, diagnostics.EntryCount);
+        Assert.Equal(credentials, context.Response.Headers.ContainsKey("Set-Cookie"));
+    }
+
+    [Theory]
+    [InlineData("strict", true, true)]
+    [InlineData("strict", false, true)]
+    [InlineData("strict", true, false)]
+    [InlineData("strict", false, false)]
+    [InlineData("smart", true, true)]
+    [InlineData("smart", false, true)]
+    [InlineData("smart", true, false)]
+    [InlineData("smart", false, false)]
+    [InlineData("open", true, false)]
+    [InlineData("open", false, false)]
+    public async Task HealthGet_IsPublicRegardlessOfAuthAndSetup(string mode, bool setupCompleted, bool configured)
+    {
+        using var fixture = new MiddlewareFixture();
+        if (setupCompleted) fixture.SetupState.MarkSetupCompleted();
+        var (hash, salt) = HashPassword("HealthTestPassword!");
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        {
+            AuthMode = mode,
+            PublicBaseUrl = "https://feedarr.example.com",
+            Username = configured ? "admin" : "",
+            PasswordHash = configured ? hash : "",
+            PasswordSalt = configured ? salt : ""
+        });
+
+        var (nextCalled, context) = await fixture.InvokeAsync("/health");
+
+        Assert.True(nextCalled);
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.False(context.Response.Headers.ContainsKey("WWW-Authenticate"));
+        Assert.False(context.Items.ContainsKey(BasicAuthMiddleware.AuthPassedKey));
+    }
+
+    [Theory]
+    [InlineData("HEAD", "/health")]
+    [InlineData("POST", "/health")]
+    [InlineData("PUT", "/health")]
+    [InlineData("DELETE", "/health")]
+    [InlineData("GET", "/health/deep")]
+    [InlineData("GET", "/health/deep/")]
+    [InlineData("GET", "/health/other")]
+    [InlineData("GET", "/healthcheck")]
+    [InlineData("GET", "/health/")]
+    [InlineData("GET", "/api/health")]
+    [InlineData("GET", "/api/sources")]
+    public async Task HealthException_DoesNotOpenOtherMethodsOrRoutes(string method, string path)
+    {
+        foreach (var mode in new[] { "strict", "smart" })
+        {
+            using var fixture = new MiddlewareFixture();
+            fixture.SetupState.MarkSetupCompleted();
+            var (hash, salt) = HashPassword("HealthTestPassword!");
+            fixture.Settings.SaveSecurity(new SecuritySettings
+            {
+                AuthMode = mode, PublicBaseUrl = "https://feedarr.example.com",
+                Username = "admin", PasswordHash = hash, PasswordSalt = salt
+            });
+
+            var (nextCalled, context) = await fixture.InvokeAsync(path, method);
+
+            Assert.False(nextCalled);
+            Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
+        }
+    }
+
+    [Fact]
+    public async Task HealthGet_PreservesFailingProbeStatus()
+    {
+        using var fixture = new MiddlewareFixture();
+        var (nextCalled, context) = await fixture.InvokeAsync("/health", onNext: context =>
+        {
+            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            return Task.CompletedTask;
+        });
+        Assert.True(nextCalled);
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, context.Response.StatusCode);
+    }
+
     [Fact]
     public async Task SmartMode_LocalRequest_DoesNotRequireAuth()
     {
@@ -1019,12 +1131,14 @@ public sealed class SmartAuthMiddlewareTests
             string method = "GET",
             string host = "localhost",
             IPAddress? remoteIp = null,
-            Dictionary<string, string>? headers = null)
+            Dictionary<string, string>? headers = null,
+            RequestDelegate? onNext = null)
         {
             var nextCalled = false;
             var middleware = new BasicAuthMiddleware(context =>
             {
                 nextCalled = true;
+                if (onNext is not null) return onNext(context);
                 context.Response.StatusCode = StatusCodes.Status200OK;
                 return Task.CompletedTask;
             }, _configuration);

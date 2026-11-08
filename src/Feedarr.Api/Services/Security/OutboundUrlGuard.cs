@@ -5,6 +5,7 @@ namespace Feedarr.Api.Services.Security;
 
 public static class OutboundUrlGuard
 {
+    private static readonly OutboundDestinationPolicy StrictPolicy = new(new Feedarr.Api.Options.OutboundSecurityOptions());
     // -----------------------------------------------------------------------
     // Blocked IP ranges — comprehensive SSRF deny list
     // -----------------------------------------------------------------------
@@ -50,17 +51,6 @@ public static class OutboundUrlGuard
         IpRange.Parse("ff00::/8"),
     ];
 
-    // Hostname-based deny list: cloud metadata services that may not resolve to
-    // link-local IPs in all environments (GCP, Azure internal DNS).
-    private static readonly HashSet<string> BlockedMetadataHosts = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "metadata.google.internal",
-        "metadata.azure.internal",
-        // Alibaba Cloud metadata (100.100.100.200 is also covered by blocked ranges but
-        // this hostname guard catches it before DNS resolution).
-        "100.100.100.200",
-    };
-
     // -----------------------------------------------------------------------
     // Public entry points
     // -----------------------------------------------------------------------
@@ -69,7 +59,9 @@ public static class OutboundUrlGuard
         string providerType,
         string? rawBaseUrl,
         out string normalizedBaseUrl,
-        out string error)
+        out string error,
+        OutboundDestinationPolicy? policy = null,
+        OutboundDestinationContext context = OutboundDestinationContext.Strict)
     {
         var normalizedType = (providerType ?? string.Empty).Trim().ToLowerInvariant();
         var trimmed = (rawBaseUrl ?? string.Empty).Trim().TrimEnd('/');
@@ -86,22 +78,26 @@ public static class OutboundUrlGuard
             trimmed = trimmed[..^"/api/v1".Length];
         }
 
-        return TryNormalizeHttpBaseUrl(trimmed, allowImplicitHttp: true, out normalizedBaseUrl, out error);
+        return TryNormalizeHttpBaseUrl(trimmed, allowImplicitHttp: true, out normalizedBaseUrl, out error, policy, context);
     }
 
     public static bool TryNormalizeArrBaseUrl(
         string? rawBaseUrl,
         out string normalizedBaseUrl,
-        out string error)
+        out string error,
+        OutboundDestinationPolicy? policy = null,
+        OutboundDestinationContext context = OutboundDestinationContext.Strict)
     {
-        return TryNormalizeHttpBaseUrl(rawBaseUrl, allowImplicitHttp: true, out normalizedBaseUrl, out error);
+        return TryNormalizeHttpBaseUrl(rawBaseUrl, allowImplicitHttp: true, out normalizedBaseUrl, out error, policy, context);
     }
 
     public static bool TryNormalizeHttpBaseUrl(
         string? rawBaseUrl,
         bool allowImplicitHttp,
         out string normalizedBaseUrl,
-        out string error)
+        out string error,
+        OutboundDestinationPolicy? policy = null,
+        OutboundDestinationContext context = OutboundDestinationContext.Strict)
     {
         normalizedBaseUrl = string.Empty;
         error = "baseUrl invalid";
@@ -151,9 +147,12 @@ public static class OutboundUrlGuard
             return false;
         }
 
-        if (IsBlockedHost(uri.Host))
+        if (OutboundDestinationPolicy.IsForbiddenHost(uri.IdnHost) ||
+            (IPAddress.TryParse(uri.IdnHost, out var ip) &&
+             !(policy ?? StrictPolicy).Allows(uri.IdnHost, uri.Port, ip, context)))
         {
-            error = "baseUrl host not allowed";
+            error = context == OutboundDestinationContext.TrustedIntegration
+                ? SsrfBlockedException.Code : "baseUrl host not allowed";
             return false;
         }
 
@@ -165,6 +164,22 @@ public static class OutboundUrlGuard
         };
 
         normalizedBaseUrl = normalized.Uri.ToString().TrimEnd('/');
+        return true;
+    }
+
+    public static bool TryNormalizeTorznabUrl(
+        string? rawUrl, out string normalizedUrl, out string error,
+        OutboundDestinationPolicy? policy = null,
+        OutboundDestinationContext context = OutboundDestinationContext.Strict)
+    {
+        normalizedUrl = string.Empty;
+        error = "torznabUrl invalid";
+        if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)) return false;
+        var baseUri = new UriBuilder(uri) { Query = string.Empty };
+        if (!TryNormalizeHttpBaseUrl(baseUri.Uri.ToString(), false, out _, out error, policy, context))
+            return false;
+        normalizedUrl = uri.AbsoluteUri;
         return true;
     }
 
@@ -247,7 +262,7 @@ public static class OutboundUrlGuard
 
         foreach (var ip in addresses)
         {
-            if (IsBlockedIp(ip))
+            if (!StrictPolicy.Allows(host, 0, ip, OutboundDestinationContext.Strict))
                 return (false, $"host '{host}' resolves to a blocked IP address ({ip})");
         }
 
@@ -260,15 +275,9 @@ public static class OutboundUrlGuard
 
     internal static bool IsBlockedHost(string host)
     {
-        if (BlockedMetadataHosts.Contains(host))
-            return true;
-
-        // If the host is a literal IP address, check it directly.
-        if (IPAddress.TryParse(host, out var ip))
-            return IsBlockedIp(ip);
-
-        // Hostname (non-IP): static check only; DNS-rebinding requires ValidateOutboundHostAsync.
-        return false;
+        return OutboundDestinationPolicy.IsForbiddenHost(host) ||
+            (IPAddress.TryParse(host, out var ip) &&
+             !StrictPolicy.Allows(host, 0, ip, OutboundDestinationContext.Strict));
     }
 
     internal static bool IsBlockedIp(IPAddress ip)

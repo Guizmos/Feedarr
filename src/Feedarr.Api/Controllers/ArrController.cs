@@ -230,7 +230,7 @@ public sealed class ArrController : ControllerBase
                 Message = result.Message
             });
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "sonarr add failed");
             _activity.Add(null, "error", "arr", $"Sonarr add failed: {safeError}",
@@ -361,7 +361,7 @@ public sealed class ArrController : ControllerBase
                 Message = result.Message
             });
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "radarr add failed");
             _activity.Add(null, "error", "arr", $"Radarr add failed: {safeError}",
@@ -488,7 +488,7 @@ public sealed class ArrController : ControllerBase
                 Message = result.Message
             });
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "request add failed");
             TryAddActivity(
@@ -564,7 +564,7 @@ public sealed class ArrController : ControllerBase
                     overseerrTvByTmdb = lookups.tvByTmdb;
                     overseerrTvByTvdb = lookups.tvByTvdb;
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
                 {
                     _logger.LogWarning(ex, "Failed to load Overseerr requests for status check");
                 }
@@ -584,7 +584,7 @@ public sealed class ArrController : ControllerBase
                     jellyseerrTvByTmdb = lookups.tvByTmdb;
                     jellyseerrTvByTvdb = lookups.tvByTvdb;
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
                 {
                     _logger.LogWarning(ex, "Failed to load Jellyseerr requests for status check");
                 }
@@ -604,7 +604,7 @@ public sealed class ArrController : ControllerBase
                     seerTvByTmdb = lookups.tvByTmdb;
                     seerTvByTvdb = lookups.tvByTvdb;
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
                 {
                     _logger.LogWarning(ex, "Failed to load Seer requests for status check");
                 }
@@ -1117,7 +1117,7 @@ public sealed class ArrController : ControllerBase
             var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "arr sync unavailable");
             return Problem(title: safeError, statusCode: StatusCodes.Status409Conflict);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             _logger.LogWarning(ex, "Arr app sync failed for appId={AppId}", appId);
             return Problem(

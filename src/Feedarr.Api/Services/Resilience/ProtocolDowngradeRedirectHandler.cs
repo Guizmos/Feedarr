@@ -5,10 +5,16 @@ namespace Feedarr.Api.Services.Resilience;
 /// <summary>
 /// DelegatingHandler that follows HTTP redirects manually, including
 /// HTTPS → HTTP downgrades that .NET's HttpClientHandler refuses to follow.
-/// Requires AllowAutoRedirect = false on the inner HttpClientHandler.
+/// Requires AllowAutoRedirect = false on the primary transport.
 /// </summary>
 internal sealed class ProtocolDowngradeRedirectHandler : DelegatingHandler
 {
+    private readonly OutboundDestinationPolicy _policy;
+    private readonly OutboundDestinationContext _context;
+    public ProtocolDowngradeRedirectHandler() : this(new OutboundDestinationPolicy(new Feedarr.Api.Options.OutboundSecurityOptions()), OutboundDestinationContext.Strict) { }
+    public ProtocolDowngradeRedirectHandler(OutboundDestinationPolicy policy, OutboundDestinationContext context)
+    { _policy = policy; _context = context; }
+
     internal static readonly HttpRequestOptionsKey<bool> AllowHttpsToHttpDowngradeOption =
         new("feedarr.allow_https_to_http_downgrade_redirect");
 
@@ -41,18 +47,21 @@ internal sealed class ProtocolDowngradeRedirectHandler : DelegatingHandler
                 : new Uri(currentRequest.RequestUri!, location);
 
             if (HasHostChanged(currentRequest.RequestUri, redirectUri))
-                return response;
+                throw BlockedRedirect(response, currentRequest, request);
 
-            // Validate the redirect destination: block redirects to private/internal IPs.
-            // Cross-host redirects are already blocked above, but we also guard against
-            // same-host redirects where the hostname resolves to an internal IP.
-            if (OutboundUrlGuard.IsBlockedHost(redirectUri.Host))
-                return response;
+            // Check literal destinations here. The inner SSRF guard and validated
+            // connector reapply DNS policy before sending and opening a connection.
+            if ((redirectUri.Scheme != Uri.UriSchemeHttp && redirectUri.Scheme != Uri.UriSchemeHttps) ||
+                !string.IsNullOrEmpty(redirectUri.UserInfo) ||
+                OutboundDestinationPolicy.IsForbiddenHost(redirectUri.IdnHost) ||
+                (System.Net.IPAddress.TryParse(redirectUri.IdnHost, out var address) &&
+                 !_policy.Allows(redirectUri.IdnHost, redirectUri.Port, address, _context)))
+                throw BlockedRedirect(response, currentRequest, request);
 
             if (IsHttpsToHttpDowngrade(currentRequest.RequestUri, redirectUri) &&
                 !IsHttpsToHttpDowngradeAllowed(currentRequest))
             {
-                return response;
+                throw BlockedRedirect(response, currentRequest, request);
             }
 
             var redirectRequest = await BuildRedirectRequestAsync(currentRequest, redirectUri, ct).ConfigureAwait(false);
@@ -66,12 +75,20 @@ internal sealed class ProtocolDowngradeRedirectHandler : DelegatingHandler
         return response;
     }
 
+    private static SsrfBlockedException BlockedRedirect(HttpResponseMessage response,
+        HttpRequestMessage currentRequest, HttpRequestMessage originalRequest)
+    {
+        response.Dispose();
+        if (!ReferenceEquals(currentRequest, originalRequest)) currentRequest.Dispose();
+        return new SsrfBlockedException();
+    }
+
     private static bool HasHostChanged(Uri? sourceUri, Uri redirectUri)
     {
         if (sourceUri is null)
             return true;
 
-        return !string.Equals(sourceUri.IdnHost, redirectUri.IdnHost, StringComparison.OrdinalIgnoreCase);
+        return sourceUri.Port != redirectUri.Port || !string.Equals(sourceUri.IdnHost, redirectUri.IdnHost, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsHttpsToHttpDowngrade(Uri? sourceUri, Uri redirectUri)

@@ -9,6 +9,9 @@ Version 1 (split API + Web containers) is deprecated.
 
 Feedarr now runs as a single service and enforces a First Boot Setup Lock.
 
+
+> **Private Docker/LAN services:** configure `TrustedHosts` or `TrustedNetworks` before setup and recreate the container after environment changes. See [SSRF configuration and download limitations](../README.md#private-dockerlan-integrations-and-ssrf). A blocked connection is not fixed by manual indexer entry; check the existing source/application after a failed save.
+
 ## Prerequisites
 
 Before starting /setup, make sure you have:

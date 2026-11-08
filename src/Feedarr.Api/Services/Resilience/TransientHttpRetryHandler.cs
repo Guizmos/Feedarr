@@ -1,3 +1,4 @@
+using Feedarr.Api.Services.Security;
 using System.Net;
 
 namespace Feedarr.Api.Services.Resilience;
@@ -31,7 +32,7 @@ internal sealed class TransientHttpRetryHandler : DelegatingHandler
                 lastResponse = null;
                 attemptRequest.Dispose();
             }
-            catch (HttpRequestException) when (attempt < MaxRetries)
+            catch (HttpRequestException ex) when (!SsrfBlockedException.IsBlocked(ex) && attempt < MaxRetries)
             {
                 // Transient network error — retry
                 attemptRequest.Dispose();

@@ -59,6 +59,15 @@ public sealed class BasicAuthMiddleware
         AuthThrottleService authThrottle,
         ILogger<BasicAuthMiddleware> log)
     {
+        // Docker's readiness probe must reach the SQLite check without credentials.
+        // Exact GET only: do not open /health/deep or mark this as authenticated.
+        if (HttpMethods.IsGet(context.Request.Method) &&
+            context.Request.Path.Equals("/health", StringComparison.OrdinalIgnoreCase))
+        {
+            await _next(context).ConfigureAwait(false);
+            return;
+        }
+
         if (!setupState.IsSetupCompleted() && !IsAllowedDuringSetup(context.Request))
         {
             log.LogWarning(

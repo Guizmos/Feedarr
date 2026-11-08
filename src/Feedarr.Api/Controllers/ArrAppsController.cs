@@ -12,6 +12,7 @@ namespace Feedarr.Api.Controllers;
 [Route("api/apps")]
 public sealed class ArrAppsController : ControllerBase
 {
+    private readonly OutboundDestinationPolicy _outboundPolicy;
     private readonly ArrApplicationRepository _repo;
     private readonly SonarrClient _sonarr;
     private readonly RadarrClient _radarr;
@@ -27,8 +28,9 @@ public sealed class ArrAppsController : ControllerBase
         EerrRequestClient eerr,
         ArrLibrarySyncService syncService,
         ActivityRepository activity,
-        ILogger<ArrAppsController> log)
+        ILogger<ArrAppsController> log, OutboundDestinationPolicy? outboundPolicy = null)
     {
+        _outboundPolicy = outboundPolicy ?? new OutboundDestinationPolicy(new Feedarr.Api.Options.OutboundSecurityOptions());
         _repo = repo;
         _sonarr = sonarr;
         _radarr = radarr;
@@ -112,7 +114,7 @@ public sealed class ArrAppsController : ControllerBase
         if (!IsSupportedAppType(type))
             return BadRequest(new { error = "type must be one of: sonarr, radarr, overseerr, jellyseerr, seer" });
 
-        if (!OutboundUrlGuard.TryNormalizeArrBaseUrl(dto.BaseUrl, out var baseUrl, out var baseUrlError))
+        if (!OutboundUrlGuard.TryNormalizeArrBaseUrl(dto.BaseUrl, out var baseUrl, out var baseUrlError, policy: _outboundPolicy, context: OutboundDestinationContext.TrustedIntegration))
             return BadRequest(new { error = baseUrlError });
 
         var apiKey = (dto.ApiKey ?? "").Trim();
@@ -146,7 +148,7 @@ public sealed class ArrAppsController : ControllerBase
             {
                 await _syncService.SyncAppAsync(id, ct);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
             {
                 _log.LogWarning(ex, "Initial Arr sync failed after app creation for appId={AppId}", id);
                 _activity.Add(null, "warn", "arr", "Arr app created but initial sync failed",
@@ -172,7 +174,7 @@ public sealed class ArrAppsController : ControllerBase
         string? baseUrlMaybe = null;
         if (!string.IsNullOrWhiteSpace(dto.BaseUrl))
         {
-            if (!OutboundUrlGuard.TryNormalizeArrBaseUrl(dto.BaseUrl, out var normalizedBaseUrl, out var baseUrlError))
+            if (!OutboundUrlGuard.TryNormalizeArrBaseUrl(dto.BaseUrl, out var normalizedBaseUrl, out var baseUrlError, policy: _outboundPolicy, context: OutboundDestinationContext.TrustedIntegration))
                 return BadRequest(new { error = baseUrlError });
             baseUrlMaybe = normalizedBaseUrl;
         }
@@ -240,7 +242,7 @@ public sealed class ArrAppsController : ControllerBase
             {
                 await _syncService.SyncAppAsync(id, ct);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
             {
                 _log.LogWarning(ex, "Arr sync failed after enabling appId={AppId}", id);
                 _activity.Add(null, "warn", "arr", "Arr app enabled but sync failed",
@@ -287,7 +289,7 @@ public sealed class ArrAppsController : ControllerBase
         if (!IsSupportedAppType(appType))
             return BadRequest(new { error = "type query param must be one of: sonarr, radarr, overseerr, jellyseerr, seer" });
 
-        if (!OutboundUrlGuard.TryNormalizeArrBaseUrl(dto.BaseUrl, out var baseUrl, out var baseUrlError))
+        if (!OutboundUrlGuard.TryNormalizeArrBaseUrl(dto.BaseUrl, out var baseUrl, out var baseUrlError, policy: _outboundPolicy, context: OutboundDestinationContext.TrustedIntegration))
             return BadRequest(new { error = baseUrlError });
 
         var apiKey = (dto.ApiKey ?? "").Trim();
@@ -300,7 +302,7 @@ public sealed class ArrAppsController : ControllerBase
     private async Task<ActionResult<ArrAppTestResultDto>> TestConnection(
         string type, string baseUrl, string apiKey, CancellationToken ct)
     {
-        if (!OutboundUrlGuard.TryNormalizeArrBaseUrl(baseUrl, out var normalizedBaseUrl, out var baseUrlError))
+        if (!OutboundUrlGuard.TryNormalizeArrBaseUrl(baseUrl, out var normalizedBaseUrl, out var baseUrlError, policy: _outboundPolicy, context: OutboundDestinationContext.TrustedIntegration))
             return BadRequest(new { error = baseUrlError });
 
         var sw = Stopwatch.StartNew();
@@ -423,7 +425,7 @@ public sealed class ArrAppsController : ControllerBase
             _log.LogWarning(ex, "Timed out while loading Arr app config for appId={AppId}", id);
             return StatusCode(504, new { error = "arr service timeout" });
         }
-        catch (HttpRequestException ex)
+        catch (HttpRequestException ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             _log.LogWarning(ex, "Arr app config upstream request failed for appId={AppId}", id);
             return StatusCode(502, new { error = "arr service unavailable" });
@@ -438,7 +440,7 @@ public sealed class ArrAppsController : ControllerBase
             _log.LogDebug(ex, "Arr app config request canceled for appId={AppId}", id);
             return BadRequest(new { error = "request canceled" });
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             _log.LogError(ex, "Failed to load Arr app config for appId={AppId}", id);
             return StatusCode(500, new { error = "internal server error" });

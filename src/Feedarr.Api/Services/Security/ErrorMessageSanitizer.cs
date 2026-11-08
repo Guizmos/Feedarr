@@ -14,6 +14,8 @@ public static class ErrorMessageSanitizer
 
     public static string ToOperationalMessage(Exception ex, string fallback = "operation failed")
     {
+        if (SsrfBlockedException.IsBlocked(ex)) return SsrfBlockedException.Code;
+
         return ex switch
         {
             TimeoutException => "request timed out",

@@ -1,3 +1,4 @@
+using Feedarr.Api.Services.Security;
 using System.Security.Cryptography;
 using System.Text;
 using Feedarr.Api.Data.Repositories;
@@ -274,7 +275,7 @@ public sealed class CategoryRecommendationService
 
             return raw;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             _log.LogWarning(ex, "Caps fetch failed for {Url}", torznabUrl);
             warnings.Add("Caps indisponible.");

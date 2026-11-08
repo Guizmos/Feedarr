@@ -8,6 +8,7 @@ namespace Feedarr.Api.Services.Arr;
 
 public sealed class RadarrClient
 {
+    private readonly OutboundDestinationPolicy _outboundPolicy;
     private readonly HttpClient _http;
 
     private static readonly JsonSerializerOptions JsonOpts = new()
@@ -17,15 +18,19 @@ public sealed class RadarrClient
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    public RadarrClient(HttpClient http)
+    public RadarrClient(HttpClient http, OutboundDestinationPolicy? outboundPolicy = null)
     {
+        _outboundPolicy = outboundPolicy ?? new OutboundDestinationPolicy(new Feedarr.Api.Options.OutboundSecurityOptions());
         _http = http;
     }
 
-    private static string NormalizeBaseUrl(string baseUrl)
+    private string NormalizeBaseUrl(string baseUrl)
     {
-        if (!OutboundUrlGuard.TryNormalizeArrBaseUrl(baseUrl, out var normalizedBaseUrl, out var error))
+        if (!OutboundUrlGuard.TryNormalizeArrBaseUrl(baseUrl, out var normalizedBaseUrl, out var error, policy: _outboundPolicy, context: OutboundDestinationContext.TrustedIntegration))
+        {
+            if (error == SsrfBlockedException.Code) throw new SsrfBlockedException();
             throw new ArgumentException(error, nameof(baseUrl));
+        }
         return normalizedBaseUrl;
     }
 
@@ -56,7 +61,7 @@ public sealed class RadarrClient
         {
             return (false, null, null, "arr service timeout");
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             return (false, null, null, "arr service unavailable");
         }
@@ -68,7 +73,7 @@ public sealed class RadarrClient
         {
             return (false, null, null, "baseUrl invalid");
         }
-        catch
+        catch (Exception ex) when (!SsrfBlockedException.IsBlocked(ex))
         {
             return (false, null, null, "connection failed");
         }

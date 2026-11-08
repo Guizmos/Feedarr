@@ -1,3 +1,5 @@
+using Feedarr.Api.Services.Diagnostics;
+using Microsoft.AspNetCore.Http;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -138,11 +140,14 @@ public sealed class ReleasesControllerLoggingTests
         Assert.True(logger.Contains(LogLevel.Information, "proxy success"));
     }
 
-    [Fact]
-    public async Task Download_WhenDownloadUrlHostIsBlocked_ReturnsBadRequest_AndSkipsProxy()
+    [Theory]
+    [InlineData("http://127.0.0.1/file.torrent")]
+    [InlineData("http://172.20.0.2:9696/1/download.torrent")]
+    [InlineData("http://10.50.0.15:9117/api/v2.0/indexers/test/results/torznab/download")]
+    public async Task Download_WhenDownloadUrlHostIsBlocked_ReturnsBadRequest_AndSkipsProxy(string downloadUrl)
     {
         using var context = new ReleasesControllerTestContext();
-        var releaseId = context.CreateRelease(downloadUrl: "http://127.0.0.1/file.torrent");
+        var releaseId = context.CreateRelease(downloadUrl: downloadUrl);
         var logger = new ListLogger<ReleasesController>();
         var handler = new CountingHandler();
         var controller = context.CreateController(handler: handler, logger: logger);
@@ -152,6 +157,7 @@ public sealed class ReleasesControllerLoggingTests
         Assert.IsType<BadRequestObjectResult>(result);
         Assert.Equal(0, handler.CallCount);
         Assert.True(logger.Contains(LogLevel.Warning, "invalid download_url"));
+        Assert.Equal("ssrf_blocked", controller.HttpContext.Items[DownloadDiagnostics.FailureCodeKey]);
     }
 
     [Fact]
@@ -421,7 +427,10 @@ public sealed class ReleasesControllerLoggingTests
                 _parser,
                 null!,
                 new FixedHttpClientFactory(http),
-                logger ?? NullLogger<ReleasesController>.Instance);
+                logger ?? NullLogger<ReleasesController>.Instance)
+            {
+                ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+            };
         }
 
         public long CreateRelease(string? downloadUrl)

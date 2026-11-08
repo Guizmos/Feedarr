@@ -1,3 +1,4 @@
+using Feedarr.Api.Services.Security;
 using System.Collections.Concurrent;
 using System.Reflection;
 using Microsoft.AspNetCore.Mvc;
@@ -6,8 +7,21 @@ using Microsoft.AspNetCore.WebUtilities;
 
 namespace Feedarr.Api.Filters;
 
-public sealed class ApiErrorNormalizationFilter : IAsyncResultFilter
+public sealed class ApiErrorNormalizationFilter : IAsyncResultFilter, IExceptionFilter
 {
+    public void OnException(ExceptionContext context)
+    {
+        if (!SsrfBlockedException.IsBlocked(context.Exception)) return;
+        context.Result = new ObjectResult(new ProblemDetails
+        {
+            Status = StatusCodes.Status403Forbidden,
+            Title = SsrfBlockedException.Code,
+            Detail = SsrfBlockedException.SafeMessage,
+            Extensions = { ["code"] = SsrfBlockedException.Code }
+        }) { StatusCode = StatusCodes.Status403Forbidden };
+        context.ExceptionHandled = true;
+    }
+
     private static readonly HashSet<string> ReservedKeys = new(StringComparer.OrdinalIgnoreCase)
     {
         "error", "message", "title", "detail", "status", "type", "instance"
@@ -28,6 +42,15 @@ public sealed class ApiErrorNormalizationFilter : IAsyncResultFilter
             {
                 context.Result = new ObjectResult(problem) { StatusCode = statusCode };
             }
+        }
+
+        if (context.Result is ObjectResult { Value: ProblemDetails securityProblem } &&
+            securityProblem.Title == SsrfBlockedException.Code)
+        {
+            securityProblem.Status = StatusCodes.Status403Forbidden;
+            ((ObjectResult)context.Result).StatusCode = StatusCodes.Status403Forbidden;
+            securityProblem.Extensions["code"] = SsrfBlockedException.Code;
+            securityProblem.Detail = SsrfBlockedException.SafeMessage;
         }
 
         await next();

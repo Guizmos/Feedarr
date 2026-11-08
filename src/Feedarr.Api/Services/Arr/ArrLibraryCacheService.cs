@@ -1,3 +1,4 @@
+using Feedarr.Api.Services.Security;
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -167,7 +168,7 @@ public sealed class ArrLibraryCacheService : IDisposable
 
                 _log.LogDebug("Sonarr cache refreshed: {Count} series", series.Count);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException && !SsrfBlockedException.IsBlocked(ex))
             {
                 _log.LogWarning(ex, "Failed to refresh Sonarr cache");
             }
@@ -226,7 +227,7 @@ public sealed class ArrLibraryCacheService : IDisposable
 
                 _log.LogDebug("Radarr cache refreshed: {Count} movies", movies.Count);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException && !SsrfBlockedException.IsBlocked(ex))
             {
                 _log.LogWarning(ex, "Failed to refresh Radarr cache");
             }

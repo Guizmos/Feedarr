@@ -1,3 +1,5 @@
+import { findPersistedIntegration } from "../../../utils/persistedIntegration.js";
+import { isSsrfBlocked, integrationSaveErrorMessage } from "../../../utils/ssrfErrors.js";
 import { useCallback, useState } from "react";
 import { apiDelete, apiGet, apiPost, apiPut } from "../../../api/client.js";
 import { sleep } from "../settingsUtils.js";
@@ -7,6 +9,7 @@ const ALL_APP_TYPES = ["sonarr", "radarr", "overseerr", "jellyseerr", "seer"];
 
 export default function useArrApplications() {
   const arrSettingsState = useArrSettings();
+  const [arrActionError, setArrActionError] = useState("");
   const [arrApps, setArrApps] = useState([]);
   const [arrAppsLoading, setArrAppsLoading] = useState(false);
 
@@ -80,9 +83,12 @@ export default function useArrApplications() {
   // Load functions
   const loadArrApps = useCallback(async () => {
     setArrAppsLoading(true);
+    setArrActionError("");
     try {
       const apps = await apiGet("/api/apps");
-      setArrApps(Array.isArray(apps) ? apps : []);
+      const loaded = Array.isArray(apps) ? apps : [];
+      setArrApps(loaded);
+      return loaded;
     } catch {
       setArrApps([]);
     } finally {
@@ -111,8 +117,9 @@ export default function useArrApplications() {
     try {
       const config = await apiGet(`/api/apps/${appId}/config`);
       setArrModalConfig(config);
-    } catch {
+    } catch (e) {
       setArrModalConfig(null);
+      if (isSsrfBlocked(e)) setArrModalError(e.message);
     } finally {
       setArrModalConfigLoading(false);
     }
@@ -234,6 +241,7 @@ export default function useArrApplications() {
   async function saveArrModal() {
     setArrModalSaving(true);
     setArrModalError("");
+    let persistedAppId = arrModalApp?.id;
     try {
       if (arrModalMode === "add" && !arrModalType) {
         throw new Error("Aucun type disponible à ajouter");
@@ -264,7 +272,8 @@ export default function useArrApplications() {
       }
 
       if (arrModalMode === "add") {
-        await apiPost("/api/apps", payload);
+        const created = await apiPost("/api/apps", payload);
+        persistedAppId = created?.id ?? persistedAppId;
       } else if (arrModalApp) {
         await apiPut(`/api/apps/${arrModalApp.id}`, payload);
       }
@@ -272,7 +281,20 @@ export default function useArrApplications() {
       closeArrModal();
       await loadArrApps();
     } catch (e) {
-      setArrModalError(e?.message || "Erreur sauvegarde");
+      if (isSsrfBlocked(e)) {
+        setArrModalTested(false);
+        const loaded = await loadArrApps();
+        const savedApp = findPersistedIntegration(loaded, {
+          id: persistedAppId,
+          type: arrModalType,
+          url: arrModalBaseUrl,
+        });
+        if (savedApp) {
+          setArrModalMode("edit");
+          setArrModalApp(savedApp);
+        }
+      }
+      setArrModalError(integrationSaveErrorMessage(e, "application") || "Erreur sauvegarde");
     } finally {
       setArrModalSaving(false);
     }
@@ -318,7 +340,8 @@ export default function useArrApplications() {
           return next;
         });
       }, 1600);
-    } catch {
+    } catch (e) {
+      if (isSsrfBlocked(e)) setArrActionError(e.message);
       setArrTestStatusById((prev) => ({ ...prev, [appId]: "error" }));
       setTimeout(() => {
         setArrTestStatusById((prev) => {
@@ -354,7 +377,8 @@ export default function useArrApplications() {
         }, 1600);
         setArrSyncingId(null);
       }, wait);
-    } catch {
+    } catch (e) {
+      if (isSsrfBlocked(e)) setArrActionError(e.message);
       const elapsed = Date.now() - startedAt;
       const wait = Math.max(2000 - elapsed, 0);
       setTimeout(() => {
@@ -390,6 +414,7 @@ export default function useArrApplications() {
   }
 
   return {
+    arrActionError,
     // Apps list
     arrApps,
     arrAppsLoading,

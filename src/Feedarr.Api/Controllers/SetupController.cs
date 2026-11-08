@@ -17,6 +17,7 @@ namespace Feedarr.Api.Controllers;
 [Route("api/setup")]
 public sealed class SetupController : ControllerBase
 {
+    private readonly OutboundDestinationPolicy _outboundPolicy;
     private readonly Db _db;
     private readonly SettingsRepository _settings;
     private readonly ProviderRepository _providers;
@@ -32,8 +33,9 @@ public sealed class SetupController : ControllerBase
         IConfiguration config,
         BootstrapTokenService bootstrapTokens,
         SetupStateService setupState,
-        ILogger<SetupController> log)
+        ILogger<SetupController> log, OutboundDestinationPolicy? outboundPolicy = null)
     {
+        _outboundPolicy = outboundPolicy ?? new OutboundDestinationPolicy(new Feedarr.Api.Options.OutboundSecurityOptions());
         _db = db;
         _settings = settings;
         _providers = providers;
@@ -95,7 +97,7 @@ public sealed class SetupController : ControllerBase
         if (normalizedType is null)
             return Problem(title: "provider type invalid", statusCode: StatusCodes.Status400BadRequest);
 
-        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl(normalizedType, dto.BaseUrl, out var normalizedBaseUrl, out var baseUrlError))
+        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl(normalizedType, dto.BaseUrl, out var normalizedBaseUrl, out var baseUrlError, policy: _outboundPolicy, context: OutboundDestinationContext.TrustedIntegration))
             return Problem(title: baseUrlError, statusCode: StatusCodes.Status400BadRequest);
 
         var apiKey = (dto.ApiKey ?? "").Trim();

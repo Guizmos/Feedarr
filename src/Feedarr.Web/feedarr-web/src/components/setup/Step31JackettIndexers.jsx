@@ -1,3 +1,4 @@
+import { isSsrfBlocked, ssrfBlockedMessage, integrationSaveErrorMessage } from "../../utils/ssrfErrors.js";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import ItemRow from "../../ui/ItemRow.jsx";
 import Modal from "../../ui/Modal.jsx";
@@ -166,6 +167,15 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
             }
           } catch (e) {
             console.error(`[Step3 Indexers] Chargement indexeurs ${provider.label} échoué.`, e);
+            if (isSsrfBlocked(e)) {
+              nextConfigs[provider.key] = { ...cfg, indexers: [], manualOnly: false, ssrfBlocked: true };
+              nextWarnings[provider.key] = ssrfBlockedMessage();
+              if (typeof window !== "undefined") {
+                window.localStorage.setItem(STORAGE_KEYS[provider.key].manualOnly, "false");
+                window.localStorage.setItem(STORAGE_KEYS[provider.key].indexers, "[]");
+              }
+              return;
+            }
             const cached = Array.isArray(nextConfigs[provider.key]?.indexers)
               ? nextConfigs[provider.key].indexers
               : [];
@@ -283,6 +293,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
   }
 
   function openAddModal(providerKey, indexer) {
+    if (providerConfigs[providerKey]?.ssrfBlocked) return;
     resetModalState();
     setManualMode(false);
     setSelectedProviderKey(providerKey);
@@ -292,6 +303,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
   }
 
   function openManualModal(providerKey) {
+    if (providerConfigs[providerKey]?.ssrfBlocked) return;
     resetModalState();
     setManualMode(true);
     setSelectedProviderKey(providerKey);
@@ -364,6 +376,12 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
         setCapsWarning(tr("Aucune categorie disponible.", "No category available."));
       }
     } catch (e) {
+      if (isSsrfBlocked(e)) {
+        setCapsOk("");
+        setCapsWarning("");
+        setCapsError(ssrfBlockedMessage());
+        return;
+      }
       setCapsWarning(e?.message || tr("Caps indisponible. Aucune categorie disponible.", "Caps unavailable. No category available."));
     } finally {
       setCapsLoading(false);
@@ -450,7 +468,12 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
       setCapsOk(tr("Indexeur ajoute.", "Indexer added."));
       closeModal();
     } catch (e) {
-      setCapsError(e?.message || "Erreur ajout indexeur");
+      if (isSsrfBlocked(e)) {
+        await loadSources();
+        setCapsOk("");
+        setCapsWarning("");
+      }
+      setCapsError(integrationSaveErrorMessage(e) || tr("Erreur ajout indexeur", "Unable to add indexer"));
     } finally {
       setSaving(false);
     }
@@ -625,6 +648,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
                   <select
                     className="settings-field"
                     value={addIds[provider.key] || ""}
+                    disabled={!!providerConfigs[provider.key]?.ssrfBlocked}
                     onChange={(e) => {
                       const id = e.target.value;
                       setAddIds((prev) => ({ ...prev, [provider.key]: id }));
@@ -654,7 +678,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
                     <div className="muted">{tr("Tous les indexeurs detectes sont deja ajoutes.", "All detected indexers are already added.")}</div>
                   )}
                   {availableIndexers.length === 0 && providerConfigs[provider.key]?.indexers?.length === 0 && (
-                    <div className="onboarding__warn">
+                    <div className={providerConfigs[provider.key]?.ssrfBlocked ? "onboarding__error" : "onboarding__warn"}>
                       {providerIndexerWarnings[provider.key] ||
                         tr(`Aucun indexeur detecte automatiquement pour ${provider.label}.`, `No indexer auto-detected for ${provider.label}.`)}
                     </div>

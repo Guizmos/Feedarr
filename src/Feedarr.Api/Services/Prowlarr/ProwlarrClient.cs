@@ -6,21 +6,26 @@ namespace Feedarr.Api.Services.Prowlarr;
 
 public sealed class ProwlarrClient
 {
+    private readonly OutboundDestinationPolicy _outboundPolicy;
     private readonly HttpClient _http;
 
-    public ProwlarrClient(HttpClient http)
+    public ProwlarrClient(HttpClient http, OutboundDestinationPolicy? outboundPolicy = null)
     {
+        _outboundPolicy = outboundPolicy ?? new OutboundDestinationPolicy(new Feedarr.Api.Options.OutboundSecurityOptions());
         _http = http;
     }
 
-    private static string NormalizeBaseUrl(string baseUrl)
+    private string NormalizeBaseUrl(string baseUrl)
     {
-        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl("prowlarr", baseUrl, out var normalizedBaseUrl, out var error))
+        if (!OutboundUrlGuard.TryNormalizeProviderBaseUrl("prowlarr", baseUrl, out var normalizedBaseUrl, out var error, policy: _outboundPolicy, context: OutboundDestinationContext.TrustedIntegration))
+        {
+            if (error == SsrfBlockedException.Code) throw new SsrfBlockedException();
             throw new ArgumentException(error, nameof(baseUrl));
+        }
         return normalizedBaseUrl;
     }
 
-    private static string BuildIndexersUrl(string baseUrl, string apiKey)
+    private string BuildIndexersUrl(string baseUrl, string apiKey)
     {
         var baseTrim = NormalizeBaseUrl(baseUrl);
         return $"{baseTrim}/api/v1/indexer?apikey={Uri.EscapeDataString(apiKey ?? "")}";

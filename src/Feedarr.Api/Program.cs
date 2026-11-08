@@ -241,12 +241,16 @@ builder.Services.AddHttpClient("torrent-download", c =>
 {
     c.Timeout = TimeSpan.FromSeconds(60);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+}).ConfigurePrimaryHttpMessageHandler(sp => new SocketsHttpHandler
 {
     AllowAutoRedirect = false,
-    ServerCertificateCustomValidationCallback = allowInvalidCerts
-        ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-        : null
+    UseProxy = false,
+    ConnectCallback = (connection, ct) => sp.GetRequiredService<ValidatedOutboundConnector>()
+        .ConnectAsync(connection.DnsEndPoint.Host, connection.DnsEndPoint.Port, OutboundDestinationContext.Strict, ct),
+    SslOptions = new System.Net.Security.SslClientAuthenticationOptions
+    {
+        RemoteCertificateValidationCallback = allowInvalidCerts ? (_, _, _, _) => true : null
+    }
 }).AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
   .AddHttpMessageHandler<SsrfGuardHandler>();
 
@@ -255,6 +259,16 @@ builder.Services.AddTransient<TransientHttpRetryHandler>();
 builder.Services.AddTransient<ProtocolDowngradeRedirectHandler>();
 // SSRF guard: DNS re-validates the destination before each call on user-configurable clients
 builder.Services.AddTransient<SsrfGuardHandler>();
+builder.Services.AddOptions<OutboundSecurityOptions>()
+    .Bind(builder.Configuration.GetSection("App:Security")).ValidateOnStart();
+builder.Services.AddSingleton<Microsoft.Extensions.Options.IValidateOptions<OutboundSecurityOptions>, OutboundSecurityOptionsValidator>();
+builder.Services.AddSingleton<OutboundDestinationPolicy>();
+builder.Services.AddSingleton<IOutboundDnsResolver, OutboundDnsResolver>();
+builder.Services.AddSingleton<IOutboundSocketConnector, OutboundSocketConnector>();
+builder.Services.AddSingleton<ValidatedOutboundConnector>();
+builder.Services.AddSingleton<DownloadDiagnostics>();
+builder.Services.AddSingleton<DownloadBrowserSession>();
+
 
 // Circuit breaker — singleton state per family, transient handler
 builder.Services.Configure<HttpResilienceOptions>(builder.Configuration.GetSection("App:Http"));
@@ -271,17 +285,21 @@ builder.Services.AddHttpClient<TorznabClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(45);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+}).ConfigurePrimaryHttpMessageHandler(sp => new SocketsHttpHandler
 {
     // AllowAutoRedirect=false: redirects are followed manually by ProtocolDowngradeRedirectHandler
     // so we can validate the destination IP before following (SSRF guard).
     AllowAutoRedirect = false,
-    ServerCertificateCustomValidationCallback = allowInvalidCerts
-        ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-        : null
+    UseProxy = false,
+    ConnectCallback = (connection, ct) => sp.GetRequiredService<ValidatedOutboundConnector>()
+        .ConnectAsync(connection.DnsEndPoint.Host, connection.DnsEndPoint.Port, OutboundDestinationContext.TrustedIntegration, ct),
+    SslOptions = new System.Net.Security.SslClientAuthenticationOptions
+    {
+        RemoteCertificateValidationCallback = allowInvalidCerts ? (_, _, _, _) => true : null
+    }
 }).AddHttpMessageHandler<IndexerCircuitBreakerHandler>()
-  .AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
-  .AddHttpMessageHandler<SsrfGuardHandler>();
+  .AddHttpMessageHandler(sp => new ProtocolDowngradeRedirectHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), OutboundDestinationContext.TrustedIntegration))
+  .AddHttpMessageHandler(sp => new SsrfGuardHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), sp.GetRequiredService<IOutboundDnsResolver>(), OutboundDestinationContext.TrustedIntegration));
 
 // TMDB
 builder.Services.AddHttpClient<TmdbClient>(c =>
@@ -387,15 +405,19 @@ builder.Services.AddHttpClient<SonarrClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(30);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+}).ConfigurePrimaryHttpMessageHandler(sp => new SocketsHttpHandler
 {
     AllowAutoRedirect = false,
-    ServerCertificateCustomValidationCallback = allowInvalidCerts
-        ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-        : null
+    UseProxy = false,
+    ConnectCallback = (connection, ct) => sp.GetRequiredService<ValidatedOutboundConnector>()
+        .ConnectAsync(connection.DnsEndPoint.Host, connection.DnsEndPoint.Port, OutboundDestinationContext.TrustedIntegration, ct),
+    SslOptions = new System.Net.Security.SslClientAuthenticationOptions
+    {
+        RemoteCertificateValidationCallback = allowInvalidCerts ? (_, _, _, _) => true : null
+    }
 }).AddHttpMessageHandler<ArrCircuitBreakerHandler>()
-  .AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
-  .AddHttpMessageHandler<SsrfGuardHandler>()
+  .AddHttpMessageHandler(sp => new ProtocolDowngradeRedirectHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), OutboundDestinationContext.TrustedIntegration))
+  .AddHttpMessageHandler(sp => new SsrfGuardHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), sp.GetRequiredService<IOutboundDnsResolver>(), OutboundDestinationContext.TrustedIntegration))
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Radarr
@@ -403,15 +425,19 @@ builder.Services.AddHttpClient<RadarrClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(30);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+}).ConfigurePrimaryHttpMessageHandler(sp => new SocketsHttpHandler
 {
     AllowAutoRedirect = false,
-    ServerCertificateCustomValidationCallback = allowInvalidCerts
-        ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-        : null
+    UseProxy = false,
+    ConnectCallback = (connection, ct) => sp.GetRequiredService<ValidatedOutboundConnector>()
+        .ConnectAsync(connection.DnsEndPoint.Host, connection.DnsEndPoint.Port, OutboundDestinationContext.TrustedIntegration, ct),
+    SslOptions = new System.Net.Security.SslClientAuthenticationOptions
+    {
+        RemoteCertificateValidationCallback = allowInvalidCerts ? (_, _, _, _) => true : null
+    }
 }).AddHttpMessageHandler<ArrCircuitBreakerHandler>()
-  .AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
-  .AddHttpMessageHandler<SsrfGuardHandler>()
+  .AddHttpMessageHandler(sp => new ProtocolDowngradeRedirectHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), OutboundDestinationContext.TrustedIntegration))
+  .AddHttpMessageHandler(sp => new SsrfGuardHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), sp.GetRequiredService<IOutboundDnsResolver>(), OutboundDestinationContext.TrustedIntegration))
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Overseerr/Jellyseerr/Seer
@@ -419,15 +445,19 @@ builder.Services.AddHttpClient<EerrRequestClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(30);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+}).ConfigurePrimaryHttpMessageHandler(sp => new SocketsHttpHandler
 {
     AllowAutoRedirect = false,
-    ServerCertificateCustomValidationCallback = allowInvalidCerts
-        ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-        : null
+    UseProxy = false,
+    ConnectCallback = (connection, ct) => sp.GetRequiredService<ValidatedOutboundConnector>()
+        .ConnectAsync(connection.DnsEndPoint.Host, connection.DnsEndPoint.Port, OutboundDestinationContext.TrustedIntegration, ct),
+    SslOptions = new System.Net.Security.SslClientAuthenticationOptions
+    {
+        RemoteCertificateValidationCallback = allowInvalidCerts ? (_, _, _, _) => true : null
+    }
 }).AddHttpMessageHandler<ArrCircuitBreakerHandler>()
-  .AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
-  .AddHttpMessageHandler<SsrfGuardHandler>()
+  .AddHttpMessageHandler(sp => new ProtocolDowngradeRedirectHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), OutboundDestinationContext.TrustedIntegration))
+  .AddHttpMessageHandler(sp => new SsrfGuardHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), sp.GetRequiredService<IOutboundDnsResolver>(), OutboundDestinationContext.TrustedIntegration))
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Jackett — AllowAutoRedirect=false + ProtocolDowngradeRedirectHandler (HTTPS→HTTP)
@@ -436,15 +466,19 @@ builder.Services.AddHttpClient<JackettClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(30);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+}).ConfigurePrimaryHttpMessageHandler(sp => new SocketsHttpHandler
 {
     AllowAutoRedirect = false,
-    ServerCertificateCustomValidationCallback = allowInvalidCerts
-        ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-        : null
+    UseProxy = false,
+    ConnectCallback = (connection, ct) => sp.GetRequiredService<ValidatedOutboundConnector>()
+        .ConnectAsync(connection.DnsEndPoint.Host, connection.DnsEndPoint.Port, OutboundDestinationContext.TrustedIntegration, ct),
+    SslOptions = new System.Net.Security.SslClientAuthenticationOptions
+    {
+        RemoteCertificateValidationCallback = allowInvalidCerts ? (_, _, _, _) => true : null
+    }
 }).AddHttpMessageHandler<ArrCircuitBreakerHandler>()
-  .AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
-  .AddHttpMessageHandler<SsrfGuardHandler>()
+  .AddHttpMessageHandler(sp => new ProtocolDowngradeRedirectHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), OutboundDestinationContext.TrustedIntegration))
+  .AddHttpMessageHandler(sp => new SsrfGuardHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), sp.GetRequiredService<IOutboundDnsResolver>(), OutboundDestinationContext.TrustedIntegration))
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Prowlarr — même traitement
@@ -452,15 +486,19 @@ builder.Services.AddHttpClient<ProwlarrClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(30);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+}).ConfigurePrimaryHttpMessageHandler(sp => new SocketsHttpHandler
 {
     AllowAutoRedirect = false,
-    ServerCertificateCustomValidationCallback = allowInvalidCerts
-        ? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-        : null
+    UseProxy = false,
+    ConnectCallback = (connection, ct) => sp.GetRequiredService<ValidatedOutboundConnector>()
+        .ConnectAsync(connection.DnsEndPoint.Host, connection.DnsEndPoint.Port, OutboundDestinationContext.TrustedIntegration, ct),
+    SslOptions = new System.Net.Security.SslClientAuthenticationOptions
+    {
+        RemoteCertificateValidationCallback = allowInvalidCerts ? (_, _, _, _) => true : null
+    }
 }).AddHttpMessageHandler<ArrCircuitBreakerHandler>()
-  .AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
-  .AddHttpMessageHandler<SsrfGuardHandler>()
+  .AddHttpMessageHandler(sp => new ProtocolDowngradeRedirectHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), OutboundDestinationContext.TrustedIntegration))
+  .AddHttpMessageHandler(sp => new SsrfGuardHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), sp.GetRequiredService<IOutboundDnsResolver>(), OutboundDestinationContext.TrustedIntegration))
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Arr Library Cache (in-memory, will be deprecated)
@@ -717,6 +755,9 @@ app.UseMiddleware<BasicAuthMiddleware>();
 // Browser-origin guard for unsafe requests. Allows same-origin or allowlisted
 // origins/referers, and requires an explicit trusted header for non-browser clients.
 app.UseMiddleware<AntiCsrfOriginMiddleware>();
+
+// Diagnostics may only observe requests already authorized by Basic/Smart Auth.
+app.UseMiddleware<Feedarr.Api.Middleware.DownloadDiagnosticsMiddleware>();
 
 // Response compression (Brotli preferred, Gzip fallback).
 // Must be placed before UseStaticFiles so static assets are also compressed.

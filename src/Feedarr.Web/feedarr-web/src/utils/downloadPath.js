@@ -1,92 +1,108 @@
-import { resolveApiUrl } from "../api/client.js";
+import { apiGet, apiPost, resolveApiUrl } from "../api/client.js";
+import { tr } from "../app/uiText.js";
 
-const IFRAME_CLEANUP_MS = 30_000;
+const POLL_INTERVAL_MS = 1000;
+const DIAGNOSTIC_TIMEOUT_MS = 4 * 60_000;
+let preparingSession;
 
-function reportDownloadError(onError, message, error) {
-  console.error(message, error);
-  if (typeof onError === "function") {
-    onError(message);
+// Serialize first-use cookie creation across concurrent downloads in this page.
+function prepareSession(path) {
+  if (!preparingSession) {
+    preparingSession = apiPost(path.replace(/\/download$/, "/download-session"), null)
+      .finally(() => { preparingSession = undefined; });
   }
+  return preparingSession;
 }
 
-function triggerDownloadWithIframe(url) {
-  if (typeof document === "undefined" || !document.body) {
-    throw new Error("document.body indisponible");
-  }
-
-  const iframe = document.createElement("iframe");
-  iframe.style.display = "none";
-  iframe.setAttribute("aria-hidden", "true");
-  iframe.src = url;
-
-  document.body.appendChild(iframe);
-
-  const timeout = typeof window !== "undefined" ? window.setTimeout : setTimeout;
-  timeout(() => {
-    if (iframe.parentNode) {
-      iframe.parentNode.removeChild(iframe);
-    }
-  }, IFRAME_CLEANUP_MS);
-
-  return true;
+export function downloadErrorMessage(status, code, diagnosticUnavailable = false) {
+  if (code === "download_session_invalid") return tr(
+    "Session de téléchargement invalide ou expirée. Vérifiez les téléchargements du navigateur avant de réessayer.",
+    "Download session is invalid or expired. Check your browser downloads before retrying."
+  );
+  if (diagnosticUnavailable) return tr(
+    "Impossible de vérifier le téléchargement : erreur réseau ou suivi indisponible. Vérifiez les téléchargements du navigateur avant de réessayer.",
+    "Unable to check the download: network error or tracking unavailable. Check your browser downloads before retrying."
+  );
+  if (code === "ssrf_blocked") return tr(
+    "Téléchargement bloqué par la protection SSRF. Les torrents HTTP sur une destination privée restent interdits, même si le fournisseur est autorisé pour le RSS.",
+    "Download blocked by SSRF protection. HTTP torrents on private destinations remain blocked, even when the provider is authorized for RSS."
+  );
+  if (status === 401) return tr("Authentification requise pour télécharger. Reconnectez-vous à Feedarr.", "Authentication is required to download. Sign in to Feedarr again.");
+  if (status === 403) return tr("Téléchargement refusé : accès non autorisé.", "Download denied: access is not authorized.");
+  if (status === 404) return tr("Release ou lien de téléchargement introuvable.", "Release or download link not found.");
+  if (code === "network_error") return tr("Le téléchargement a échoué : erreur réseau avec le fournisseur.", "Download failed: network error while contacting the provider.");
+  if (status === 400) return tr("Lien de téléchargement invalide ou destination refusée.", "Invalid download link or destination denied.");
+  return tr("Le téléchargement a échoué : erreur du serveur ou du fournisseur.", "Download failed: server or provider error.");
 }
 
-function triggerDownloadWithAnchor(url) {
-  if (typeof document === "undefined" || !document.body) {
-    throw new Error("document.body indisponible");
-  }
-
-  const link = document.createElement("a");
-  link.href = url;
-  link.target = "_self";
-  link.rel = "noopener";
-  link.style.display = "none";
-
-  document.body.appendChild(link);
-  try {
-    link.click();
-  } finally {
-    if (link.parentNode) {
-      link.parentNode.removeChild(link);
-    }
-  }
-
-  return true;
-}
-
-export function openDownloadPath(downloadPath, options = {}) {
-  const { onError } = options;
-
-  if (typeof window === "undefined") {
-    return false;
-  }
-
+// One native download, plus local status lookups. Never fetch/blob the torrent in JS.
+export async function openDownloadPath(downloadPath, { onError } = {}) {
+  if (typeof window === "undefined") return false;
+  let iframe;
+  let reported = false;
+  const report = (message) => {
+    if (!reported) onError?.(message);
+    reported = true;
+  };
   try {
     const path = String(downloadPath || "").trim();
-    if (!path) {
-      reportDownloadError(onError, "URL de telechargement manquante.", null);
+    if (!/^\/api\/releases\/[1-9]\d*\/download$/.test(path)) {
+      report(tr("Lien de téléchargement invalide.", "Invalid download link."));
       return false;
     }
-    if (!path.startsWith("/api/")) {
-      reportDownloadError(onError, "URL de telechargement invalide.", null);
+    const url = new URL(resolveApiUrl(path), window.location.origin);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+      report(tr("Lien de téléchargement refusé.", "Download link denied."));
       return false;
     }
-
-    const resolved = resolveApiUrl(path);
-    const url = new URL(resolved, window.location.origin);
-    const isHttp = url.protocol === "http:" || url.protocol === "https:";
-    if (!isHttp || !url.pathname.startsWith("/api/")) {
-      reportDownloadError(onError, "URL de telechargement refusee.", null);
-      return false;
-    }
-
     try {
-      return triggerDownloadWithIframe(url.toString());
-    } catch {
-      return triggerDownloadWithAnchor(url.toString());
+      await prepareSession(path);
+    } catch (error) {
+      report(downloadErrorMessage(error?.status, error?.code,
+        error?.status !== 401 && error?.status !== 403));
+      return false;
     }
-  } catch (error) {
-    reportDownloadError(onError, "Impossible d'ouvrir le lien de telechargement.", error);
+    const attempt = crypto.randomUUID();
+    url.searchParams.set("downloadAttempt", attempt);
+    iframe = document.createElement("iframe");
+    iframe.style.display = "none";
+    iframe.setAttribute("aria-hidden", "true");
+    iframe.onerror = () => report(downloadErrorMessage(null, null, true));
+    iframe.src = url.toString();
+    document.body.appendChild(iframe);
+    // No load handler: navigating an iframe does not prove a successful download.
+    const startedAt = Date.now();
+    const deadline = startedAt + DIAGNOSTIC_TIMEOUT_MS;
+    while (!reported && Date.now() < deadline) {
+      let result;
+      try {
+        result = await apiGet(`${path.replace(/\/download$/, "/download-status")}/${attempt}`, { timeoutMs: 10_000 });
+      } catch (error) {
+        // Initial lookup can race with the iframe reaching the server; do not retry the download.
+        if (error?.status === 404 && Date.now() - startedAt < 5000) {
+          await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+          continue;
+        }
+        report(downloadErrorMessage(error?.status, error?.code, error?.status !== 401 && error?.status !== 403));
+        break;
+      }
+      if (result?.state === "failed") {
+        report(downloadErrorMessage(result.statusCode, result.code));
+        break;
+      }
+      if (result?.state === "completed") {
+        iframe.remove();
+        return true; // server response completed; no claim about browser/OS file saving
+      }
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    }
+    if (!reported) report(downloadErrorMessage(null, null, true));
+    // A failed diagnostic request must not cancel a possibly ongoing native transfer.
+    setTimeout(() => iframe?.remove(), DIAGNOSTIC_TIMEOUT_MS);
+    return false;
+  } catch {
+    report(downloadErrorMessage(null, null, true));
+    iframe?.remove();
     return false;
   }
 }

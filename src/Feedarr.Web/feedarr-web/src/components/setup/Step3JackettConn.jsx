@@ -1,3 +1,4 @@
+import { discoveryFailureState, isSsrfBlocked, shouldRetryDiscovery, ssrfBlockedMessage } from "../../utils/ssrfErrors.js";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { apiPost, apiPut } from "../../api/client.js";
 import ItemRow from "../../ui/ItemRow.jsx";
@@ -317,11 +318,23 @@ export default function Step3JackettConn({ onStatusChange, resetToken, initialSt
         break;
       } catch (e) {
         const rawMsg = e?.message || `Erreur de connexion ${providerName}.`;
-        if (attempt === 0 && /invalid start of a value|unexpected token\s*</i.test(rawMsg)) {
+        if (shouldRetryDiscovery(e, attempt)) {
           await new Promise((r) => setTimeout(r, 350));
           continue;
         }
-        nextState = "manual";
+        nextState = discoveryFailureState(e);
+        if (isSsrfBlocked(e)) {
+          nextMsg = ssrfBlockedMessage();
+          setSaved(false);
+          setIndexers([]);
+          if (typeof window !== "undefined") {
+            const keys = STORAGE_KEYS[provider];
+            window.localStorage.setItem(keys.manualOnly, "false");
+            window.localStorage.setItem(keys.indexers, "[]");
+          }
+          onStatusChange?.({ provider, ready: false, baseUrl: normalizeBaseUrl(baseUrl), indexers: [], manualOnly: false });
+          break;
+        }
         nextMsg =
           /invalid start of a value|unexpected token\s*</i.test(rawMsg)
             ? tr(

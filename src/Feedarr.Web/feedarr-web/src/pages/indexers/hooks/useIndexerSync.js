@@ -1,3 +1,4 @@
+import { isSsrfBlocked, ssrfBlockedMessage } from "../../../utils/ssrfErrors.js";
 import { useCallback, useMemo, useState } from "react";
 import { apiPost } from "../../../api/client.js";
 import { startRssSyncSingle, completeRssSyncSingle } from "../../../tasks/syncTasks.js";
@@ -46,6 +47,9 @@ export default function useIndexerSync({ items, load, setErr }) {
         enabledItems.map((source) => apiPost(`/api/sources/${source.id}/sync`))
       );
       await load();
+      if (results.some((result) => result.status === "rejected" && isSsrfBlocked(result.reason))) {
+        setErr(ssrfBlockedMessage());
+      }
       triggerPosterPolling("sync-all");
       const elapsed = Date.now() - startedAt;
       const wait = Math.max(2000 - elapsed, 0);
