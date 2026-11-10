@@ -2980,49 +2980,97 @@ LEFT JOIN media_entities me
     public DuplicateResult DetectDuplicates()
     {
         using var conn = _db.Open();
-        var duplicateIds = conn.Query<long>(
-            """
-            WITH ranked AS (
-                SELECT id,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY source_id, title_clean
-                           ORDER BY COALESCE(published_at_ts, created_at_ts) DESC, id DESC
-                       ) AS rn
+        using var tx = conn.BeginTransaction(deferred: true);
+        var candidates = GetDuplicateCandidates(conn, tx);
+        tx.Commit();
+        return new DuplicateResult(candidates.Select(row => row.KeeperId).Distinct().Count(),
+            candidates.Count, candidates.Select(row => row.Id).ToList());
+    }
+
+    private sealed record DuplicateCandidate(long Id, long KeeperId);
+
+    private static List<DuplicateCandidate> GetDuplicateCandidates(SqliteConnection conn, SqliteTransaction tx)
+        => conn.Query<DuplicateCandidate>(BuildDuplicateCandidatesSql(conn, tx), transaction: tx).AsList();
+
+    internal static string BuildDuplicateCandidatesSql(SqliteConnection conn, SqliteTransaction tx)
+    {
+        // Preserve every persisted field by default, including future metadata columns.
+        // Transport aliases and observation counters are not payload/user metadata.
+        var ignored = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "id", "source_id", "guid", "info_hash", "title", "link", "download_url",
+            "created_at_ts", "published_at_ts", "seeders", "leechers", "grabs"
+        };
+        var columns = conn.Query("PRAGMA table_info(releases);", transaction: tx)
+            .Select(row => (string)row.name).Where(name => !ignored.Contains(name)).ToArray();
+        static string Quote(string name) => "\"" + name.Replace("\"", "\"\"") + "\"";
+        var usefulData = string.Join(" + ", columns.Select(name =>
+            $"CASE WHEN r.{Quote(name)} IS NOT NULL AND r.{Quote(name)} IS NOT '' THEN 1 ELSE 0 END"));
+        var preserved = string.Join(" AND ", columns.Select(name =>
+            $"(d.{Quote(name)} IS NULL OR d.{Quote(name)} IS '' OR d.{Quote(name)} IS k.{Quote(name)})"));
+        var statusColumns = conn.Query("PRAGMA table_info(release_arr_status);", transaction: tx)
+            .Select(row => (string)row.name).Where(name => name != "release_id");
+        var sameStatus = string.Join(" AND ", statusColumns.Select(name => $"ks.{Quote(name)} IS ds.{Quote(name)}"));
+        return $"""
+            WITH eligible AS (
+                SELECT id, source_id, title, lower(trim(info_hash)) AS hash
                 FROM releases
-                WHERE title_clean IS NOT NULL AND title_clean <> ''
+                WHERE length(trim(info_hash)) = 40
+                  AND lower(trim(info_hash)) NOT GLOB '*[^0-9a-f]*'
+                  AND length(replace(lower(trim(info_hash)), substr(lower(trim(info_hash)), 1, 1), '')) > 0
+                  AND trim(title) <> ''
+            ), ranked AS (
+                SELECT e.id,
+                       FIRST_VALUE(e.id) OVER (
+                           PARTITION BY e.source_id, e.hash, e.title
+                           ORDER BY ({usefulData}) DESC,
+                                    EXISTS(SELECT 1 FROM release_arr_status s WHERE s.release_id = e.id) DESC,
+                                    COALESCE(r.published_at_ts, r.created_at_ts) DESC, e.id DESC
+                       ) AS keeperId
+                FROM eligible e JOIN releases r ON r.id = e.id
             )
-            SELECT id FROM ranked WHERE rn > 1;
-            """
-        ).AsList();
-
-        var groupsFound = conn.ExecuteScalar<int>(
-            """
-            SELECT COUNT(1) FROM (
-                SELECT 1
-                FROM releases
-                WHERE title_clean IS NOT NULL AND title_clean <> ''
-                GROUP BY source_id, title_clean
-                HAVING COUNT(1) > 1
-            );
-            """
-        );
-
-        return new DuplicateResult(groupsFound, duplicateIds.Count, duplicateIds);
+            SELECT d.id AS Id, k.id AS KeeperId
+            FROM ranked p
+            JOIN releases d ON d.id = p.id
+            JOIN releases k ON k.id = p.keeperId
+            WHERE d.id <> k.id AND {preserved}
+              AND d.year IS k.year AND d.season IS k.season AND d.episode IS k.episode
+              AND d.resolution IS k.resolution AND d.release_group IS k.release_group
+              AND (d.download_url IS NULL OR d.download_url = '' OR COALESCE(k.download_url, '') <> '')
+              AND (d.link IS NULL OR d.link = '' OR COALESCE(k.link, '') <> '')
+              AND ((COALESCE(lower(d.download_url), '') NOT LIKE 'magnet:%' AND COALESCE(lower(k.download_url), '') NOT LIKE 'magnet:%') OR d.download_url IS k.download_url)
+              AND ((COALESCE(lower(d.link), '') NOT LIKE 'magnet:%' AND COALESCE(lower(k.link), '') NOT LIKE 'magnet:%') OR d.link IS k.link)
+              AND NOT EXISTS (
+                  SELECT 1 FROM release_arr_status ds WHERE ds.release_id = d.id
+                  AND NOT EXISTS (SELECT 1 FROM release_arr_status ks WHERE ks.release_id = k.id AND {sameStatus})
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM poster_store_refs ds WHERE ds.release_id = d.id
+                  AND NOT EXISTS (SELECT 1 FROM poster_store_refs ks WHERE ks.release_id = k.id AND ks.store_dir = ds.store_dir)
+              )
+            ORDER BY d.id;
+            """;
     }
 
     public int PurgeDuplicates(List<long> ids)
     {
         if (ids.Count == 0) return 0;
         using var conn = _db.Open();
-        using var tx = conn.BeginTransaction();
-
-        conn.Execute("DELETE FROM release_arr_status WHERE release_id IN @ids;", new { ids }, tx);
-        conn.Execute("DELETE FROM poster_store_refs WHERE release_id IN @ids;", new { ids }, tx);
-        var deleted = conn.Execute("DELETE FROM releases WHERE id IN @ids;", new { ids }, tx);
-
+        // IMMEDIATE reserves the SQLite writer before revalidating candidates.
+        // RSS updates, retention and other writers cannot change identity until commit.
+        using var tx = conn.BeginTransaction(deferred: false);
+        var requested = ids.ToHashSet();
+        var currentIds = GetDuplicateCandidates(conn, tx).Where(row => requested.Contains(row.Id))
+            .Select(row => row.Id).ToArray();
+        var deleted = 0;
+        foreach (var batch in currentIds.Chunk(500))
+        {
+            conn.Execute("DELETE FROM release_arr_status WHERE release_id IN @batch;", new { batch }, tx);
+            conn.Execute("DELETE FROM poster_store_refs WHERE release_id IN @batch;", new { batch }, tx);
+            deleted += conn.Execute("DELETE FROM releases WHERE id IN @batch;", new { batch }, tx);
+        }
         tx.Commit();
-        if (deleted > 0)
-            _badgeSignal?.Notify("releases");
+        if (deleted > 0) _badgeSignal?.Notify("releases");
         return deleted;
     }
 

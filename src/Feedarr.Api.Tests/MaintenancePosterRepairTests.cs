@@ -143,6 +143,24 @@ public sealed class MaintenancePosterRepairTests
         Assert.True(logger.Contains(LogLevel.Information, "DetectDuplicates completed"));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DetectDuplicates_OnlyCertainDuplicatesAreEligible_AndDefaultDoesNotPurge(bool purge)
+    {
+        using var context = new MaintenancePosterRepairContext();
+        context.CreateRelease("same.jpg"); context.CreateRelease("same.jpg");
+        using var conn = context.Db.Open();
+        conn.Execute("UPDATE releases SET info_hash='0123456789abcdef0123456789abcdef01234567', poster_updated_at_ts=1");
+        var controller = context.CreateController();
+        var result = purge ? controller.DetectDuplicates(purge: true) : controller.DetectDuplicates();
+        var ok = Assert.IsType<OkObjectResult>(result);
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        Assert.Equal(1, doc.RootElement.GetProperty("duplicatesCount").GetInt32());
+        Assert.Equal(purge, doc.RootElement.GetProperty("purged").GetBoolean());
+        Assert.Equal(purge ? 1 : 2, conn.ExecuteScalar<int>("SELECT COUNT(*) FROM releases"));
+    }
+
     private sealed class MaintenancePosterRepairContext : IDisposable
     {
         private readonly TestWorkspace _workspace;

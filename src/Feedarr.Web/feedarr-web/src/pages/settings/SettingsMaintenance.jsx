@@ -559,8 +559,8 @@ export default function SettingsMaintenance({
         <div style={{ padding: 12 }}>
           <div style={{ fontWeight: 700, marginBottom: 8 }}>Confirmer la suppression des doublons ?</div>
           <div className="muted" style={{ marginBottom: 12 }}>
-            Cette action va supprimer {duplicatesResult?.duplicatesCount ?? 0} releases en double.
-            Pour chaque groupe de doublons, seule la release la plus récente sera conservée.
+            Cette action supprimera les doublons encore confirmés, jusqu’à {duplicatesResult?.duplicatesCount ?? 0} releases.
+            La release conservée est choisie pour préserver les métadonnées et associations existantes.
             Cette action est définitive.
           </div>
           <div className="formactions">
