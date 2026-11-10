@@ -290,6 +290,67 @@ public sealed class ConfigurationRestoreService(
         finally { activity?.Dispose(); _syncGate.Release(); }
     }
 
+    internal void AuthorizeRequest(HttpContext caller) => Authorize(caller);
+
+    public ConfigurationRestoreState GetState(HttpContext caller)
+    {
+        Authorize(caller);
+        var pending=store.Read();
+        using var c=db.Open();
+        var job=c.QuerySingleOrDefault<ConfigurationAppliedState>("""
+            SELECT id AS OperationId,initial_sync_state AS SyncState,
+                json_array_length(source_ids_json) AS TotalSources,
+                json_array_length(completed_ids_json) AS CompletedSources,
+                retention_per_category IS NOT NULL AS RetentionPending
+            FROM configuration_restore_operations ORDER BY rowid DESC LIMIT 1
+            """);
+        return new(pending?.Preview,pending?.Confirmed??false,job,GetResumeStepsForSetup(),legacy.GetStatus().Pending);
+    }
+
+    // Only step IDs, never credentials or source URLs, are exposed through setup state.
+    internal int[]? GetResumeStepsForSetup()
+    {
+        if(setup.IsSetupCompleted()) return null;
+        using var c=db.Open();
+        if(c.ExecuteScalar<int>("SELECT COUNT(*) FROM configuration_restore_operations")==0)return null;
+        try
+        {
+            var model=new ConfigurationSnapshotReader(protection,registry).Read(c,false,out _);
+            var missing=ConfigurationSchema.MissingRequiredSecrets(model,registry);
+            var steps=new List<int>();
+            var security=model.Settings["security"].Deserialize<SecuritySettings>(ConfigurationSchema.Json)!;
+            if(security.AuthMode!="open" && !SmartAuthPolicy.IsAuthConfigured(security,null)) steps.Add(3);
+            if(model.ExternalProviders.Any(p=>missing.Any(m=>m.ItemKey==Text(p,"key"))))steps.Add(4);
+            if(model.Sources.Count==0 && model.Providers.Count==0 || model.Providers.Any(p=>missing.Any(m=>m.ItemKey==Text(p,"key"))))steps.Add(5);
+            if(model.Sources.Count==0 || model.Sources.Any(p=>missing.Any(m=>m.ItemKey==Text(p,"key"))))steps.Add(6);
+            if(model.Applications.Any(p=>missing.Any(m=>m.ItemKey==Text(p,"key"))))steps.Add(7);
+            steps.Add(8);return steps.ToArray();
+        }
+        catch(ConfigurationArchiveException){return [3,4,5,6,7,8];}
+    }
+
+    public Task CompleteRestoredSetupAsync(HttpContext caller,CancellationToken ct=default)
+    {
+        Authorize(caller);
+        if(setup.IsSetupCompleted())throw Changed();
+        return coordinator.RunExclusiveAsync("complete-restored-setup",null,cancellationToken=>
+        {
+            using var c=db.Open();
+            string baseline;
+            using(var read=c.BeginTransaction()) { baseline=ConfigurationRestorePlanner.Fingerprint(c,read); read.Commit(); }
+            var model=new ConfigurationSnapshotReader(protection,registry).Read(c,false,out _);
+            var security=model.Settings["security"].Deserialize<SecuritySettings>(ConfigurationSchema.Json)!;
+            if(!ConfigurationSchema.Validate(model,registry).IsComplete || security.AuthMode!="open" && !SmartAuthPolicy.IsAuthConfigured(security,null))throw Changed();
+            using var tx=c.BeginTransaction(deferred:false);
+            if(ConfigurationRestorePlanner.Fingerprint(c,tx)!=baseline || c.ExecuteScalar<int>("SELECT COUNT(*) FROM configuration_restore_operations",transaction:tx)==0)throw Changed();
+            var ui=ConfigurationRestorePlanner.Setting(c,tx,"ui",new UiSettings());ui.OnboardingDone=true;
+            c.Execute("UPDATE app_settings SET value_json=@json WHERE key='ui'",new{json=JsonSerializer.Serialize(ui,ConfigurationSchema.Json)},tx);
+            if(!ConfigurationRestorePlanner.HasLibrary(c,tx,HasMediaFiles()))
+                c.Execute("UPDATE configuration_restore_operations SET initial_sync_state='pending',next_attempt_ts=0 WHERE id=(SELECT id FROM configuration_restore_operations ORDER BY rowid DESC LIMIT 1) AND initial_sync_state='held' AND retention_per_category IS NULL",transaction:tx);
+            tx.Commit();Invalidate();return Task.FromResult(true);
+        },ct);
+    }
+
     private void Authorize(HttpContext caller)
     {
         if (caller.Items[BasicAuthMiddleware.AuthPassedKey] is not true ||
@@ -368,4 +429,16 @@ public sealed class ConfigurationRestoreService(
         public string Completed { get; set; } = "[]"; public long Next { get; set; }
         public int Attempts { get; set; }
     }
+}
+
+public sealed record ConfigurationRestoreState(ConfigurationRestorePreview? Pending,bool Confirmed,
+    ConfigurationAppliedState? Applied,int[]? RemainingSetupSteps,bool LegacyRestorePending);
+
+public sealed class ConfigurationAppliedState
+{
+    public string OperationId {get;set;}="";
+    public string SyncState {get;set;}="";
+    public int TotalSources {get;set;}
+    public int CompletedSources {get;set;}
+    public bool RetentionPending {get;set;}
 }

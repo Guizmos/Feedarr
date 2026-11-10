@@ -600,6 +600,10 @@ builder.Services.AddRateLimiter(options =>
             });
     });
 
+    options.AddPolicy("configuration-backup", httpContext => RateLimitPartition.GetFixedWindowLimiter(
+        httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 6, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+
     options.AddPolicy("stats-heavy", httpContext =>
     {
         var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";

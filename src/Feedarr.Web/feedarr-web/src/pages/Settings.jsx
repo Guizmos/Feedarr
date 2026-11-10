@@ -68,19 +68,14 @@ function SettingsStandardPage({ section }) {
   } = controller;
 
   // Refs for stable callback references in subbar - direct assignment (refs don't trigger re-renders)
-  const openBackupCreateRef = useRef(null);
   const handleSaveRef = useRef(null);
   const openExternalModalAddRef = useRef(null);
 
   // Sync refs directly during render (safe because refs don't trigger re-renders)
-  openBackupCreateRef.current = backup?.openBackupCreate;
   handleSaveRef.current = handleSave;
   openExternalModalAddRef.current = openExternalModalAdd;
   const [posterModalOpen, setPosterModalOpen] = useState(false);
-  const backupActionsLocked = !!backup?.backupState?.isBusy || !!backup?.backupState?.needsRestart;
-  const backupLockedTitle = backup?.backupState?.needsRestart
-    ? "Redemarrage requis apres restauration"
-    : "Operation de sauvegarde en cours";
+
 
   useEffect(() => {
     setContent(
@@ -128,15 +123,6 @@ function SettingsStandardPage({ section }) {
               }
             />
           </>
-        )}
-        {showBackup && (
-          <SubAction
-            icon="add_circle"
-            label="Ajouter"
-            onClick={() => openBackupCreateRef.current?.()}
-            disabled={backupActionsLocked}
-            title={backupActionsLocked ? backupLockedTitle : "Ajouter"}
-          />
         )}
         {!showMaintenance && !showBackup && !showExternals && (
           <SubAction
@@ -187,8 +173,6 @@ function SettingsStandardPage({ section }) {
     saveState,
     canSave,
     canAddExternalProvider,
-    backupActionsLocked,
-    backupLockedTitle,
     maintenance.toggleAdvancedOptions,
     maintenance.maintenanceSettings?.maintenanceAdvancedOptionsEnabled,
   ]);

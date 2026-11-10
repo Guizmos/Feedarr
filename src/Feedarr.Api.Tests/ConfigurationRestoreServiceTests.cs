@@ -376,7 +376,7 @@ public sealed class ConfigurationRestoreServiceTests
     }
 
     private sealed class InjectedCrash : Exception;
-    private sealed class Target : IDisposable
+    internal sealed class Target : IDisposable
     {
         public ArchiveFixture Data { get; }
         public MemoryCache Cache { get; } = new(new MemoryCacheOptions());

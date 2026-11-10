@@ -18,6 +18,7 @@ namespace Feedarr.Api.Controllers;
 public sealed class SetupController : ControllerBase
 {
     private readonly OutboundDestinationPolicy _outboundPolicy;
+    private readonly Feedarr.Api.Services.Backup.Configuration.ConfigurationRestoreService? _configurationRestore;
     private readonly Db _db;
     private readonly SettingsRepository _settings;
     private readonly ProviderRepository _providers;
@@ -33,8 +34,10 @@ public sealed class SetupController : ControllerBase
         IConfiguration config,
         BootstrapTokenService bootstrapTokens,
         SetupStateService setupState,
-        ILogger<SetupController> log, OutboundDestinationPolicy? outboundPolicy = null)
+        ILogger<SetupController> log, OutboundDestinationPolicy? outboundPolicy = null,
+        Feedarr.Api.Services.Backup.Configuration.ConfigurationRestoreService? configurationRestore = null)
     {
+        _configurationRestore = configurationRestore;
         _outboundPolicy = outboundPolicy ?? new OutboundDestinationPolicy(new Feedarr.Api.Options.OutboundSecurityOptions());
         _db = db;
         _settings = settings;
@@ -78,7 +81,8 @@ public sealed class SetupController : ControllerBase
             hasProwlarrSource,
             authMode,
             authConfigured,
-            authRequired
+            authRequired,
+            restoreSteps = _configurationRestore?.GetResumeStepsForSetup()
         });
     }
 

@@ -10,6 +10,8 @@ import Step3JackettConn from "../components/setup/Step3JackettConn.jsx";
 import Step31JackettIndexers from "../components/setup/Step31JackettIndexers.jsx";
 import Step4ArrApps from "../components/setup/Step4ArrApps.jsx";
 import Step5Summary from "../components/setup/Step5Summary.jsx";
+import ConfigurationBackupPanel from "../components/backup/ConfigurationBackupPanel.jsx";
+import { backupRoot, configurationRequest, resumeSetupSteps } from "../components/backup/configurationBackupApi.js";
 
 const STORAGE_KEY = "feedarr:setupStep";
 const ONBOARDING_FLAG = "feedarr:onboardingDone";
@@ -47,6 +49,11 @@ export default function SetupWizard() {
   const [step, setStep] = useState(readStoredStep);
   const [maxStep, setMaxStep] = useState(step);
   const [finishing, setFinishing] = useState(false);
+  const [restoreMode, setRestoreMode] = useState(false);
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const [restoreSteps, setRestoreSteps] = useState(null);
+  const [restoreError, setRestoreError] = useState("");
+  const [completionBootstrap, setCompletionBootstrap] = useState("");
   const [languageStepStatus, setLanguageStepStatus] = useState({
     ready: false,
     saving: false,
@@ -71,6 +78,7 @@ export default function SetupWizard() {
   const [jackettHasSources, setJackettHasSources] = useState(false);
   const [jackettResetToken, setJackettResetToken] = useState(0);
   const securitySaveRef = useRef(null);
+  const restoredStepsRef = useRef(null);
 
   useEffect(() => {
     setMaxStep((prev) => Math.max(prev, step));
@@ -94,8 +102,7 @@ export default function SetupWizard() {
           window.localStorage.setItem(ONBOARDING_FLAG, "false");
           window.localStorage.removeItem(STORAGE_KEY);
           JACKETT_STORAGE_KEYS.forEach((key) => window.localStorage.removeItem(key));
-          setStep(MIN_STEP);
-          setMaxStep(MIN_STEP);
+          if (!restoredStepsRef.current) { setStep(MIN_STEP); setMaxStep(MIN_STEP); }
         }
       })
       .catch((error) => {
@@ -111,6 +118,11 @@ export default function SetupWizard() {
     apiGet("/api/setup/state")
       .then((state) => {
         if (!active || typeof window === "undefined") return;
+        const remaining = resumeSetupSteps(state?.restoreSteps);
+        restoredStepsRef.current = remaining?.length ? remaining : null;
+        if (remaining?.length) {
+          setRestoreSteps(remaining); setStep(remaining[0]); setMaxStep(MAX_STEP);
+        }
         const prevHasJackett = window.localStorage.getItem(STORAGE_HAS_JACKETT_SOURCE);
         const hasLocalConfig = JACKETT_STORAGE_KEYS.some((key) => {
           const value = window.localStorage.getItem(key);
@@ -130,7 +142,7 @@ export default function SetupWizard() {
           authConfigured,
           ready: !authRequired || authConfigured || prev.authMode === "open",
         }));
-        if (shouldClear) {
+        if (shouldClear && !remaining?.length) {
           JACKETT_STORAGE_KEYS.forEach((key) => window.localStorage.removeItem(key));
           window.localStorage.removeItem(STORAGE_KEY);
           setJackettStatus({ provider: "", ready: false, baseUrl: "", manualOnly: false });
@@ -152,17 +164,20 @@ export default function SetupWizard() {
     if (finishing) return;
     setFinishing(true);
     try {
-      await apiPost("/api/system/onboarding/complete");
+      if (restoreSteps) {
+        await configurationRequest(`${backupRoot(true)}/complete`, { method: "POST", bootstrap: completionBootstrap });
+        setCompletionBootstrap("");
+      } else await apiPost("/api/system/onboarding/complete");
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(STORAGE_KEY);
         window.localStorage.setItem(ONBOARDING_FLAG, "true");
       }
       navigate("/library", { replace: true });
     } catch (error) {
-      console.error("Failed to complete onboarding from setup wizard", error);
+      setRestoreError(error?.message || "Impossible de terminer la configuration.");
       setFinishing(false);
     }
-  }, [finishing, navigate]);
+  }, [finishing, navigate, restoreSteps, completionBootstrap]);
 
   const steps = [
     {
@@ -210,7 +225,7 @@ export default function SetupWizard() {
       content: (
         <Step31JackettIndexers
           onHasSourcesChange={setJackettHasSources}
-          onBack={() => setStep(5)}
+          onBack={() => goStep(5)}
           jackettConfig={jackettStatus}
         />
       ),
@@ -224,20 +239,23 @@ export default function SetupWizard() {
     [providersValidation]
   );
 
-  const current = steps[step - 1];
+  const visibleSteps = restoreSteps ? steps.filter(s => restoreSteps.includes(s.id)) : steps;
+  const current = steps.find(s => s.id === step);
   const allowSkip = step === 4 || step === 7;
   const isJackettReady = !!jackettStatus?.ready;
   const canSkip = step === 4 ? providersOk : true;
   const showSkip = allowSkip && !(step === 4 && providersAllAdded);
 
   function goStep(next) {
-    setStep(clampStep(next));
+    if (!restoreSteps) { setStep(clampStep(next)); return; }
+    const candidates = visibleSteps.filter(s => next < step ? s.id <= next : s.id >= next);
+    setStep((next < step ? candidates.at(-1) : candidates[0])?.id ?? step);
   }
 
   return (
     <div className="setup-container">
       <div className="setup-stepper">
-        {steps.map((s) => {
+        {!restoreMode && visibleSteps.map((s) => {
           const isActive = s.id === step;
           const isDone = s.id <= maxStep;
           const canClick = s.id <= maxStep;
@@ -260,13 +278,21 @@ export default function SetupWizard() {
       <div className="setup-card setupWizardFrame">
         <div className="setupWizardBody">
           <div className="setup-card__content">
-            {current?.content}
+            {!restoreSteps && step === MIN_STEP && <div className="formactions" style={{ marginBottom: 16 }}>
+              <button className={`btn${!restoreMode ? " btn-accent" : ""}`} type="button" onClick={() => setRestoreMode(false)} disabled={restoreBusy}>Nouvelle installation</button>
+              <button className={`btn${restoreMode ? " btn-accent" : ""}`} type="button" onClick={() => setRestoreMode(true)} disabled={restoreBusy}>Restaurer une configuration</button>
+            </div>}
+            {restoreMode ? <ConfigurationBackupPanel initialSetup onBusyChange={setRestoreBusy} onApplied={() => window.location.reload()} /> : current?.content}
+            {restoreError && <div className="onboarding__error" role="alert">{restoreError}</div>}
+            {!!restoreSteps && step === MAX_STEP && <label className="formrow">Secret bootstrap si demandé pour terminer la restauration
+              <input type="password" autoComplete="off" value={completionBootstrap} onChange={e => setCompletionBootstrap(e.target.value)} disabled={finishing} />
+            </label>}
           </div>
         </div>
 
-        <div className="setupWizardFooter">
+        {!restoreMode && <div className="setupWizardFooter">
           <div className="setup-actions">
-            {step > MIN_STEP && (
+            {step > visibleSteps[0]?.id && (
               <button
                 className="btn"
                 type="button"
@@ -326,7 +352,7 @@ export default function SetupWizard() {
               )}
             </div>
           </div>
-        </div>
+        </div>}
       </div>
     </div>
   );

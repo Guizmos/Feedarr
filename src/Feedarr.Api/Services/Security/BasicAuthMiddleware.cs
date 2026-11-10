@@ -111,6 +111,13 @@ public sealed class BasicAuthMiddleware
             await RejectBootstrapTokenDenied(context).ConfigureAwait(false);            return;
         }
 
+        if (!setupState.IsSetupCompleted() && ConfigurationSetupRoutes.Allows(context.Request) &&
+            (SmartAuthPolicy.IsLoopbackRequest(context) || SmartAuthPolicy.HasValidBootstrapSecretHeader(context, bootstrapSecret)))
+        {
+            context.Items[AuthPassedKey] = true;
+            await _next(context).ConfigureAwait(false); return;
+        }
+
         var authRequired = SmartAuthPolicy.IsAuthRequired(context, security);
         var authConfigured = SmartAuthPolicy.IsAuthConfigured(security, bootstrapSecret);
         var authMode = SmartAuthPolicy.NormalizeAuthMode(security);
@@ -128,7 +135,7 @@ public sealed class BasicAuthMiddleware
             var issuedToken = TryGetBootstrapTokenHeader(context.Request);
             if (issuedToken is not null)
             {
-                if (IsAllowedWithBootstrapToken(context.Request))
+                if (IsAllowedWithBootstrapToken(context.Request, !setupState.IsSetupCompleted()))
                 {
                     if (bootstrapTokens.TryConsume(issuedToken))
                     {
@@ -494,7 +501,7 @@ public sealed class BasicAuthMiddleware
     /// to configure authentication during the security setup phase.
     /// The full API is NOT accessible via a bootstrap token (principle of least privilege).
     /// </summary>
-    private static bool IsAllowedWithBootstrapToken(HttpRequest request)
+    private static bool IsAllowedWithBootstrapToken(HttpRequest request, bool initialSetup)
     {
         if (HttpMethods.IsOptions(request.Method))
             return true;
@@ -516,6 +523,8 @@ public sealed class BasicAuthMiddleware
         // The bootstrap token endpoint itself (POST to re-issue a token)
         if (SmartAuthPolicy.IsBootstrapTokenRequest(request))
             return true;
+
+        if (initialSetup && ConfigurationSetupRoutes.Allows(request)) return true;
 
         // The only API paths this token needs: security + setup state
         foreach (var prefix in SecuritySetupAllowedApiPrefixes)

@@ -122,3 +122,51 @@ and production timeout are unchanged. Tests advance a controlled clock to the ex
 deadline, independently delivering or withholding the timer callback; they also
 cover late cancellation before publication. They keep all failed-state, busy-state,
 missing-pending and staging-cleanup assertions, without sleeps or larger timeouts.
+
+## API et interface (lot 3)
+
+Paramètres → Sauvegarde exporte désormais uniquement la configuration V2 chiffrée.
+La phrase (12–1024 caractères) doit être conservée séparément : elle n'est jamais
+persistée par le frontend. Les anciennes archives restent téléchargeables et
+importables pour leur configuration ; une restauration SQLite V1 déjà préparée
+reste gérée par son bandeau existant et bloque un import V2 concurrent.
+
+Routes administratives sous `/api/configuration-backups` :
+- `POST export` : JSON `{passphrase}`, archive ZIP chiffrée.
+- `POST prepare` : multipart `archive` (64 Mio maximum), `passphrase`.
+- `GET state` : aperçu préparé, confirmation et suivi après application.
+- `POST {id}/confirm` : `{confirm:true, securityChange:true}` si nécessaire.
+- `DELETE {id}` : annulation avant application.
+- `POST {id}/retention`, `POST {id}/sync`, `POST {id}/sync/cancel` : confirmations
+  distinctes `{confirm:true}`. Une rétention plus stricte reste suspendue avant
+  confirmation ; sur une bibliothèque existante, la première synchronisation
+  nécessite sa propre confirmation.
+
+Le premier écran du wizard propose nouvelle installation ou restauration.
+Les routes sous `/api/setup/configuration-restore` exposent seulement `prepare`,
+`state`, `{id}/confirm`, `DELETE {id}` et `POST complete` pour la reprise incomplète.
+Elles se ferment une fois le setup terminé et n'autorisent aucun export initial.
+L'autorisation bootstrap existante (accès loopback direct, secret configuré ou
+token bootstrap autorisé) est requise indépendamment de la phrase de l'archive.
+Les appels restent soumis à la protection CSRF/origine et les mutations lourdes
+à une limite dédiée de 6 demandes/minute/IP. Le multipart est lu en mémoire,
+sans buffering de formulaire sur disque ; les réponses d'état sont `no-store`
+et ne contiennent ni URLs, ni identifiants, ni valeurs de secrets.
+
+Confirmer ne redémarre pas Feedarr : redémarrer manuellement le conteneur après
+confirmation, puis vérifier l'application. Les identifiants restaurés peuvent
+nécessiter une nouvelle authentification. Une configuration complète termine
+le setup côté serveur ; sinon le wizard ne propose que les étapes manquantes,
+puis une complétion validée côté serveur. Aucun état onboarding importé n'est
+repris aveuglément.
+
+### Vérification manuelle sur Synology
+
+Sur une instance de test et des données isolées : export/téléchargement/import
+V2 ; mauvaise phrase ; import V1 compatible ; aperçu et annulation ; confirmation
+puis redémarrage manuel Docker ; reconnexion avec les identifiants restaurés ;
+setup local/distant avec les autorisations bootstrap existantes ; reprise des
+seuls éléments incomplets ; conservation de la bibliothèque et des posters ;
+confirmations séparées rétention/synchronisation. Vérifier aussi le proxy inverse,
+les limites d'upload et le bandeau d'une restauration V1 déjà préparée.
+Ces vérifications réelles ne sont pas couvertes par les tests automatiques.
