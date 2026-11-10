@@ -2,6 +2,7 @@ namespace Feedarr.Api.Services.Backup;
 
 public sealed class BackupOperationStateDto
 {
+    public PendingRestoreStatus? RestorePending { get; set; }
     public bool IsBusy { get; set; }
     public bool NeedsRestart { get; set; }
     public string Operation { get; set; } = "idle";

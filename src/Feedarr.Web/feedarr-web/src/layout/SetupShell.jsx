@@ -3,6 +3,7 @@ import { Outlet, useNavigate } from "react-router-dom";
 import { apiGet } from "../api/client.js";
 import { applyTheme } from "../app/theme.js";
 import { applyUiLanguage } from "../app/locale.js";
+import RestorePendingBanner from "./RestorePendingBanner.jsx";
 import Topbar from "./Topbar.jsx";
 
 export default function SetupShell() {
@@ -44,6 +45,7 @@ export default function SetupShell() {
   return (
     <div className="app setup-shell">
       <Topbar onToggleNav={() => {}} />
+      <RestorePendingBanner />
       <main className="setup-main">
         <Outlet />
       </main>

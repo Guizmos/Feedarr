@@ -98,6 +98,10 @@ public sealed class BackupServiceTests
         var result = await service.RestoreBackupAsync(backupName, "1.0.0");
         Assert.Equal(2, result.ReencryptedCredentials);
         Assert.Equal(1, result.ClearedUndecryptableCredentials);
+        Assert.True(service.GetPendingRestore().Pending);
+        // Simulate the new process startup; preparation alone never installs the DB.
+        new PendingRestoreStore(workspace.DataDir, "feedarr.db").ApplyAtStartup();
+        Assert.Equal("applied", service.GetPendingRestore().State);
 
         using var conn = db.Open();
         var sourceApiKey = conn.ExecuteScalar<string>("SELECT api_key FROM sources LIMIT 1;");
@@ -176,6 +180,30 @@ public sealed class BackupServiceTests
             DbFileName = "feedarr.db"
         });
         return new Db(options);
+    }
+
+    [Fact]
+    public async Task InvalidReplacementArchive_PreservesTheAlreadyPreparedRestore()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        var service = CreateBackupService(workspace, db, new SettingsRepository(db), new FakeApiKeyProtectionService());
+        var incoming = Path.Combine(workspace.RootDir, "incoming.db");
+        CreateIncomingBackupDatabase(incoming);
+        Directory.CreateDirectory(workspace.BackupsDir);
+        void Archive(string name, string checksum)
+        {
+            using var zip = ZipFile.Open(Path.Combine(workspace.BackupsDir, name), ZipArchiveMode.Create);
+            zip.CreateEntryFromFile(incoming, "feedarr.db");
+            AddJsonEntry(zip, "info.json", new { version = "1.0.0", backupFormatVersion = 1, dbSha256 = checksum });
+        }
+        Archive("valid.zip", ComputeFileSha256(incoming));
+        await service.RestoreBackupAsync("valid.zip", "1.0.0");
+        var pending = service.GetPendingRestore();
+        Archive("invalid.zip", new string('0', 64));
+        await Assert.ThrowsAsync<BackupOperationException>(() => service.RestoreBackupAsync("invalid.zip", "1.0.0", replacePendingId: pending.Id));
+        Assert.Equal(pending.Id, service.GetPendingRestore().Id);
+        Assert.DoesNotContain(workspace.RootDir, JsonSerializer.Serialize(pending));
     }
 
     private static BackupService CreateBackupService(

@@ -5,6 +5,22 @@ namespace Feedarr.Api.Tests;
 public sealed class BackupExecutionCoordinatorTests
 {
     [Fact]
+    public async Task PreparationDoesNotDrainOrBlockNormalSync()
+    {
+        var coordinator = new BackupExecutionCoordinator();
+        using var running = coordinator.TryEnterSyncActivity("already-running");
+        var result = await coordinator.RunExclusiveAsync("prepare-restore", "backup.zip", _ =>
+        {
+            Assert.False(coordinator.GetState().SyncBlocked);
+            using var another = coordinator.TryEnterSyncActivity("new-sync");
+            Assert.NotNull(another);
+            return Task.FromResult(7);
+        }, blockSync: false).WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(7, result);
+        Assert.False(coordinator.GetState().IsBusy);
+    }
+
+    [Fact]
     public async Task RunExclusiveAsync_ConcurrentOperations_RunOneAfterAnother()
     {
         var coordinator = new BackupExecutionCoordinator();

@@ -8340,3 +8340,29 @@ body.library-select-mode .list-edit{ display: none; }
     border-radius: 12px;
   }
 }
+
+/* Restoration notice participates in the shell's normal flex flow. */
+.app-shell > .topbar, .setup-shell > .topbar { flex-shrink: 0; }
+.app-shell > .body { position: relative; overflow: hidden; }
+.app-shell .content-outer { height: 100%; min-height: 0; }
+.app-shell .sidebar { height: 100%; top: 0; }
+.app-shell .drawer-overlay { position: absolute; inset: 0; }
+.restore-pending-banner {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  background: #fff0d3;
+  color: #663b00;
+  border-bottom: 1px solid #d99532;
+  font-size: 12px;
+}
+.restore-pending-banner__text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.restore-pending-banner small { display: block; }
+.restore-pending-banner .btn { flex-shrink: 0; color: inherit; }
+:root[data-theme="dark"] .restore-pending-banner { background: #493115; color: #ffdc9e; border-color: #a56e26; }
+@media (max-width: 768px) {
+  .app-shell .sidebar.drawer { position: absolute; top: 0; bottom: 0; height: 100%; }
+  .restore-pending-banner { gap: 6px; padding: 5px 8px; font-size: 11px; }
+}

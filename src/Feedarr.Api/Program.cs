@@ -64,6 +64,12 @@ var configuredDataDir = builder.Configuration.GetValue<string>("App:DataDir") ??
 var dataDirPath = Path.IsPathRooted(configuredDataDir)
     ? configuredDataDir
     : Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, configuredDataDir));
+// Must precede DataProtection, DI construction, migrations, workers and HTTP.
+var pendingRestore = new PendingRestoreStore(dataDirPath,
+    builder.Configuration.GetValue<string>("App:DbFileName") ?? "feedarr.db");
+using var databaseProcessLease = pendingRestore.AcquireProcessLease();
+pendingRestore.ApplyAtStartup();
+builder.Services.AddSingleton(pendingRestore);
 var keysPath = Path.Combine(dataDirPath, "keys");
 Directory.CreateDirectory(keysPath);
 MigrateLegacyDataProtectionKeys(Path.Combine(AppContext.BaseDirectory, "Data", "keys"), keysPath);

@@ -253,7 +253,7 @@ public sealed partial class SystemApiCore : ControllerBase
     //   confirm=true explicitly, acknowledging that some credentials will be erased.
     //   Response: { ok: true, needsRestart: true, reencryptedCredentials: N, clearedUndecryptableCredentials: N }
     [HttpPost("backups/{name}/restore")]
-    public async Task<IActionResult> RestoreBackup([FromRoute] string name, [FromQuery] bool confirm = false, CancellationToken ct = default)
+    public async Task<IActionResult> RestoreBackup([FromRoute] string name, [FromQuery] bool confirm = false, CancellationToken ct = default, [FromQuery] string? replacePendingId = null)
     {
         try
         {
@@ -276,12 +276,12 @@ public sealed partial class SystemApiCore : ControllerBase
                 });
             }
 
-            // Actual restore.
-            var result = await _backupService.RestoreBackupAsync(name, GetAppVersion(), ct);
+            // Prepare only: active database remains unchanged until process startup.
+            var result = await _backupService.RestoreBackupAsync(name, GetAppVersion(), ct, replacePendingId);
 
             var warning = result.ClearedUndecryptableCredentials > 0
                 ? $"{result.ClearedUndecryptableCredentials} credential(s) could not be decrypted " +
-                  "and were cleared. Reconfigure them in Settings → External Providers."
+                  "and will be cleared in the restored database after restart. Reconfigure them in Settings → External Providers."
                 : null;
 
             if (result.ClearedUndecryptableCredentials > 0)
@@ -295,12 +295,26 @@ public sealed partial class SystemApiCore : ControllerBase
                 needsRestart = true,
                 reencryptedCredentials = result.ReencryptedCredentials,
                 clearedUndecryptableCredentials = result.ClearedUndecryptableCredentials,
+                missingPosters = result.MissingPosters,
                 warning
             });
         }
         catch (BackupOperationException ex)
         {
             return ToBackupErrorResult(ex);
+        }
+    }
+
+    public IActionResult PendingRestoreState() => Ok(_backupService.GetPendingRestore());
+
+    public IActionResult CancelPendingRestore(string id)
+    {
+        try { _backupService.CancelPendingRestore(id); return Ok(new { ok = true }); }
+        catch (BackupOperationException ex) { return ToBackupErrorResult(ex); }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Pending restore cancellation failed");
+            return StatusCode(500, new { error = "restore cancellation failed; check server logs" });
         }
     }
 

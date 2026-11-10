@@ -45,7 +45,7 @@ export default function SettingsBackup({
   handleBackupDelete,
 }) {
   const operationBusy = !!backupState?.isBusy;
-  const restartRequired = !!backupState?.needsRestart;
+  const restartRequired = !!backupState?.needsRestart && !backupState?.restorePending?.pending;
   const isBusy = restartRequired || operationBusy || backupCreateLoading || backupRestoreLoading || backupDeleteLoading || !!backupDownloadName;
   const wouldReencrypt = Number(backupRestorePreview?.wouldReencrypt ?? 0);
   const wouldClear = Number(backupRestorePreview?.wouldClear ?? 0);
@@ -168,9 +168,9 @@ export default function SettingsBackup({
         <div className="backup-confirm-modal__content">
           <div className="backup-confirm-modal__lead">Confirmer la restauration ?</div>
           <div className="muted backup-confirm-modal__text">
-            Cette action remplace la base actuelle par la sauvegarde :
+            Cette action prépare la restauration de la sauvegarde :
             <strong className="backup-confirm-modal__name">{backupRestoreTarget?.name || "-"}</strong>
-            Un redémarrage de l'application sera requis après restauration.
+            La base actuelle reste inchangée jusqu’au prochain redémarrage. Les modifications effectuées entre-temps ne seront pas conservées dans la base restaurée.
           </div>
           {backupRestorePreviewLoading ? (
             <div className="muted backup-confirm-modal__text">

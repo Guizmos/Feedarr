@@ -63,7 +63,7 @@ public sealed class BackupExecutionCoordinator
         string operation,
         string? backupName,
         Func<CancellationToken, Task<T>> action,
-        CancellationToken ct = default)
+        CancellationToken ct = default, bool blockSync = true)
     {
         await _operationGate.WaitAsync(ct).ConfigureAwait(false);
 
@@ -73,7 +73,7 @@ public sealed class BackupExecutionCoordinator
         {
             lock (_stateLock)
             {
-                _syncBlocked = true;
+                _syncBlocked = blockSync;
                 _state.IsBusy = true;
                 _state.Operation = operation;
                 _state.Phase = "waiting-sync";
@@ -83,7 +83,7 @@ public sealed class BackupExecutionCoordinator
             }
             _badgeSignal?.Notify("system");
 
-            await WaitForSyncDrainAsync(ct).ConfigureAwait(false);
+            if (blockSync) await WaitForSyncDrainAsync(ct).ConfigureAwait(false);
 
             lock (_stateLock)
             {

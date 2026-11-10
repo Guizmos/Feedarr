@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ScrollContainerProvider } from "../context/ScrollContainerContext.js";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import RestorePendingBanner from "./RestorePendingBanner.jsx";
 import Topbar from "./Topbar.jsx";
 import Sidebar from "./Sidebar.jsx";
 import Subbar from "./Subbar.jsx";
@@ -203,14 +204,15 @@ export default function Shell() {
       <SubbarProvider>
         <div className={`app app-shell ${showOnboardingBar ? "onboarding-bar-visible" : ""} ${isNavOpen ? "is-open" : ""}`}>
           <Topbar onToggleNav={toggleNav} />
-          <button
-            type="button"
-            className="drawer-overlay"
-            aria-label="Fermer le menu latéral"
-            onClick={closeNav}
-          />
-
+          <RestorePendingBanner />
           <div className="body">
+            <button
+              type="button"
+              className="drawer-overlay"
+              aria-label="Fermer le menu latéral"
+              onClick={closeNav}
+            />
+
             <Sidebar onNavigate={closeNav} />
 
             <ScrollContainerProvider scrollRef={contentRef}>

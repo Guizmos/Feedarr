@@ -33,6 +33,7 @@ public sealed class BackupService
     private readonly BackupExecutionCoordinator _coordinator;
     private readonly IApiKeyProtectionService _apiKeyProtection;
     private readonly ILogger<BackupService> _logger;
+    private readonly PendingRestoreStore _pending;
 
     private string DataDirAbs =>
         Path.IsPathRooted(_opts.DataDir)
@@ -51,7 +52,8 @@ public sealed class BackupService
         BackupValidationService validation,
         BackupExecutionCoordinator coordinator,
         IApiKeyProtectionService apiKeyProtection,
-        ILogger<BackupService> logger)
+        ILogger<BackupService> logger,
+        PendingRestoreStore? pending = null)
     {
         _db = db;
         _env = env;
@@ -61,6 +63,7 @@ public sealed class BackupService
         _coordinator = coordinator;
         _apiKeyProtection = apiKeyProtection;
         _logger = logger;
+        _pending = pending ?? new PendingRestoreStore(DataDirAbs, _opts.DbFileName);
     }
 
     public IReadOnlyList<BackupFileDto> ListBackups()
@@ -263,95 +266,53 @@ public sealed class BackupService
     }
 
     public Task<BackupRestoreResult> RestoreBackupAsync(
-        string name,
-        string currentAppVersion,
-        CancellationToken ct = default)
+        string name, string currentAppVersion, CancellationToken ct = default, string? replacePendingId = null)
     {
         EnsureRestartNotRequired();
-        return _coordinator.RunExclusiveAsync("restore", name, async opCt =>
+        return _coordinator.RunExclusiveAsync("prepare-restore", name, async opCt =>
         {
             var (_, backupPath) = GetExistingBackupFile(name);
-            var operationId = Guid.NewGuid().ToString("N");
-            var workDir = Path.Combine(BackupDirAbs, $"restore-{operationId}");
-            var extractedDbPath = Path.Combine(workDir, "incoming.db");
-            var credentialReport = CredentialRestoreReport.Empty;
-
-            Directory.CreateDirectory(workDir);
-
+            var work = _pending.NewWorkDirectory();
+            var extracted = Path.Combine(work, "incoming.db");
             try
             {
                 opCt.ThrowIfCancellationRequested();
                 using var archive = ZipFile.OpenRead(backupPath);
-                if (!_validation.TryValidateArchiveForRestore(
-                        archive,
-                        _opts.DbFileName,
-                        currentAppVersion,
-                        out var dbEntryName,
-                        out var details,
-                        out var validationError))
-                {
-                    throw new BackupOperationException(validationError, StatusCodes.Status400BadRequest);
-                }
-
-                var dbEntry = archive.GetEntry(dbEntryName);
-                if (dbEntry is null)
-                    throw new BackupOperationException("backup database missing", StatusCodes.Status400BadRequest);
-
-                opCt.ThrowIfCancellationRequested();
-                ExtractEntryControlled(dbEntry, extractedDbPath);
-
-                var extractedHash = ComputeFileSha256(extractedDbPath);
-                if (!string.Equals(extractedHash, details.DbSha256, StringComparison.OrdinalIgnoreCase))
+                if (!_validation.TryValidateArchiveForRestore(archive, _opts.DbFileName, currentAppVersion,
+                    out var entryName, out var details, out var error))
+                    throw new BackupOperationException(error, StatusCodes.Status400BadRequest);
+                ExtractEntryControlled(archive.GetEntry(entryName)!, extracted);
+                if (!string.Equals(ComputeFileSha256(extracted), details.DbSha256, StringComparison.OrdinalIgnoreCase))
                     throw new BackupOperationException("backup database checksum mismatch", StatusCodes.Status400BadRequest);
-
-                VerifySqliteIntegrity(extractedDbPath);
-                opCt.ThrowIfCancellationRequested();
-                credentialReport = NormalizeRestoredCredentials(extractedDbPath);
-                VerifySqliteIntegrity(extractedDbPath);
-
-                opCt.ThrowIfCancellationRequested();
-                CreatePreRestoreBackup(currentAppVersion);
-                ReplaceDatabaseAtomically(extractedDbPath);
-                MarkRestartRequired();
-
-                if (credentialReport.ClearedUndecryptable > 0)
+                VerifySqliteIntegrity(extracted);
+                var credentials = NormalizeRestoredCredentials(extracted);
+                VerifySqliteIntegrity(extracted);
+                var status = _pending.Publish(work, name, replacePendingId, opCt);
+                return await Task.FromResult(new BackupRestoreResult
                 {
-                    _logger.LogWarning(
-                        "Backup restore completed with {Cleared} credentials cleared because they could not be decrypted with current key ring",
-                        credentialReport.ClearedUndecryptable);
-                }
-
-                _logger.LogInformation("Backup restore succeeded from {BackupPath}", backupPath);
+                    ReencryptedCredentials = credentials.Reencrypted,
+                    ClearedUndecryptableCredentials = credentials.ClearedUndecryptable,
+                    MissingPosters = status.MissingPosters
+                });
             }
-            catch (BackupOperationException)
-            {
-                throw;
-            }
+            catch (BackupOperationException) { throw; }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Backup restore failed for {BackupName}", name);
-                throw new BackupOperationException(
-                    ErrorMessageSanitizer.ToOperationalMessage(ex, "backup restore failed"),
-                    ex);
+                _logger.LogError(ex, "Backup restore preparation failed for {BackupName}", name);
+                throw new BackupOperationException("backup preparation failed; check server logs", ex);
             }
-            finally
-            {
-                TryDeleteFile(extractedDbPath);
-                TryDeleteDirectory(workDir);
-            }
-
-            return await Task.FromResult(new BackupRestoreResult
-            {
-                ReencryptedCredentials = credentialReport.Reencrypted,
-                ClearedUndecryptableCredentials = credentialReport.ClearedUndecryptable
-            });
-        }, ct);
+            finally { TryDeleteDirectory(work); } // published work has already moved to its persistent stage
+        }, ct, blockSync: false);
     }
+
+    public PendingRestoreStatus GetPendingRestore() => _pending.GetStatus();
+    public void CancelPendingRestore(string id) => _pending.Cancel(id);
 
     public BackupOperationStateDto GetOperationState()
     {
         var state = _coordinator.GetState();
-        state.NeedsRestart = IsRestartRequired();
+        state.RestorePending = _pending.GetStatus();
+        state.NeedsRestart = IsRestartRequired() || state.RestorePending.Pending;
         return state;
     }
 
@@ -367,130 +328,6 @@ public sealed class BackupService
     {
         if (IsRestartRequired())
             throw new BackupOperationException(RestartRequiredErrorMessage, StatusCodes.Status409Conflict);
-    }
-
-    private void MarkRestartRequired()
-    {
-        Directory.CreateDirectory(DataDirAbs);
-        System.IO.File.WriteAllText(RestartRequiredFlagPath, DateTimeOffset.UtcNow.ToString("O"));
-    }
-
-    private void CreatePreRestoreBackup(string appVersion)
-    {
-        if (!System.IO.File.Exists(DbPathAbs))
-            return;
-
-        Directory.CreateDirectory(BackupDirAbs);
-
-        var version = SanitizeFileFragment(appVersion);
-        if (string.IsNullOrWhiteSpace(version)) version = "0.0.0";
-
-        var timestamp = DateTime.UtcNow;
-        var baseName = $"feedarr_prerestore_v{version}_{timestamp:yyyy.MM.dd_HH.mm.ss}";
-        var zipPath = Path.Combine(BackupDirAbs, $"{baseName}.zip");
-        var tempDbPath = Path.Combine(BackupDirAbs, $"{baseName}.db");
-
-        if (System.IO.File.Exists(zipPath))
-        {
-            baseName = $"{baseName}_{Guid.NewGuid():N}";
-            zipPath = Path.Combine(BackupDirAbs, $"{baseName}.zip");
-            tempDbPath = Path.Combine(BackupDirAbs, $"{baseName}.db");
-        }
-
-        try
-        {
-            CreateDbSnapshot(tempDbPath);
-            var dbSha256 = ComputeFileSha256(tempDbPath);
-            var dbSizeBytes = new FileInfo(tempDbPath).Length;
-            using var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create);
-            archive.CreateEntryFromFile(tempDbPath, _opts.DbFileName);
-            AddJsonEntry(archive, "config.json", BuildBackupConfig());
-            AddJsonEntry(archive, "info.json", BuildBackupInfo(timestamp, appVersion, "pre-restore", dbSha256, dbSizeBytes));
-        }
-        catch (Exception ex)
-        {
-            TryDeleteFile(zipPath);
-            throw new BackupOperationException("unable to create pre-restore backup", ex);
-        }
-        finally
-        {
-            TryDeleteFile(tempDbPath);
-        }
-    }
-
-    private void ReplaceDatabaseAtomically(string sourcePath)
-    {
-        Directory.CreateDirectory(DataDirAbs);
-
-        var stagePath = Path.Combine(DataDirAbs, $"restore-stage-{Guid.NewGuid():N}.db");
-        var rollbackPath = Path.Combine(DataDirAbs, $"restore-rollback-{Guid.NewGuid():N}.db");
-
-        TryDeleteFile(stagePath);
-        TryDeleteFile(rollbackPath);
-
-        try
-        {
-            System.IO.File.Copy(sourcePath, stagePath, true);
-            VerifySqliteIntegrity(stagePath);
-            CheckpointCurrentDatabase();
-
-            if (!System.IO.File.Exists(DbPathAbs))
-            {
-                System.IO.File.Move(stagePath, DbPathAbs, true);
-            }
-            else
-            {
-                try
-                {
-                    System.IO.File.Replace(stagePath, DbPathAbs, rollbackPath, true);
-                    TryDeleteFile(rollbackPath);
-                }
-                catch (PlatformNotSupportedException)
-                {
-                    ReplaceWithMove(stagePath, rollbackPath);
-                }
-                catch (IOException)
-                {
-                    ReplaceWithMove(stagePath, rollbackPath);
-                }
-            }
-
-            TryDeleteFile(DbPathAbs + "-wal");
-            TryDeleteFile(DbPathAbs + "-shm");
-        }
-        finally
-        {
-            TryDeleteFile(stagePath);
-            TryDeleteFile(rollbackPath);
-        }
-    }
-
-    private void ReplaceWithMove(string stagePath, string rollbackPath)
-    {
-        var movedCurrent = false;
-
-        try
-        {
-            if (System.IO.File.Exists(DbPathAbs))
-            {
-                System.IO.File.Move(DbPathAbs, rollbackPath, true);
-                movedCurrent = true;
-            }
-
-            System.IO.File.Move(stagePath, DbPathAbs, true);
-            if (movedCurrent)
-                TryDeleteFile(rollbackPath);
-        }
-        catch
-        {
-            if (movedCurrent && System.IO.File.Exists(rollbackPath))
-            {
-                TryDeleteFile(DbPathAbs);
-                System.IO.File.Move(rollbackPath, DbPathAbs, true);
-            }
-
-            throw;
-        }
     }
 
     private void CheckpointCurrentDatabase()
@@ -519,25 +356,7 @@ public sealed class BackupService
         }
     }
 
-    private static void VerifySqliteIntegrity(string dbPath)
-    {
-        var cs = new SqliteConnectionStringBuilder
-        {
-            DataSource = dbPath,
-            Mode = SqliteOpenMode.ReadOnly,
-            Pooling = false
-        }.ToString();
-
-        using var conn = new SqliteConnection(cs);
-        conn.Open();
-
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "PRAGMA integrity_check;";
-        var result = Convert.ToString(cmd.ExecuteScalar())?.Trim();
-
-        if (!string.Equals(result, "ok", StringComparison.OrdinalIgnoreCase))
-            throw new BackupOperationException($"backup database integrity check failed: {result}");
-    }
+    private static void VerifySqliteIntegrity(string dbPath) => PendingRestoreStore.VerifyDatabase(dbPath);
 
     private static void ExtractEntryControlled(ZipArchiveEntry entry, string destinationPath)
     {
@@ -669,6 +488,7 @@ public sealed class BackupService
         var cs = new SqliteConnectionStringBuilder
         {
             DataSource = dbPath,
+            Pooling = false,
             Mode = SqliteOpenMode.ReadWrite
         }.ToString();
 

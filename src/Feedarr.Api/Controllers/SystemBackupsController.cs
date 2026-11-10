@@ -38,6 +38,12 @@ public sealed class SystemBackupsController : ControllerBase
         => _core.DownloadBackup(name);
 
     [HttpPost("backups/{name}/restore")]
-    public Task<IActionResult> RestoreBackup([FromRoute] string name, [FromQuery] bool confirm = false, CancellationToken ct = default)
-        => _core.RestoreBackup(name, confirm, ct);
+    public Task<IActionResult> RestoreBackup([FromRoute] string name, [FromQuery] bool confirm = false, CancellationToken ct = default, [FromQuery] string? replacePendingId = null)
+        => _core.RestoreBackup(name, confirm, ct, replacePendingId);
+
+    [HttpGet("backups/restore-state")]
+    public IActionResult PendingRestoreState() => _core.PendingRestoreState();
+
+    [HttpDelete("backups/pending-restore")]
+    public IActionResult CancelPendingRestore([FromQuery] string id) => _core.CancelPendingRestore(id);
 }

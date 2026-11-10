@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiDelete, apiGet, apiPost, resolveApiUrl } from "../../../api/client.js";
 import { triggerPosterPolling } from "../../../hooks/usePosterPollingService.js";
 
@@ -65,7 +65,7 @@ export default function useMaintenanceActions() {
   const [backupNotice, setBackupNotice] = useState("");
   const [backupState, setBackupState] = useState(null);
   const backupRestorePreviewRequestRef = useRef(0);
-  const restartRequired = !!backupState?.needsRestart;
+  const restartRequired = !!backupState?.needsRestart && !backupState?.restorePending?.pending;
   const backupLockedByRestartMessage = "Redemarrage requis apres restauration. Action impossible avant redemarrage.";
 
   // Load backups
@@ -91,6 +91,12 @@ export default function useMaintenanceActions() {
       // no-op: state is optional for UX
     }
   }, []);
+
+  useEffect(() => {
+    const refresh = () => { void loadBackupState(); };
+    window.addEventListener("restore:changed", refresh);
+    return () => window.removeEventListener("restore:changed", refresh);
+  }, [loadBackupState]);
 
   // Load stats
   const loadStats = useCallback(async () => {
@@ -381,21 +387,27 @@ export default function useMaintenanceActions() {
       setBackupError(backupLockedByRestartMessage);
       return;
     }
+    const pending = backupState?.restorePending;
+    if (pending?.pending && !window.confirm("Remplacer explicitement la restauration déjà en attente ?")) return;
+    const replaceQuery = pending?.pending ? `&replacePendingId=${encodeURIComponent(pending.id)}` : "";
     setBackupRestoreLoading(true);
     setBackupError("");
     setBackupNotice("");
     try {
       const res = await apiPost(
-        `/api/system/backups/${encodeURIComponent(backupRestoreTarget.name)}/restore?confirm=true`,
-        {}
+        `/api/system/backups/${encodeURIComponent(backupRestoreTarget.name)}/restore?confirm=true${replaceQuery}`,
+        {},
+        { timeoutMs: 600000 }
       );
       const notices = [];
       if (res?.needsRestart) {
-        notices.push("Restauration terminée. Redémarrage de l'application requis.");
+        notices.push("Restauration préparée. Elle sera appliquée au prochain redémarrage du conteneur.");
       } else {
         notices.push("Restauration terminée.");
       }
       if (res?.warning) notices.push(res.warning);
+      if (res?.missingPosters) notices.push(`${res.missingPosters} référence(s) de posters introuvables retirées de la copie préparée.`);
+      window.dispatchEvent(new Event("restore:changed"));
       setBackupNotice(notices.join(" "));
       setBackupRestoreOpen(false);
       setBackupRestoreTarget(null);
