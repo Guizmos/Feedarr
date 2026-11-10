@@ -22,7 +22,9 @@ export function readCachedUpdate() {
 
     const hasLegacyShape = !!parsed.latestRelease && !Object.prototype.hasOwnProperty.call(parsed, "releases");
     const hasInvalidReleases = Object.prototype.hasOwnProperty.call(parsed, "releases") && !Array.isArray(parsed.releases);
-    if (hasLegacyShape || hasInvalidReleases) {
+    const hasLegacyEmptyResult = parsed.enabled !== false && !parsed.latestRelease
+      && !Object.prototype.hasOwnProperty.call(parsed, "error");
+    if (hasLegacyShape || hasInvalidReleases || hasLegacyEmptyResult) {
       window.localStorage.removeItem(UPDATE_CACHE_KEY);
       window.localStorage.removeItem(UPDATE_LAST_CHECK_TS_KEY);
       return null;

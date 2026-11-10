@@ -22,7 +22,8 @@ public sealed record UpdateCheckResult(
     bool IsUpdateAvailable,
     int CheckIntervalHours,
     LatestReleaseInfo? LatestRelease,
-    IReadOnlyList<LatestReleaseInfo> Releases);
+    IReadOnlyList<LatestReleaseInfo> Releases,
+    string? Error = null);
 
 public sealed class ReleaseInfoService
 {
@@ -80,12 +81,12 @@ public sealed class ReleaseInfoService
         var cached = _cache.Get<CachedReleaseState>(CacheKey);
         if (!forceRefresh && cached is not null && now < cached.ExpiresAtUtc)
         {
-            return BuildResult(cfg, currentVersion, cached.Releases);
+            return BuildResult(cfg, currentVersion, cached.Releases) with { Error = cached.Error };
         }
 
         if (!forceRefresh && now < _circuitOpenUntil && cached?.Releases?.Count > 0)
         {
-            return BuildResult(cfg, currentVersion, cached.Releases);
+            return BuildResult(cfg, currentVersion, cached.Releases) with { Error = cached.Error };
         }
 
         await _refreshLock.WaitAsync(ct).ConfigureAwait(false);        try
@@ -94,12 +95,12 @@ public sealed class ReleaseInfoService
             cached = _cache.Get<CachedReleaseState>(CacheKey);
             if (!forceRefresh && cached is not null && now < cached.ExpiresAtUtc)
             {
-                return BuildResult(cfg, currentVersion, cached.Releases);
+                return BuildResult(cfg, currentVersion, cached.Releases) with { Error = cached.Error };
             }
 
             if (!forceRefresh && now < _circuitOpenUntil && cached?.Releases?.Count > 0)
             {
-                return BuildResult(cfg, currentVersion, cached.Releases);
+                return BuildResult(cfg, currentVersion, cached.Releases) with { Error = cached.Error };
             }
 
             try
@@ -112,11 +113,17 @@ public sealed class ReleaseInfoService
 
                 return BuildResult(cfg, currentVersion, releases);
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
                 _consecutiveFailures++;
                 var openMinutes = Math.Min(30, Math.Max(2, _consecutiveFailures * 2));
                 _circuitOpenUntil = now.AddMinutes(openMinutes);
+
+                var failure = FetchError(ex);
+                _cache.Set(CacheKey, new CachedReleaseState(
+                    cached?.Releases ?? Array.Empty<LatestReleaseInfo>(), _circuitOpenUntil, failure),
+                    TimeSpan.FromHours(168));
 
                 if (cached?.Releases?.Count > 0)
                 {
@@ -126,7 +133,7 @@ public sealed class ReleaseInfoService
                         cfg.RepoOwner,
                         cfg.RepoName,
                         _consecutiveFailures);
-                    return BuildResult(cfg, currentVersion, cached.Releases);
+                    return BuildResult(cfg, currentVersion, cached.Releases) with { Error = FetchError(ex) };
                 }
 
                 _log.LogWarning(
@@ -135,7 +142,7 @@ public sealed class ReleaseInfoService
                     cfg.RepoOwner,
                     cfg.RepoName,
                     _consecutiveFailures);
-                return BuildResult(cfg, currentVersion, Array.Empty<LatestReleaseInfo>());
+                return BuildResult(cfg, currentVersion, Array.Empty<LatestReleaseInfo>()) with { Error = FetchError(ex) };
             }
         }
         finally
@@ -144,6 +151,15 @@ public sealed class ReleaseInfoService
         }
     }
 
+    private static string FetchError(Exception ex) => ex switch
+    {
+        HttpRequestException { StatusCode: HttpStatusCode.TooManyRequests or HttpStatusCode.Forbidden }
+            => "GitHub refuse la vérification des releases (quota ou accès limité). Réessayez plus tard.",
+        OperationCanceledException => "Délai dépassé lors de la récupération des releases GitHub.",
+        JsonException => "Réponse de releases GitHub invalide.",
+        _ => "Impossible de récupérer les releases GitHub. Vérifiez la connexion et les journaux du serveur."
+    };
+
     private UpdateCheckResult BuildResult(
         NormalizedOptions cfg,
         string currentVersion,
@@ -151,7 +167,11 @@ public sealed class ReleaseInfoService
     {
         var track = DetectTrack(currentVersion);
         var releasesForTrack = FilterReleasesForTrack(cfg, track, releases);
-        var latest = SelectLatestBySemVer(releasesForTrack);
+        // Metadata remains useful when GitHub has no release on the current beta track.
+        var displayReleases = track == ReleaseTrack.Prerelease && releasesForTrack.Count == 0
+            ? releases.Where(release => !release.IsPrerelease).ToList()
+            : releasesForTrack;
+        var latest = SelectLatestBySemVer(displayReleases);
         var isUpdateAvailable = latest is not null
             && IsUpdateAvailableForTrack(currentVersion, latest.TagName, track, cfg.AllowPrerelease);
 
@@ -161,7 +181,7 @@ public sealed class ReleaseInfoService
             IsUpdateAvailable: isUpdateAvailable,
             CheckIntervalHours: cfg.CheckIntervalHours,
             LatestRelease: latest,
-            Releases: releasesForTrack);
+            Releases: displayReleases);
     }
 
     private async Task<IReadOnlyList<LatestReleaseInfo>> FetchReleasesAsync(NormalizedOptions cfg, CancellationToken ct)
@@ -170,7 +190,7 @@ public sealed class ReleaseInfoService
         var baseUrl = cfg.GitHubApiBaseUrl.TrimEnd('/');
 
         var uri = $"{baseUrl}/repos/{Uri.EscapeDataString(cfg.RepoOwner)}/{Uri.EscapeDataString(cfg.RepoName)}/releases?per_page=10";
-        var list = await SendAndReadAsync<List<GitHubReleasePayload>>(client, uri, cfg, ct, allowNotFound: true).ConfigureAwait(false) ?? new List<GitHubReleasePayload>();        if (list.Count == 0)
+        var list = await SendAndReadAsync<List<GitHubReleasePayload>>(client, uri, cfg, ct, allowNotFound: false).ConfigureAwait(false) ?? throw new JsonException("GitHub returned null instead of a release list");        if (list.Count == 0)
         {
             return Array.Empty<LatestReleaseInfo>();
         }
@@ -389,7 +409,7 @@ public sealed class ReleaseInfoService
 
     private sealed record CachedReleaseState(
         IReadOnlyList<LatestReleaseInfo> Releases,
-        DateTimeOffset ExpiresAtUtc);
+        DateTimeOffset ExpiresAtUtc, string? Error = null);
 
     private sealed record NormalizedOptions(
         bool Enabled,

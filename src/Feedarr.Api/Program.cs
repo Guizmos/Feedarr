@@ -248,7 +248,7 @@ builder.Services.AddHttpClient("github-updates", c =>
 {
     c.Timeout = TimeSpan.FromSeconds(30);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-});
+}).UsePublicProviderTransport();
 
 builder.Services.AddHttpClient("torrent-download", c =>
 {
