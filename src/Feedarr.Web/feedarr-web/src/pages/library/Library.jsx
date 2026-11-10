@@ -27,6 +27,7 @@ import {
   normalizeTitleKey,
   sortManualResultsBySize,
 } from "./utils/helpers.js";
+import { loadSourceFeeds, sourceFailureMessage } from "./utils/sourceFeeds.js";
 import { buildFeedParams } from "./utils/feedParams.js";
 import { ARR_STATUS_TTL_MS, ARR_STATUS_BATCH_SIZE } from "./utils/constants.js";
 import useLibraryFilters from "./hooks/useLibraryFilters.js";
@@ -228,6 +229,10 @@ export default function Library() {
 
   // Sources
   const [sources, setSources] = useState([]);
+  const [sourcesError, setSourcesError] = useState("");
+  const [sourcesLoading, setSourcesLoading] = useState(true);
+  const [sourcesRetry, setSourcesRetry] = useState(0);
+  const [sourceWarning, setSourceWarning] = useState("");
   const enabledSources = useMemo(
     () => (sources || []).filter((s) => Number(s.enabled ?? 1) === 1),
     [sources]
@@ -320,16 +325,24 @@ export default function Library() {
     };
   }, []);
 
-  // Load sources
+  // Load sources; an unavailable source registry must not look like an empty library.
   useEffect(() => {
+    const controller = new AbortController();
     (async () => {
-      const src = await executeAsync(
-        () => apiGet("/api/sources"),
-        { context: "Failed to load sources for library page" }
-      );
-      if (Array.isArray(src)) setSources(src);
+      setSourcesLoading(true);
+      setSourcesError("");
+      try {
+        const src = await apiGet("/api/sources", { signal: controller.signal });
+        if (!Array.isArray(src)) throw new Error("Invalid source response");
+        if (!controller.signal.aborted) setSources(src);
+      } catch {
+        if (!controller.signal.aborted) setSourcesError("Impossible de charger les sources. Réessayez.");
+      } finally {
+        if (!controller.signal.aborted) setSourcesLoading(false);
+      }
     })();
-  }, []);
+    return () => controller.abort();
+  }, [sourcesRetry]);
 
   // Build arr status map
   const buildArrStatusMap = useCallback(
@@ -376,6 +389,7 @@ export default function Library() {
       posterRefreshRef.current.timer = null;
     }
     setErr("");
+    setSourceWarning("");
 
     const baseLimit = filters.limit === "all" ? 500 : Math.max(1, Number(filters.limit) || 100);
     const fetchLimit = filters.limit === "all" ? 1500 : Math.min(baseLimit * 3, 1500);
@@ -390,23 +404,17 @@ export default function Library() {
         }
         const params = buildFeedParams(filters.q, filters.seen, fetchLimit);
 
-        const all = await Promise.allSettled(
-          enabledSources.map(async (s) => {
-            const id = s.id ?? s.sourceId;
-            if (!id) return [];
-            const data = await apiGet(`/api/feed/${id}?${params.toString()}`, {
-              signal: abortController.signal,
-            });
-            return Array.isArray(data)
-              ? data.map((it) => ({ ...it, sourceId: it.sourceId ?? id }))
-              : [];
-          })
-        );
+        const result = await loadSourceFeeds(enabledSources, params, {
+          signal: abortController.signal, fetchFeed: apiGet,
+        });
         if (!isLatestRequest()) return;
-
-        const merged = all
-          .filter((r) => r.status === "fulfilled")
-          .flatMap((r) => r.value)
+        if (result.outcome === "error") {
+          setErr(sourceFailureMessage(result.failedSourceIds, true));
+          setItems([]);
+          return;
+        }
+        if (result.outcome === "partial") setSourceWarning(sourceFailureMessage(result.failedSourceIds));
+        const merged = result.items
           .map((it) => ({
             ...it,
             size: fmtBytes(it.sizeBytes),
@@ -422,7 +430,8 @@ export default function Library() {
           signal: abortController.signal,
         });
         if (!isLatestRequest()) return;
-        const mapped = (Array.isArray(data) ? data : []).map((it) => ({
+        if (!Array.isArray(data)) throw new Error("Invalid feed response");
+        const mapped = data.map((it) => ({
           ...it,
           sourceId: it.sourceId ?? sid,
           size: fmtBytes(it.sizeBytes),
@@ -431,12 +440,11 @@ export default function Library() {
         if (isLatestRequest()) setItems(mapped);
       }
     } catch (e) {
-      if (e?.name === "AbortError") return;
       if (!isLatestRequest()) return;
-      setErr(e?.message || "Erreur chargement feed");
+      setErr("Impossible de charger les releases. Réessayez.");
       setItems([]);
     } finally {
-      if (loadRequestIdRef.current === requestId) setLoading(false);
+      if (isLatestRequest()) setLoading(false);
     }
   }, [filters.sourceId, enabledSources, filters.limit, filters.q, filters.seen, setErr, setLoading]);
 
@@ -1206,16 +1214,23 @@ export default function Library() {
         )}
       </div>
 
-      {loading && <Loader label="Chargement du feed…" />}
+      {(loading || sourcesLoading) && <Loader label="Chargement du feed…" />}
 
-      {!loading && err && (
-        <div className="errorbox">
-          <div className="errorbox__title">Erreur</div>
-          <div className="muted">{err}</div>
+      {!loading && !sourcesLoading && sourceWarning && !sourcesError && !err && (
+        <div className="onboarding__warn" role="status">
+          {sourceWarning}{" "}<button className="btn" type="button" onClick={load}>Réessayer</button>
         </div>
       )}
 
-      {!loading && !err && (viewMode === "grid" || viewMode === "missing") && (
+      {!loading && !sourcesLoading && (err || sourcesError) && (
+        <div className="errorbox">
+          <div className="errorbox__title">Erreur</div>
+          <div className="muted">{sourcesError || err}</div>
+          <button className="btn" type="button" onClick={() => sourcesError ? setSourcesRetry(value => value + 1) : load()}>Réessayer</button>
+        </div>
+      )}
+
+      {!loading && !sourcesLoading && !sourcesError && !err && (!sourceWarning || visibleItems.length > 0) && (viewMode === "grid" || viewMode === "missing") && (
         <LibraryGrid
           items={visibleItems}
           onDownload={download}
@@ -1234,7 +1249,7 @@ export default function Library() {
         />
       )}
 
-      {!loading && !err && viewMode === "poster" && (
+      {!loading && !sourcesLoading && !sourcesError && !err && (!sourceWarning || visibleItems.length > 0) && viewMode === "poster" && (
         <LibraryPoster
           items={visibleItems}
           onOpen={openDetails}
@@ -1251,7 +1266,7 @@ export default function Library() {
         />
       )}
 
-      {!loading && !err && viewMode === "list" && (
+      {!loading && !sourcesLoading && !sourcesError && !err && (!sourceWarning || visibleItems.length > 0) && viewMode === "list" && (
         <LibraryList
           items={visibleItems}
           selectionMode={selectionMode}
@@ -1268,7 +1283,7 @@ export default function Library() {
         />
       )}
 
-      {!loading && !err && viewMode === "banner" && (
+      {!loading && !sourcesLoading && !sourcesError && !err && (!sourceWarning || visibleItems.length > 0) && viewMode === "banner" && (
         <LibraryBanner
           items={visibleItems}
           selectionMode={selectionMode}

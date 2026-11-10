@@ -60,7 +60,8 @@ async function mount(name, fetcher, storage = new Map(), props = {}) {
   const setSubbar = (content) => { subbar = content; };
   const module = { exports: {} };
   const execute = new Function("require", "module", "exports", "window", "localStorage", "fetch", "setTimeout", "clearTimeout", "console", await componentBundle(name));
-  execute((id) => id === "test-react" ? react : { useSubbarSetter: () => setSubbar }, module, module.exports, { localStorage, dispatchEvent() {} }, localStorage, fetcher, (fn) => { fn(); return 1; }, () => {}, { log() {}, info() {}, error() {} });
+  execute((id) => id === "test-react" ? react : { useSubbarSetter: () => setSubbar }, module, module.exports, { localStorage, dispatchEvent() {} }, localStorage, fetcher, // Advance UI debounce/retry delays, not the client's unelapsed HTTP deadline.
+    (fn, delay) => { if (!delay || delay < 30000) fn(); return 1; }, () => {}, { log() {}, info() {}, error() {} });
   let tree;
   function render() {
     cursor = 0;

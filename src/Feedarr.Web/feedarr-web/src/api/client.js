@@ -22,12 +22,12 @@ function extractExtensions(payload) {
   return extensions;
 }
 
-async function parseError(res) {
+async function parseError(res, signal) {
   let msg = `HTTP ${res.status}`;
   const ct = res.headers.get("content-type") || "";
   if (ct.includes("application/json") || ct.includes("+json")) {
     try {
-      const data = await res.json();
+      const data = await untilAborted(res.json(), signal);
       const detail = typeof data?.detail === "string" ? data.detail : "";
       const title = typeof data?.title === "string" ? data.title : "";
       const error = typeof data?.error === "string" ? data.error : "";
@@ -44,17 +44,17 @@ async function parseError(res) {
         extensions: extractExtensions(data),
         payload: data,
       };
-    } catch {}
+    } catch (error) { if (signal.aborted) throw error; }
     return { message: msg, status: res.status };
   }
   try {
-    const text = await res.text();
+    const text = await untilAborted(res.text(), signal);
     const cleaned = String(text || "").replace(/\s+/g, " ").trim();
     if (cleaned) {
       const snippet = cleaned.slice(0, 180);
       msg = `${msg} - ${snippet}`;
     }
-  } catch {}
+  } catch (error) { if (signal.aborted) throw error; }
   return { message: msg, status: res.status };
 }
 
@@ -76,23 +76,47 @@ function createApiError(parsed) {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+function untilAborted(promise, signal) {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener("abort", aborted);
+    const aborted = () => { cleanup(); reject(signal.reason); };
+    if (signal.aborted) {
+      Promise.resolve(promise).catch(() => {});
+      reject(signal.reason);
+      return;
+    }
+    signal.addEventListener("abort", aborted, { once: true });
+    Promise.resolve(promise).then(
+      value => { cleanup(); resolve(value); },
+      error => { cleanup(); reject(error); }
+    );
+  });
+}
+
 function withTimeout(externalSignal, timeoutMs) {
   const ms = timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ms);
-
-  if (externalSignal) {
-    if (externalSignal.aborted) { clearTimeout(timer); controller.abort(); }
-    else externalSignal.addEventListener("abort", () => { clearTimeout(timer); controller.abort(); }, { once: true });
-  }
-
-  return { signal: controller.signal, clear: () => clearTimeout(timer) };
+  const timer = setTimeout(() => controller.abort(new DOMException("API request timed out", "TimeoutError")), ms);
+  const aborted = () => {
+    clearTimeout(timer);
+    controller.abort(externalSignal.reason);
+  };
+  if (externalSignal?.aborted) aborted();
+  else externalSignal?.addEventListener("abort", aborted, { once: true });
+  return {
+    signal: controller.signal,
+    clear: () => {
+      clearTimeout(timer);
+      externalSignal?.removeEventListener("abort", aborted);
+    },
+  };
 }
 
 async function apiSend(method, path, body, { signal, timeoutMs } = {}) {
   const { signal: merged, clear } = withTimeout(signal, timeoutMs);
   try {
-    const res = await fetch(resolveApiUrl(path), {
+    if (merged.aborted) throw merged.reason;
+    const res = await untilAborted(fetch(resolveApiUrl(path), {
       method,
       headers: {
         Accept: "application/json",
@@ -102,14 +126,14 @@ async function apiSend(method, path, body, { signal, timeoutMs } = {}) {
       credentials: "include",
       body: body ? JSON.stringify(body) : null,
       signal: merged,
-    });
+    }), merged);
 
     if (res.status === 204) return null;
-    if (!res.ok) throw createApiError(await parseError(res));
+    if (!res.ok) throw createApiError(await parseError(res, merged));
 
     const ct = res.headers.get("content-type") || "";
     if (!ct.includes("application/json") && !ct.includes("+json")) return null;
-    return res.json();
+    return await untilAborted(res.json(), merged);
   } finally {
     clear();
   }
@@ -118,16 +142,17 @@ async function apiSend(method, path, body, { signal, timeoutMs } = {}) {
 export async function apiGet(path, { signal, timeoutMs } = {}) {
   const { signal: merged, clear } = withTimeout(signal, timeoutMs);
   try {
-    const res = await fetch(resolveApiUrl(path), {
+    if (merged.aborted) throw merged.reason;
+    const res = await untilAborted(fetch(resolveApiUrl(path), {
       headers: { Accept: "application/json" },
       credentials: "include",
       signal: merged,
-    });
+    }), merged);
 
-    if (!res.ok) throw createApiError(await parseError(res));
+    if (!res.ok) throw createApiError(await parseError(res, merged));
     const ct = res.headers.get("content-type") || "";
     if (!ct.includes("application/json") && !ct.includes("+json")) return null;
-    return res.json();
+    return await untilAborted(res.json(), merged);
   } finally {
     clear();
   }
