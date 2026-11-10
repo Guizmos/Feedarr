@@ -28,6 +28,8 @@ public sealed class SetupStateService
         });
     }
 
+    public void Invalidate() => _cache.Remove(SetupCompletedCacheKey);
+
     public void MarkSetupCompleted()
     {
         var ui = _settings.GetUi(new UiSettings());

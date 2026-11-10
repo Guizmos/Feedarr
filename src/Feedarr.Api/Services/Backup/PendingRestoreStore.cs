@@ -76,6 +76,8 @@ public sealed class PendingRestoreStore
 
     internal void EnsureCanPrepare(string? replacePendingId)
     {
+        if (Configuration.ConfigurationRestorePlanStore.HasPlan(_data))
+            throw new BackupOperationException("configuration_restore_pending", 409);
         using var gate = OpenLock("operation.lock");
         if (File.Exists(Journal)) throw new BackupOperationException("restore application already in progress", 409);
         Manifest? previous;
@@ -113,7 +115,7 @@ public sealed class PendingRestoreStore
     }
 
     internal PendingRestoreStatus Publish(string work, string backupName, string? replacePendingId,
-        CancellationToken ct, string? preparationId = null)
+        CancellationToken ct, string? preparationId = null, Action? ensurePreparationDeadline = null)
     {
         // Work is owned by BackupService, beneath this persistent data volume.
         if (Path.GetDirectoryName(work) != _root || !Path.GetFileName(work).StartsWith("building-", StringComparison.Ordinal))
@@ -121,6 +123,8 @@ public sealed class PendingRestoreStore
         var db = Path.Combine(work, "incoming.db");
         var posters = Path.Combine(work, "posters");
         FaultPoint?.Invoke("copying-posters");
+        ensurePreparationDeadline?.Invoke();
+        ct.ThrowIfCancellationRequested();
         CopyTree(Path.Combine(_data, "posters"), posters, ct, tolerateDisappearing: true);
         var missing = RepairUnavailablePosters(db, posters);
         using (var conn = OpenDatabase(db, readOnly: false)) conn.Execute("PRAGMA journal_mode=DELETE;");
@@ -140,6 +144,9 @@ public sealed class PendingRestoreStore
             throw new BackupOperationException("pending_restore_exists: confirm replacement using its current id", 409);
         if (previous is null && replacePendingId is not null)
             throw new BackupOperationException("pending_restore_changed: refresh before replacing", 409);
+        // Last cancellable boundary: once publication starts, finish it consistently.
+        ensurePreparationDeadline?.Invoke();
+        ct.ThrowIfCancellationRequested();
         Directory.CreateDirectory(Path.Combine(_root, "stages"));
         Directory.Move(work, Stage(id));
         SyncDirectory(Path.Combine(_root, "stages"));
@@ -391,7 +398,7 @@ public sealed class PendingRestoreStore
         File.Move(temporary, path, overwrite: true);
         SyncDirectory(Path.GetDirectoryName(path)!);
     }
-    private static void SyncDirectory(string path)
+    internal static void SyncDirectory(string path)
     {
         if (OperatingSystem.IsWindows()) return; // NTFS rename + flushed files; no portable directory fsync API
         var handle = open(path, 0);

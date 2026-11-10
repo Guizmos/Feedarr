@@ -7,8 +7,9 @@ returns an encrypted ZIP in memory. `ReadAsync(stream, passphrase, ct)` reads V2
 or a compatible legacy ZIP and returns a sensitive in-memory document plus a safe
 aggregate preview and logical credential fields requiring re-entry.
 
-No HTTP endpoints, upload flow, restore application, synchronization, wizard or
-React changes are included. Existing Backup V1 and PendingRestoreStore are unchanged.
+This document describes the lot 1 archive engine. Transactional application and
+first-sync integration are documented in [configuration-restore-v2.md](configuration-restore-v2.md).
+No new HTTP endpoints, upload flow, wizard or React changes are included.
 The unrelated poster diagnostic script is not part of this change.
 
 Never log or return `result.Configuration` from an endpoint. It contains plaintext
@@ -113,9 +114,9 @@ keys and credential fields to re-enter, including optional/disabled unreadable
 credentials. A complete cross-installation recovery from V1 cannot be promised
 without the original key ring. Master keys are never imported/exported.
 
-## Reserved for lots 2 and 3
+## Integration with lots 2 and 3
 
-Lot 2: preview/confirmation plan, source identity reconciliation while preserving
+Lot 2 (implemented separately): preview/confirmation plan, source identity reconciliation while preserving
 library rows, destination secret protection, atomic application/recovery, setup and
 security cache invalidation, compatibility with pending V1 restores, retention
 policy decisions and durable first-sync scheduling.

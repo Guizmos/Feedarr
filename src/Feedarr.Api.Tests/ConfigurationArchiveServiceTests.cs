@@ -15,6 +15,8 @@ using Feedarr.Api.Services.Security;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using OptionsFactory = Microsoft.Extensions.Options.Options;
 
 namespace Feedarr.Api.Tests;
@@ -356,17 +358,24 @@ public sealed class ConfigurationArchiveServiceTests
         entries["configuration.enc"] = encrypted; CryptographicOperations.ZeroMemory(key); return Archive(entries);
     }
 
-    private sealed class Fixture : IDisposable
+    internal sealed class Fixture : IDisposable
     {
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "feedarr-v2-tests", Guid.NewGuid().ToString("N"));
         public Db Db { get; }
         public ApiKeyProtectionService Protection { get; }
+        public IDataProtectionProvider DataProtection { get; }
         public ExternalProviderRegistry Registry { get; } = new();
         public ConfigurationArchiveService Service { get; }
         public Fixture(bool seed = true)
         {
             Directory.CreateDirectory(Root);
-            Protection = new ApiKeyProtectionService(DataProtectionProvider.Create(new DirectoryInfo(Path.Combine(Root, "keys"))), NullLogger<ApiKeyProtectionService>.Instance);
+            var master = new FixtureMasterKey();
+            DataProtection = DataProtectionProvider.Create(new DirectoryInfo(Path.Combine(Root, "keys")), builder =>
+            {
+                builder.Services.AddSingleton<IMasterKeyProvider>(master);
+                builder.Services.Configure<KeyManagementOptions>(options => options.XmlEncryptor = new AesXmlEncryptor(master.GetMasterKey()));
+            });
+            Protection = new ApiKeyProtectionService(DataProtection, NullLogger<ApiKeyProtectionService>.Instance);
             Db = new Db(OptionsFactory.Create(new AppOptions { DataDir = Root, DbFileName = "feedarr.db" }));
             new MigrationsRunner(Db, NullLogger<MigrationsRunner>.Instance).Run();
             Db.EnsureWalMode();
@@ -406,6 +415,11 @@ public sealed class ConfigurationArchiveServiceTests
             return Archive(new() { ["info.json"] = info, ["config.json"] = "{}"u8.ToArray(), ["feedarr.db"] = bytes });
         }
         public void Dispose() { try { Directory.Delete(Root, true); } catch (IOException) { } }
+    }
+    private sealed class FixtureMasterKey : IMasterKeyProvider
+    {
+        private readonly byte[] _key = RandomNumberGenerator.GetBytes(32);
+        public byte[] GetMasterKey() => _key;
     }
     private sealed class RepeatingStream(long remaining) : Stream
     {

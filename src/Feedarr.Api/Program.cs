@@ -68,6 +68,7 @@ var dataDirPath = Path.IsPathRooted(configuredDataDir)
 var pendingRestore = new PendingRestoreStore(dataDirPath,
     builder.Configuration.GetValue<string>("App:DbFileName") ?? "feedarr.db");
 using var databaseProcessLease = pendingRestore.AcquireProcessLease();
+Feedarr.Api.Services.Backup.Configuration.ConfigurationRestorePlanStore.EnsureNoLegacyConflict(dataDirPath);
 pendingRestore.ApplyAtStartup();
 builder.Services.AddSingleton(pendingRestore);
 var keysPath = Path.Combine(dataDirPath, "keys");
@@ -192,6 +193,8 @@ builder.Services.AddSingleton<ApiRequestMetricsService>();
 builder.Services.AddSingleton<BackupExecutionCoordinator>();
 builder.Services.AddSingleton<BackupValidationService>();
 builder.Services.AddSingleton<Feedarr.Api.Services.Backup.Configuration.ConfigurationArchiveService>();
+builder.Services.AddSingleton<Feedarr.Api.Services.Backup.Configuration.ConfigurationRestorePlanStore>();
+builder.Services.AddSingleton<Feedarr.Api.Services.Backup.Configuration.ConfigurationRestoreService>();
 builder.Services.AddSingleton<BackupService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<BackupService>());
 builder.Services.AddSingleton<UnifiedCategoryService>();
@@ -803,6 +806,9 @@ app.UseStaticFiles();
 var db = app.Services.GetRequiredService<Db>();
 db.EnsureWalMode();
 app.Services.GetRequiredService<MigrationsRunner>().Run();
+
+// Apply confirmed configuration before any startup credential normalization can change its baseline.
+app.Services.GetRequiredService<Feedarr.Api.Services.Backup.Configuration.ConfigurationRestoreService>().ApplyAtStartup();
 
 // Migrate existing API keys to encrypted format
 await app.Services.GetRequiredService<ApiKeyMigrationService>().MigrateAsync();

@@ -40,6 +40,7 @@ public sealed class BackupService : IHostedService
     private Task? _preparationTask;
     private RestorePreparationStatus? _preparation;
     internal TimeSpan PreparationTimeout { get; set; } = TimeSpan.FromHours(2);
+    internal TimeProvider PreparationClock { get; set; } = TimeProvider.System;
 
     public Task StartAsync(CancellationToken ct) => Task.CompletedTask;
 
@@ -67,13 +68,23 @@ public sealed class BackupService : IHostedService
             _preparation = accepted;
             _preparationTask = Task.Run(async () =>
             {
-                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_preparationStopping.Token);
-                timeout.CancelAfter(PreparationTimeout);
+                var clock = PreparationClock;
+                var budget = PreparationTimeout;
+                var preparationStarted = clock.GetTimestamp();
+                using var deadline = new CancellationTokenSource(budget, clock);
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_preparationStopping.Token, deadline.Token);
+                // Timer cancellation is cooperative and its callback may be delayed
+                // by thread-pool load. Recheck monotonic time at publication boundaries.
+                void EnsurePreparationDeadline()
+                {
+                    if (clock.GetElapsedTime(preparationStarted) >= budget) timeout.Cancel();
+                    timeout.Token.ThrowIfCancellationRequested();
+                }
                 var started = System.Diagnostics.Stopwatch.StartNew();
                 _logger.LogInformation("Restore preparation {PreparationId} started independently of HTTP", id);
                 try
                 {
-                    var result = await RestoreBackupAsync(name, version, timeout.Token, replacePendingId, id).ConfigureAwait(false);
+                    var result = await RestoreBackupAsync(name, version, timeout.Token, replacePendingId, id, EnsurePreparationDeadline).ConfigureAwait(false);
                     var pending = _pending.GetStatus();
                     if (!pending.Pending || pending.State != "pending" || pending.Id != id)
                         throw new BackupOperationException("Le manifeste de restauration préparée n'a pas pu être confirmé.");
@@ -167,7 +178,8 @@ public sealed class BackupService : IHostedService
                     deleted++;
             }
 
-            return await Task.FromResult(deleted).ConfigureAwait(false);        }, ct);
+            return await Task.FromResult(deleted).ConfigureAwait(false);
+        }, ct);
     }
 
     public Task<BackupFileDto> CreateBackupAsync(string appVersion, CancellationToken ct = default)
@@ -335,6 +347,10 @@ public sealed class BackupService : IHostedService
 
     public Task<BackupRestoreResult> RestoreBackupAsync(
         string name, string currentAppVersion, CancellationToken ct = default, string? replacePendingId = null, string? preparationId = null)
+        => RestoreBackupAsync(name, currentAppVersion, ct, replacePendingId, preparationId, null);
+
+    private Task<BackupRestoreResult> RestoreBackupAsync(
+        string name, string currentAppVersion, CancellationToken ct, string? replacePendingId, string? preparationId, Action? ensurePreparationDeadline)
     {
         EnsureRestartNotRequired();
         return _coordinator.RunExclusiveAsync("prepare-restore", name, async opCt =>
@@ -356,7 +372,7 @@ public sealed class BackupService : IHostedService
                 VerifySqliteIntegrity(extracted);
                 var credentials = NormalizeRestoredCredentials(extracted);
                 VerifySqliteIntegrity(extracted);
-                var status = _pending.Publish(work, name, replacePendingId, opCt, preparationId);
+                var status = _pending.Publish(work, name, replacePendingId, opCt, preparationId, ensurePreparationDeadline);
                 return await Task.FromResult(new BackupRestoreResult
                 {
                     ReencryptedCredentials = credentials.Reencrypted,

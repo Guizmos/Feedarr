@@ -240,20 +240,25 @@ public sealed class BackupServiceTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task PreparationFailureOrTimeout_LeavesNoPendingAndReleasesBusyState(bool timeout)
+    [InlineData(false, false, "copying-posters")]
+    [InlineData(true, false, "copying-posters")]
+    [InlineData(true, true, "copying-posters")]
+    [InlineData(true, false, "prepared")]
+    [InlineData(true, true, "prepared")]
+    public async Task PreparationFailureOrTimeout_LeavesNoPendingAndReleasesBusyState(bool timeout, bool deliverTimerCallback, string checkpoint)
     {
         using var workspace = new TestWorkspace();
         var db = CreateDb(workspace);
         var pending = new PendingRestoreStore(workspace.DataDir, "feedarr.db");
         var service = CreateBackupService(workspace, db, new SettingsRepository(db), new FakeApiKeyProtectionService(), pending);
         CreateTestArchive(workspace);
+        var clock = new PreparationTestClock();
+        service.PreparationClock = clock;
         if (timeout) service.PreparationTimeout = TimeSpan.FromMilliseconds(1);
         pending.FaultPoint = phase =>
         {
-            if (phase != "copying-posters") return;
-            if (timeout) Thread.Sleep(30);
+            if (phase != checkpoint) return;
+            if (timeout) clock.Advance(TimeSpan.FromMilliseconds(1), deliverTimerCallback);
             else throw new IOException("simulated storage failure");
         };
         service.StartRestorePreparation("job.zip", "1.0.0");
@@ -264,6 +269,8 @@ public sealed class BackupServiceTests
         Assert.False(state.IsBusy);
         Assert.False(state.RestorePending!.Pending);
         Assert.Empty(Directory.GetDirectories(Path.Combine(workspace.DataDir, "restore-state"), "building-*"));
+        var stages = Path.Combine(workspace.DataDir, "restore-state", "stages");
+        Assert.False(Directory.Exists(stages) && Directory.EnumerateFileSystemEntries(stages).Any());
         await service.StopAsync(default);
     }
 
@@ -345,6 +352,31 @@ public sealed class BackupServiceTests
         using var zip = ZipFile.Open(Path.Combine(workspace.BackupsDir, "job.zip"), ZipArchiveMode.Create);
         zip.CreateEntryFromFile(incoming, "feedarr.db");
         AddJsonEntry(zip, "info.json", new { version = "1.0.0", backupFormatVersion = 1, dbSha256 = ComputeFileSha256(incoming) });
+    }
+
+    // Expiry and callback dispatch are deliberately independent. Production timers
+    // can expire while their callback is still queued on a busy thread pool.
+    private sealed class PreparationTestClock : TimeProvider
+    {
+        private long _ticks;
+        private TestTimer? _timer;
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => Interlocked.Read(ref _ticks);
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+            => _timer = new TestTimer(callback, state);
+        public void Advance(TimeSpan elapsed, bool deliverTimerCallback)
+        {
+            Interlocked.Add(ref _ticks, elapsed.Ticks);
+            if (deliverTimerCallback) _timer!.Fire();
+        }
+        private sealed class TestTimer(TimerCallback callback, object? state) : ITimer
+        {
+            private bool _disposed;
+            public void Fire() { if (!_disposed) callback(state); }
+            public bool Change(TimeSpan dueTime, TimeSpan period) => !_disposed;
+            public void Dispose() => _disposed = true;
+            public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
+        }
     }
 
     private static async Task WaitForPreparation(BackupService service)
