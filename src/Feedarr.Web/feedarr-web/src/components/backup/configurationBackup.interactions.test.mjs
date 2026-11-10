@@ -11,7 +11,7 @@ async function load(file) {
       b.onResolve({ filter: /^react-router-dom$/ }, () => ({ path: "router", namespace: "test" }));
       b.onResolve({ filter: /api\/client\.js$/ }, () => ({ path: "api", namespace: "test" }));
       b.onResolve({ filter: /configurationBackupApi\.js$/ }, () => ({ path: "backup", namespace: "test" }));
-      b.onResolve({ filter: /(?:InlineNotice|Step\w+|ConfigurationBackupPanel)\.jsx$/ }, args => args.importer ? ({ path: args.path, namespace: "child" }) : undefined);
+      b.onResolve({ filter: /(?:InlineNotice|AppIcon|Modal|Step\w+|ConfigurationBackupPanel)\.jsx$/ }, args => args.importer ? ({ path: args.path, namespace: "child" }) : undefined);
       b.onLoad({ filter: /.*/, namespace: "child" }, () => ({ contents: 'export default function Child() {}' }));
       b.onLoad({ filter: /.*/, namespace: "test" }, args => ({ contents: {
         hooks: `const element=(type,props,...children)=>({type,props:{...props,children:children.flat(Infinity)}}); export default {createElement:element};
@@ -23,13 +23,14 @@ async function load(file) {
         api: 'export const apiGet=(...a)=>globalThis.__configUI.get(...a); export const apiPost=(...a)=>globalThis.__configUI.post(...a);',
         backup: `export const backupRoot=initial=>initial?'/api/setup/configuration-restore':'/api/configuration-backups';
           export const configurationRequest=(...a)=>globalThis.__configUI.request(...a);
-          export const configurationUpload=(file,phrase)=>({file,phrase}); export const downloadConfiguration=()=>{};
+          export const configurationUpload=(file,phrase)=>{if(!file?.size)throw new Error("Sélectionnez une archive");return {file,phrase};}; export const downloadConfiguration=(blob)=>globalThis.__configUI.download?.(blob);
           export const resumeSetupSteps=steps=>Array.isArray(steps)?steps:null;`,
       }[args.path] }));
     } }], });
   return (await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString("base64")}`)).default;
 }
 const Panel = await load("./ConfigurationBackupPanel.jsx");
+const Restore = await load("../setup/useSetupRestore.js");
 const Wizard = await load("../../pages/SetupWizard.jsx");
 const flush = async () => { for(let i=0;i<12;i++) await Promise.resolve(); };
 const nodes = tree => !tree || typeof tree !== "object" ? [] : [tree,...(tree.props?.children||[]).flatMap(nodes)];
@@ -48,7 +49,7 @@ test("import clears phrase, prevents duplicate submissions and requires both con
     inputs.find(n=>n.props.type==='file').props.onChange({target:{files:[new Blob(['zip'])]}});
     inputs.at(-1).props.onChange({target:{value:'private phrase'}});tree=f.render(Panel);
     const submit=button(tree,'Analyser la sauvegarde');const pending=submit.props.onClick();submit.props.onClick();assert.equal(calls,1);
-    tree=f.render(Panel);assert.equal(nodes(tree).filter(n=>n.type==='input').at(-1).props.value,'');assert.equal(button(tree,'Analyser la sauvegarde').props.disabled,true);
+    tree=f.render(Panel);assert.equal(nodes(tree).filter(n=>n.type==='input').at(-1).props.value,'');assert.equal(button(tree,'Analyse en cours…').props.disabled,true);
     finish({operationId:'a'.repeat(32),securityChangeRequiresConfirmation:true});await pending;tree=f.render(Panel);
     assert.equal(button(tree,'Confirmer la restauration').props.disabled,true);
     let checks=nodes(tree).filter(n=>n.type==='input'&&n.props.type==='checkbox');checks[0].props.onChange({target:{checked:true}});tree=f.render(Panel);assert.equal(button(tree,'Confirmer la restauration').props.disabled,true);
@@ -64,7 +65,11 @@ test("retention and initial sync remain separately confirmed and sync blocked by
 });
 test("wizard offers both paths and resume omits all already complete steps despite stale browser state",async()=>{
   const f=fixture();try{
-    let tree=f.render(Wizard);assert.ok(button(tree,'Nouvelle installation'));button(tree,'Restaurer une configuration').props.onClick();tree=f.render(Wizard);assert.equal(nodes(tree).filter(n=>n.props?.initialSetup).length,1);
+    let tree=f.render(Wizard);assert.ok(button(tree,'Nouvelle installation'));button(tree,'Restaurer une configuration').props.onClick();tree=f.render(Wizard);assert.equal(nodes(tree).filter(n=>n.props?.restore).length,1);
+    assert.deepEqual(nodes(tree).filter(n=>n.props?.className?.startsWith('setup-stepper-item')).map(n=>text(n.props.children[1])), ['Importer','Vérifier','Restaurer','Finaliser']);
+    assert.ok(nodes(tree).some(n=>n.props?.className==='setupWizardFooter'));
+    button(tree,'Nouvelle installation').props.onClick();tree=f.render(Wizard);
+    assert.equal(nodes(tree).filter(n=>n.props?.className?.startsWith('setup-stepper-item')).length,8);
   }finally{f.close();}
   const resumed=fixture();try{
     resumed.data.set('feedarr:jackettConfigured','true');
@@ -78,4 +83,77 @@ test("wizard offers both paths and resume omits all already complete steps despi
     assert.equal(nodes(resumed.render(Wizard)).find(n=>n.props?.['aria-current']==='step').props.children[0].props.children[0],3);
     button(tree,'Resume').props.onClick();assert.ok(nodes(resumed.render(Wizard)).some(n=>n.type==='input'&&n.props.type==='password'));
   }finally{resumed.close();}
+});
+test("export validates visibly, prevents duplicates and exposes download success or failure",async()=>{
+  const f=fixture();let finish,calls=0,downloaded=0;
+  const submit=tree=>nodes(tree).find(n=>n.type==='form').props.onSubmit({preventDefault(){}});
+  const fill=phrase=>{for(const n of nodes(f.render(Panel)).filter(n=>n.type==='input'&&n.props.type==='password').slice(0,2))n.props.onChange({target:{value:phrase}});};
+  try {
+    submit(f.render(Panel));await flush();assert.ok(nodes(f.render(Panel)).some(n=>/12 à/.test(n.props?.message)));
+    fill('long secret phrase');let tree=f.render(Panel);nodes(tree).filter(n=>n.type==='input'&&n.props.type==='password')[1].props.onChange({target:{value:'different'}});
+    submit(f.render(Panel));await flush();assert.ok(nodes(f.render(Panel)).some(n=>/identiques/.test(n.props?.message)));
+    fill('long secret phrase');f.h.download=()=>downloaded++;
+    f.h.request=(path,options)=>{calls++;assert.ok(path.endsWith('/export'));assert.equal(options.binary,true);assert.deepEqual(options.body,{passphrase:'long secret phrase'});return new Promise(r=>{finish=r;});};
+    tree=f.render(Panel);submit(tree);submit(tree);assert.equal(calls,1);assert.equal(button(f.render(Panel),'Chiffrement et téléchargement…').props.disabled,true);
+    assert.equal(nodes(f.render(Panel)).find(n=>n.type==='input').props.value,'');finish(new Blob(['zip']));await flush();assert.equal(downloaded,1);
+    assert.ok(nodes(f.render(Panel)).some(n=>n.props?.variant==='success'&&/Téléchargement/.test(n.props.message)));
+    fill('long secret phrase');f.h.request=async()=>{throw new Error('Autorisation requise');};submit(f.render(Panel));await flush();assert.ok(nodes(f.render(Panel)).some(n=>n.props?.message==='Autorisation requise'));
+  }finally{f.close();}
+});
+test("restore wizard analyzes once, requires both consents, handles confirm errors, waits for restart and finalizes incomplete setup",async()=>{
+  const f=fixture();let finish,calls=0,applied;
+  const render=()=>{f.h.cursor=0;return Restore(true,(setup,bootstrap)=>{applied={setup,bootstrap};});};
+  try {
+    await render().prepare();assert.match(render().error,/Sélectionnez/);
+    let r=render();r.setFile(new Blob(['zip']));r.setPhrase('secret');
+    f.h.request=(path,options)=>{calls++;assert.equal(options.body.phrase,'secret');return new Promise(resolve=>{finish=resolve;});};
+    r=render();const pending=r.prepare();r.prepare();assert.equal(calls,1);assert.equal(render().busy,true);assert.equal(render().phrase,'');
+    finish({operationId:'x',securityChangeRequiresConfirmation:true});await pending;r=render();assert.equal(r.stage,2);assert.equal(r.locked,true);assert.equal(r.canContinue,false);
+    r.go(3);assert.equal(render().stage,2);r.setConsent(true);r=render();assert.equal(r.canContinue,false);r.setSecurityConsent(true);r=render();r.go(3);assert.equal(render().stage,3);
+    f.h.request=async()=>{throw new Error('Confirmation refusée');};await render().confirm();assert.equal(render().error,'Confirmation refusée');assert.equal(render().stage,3);
+    f.h.request=async(path,options)=>{assert.deepEqual(options.body,{confirm:true,securityChange:true});return {pending:{operationId:'x'},confirmed:true};};await render().confirm();r=render();r.go(2);assert.equal(render().stage,3);assert.equal(r.canVisit(1),false);
+    f.h.request=async()=>({pending:{operationId:'x'},confirmed:true});await render().checkRestart();assert.match(render().notice,/pas encore/);
+    f.h.request=async()=>({applied:{operationId:'x'}});await render().checkRestart();assert.equal(render().stage,4);
+    f.h.get=async()=>({restoreSteps:[3,8],onboardingDone:false});await render().finish();assert.deepEqual(applied.setup.restoreSteps,[3,8]);
+  }finally{f.close();}
+});
+test("restore back cancels the server preview and preserves file; changing path clears secrets",async()=>{
+  const f=fixture();const render=()=>f.render(Restore,true);
+  try {
+    let r=render();r.setFile(new Blob(['zip']));r.setPhrase('secret');r.setBootstrap('bootstrap');f.h.request=async()=>({operationId:'x'});await render().prepare();
+    f.h.request=async(path,options)=>{assert.ok(path.endsWith('/x'));assert.equal(options.method,'DELETE');};await render().cancel();r=render();assert.equal(r.stage,1);assert.equal(r.locked,false);assert.ok(r.file);assert.equal(r.consent,false);
+    r.reset();r=render();assert.equal(r.file,null);assert.equal(r.phrase,'');assert.equal(r.bootstrap,'');
+  }finally{f.close();}
+});
+test("restore reload resumes confirmed/applied stages and exposes state errors",async()=>{
+  for(const [state,stage] of [[{pending:{operationId:'x'},confirmed:true},3],[{applied:{operationId:'x'}},4]]){
+    const f=fixture();try{f.h.request=async()=>state;f.render(Restore,true);await f.effects();assert.equal(f.render(Restore,true).stage,stage);}finally{f.close();}
+  }
+  const f=fixture();try{f.h.request=async()=>{throw new Error('Bootstrap requis');};f.render(Restore,true);await f.effects();assert.equal(f.render(Restore,true).error,'Bootstrap requis');}finally{f.close();}
+});
+test("classic wizard retains language validation, next/back navigation and security save behavior",()=>{
+  const f=fixture();try{
+    let tree=f.render(Wizard);assert.equal(button(tree,'Suivant').props.disabled,true);
+    nodes(tree).find(n=>n.props?.onStatusChange).props.onStatusChange({ready:true,saving:false});tree=f.render(Wizard);assert.equal(button(tree,'Suivant').props.disabled,false);
+    button(tree,'Suivant').props.onClick();tree=f.render(Wizard);assert.ok(button(tree,'Precedent'));button(tree,'Precedent').props.onClick();tree=f.render(Wizard);assert.equal(button(tree,'Suivant').props.disabled,false);
+    button(tree,'Suivant').props.onClick();button(f.render(Wizard),'Suivant').props.onClick();tree=f.render(Wizard);
+    const security=nodes(tree).find(n=>n.props?.saveRef);let saved=0;security.props.saveRef.current=()=>saved++;button(tree,'Enregistrer').props.onClick();assert.equal(saved,1);
+    security.props.onStatusChange({saved:true,ready:true});assert.ok(button(f.render(Wizard),'Suivant'));
+  }finally{f.close();}
+});
+test("a fully restored setup reaches Finaliser even though configuration endpoints are now closed",async()=>{
+  const f=fixture();try{
+    f.h.get=async()=>({onboardingDone:true});f.h.request=async()=>{throw new Error('setup_closed');};
+    await f.render(Restore,true).checkRestart();const r=f.render(Restore,true);assert.equal(r.stage,4);assert.equal(r.error,'');
+  }finally{f.close();}
+});
+test("retention and synchronization actions use the native modal and only send after confirmation",async()=>{
+  for(const [label,action] of [['Activer la rétention importée','retention'],['Autoriser la première synchronisation','sync'],['Annuler cette synchronisation','sync/cancel']]){
+    const f=fixture();let calls=0;try{
+      f.render(Panel);f.h.values[0]={applied:{operationId:'operation',retentionPending:action==='retention',syncState:'held'}};
+      f.h.request=async(path,options)=>{calls++;assert.equal(path,`/api/configuration-backups/operation/${action}`);assert.deepEqual(options.body,{confirm:true});return {applied:{operationId:'operation'}};};
+      button(f.render(Panel),label).props.onClick();let tree=f.render(Panel);assert.equal(calls,0);assert.ok(nodes(tree).some(n=>n.props?.open===true&&n.props.title==='Confirmer l’action'));
+      button(tree,'Annuler').props.onClick();assert.equal(calls,0);button(f.render(Panel),label).props.onClick();await button(f.render(Panel),'Confirmer').props.onClick();assert.equal(calls,1);
+    }finally{f.close();}
+  }
 });

@@ -7,7 +7,7 @@ export async function configurationRequest(path, { method = "GET", body, bootstr
   const controller = new AbortController();
   const abort = () => controller.abort(signal.reason);
   if (signal?.aborted) abort(); else signal?.addEventListener("abort", abort, { once: true });
-  const timer = setTimeout(() => controller.abort(), 120000);
+  const timer = setTimeout(() => controller.abort(new DOMException("La demande a dépassé le délai de deux minutes. Réessayez.", "TimeoutError")), 120000);
   const headers = { "X-Feedarr-Request": "1", Accept: binary ? "application/zip" : "application/json" };
   if (bootstrap) headers["X-Bootstrap-Secret"] = bootstrap;
   if (body && !(body instanceof FormData)) headers["Content-Type"] = "application/json";
@@ -31,7 +31,19 @@ export async function configurationRequest(path, { method = "GET", body, bootstr
       error.status = response.status; throw error;
     }
     if (response.status === 204) return null;
-    return binary ? await response.blob() : await response.json();
+    if (binary) {
+      const blob = await response.blob();
+      // Reject an HTTP 200 proxy/login page instead of downloading a fake ZIP.
+      const signature = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+      if (signature[0] !== 0x50 || signature[1] !== 0x4b || signature[2] !== 3 || signature[3] !== 4)
+        throw new Error("Le serveur n’a pas renvoyé une archive ZIP valide. Vérifiez votre connexion puis réessayez.");
+      return blob;
+    }
+    return await response.json();
+  } catch (error) {
+    if (controller.signal.aborted) throw controller.signal.reason;
+    if (error instanceof TypeError) throw new Error("Connexion au serveur impossible. Vérifiez le réseau puis réessayez.");
+    throw error;
   } finally { clearTimeout(timer); signal?.removeEventListener("abort", abort); }
 }
 
@@ -41,11 +53,12 @@ export function configurationUpload(file, passphrase) {
 }
 
 export function downloadConfiguration(blob, browser = window, dom = document) {
+  if (!blob?.size) throw new Error("L’archive reçue est vide. Aucun téléchargement n’a été lancé.");
   const url = browser.URL.createObjectURL(blob);
   try {
     const link = dom.createElement("a"); link.href = url; link.download = "feedarr-configuration.zip";
     dom.body.appendChild(link); try { link.click(); } finally { link.remove(); }
-  } finally { browser.setTimeout(() => browser.URL.revokeObjectURL(url), 0); }
+  } finally { browser.setTimeout(() => browser.URL.revokeObjectURL(url), 1000); }
 }
 
 export function resumeSetupSteps(steps) {

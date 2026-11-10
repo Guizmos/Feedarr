@@ -20,7 +20,8 @@ const render = (component, props) => renderToStaticMarkup(React.createElement(co
 test("setup offers import only; settings offer encrypted export and legacy import", () => {
   const initial = render(Panel, { initialSetup: true }); assert.match(initial, /Restaurer une configuration/); assert.match(initial, /bootstrap/); assert.doesNotMatch(initial, /Sauvegarder la configuration/);
   const settings = render(Panel, {}); assert.match(settings, /Sauvegarder la configuration/); assert.match(settings, /Confirmer la phrase secrète/); assert.match(settings, /ancienne sauvegarde compatible/);
-  assert.match(settings, /disabled=""[^>]*>Sauvegarder la configuration/);
+  assert.match(settings, /<form noValidate=""/);
+  assert.match(settings, /De 12 à 1 024 caractères/);
   assert.equal(backupRoot(true), "/api/setup/configuration-restore"); assert.equal(backupRoot(false), "/api/configuration-backups");
 });
 test("preview warns about history, missing secrets and purge without rendering private fields", () => {
@@ -43,7 +44,7 @@ test("requests send auth and CSRF headers; server errors never expose private me
     await assert.rejects(configurationRequest("/api/test", { fetcher: async () => ({ ok: false, status, json: async () => ({ code, message: "PRIVATE-TOKEN-URL" }) }) }), e => pattern.test(e.message) && !e.message.includes("PRIVATE"));
 });
 test("multipart leaves boundary to browser and encrypted export consumes binary body", async () => {
-  const body = configurationUpload(new Blob(["archive"]), "phrase"), blob = new Blob(["encrypted"]);
+  const body = configurationUpload(new Blob(["archive"]), "phrase"), blob = new Blob([new Uint8Array([0x50,0x4b,3,4]), "encrypted"]);
   assert.equal(await configurationRequest("/api/test", { method: "POST", body, binary: true, fetcher: async (_, options) => { assert.equal(options.body, body); assert.equal(options.headers["Content-Type"], undefined); return { ok: true, status: 200, blob: async () => blob }; } }), blob);
 });
 test("external abort propagates and listeners are removed on success, invalid JSON and cancellation", async () => {
@@ -55,6 +56,16 @@ test("external abort propagates and listeners are removed on success, invalid JS
 });
 test("download has safe fixed name and cleans its object URL", () => {
   let clicked = 0, removed = 0, revoked; const link = { click: () => clicked++, remove: () => removed++ };
-  downloadConfiguration(new Blob(), { URL: { createObjectURL: () => "blob:test", revokeObjectURL: u => { revoked = u; } }, setTimeout: action => action() }, { createElement: () => link, body: { appendChild: () => {} } });
+  downloadConfiguration(new Blob(["zip"]), { URL: { createObjectURL: () => "blob:test", revokeObjectURL: u => { revoked = u; } }, setTimeout: action => action() }, { createElement: () => link, body: { appendChild: () => {} } });
   assert.equal(link.download, "feedarr-configuration.zip"); assert.equal(clicked, 1); assert.equal(removed, 1); assert.equal(revoked, "blob:test");
+});
+test("export refuses HTTP 200 HTML or empty bodies and reports network failure",async()=>{
+  for(const blob of [new Blob(),new Blob(['<html>Login</html>'])])await assert.rejects(configurationRequest('/api/test',{binary:true,fetcher:async()=>({ok:true,status:200,blob:async()=>blob})}),/archive ZIP valide/);
+  await assert.rejects(configurationRequest('/api/test',{fetcher:async()=>{throw new TypeError('Failed to fetch');}}),/Connexion au serveur impossible/);
+  assert.throws(()=>downloadConfiguration(new Blob(), {}, {}),/archive reçue est vide/);
+});
+test("failed download clicks still remove the anchor and release its URL",()=>{
+  let revoked=false,removed=false;
+  assert.throws(()=>downloadConfiguration(new Blob(['zip']),{URL:{createObjectURL:()=>"blob:test",revokeObjectURL:()=>{revoked=true;}},setTimeout:fn=>fn()},{createElement:()=>({click(){throw new Error('Download blocked');},remove(){removed=true;}}),body:{appendChild(){}}}),/Download blocked/);
+  assert.equal(revoked,true);assert.equal(removed,true);
 });

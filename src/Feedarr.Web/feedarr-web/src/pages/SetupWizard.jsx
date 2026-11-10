@@ -10,7 +10,8 @@ import Step3JackettConn from "../components/setup/Step3JackettConn.jsx";
 import Step31JackettIndexers from "../components/setup/Step31JackettIndexers.jsx";
 import Step4ArrApps from "../components/setup/Step4ArrApps.jsx";
 import Step5Summary from "../components/setup/Step5Summary.jsx";
-import ConfigurationBackupPanel from "../components/backup/ConfigurationBackupPanel.jsx";
+import StepConfigurationRestore from "../components/setup/StepConfigurationRestore.jsx";
+import useSetupRestore from "../components/setup/useSetupRestore.js";
 import { backupRoot, configurationRequest, resumeSetupSteps } from "../components/backup/configurationBackupApi.js";
 
 const STORAGE_KEY = "feedarr:setupStep";
@@ -49,8 +50,7 @@ export default function SetupWizard() {
   const [step, setStep] = useState(readStoredStep);
   const [maxStep, setMaxStep] = useState(step);
   const [finishing, setFinishing] = useState(false);
-  const [restoreMode, setRestoreMode] = useState(false);
-  const [restoreBusy, setRestoreBusy] = useState(false);
+  const [restoreMode, setRestoreMode] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("feedarr:setupRestore") === "true");
   const [restoreSteps, setRestoreSteps] = useState(null);
   const [restoreError, setRestoreError] = useState("");
   const [completionBootstrap, setCompletionBootstrap] = useState("");
@@ -79,6 +79,24 @@ export default function SetupWizard() {
   const [jackettResetToken, setJackettResetToken] = useState(0);
   const securitySaveRef = useRef(null);
   const restoredStepsRef = useRef(null);
+
+  const restored = (setup, bootstrap) => {
+    const remaining = resumeSetupSteps(setup.restoreSteps);
+    window.localStorage.removeItem("feedarr:setupRestore");
+    if (setup.onboardingDone) { navigate("/library", { replace: true }); return; }
+    if (remaining?.length) {
+      restoredStepsRef.current = remaining;
+      setRestoreSteps(remaining); setStep(remaining[0]); setMaxStep(MAX_STEP);
+      setCompletionBootstrap(bootstrap); setRestoreMode(false);
+    }
+  };
+  const restore = useSetupRestore(restoreMode, restored);
+  const chooseRestore = value => {
+    if (restore.locked) return;
+    if (!value) restore.reset();
+    setRestoreMode(value);
+    window.localStorage.setItem("feedarr:setupRestore", String(value));
+  };
 
   useEffect(() => {
     setMaxStep((prev) => Math.max(prev, step));
@@ -121,7 +139,8 @@ export default function SetupWizard() {
         const remaining = resumeSetupSteps(state?.restoreSteps);
         restoredStepsRef.current = remaining?.length ? remaining : null;
         if (remaining?.length) {
-          setRestoreSteps(remaining); setStep(remaining[0]); setMaxStep(MAX_STEP);
+          setRestoreSteps(remaining); setStep(remaining[0]); setMaxStep(MAX_STEP); setRestoreMode(false);
+          window.localStorage.removeItem("feedarr:setupRestore");
         }
         const prevHasJackett = window.localStorage.getItem(STORAGE_HAS_JACKETT_SOURCE);
         const hasLocalConfig = JACKETT_STORAGE_KEYS.some((key) => {
@@ -240,6 +259,7 @@ export default function SetupWizard() {
   );
 
   const visibleSteps = restoreSteps ? steps.filter(s => restoreSteps.includes(s.id)) : steps;
+  const restoreStages = ["Importer", "Vérifier", "Restaurer", "Finaliser"].map((title, i) => ({ id: i + 1, title }));
   const current = steps.find(s => s.id === step);
   const allowSkip = step === 4 || step === 7;
   const isJackettReady = !!jackettStatus?.ready;
@@ -255,16 +275,16 @@ export default function SetupWizard() {
   return (
     <div className="setup-container">
       <div className="setup-stepper">
-        {!restoreMode && visibleSteps.map((s) => {
-          const isActive = s.id === step;
-          const isDone = s.id <= maxStep;
-          const canClick = s.id <= maxStep;
+        {(restoreMode ? restoreStages : visibleSteps).map((s) => {
+          const isActive = s.id === (restoreMode ? restore.stage : step);
+          const isDone = restoreMode ? s.id < restore.stage : s.id <= maxStep;
+          const canClick = restoreMode ? restore.canVisit(s.id) : s.id <= maxStep;
           return (
             <button
               key={s.id}
               type="button"
               className={`setup-stepper-item${isActive ? " is-active" : ""}${isDone ? " is-done" : ""}`}
-              onClick={() => canClick && goStep(s.id)}
+              onClick={() => canClick && (restoreMode ? restore.go(s.id) : goStep(s.id))}
               disabled={!canClick}
               aria-current={isActive ? "step" : undefined}
             >
@@ -277,20 +297,36 @@ export default function SetupWizard() {
 
       <div className="setup-card setupWizardFrame">
         <div className="setupWizardBody">
-          <div className="setup-card__content">
-            {!restoreSteps && step === MIN_STEP && <div className="formactions" style={{ marginBottom: 16 }}>
-              <button className={`btn${!restoreMode ? " btn-accent" : ""}`} type="button" onClick={() => setRestoreMode(false)} disabled={restoreBusy}>Nouvelle installation</button>
-              <button className={`btn${restoreMode ? " btn-accent" : ""}`} type="button" onClick={() => setRestoreMode(true)} disabled={restoreBusy}>Restaurer une configuration</button>
+          <div className="setup-card__content setup-step-group">
+            {!restoreSteps && step === MIN_STEP && (!restoreMode || restore.stage === 1) && <div className="setup-step">
+              <h2>Bienvenue dans Feedarr</h2>
+              <p className="muted">Choisissez comment configurer votre instance.</p>
+              <div className="settings-card__actions">
+                <button className={`btn${!restoreMode ? " btn-accent" : ""}`} type="button" aria-pressed={!restoreMode} onClick={() => chooseRestore(false)} disabled={restore.locked}>Nouvelle installation</button>
+                <button className={`btn${restoreMode ? " btn-accent" : ""}`} type="button" aria-pressed={restoreMode} onClick={() => chooseRestore(true)} disabled={restore.locked}>Restaurer une configuration</button>
+              </div>
             </div>}
-            {restoreMode ? <ConfigurationBackupPanel initialSetup onBusyChange={setRestoreBusy} onApplied={() => window.location.reload()} /> : current?.content}
+            {restoreMode ? <StepConfigurationRestore restore={restore} /> : current?.content}
             {restoreError && <div className="onboarding__error" role="alert">{restoreError}</div>}
-            {!!restoreSteps && step === MAX_STEP && <label className="formrow">Secret bootstrap si demandé pour terminer la restauration
-              <input type="password" autoComplete="off" value={completionBootstrap} onChange={e => setCompletionBootstrap(e.target.value)} disabled={finishing} />
-            </label>}
+            {!!restoreSteps && step === MAX_STEP && <div className="indexer-card"><div className="indexer-row indexer-row--settings">
+              <label className="indexer-title" htmlFor="completion-bootstrap">Secret bootstrap</label>
+              <div className="indexer-actions"><div className="fieldWrap"><input id="completion-bootstrap" type="password" autoComplete="off" value={completionBootstrap} onChange={e => setCompletionBootstrap(e.target.value)} disabled={finishing} /></div></div>
+            </div><div className="settings-help">Uniquement si votre accès distant le demande pour terminer la restauration.</div></div>}
           </div>
         </div>
 
-        {!restoreMode && <div className="setupWizardFooter">
+        {restoreMode ? <div className="setupWizardFooter">
+          <div className="setup-actions">
+            {restore.stage === 2 && <button className="btn" type="button" disabled={restore.busy} onClick={restore.cancel}>Précédent</button>}
+            {restore.stage === 3 && !restore.state?.confirmed && <button className="btn" type="button" disabled={restore.busy} onClick={() => restore.go(2)}>Précédent</button>}
+            <div className="setup-actions-right" style={{ marginLeft: "auto" }}>
+              {restore.stage === 1 && <button className="btn btn-accent" type="button" disabled={restore.busy || restore.state?.legacyRestorePending} onClick={restore.prepare}>{restore.busy ? "Analyse en cours…" : "Analyser la sauvegarde"}</button>}
+              {restore.stage === 2 && <button className="btn btn-accent" type="button" disabled={restore.busy || !restore.canContinue} onClick={() => restore.go(3)}>Suivant</button>}
+              {restore.stage === 3 && <button className="btn btn-accent" type="button" disabled={restore.busy} onClick={restore.state?.confirmed ? restore.checkRestart : restore.confirm}>{restore.busy ? "Opération en cours…" : restore.state?.confirmed ? "Vérifier après redémarrage" : "Confirmer la restauration"}</button>}
+              {restore.stage === 4 && <button className="btn btn-accent" type="button" disabled={restore.busy} onClick={restore.finish}>{restore.busy ? "Vérification…" : "Continuer vers Feedarr"}</button>}
+            </div>
+          </div>
+        </div> : <div className="setupWizardFooter">
           <div className="setup-actions">
             {step > visibleSteps[0]?.id && (
               <button
