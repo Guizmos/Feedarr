@@ -584,7 +584,7 @@ public sealed class PosterFetchService
         var tmpPath = targetPath + ".tmp";
         try
         {
-            await System.IO.File.WriteAllBytesAsync(tmpPath, bytes, ct).ConfigureAwait(false);
+            await PosterImageWriter.WriteAsync(tmpPath, bytes, ct).ConfigureAwait(false);
             System.IO.File.Move(tmpPath, targetPath, overwrite: true);
         }
         catch
@@ -675,7 +675,7 @@ public sealed class PosterFetchService
 
         var file = $"tmdb-{tmdbId}-manual{ext}";
         var full = Path.Combine(PostersDirAbs, file);
-        await System.IO.File.WriteAllBytesAsync(full, bytesTmdb, ct).ConfigureAwait(false);
+        await PosterImageWriter.WriteAsync(full, bytesTmdb, ct).ConfigureAwait(false);
         _releases.SavePoster(id, tmdbId, posterPath, file);
         await TrySaveToStoreAsync(id, "tmdb", tmdbId.ToString(CultureInfo.InvariantCulture), ext, bytesTmdb, file, tmdbId, posterPath, ct).ConfigureAwait(false);
         var mediaType = (string?)_releases.GetForPoster(id)?.MediaType ?? "";
@@ -707,7 +707,7 @@ public sealed class PosterFetchService
 
         var file = $"igdb-{igdbId}-manual.jpg";
         var full = Path.Combine(PostersDirAbs, file);
-        await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
+        await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, igdbId, coverUrl, file);
         await TrySaveToStoreAsync(id, "igdb", igdbId.ToString(CultureInfo.InvariantCulture), ".jpg", bytes, file, null, null, ct).ConfigureAwait(false);
         await UpdateExternalDetailsFromIgdbAsync(id, igdbId, ct).ConfigureAwait(false);        var size = InferIgdbSize(coverUrl);
@@ -739,7 +739,7 @@ public sealed class PosterFetchService
 
         var file = $"rawg-{rawgId}-manual.jpg";
         var full = Path.Combine(PostersDirAbs, file);
-        await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
+        await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, null, coverUrl, file);
         await TrySaveToStoreAsync(id, "rawg", rawgId.ToString(CultureInfo.InvariantCulture), ".jpg", bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(id, ExternalProviderKeys.Rawg, rawgId.ToString(CultureInfo.InvariantCulture),
@@ -768,7 +768,7 @@ public sealed class PosterFetchService
             : SanitizeForFile(providerId);
         var file = $"theaudiodb-{normalizedProviderId}-manual{ext}";
         var full = Path.Combine(PostersDirAbs, file);
-        await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
+        await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, null, posterUrl, file);
         await TrySaveToStoreAsync(id, ExternalProviderKeys.TheAudioDb, normalizedProviderId, ext, bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(
@@ -826,7 +826,7 @@ public sealed class PosterFetchService
             : SanitizeForFile(providerId);
         var file = $"googlebooks-{normalizedProviderId}-manual{ext}";
         var full = Path.Combine(PostersDirAbs, file);
-        await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
+        await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, null, posterUrl, file);
         await TrySaveToStoreAsync(id, ExternalProviderKeys.GoogleBooks, normalizedProviderId, ext, bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(
@@ -867,7 +867,7 @@ public sealed class PosterFetchService
             : SanitizeForFile(providerId);
         var file = $"openlibrary-{normalizedProviderId}-manual.jpg";
         var full = Path.Combine(PostersDirAbs, file);
-        await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
+        await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, null, posterUrl, file);
         await TrySaveToStoreAsync(id, ExternalProviderKeys.OpenLibrary, normalizedProviderId, ".jpg", bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(
@@ -909,7 +909,7 @@ public sealed class PosterFetchService
             : SanitizeForFile(providerId);
         var file = $"comicvine-{normalizedProviderId}-manual{ext}";
         var full = Path.Combine(PostersDirAbs, file);
-        await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
+        await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, null, posterUrl, file);
         await TrySaveToStoreAsync(id, ExternalProviderKeys.ComicVine, normalizedProviderId, ext, bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(
@@ -952,7 +952,7 @@ public sealed class PosterFetchService
 
         var file = $"musicbrainz-{normalizedProviderId}-manual{ext}";
         var full = Path.Combine(PostersDirAbs, file);
-        await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
+        await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, null, posterUrl, file);
         await TrySaveToStoreAsync(id, ExternalProviderKeys.MusicBrainz, normalizedProviderId, ext, bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(
@@ -1360,7 +1360,7 @@ public sealed class PosterFetchService
                     {
                         var file = $"igdb-{igdbMatch.Value.igdbId}-cover.jpg";
                         var full = Path.Combine(PostersDirAbs, file);
-                        await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
+                        await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
                         _releases.SavePoster(id, igdbMatch.Value.igdbId, igdbMatch.Value.coverUrl, file);
                         var igdbStoreResult = await TryMaterializeStoreForReleaseAsync(
                             id,
@@ -1544,7 +1544,7 @@ public sealed class PosterFetchService
             {
                 var file = $"tmdb-{tmdbMatch.Candidate.TmdbId}-w500.jpg";
                 var full = Path.Combine(PostersDirAbs, file);
-                await System.IO.File.WriteAllBytesAsync(full, bytesTmdb, ct).ConfigureAwait(false);
+                await PosterImageWriter.WriteAsync(full, bytesTmdb, ct).ConfigureAwait(false);
                 _releases.SavePoster(id, tmdbMatch.Candidate.TmdbId, selectedPosterPath, file);
                 var tmdbStoreResult = await TryMaterializeStoreForReleaseAsync(
                     id,
@@ -1728,7 +1728,7 @@ public sealed class PosterFetchService
         var fanartFile = $"fanart-{tmdbIdForFanart.Value}{ext}";
         var fanartFull = Path.Combine(PostersDirAbs, fanartFile);
 
-        await System.IO.File.WriteAllBytesAsync(fanartFull, fanartBytes, ct).ConfigureAwait(false);
+        await PosterImageWriter.WriteAsync(fanartFull, fanartBytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, tmdbIdForFanart.Value, fanartUrl, fanartFile);
         var fanartProviderId = mediaType == "series" && tvdbIdForFanart.HasValue
             ? tvdbIdForFanart.Value.ToString(CultureInfo.InvariantCulture)
@@ -2318,7 +2318,7 @@ public sealed class PosterFetchService
 
         var file = $"rawg-{rawgMatch.Value.rawgId}-cover.jpg";
         var full = Path.Combine(PostersDirAbs, file);
-        await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
+        await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, null, rawgMatch.Value.coverUrl, file);
         var rawgStoreResult = await TryMaterializeStoreForReleaseAsync(
             id,
@@ -2576,7 +2576,7 @@ public sealed class PosterFetchService
             if (string.IsNullOrWhiteSpace(ext)) ext = ".jpg";
             var file = $"tvmaze-{show.Id}-{size}{ext}";
             var full = Path.Combine(PostersDirAbs, file);
-            await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
+            await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
             var tmdbIdResolved = cachedIds.TmdbId;
             if (show.TvdbId.HasValue)
                 _releases.SaveTvdbId(id, show.TvdbId.Value);
@@ -2721,7 +2721,7 @@ public sealed class PosterFetchService
         if (string.IsNullOrWhiteSpace(ext)) ext = ".jpg";
         var file = $"tvmaze-{best.Candidate.Id}-{size}{ext}";
         var full = Path.Combine(PostersDirAbs, file);
-        await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
+        await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
         int? tmdbIdResolved = null;
         if (best.Candidate.TvdbId.HasValue)
             _releases.SaveTvdbId(id, best.Candidate.TvdbId.Value);
@@ -3110,7 +3110,7 @@ public sealed class PosterFetchService
     private async Task SavePosterFileAsync(string fileName, byte[] bytes, CancellationToken ct)
     {
         var full = Path.Combine(PostersDirAbs, fileName);
-        await System.IO.File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);    }
+        await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);    }
 
     private static string InferFileExtensionFromUrl(string? url, string fallback)
     {

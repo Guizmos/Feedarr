@@ -602,7 +602,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             if (_scenario == PosterContractScenario.SeriesTmdbFallbackFanart && path.Contains("/w500") && path.Contains("700"))
                 return Array.Empty<byte>();
 
-            return Encoding.UTF8.GetBytes("image-bytes");
+            return PosterTestImage.Create();
         }
 
         private static HttpResponseMessage JsonResponse(string json)
@@ -636,7 +636,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             {
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new ByteArrayContent(Encoding.UTF8.GetBytes("fanart-image"))
+                    Content = new ByteArrayContent(PosterTestImage.Create())
                 });
             }
 
@@ -686,7 +686,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             {
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new ByteArrayContent(Encoding.UTF8.GetBytes("igdb-image"))
+                    Content = new ByteArrayContent(PosterTestImage.Create())
                 };
             }
 
@@ -740,7 +740,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             {
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new ByteArrayContent(Encoding.UTF8.GetBytes("tvmaze-image"))
+                    Content = new ByteArrayContent(PosterTestImage.Create())
                 });
             }
 
@@ -768,7 +768,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             var uri = request.RequestUri ?? new Uri("https://api.jikan.moe/v4/");
             var path = uri.AbsolutePath.ToLowerInvariant();
 
-            if (path.Contains("/anime"))
+            if (!uri.Host.Contains("cdn.jikan.moe", StringComparison.OrdinalIgnoreCase) && path.Contains("/anime"))
             {
                 if (_scenario == PosterContractScenario.AnimeJikanHit)
                 {
@@ -781,7 +781,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             {
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new ByteArrayContent(Encoding.UTF8.GetBytes("jikan-image"))
+                    Content = new ByteArrayContent(PosterTestImage.Create())
                 });
             }
 
@@ -827,7 +827,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             {
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new ByteArrayContent(Encoding.UTF8.GetBytes("audiodb-image"))
+                    Content = new ByteArrayContent(PosterTestImage.Create())
                 });
             }
 
@@ -866,7 +866,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             {
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new ByteArrayContent(Encoding.UTF8.GetBytes("googlebooks-image"))
+                    Content = new ByteArrayContent(PosterTestImage.Create())
                 });
             }
 
@@ -905,7 +905,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             {
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new ByteArrayContent(Encoding.UTF8.GetBytes("comicvine-image"))
+                    Content = new ByteArrayContent(PosterTestImage.Create())
                 });
             }
 

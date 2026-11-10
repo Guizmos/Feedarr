@@ -22,14 +22,14 @@ internal sealed class SsrfGuardHandler : DelegatingHandler
         CancellationToken cancellationToken)
     {
         var uri = request.RequestUri;
-        if (uri is not null &&
-            (uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
-             uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
-        {
-            var addresses = await _dns.ResolveAsync(uri.IdnHost, cancellationToken).ConfigureAwait(false);
-            if (addresses.Length == 0 || addresses.Any(ip => !_policy.Allows(uri.IdnHost, uri.Port, ip, _context)))
-                throw new SsrfBlockedException();
-        }
+        if (uri is null || !uri.IsAbsoluteUri ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
+            !string.IsNullOrEmpty(uri.UserInfo) || OutboundDestinationPolicy.IsForbiddenHost(uri.IdnHost))
+            throw new SsrfBlockedException();
+
+        var addresses = await _dns.ResolveAsync(uri.IdnHost, cancellationToken).ConfigureAwait(false);
+        if (addresses.Length == 0 || addresses.Any(ip => !_policy.Allows(uri.IdnHost, uri.Port, ip, _context)))
+            throw new SsrfBlockedException();
 
         return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
     }

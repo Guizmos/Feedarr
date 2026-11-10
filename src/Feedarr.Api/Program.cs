@@ -314,7 +314,8 @@ builder.Services.AddHttpClient<TmdbClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(30);
     c.BaseAddress = new Uri("https://api.themoviedb.org/3/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+}).UsePublicProviderTransport()
+  .AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Fanart
@@ -323,7 +324,8 @@ builder.Services.AddHttpClient<FanartClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(25);
     c.BaseAddress = new Uri("https://webservice.fanart.tv/v3/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+}).UsePublicProviderTransport()
+  .AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // IGDB
@@ -331,7 +333,8 @@ builder.Services.AddHttpClient<IgdbClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(25);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+}).UsePublicProviderTransport()
+  .AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // TVmaze
@@ -340,7 +343,8 @@ builder.Services.AddHttpClient<TvMazeClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(20);
     c.BaseAddress = new Uri("https://api.tvmaze.com/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+}).UsePublicProviderTransport()
+  .AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Jikan
@@ -349,7 +353,8 @@ builder.Services.AddHttpClient<JikanClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(20);
     c.BaseAddress = new Uri("https://api.jikan.moe/v4/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+}).UsePublicProviderTransport()
+  .AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Google Books
@@ -358,7 +363,8 @@ builder.Services.AddHttpClient<GoogleBooksClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(20);
     c.BaseAddress = new Uri("https://www.googleapis.com/books/v1/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+}).UsePublicProviderTransport()
+  .AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // TheAudioDB
@@ -367,7 +373,8 @@ builder.Services.AddHttpClient<TheAudioDbClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(20);
     c.BaseAddress = new Uri("https://www.theaudiodb.com/api/v1/json/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+}).UsePublicProviderTransport()
+  .AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Comic Vine
@@ -376,7 +383,8 @@ builder.Services.AddHttpClient<ComicVineClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(20);
     c.BaseAddress = new Uri("https://comicvine.gamespot.com/api/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+}).UsePublicProviderTransport()
+  .AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Open Library — free, no API key required
@@ -386,7 +394,8 @@ builder.Services.AddHttpClient<OpenLibraryClient>(c =>
     c.BaseAddress = new Uri("https://openlibrary.org/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0 ( https://github.com/Guizmos/feedarr )");
     c.DefaultRequestHeaders.Accept.ParseAdd("application/json");
-}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+}).UsePublicProviderTransport()
+  .AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // MusicBrainz — no API key required, User-Agent mandatory
@@ -395,7 +404,8 @@ builder.Services.AddHttpClient<MusicBrainzClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(25);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0 ( https://github.com/Guizmos/feedarr )");
     c.DefaultRequestHeaders.Accept.ParseAdd("application/json");
-}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+}).UsePublicProviderTransport()
+  .AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // RAWG — free tier API key required (rawg.io/apidocs)
@@ -404,7 +414,8 @@ builder.Services.AddHttpClient<RawgClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(20);
     c.BaseAddress = new Uri("https://api.rawg.io/api/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
+}).UsePublicProviderTransport()
+  .AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // Sonarr

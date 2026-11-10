@@ -81,21 +81,19 @@ public sealed class PosterFetchStoreMaterializationTests
     }
 
     [Fact]
-    public async Task FetchPosterAsync_InvalidImageBytes_StaysBestEffort()
+    public async Task FetchPosterAsync_InvalidImageBytes_AreNotPublished()
     {
         using var ctx = new PosterStoreContext(ImagePayloadMode.InvalidImage);
         var releaseId = ctx.CreateRelease("Broken Poster", "Broken Poster", 1999);
 
-        var result = await ctx.Posters.FetchPosterAsync(releaseId, CancellationToken.None, logSingle: false, skipIfExists: true);
-
-        Assert.True(result.Ok);
+        await Assert.ThrowsAsync<InvalidDataException>(() => ctx.Posters.FetchPosterAsync(
+            releaseId, CancellationToken.None, logSingle: false, skipIfExists: true));
 
         var release = ctx.Releases.GetForPoster(releaseId);
         Assert.NotNull(release);
-        Assert.Equal("tmdb-100-w500.jpg", release!.PosterFile);
-        Assert.True(File.Exists(Path.Combine(ctx.PostersDir, "tmdb-100-w500.jpg")));
+        Assert.True(string.IsNullOrEmpty(release!.PosterFile));
+        Assert.False(File.Exists(Path.Combine(ctx.PostersDir, "tmdb-100-w500.jpg")));
         Assert.False(File.Exists(Path.Combine(ctx.StoreDir, "tmdb-100", "w500.webp")));
-        Assert.Contains(ctx.ThumbLogger.Entries, entry => entry.Level == LogLevel.Warning);
     }
 
     [Fact]

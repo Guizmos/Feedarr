@@ -226,7 +226,7 @@ public sealed class PostersController : ControllerBase
 
         try
         {
-            await System.IO.File.WriteAllBytesAsync(full, bytes, ct);
+            await PosterImageWriter.WriteAsync(full, bytes, ct);
         }
         catch (UnauthorizedAccessException ex)
         {

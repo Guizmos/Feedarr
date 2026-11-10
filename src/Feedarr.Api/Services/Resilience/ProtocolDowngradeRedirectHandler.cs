@@ -11,9 +11,11 @@ internal sealed class ProtocolDowngradeRedirectHandler : DelegatingHandler
 {
     private readonly OutboundDestinationPolicy _policy;
     private readonly OutboundDestinationContext _context;
+    private readonly bool _allowPublicRedirects;
     public ProtocolDowngradeRedirectHandler() : this(new OutboundDestinationPolicy(new Feedarr.Api.Options.OutboundSecurityOptions()), OutboundDestinationContext.Strict) { }
-    public ProtocolDowngradeRedirectHandler(OutboundDestinationPolicy policy, OutboundDestinationContext context)
-    { _policy = policy; _context = context; }
+    public ProtocolDowngradeRedirectHandler(OutboundDestinationPolicy policy, OutboundDestinationContext context,
+        bool allowPublicRedirects = false)
+    { _policy = policy; _context = context; _allowPublicRedirects = allowPublicRedirects; }
 
     internal static readonly HttpRequestOptionsKey<bool> AllowHttpsToHttpDowngradeOption =
         new("feedarr.allow_https_to_http_downgrade_redirect");
@@ -46,7 +48,9 @@ internal sealed class ProtocolDowngradeRedirectHandler : DelegatingHandler
                 ? location
                 : new Uri(currentRequest.RequestUri!, location);
 
-            if (HasHostChanged(currentRequest.RequestUri, redirectUri))
+            if (HasHostChanged(currentRequest.RequestUri, redirectUri) &&
+                !(_allowPublicRedirects && _context == OutboundDestinationContext.Strict &&
+                  (currentRequest.Method == HttpMethod.Get || currentRequest.Method == HttpMethod.Head)))
                 throw BlockedRedirect(response, currentRequest, request);
 
             // Check literal destinations here. The inner SSRF guard and validated
@@ -59,7 +63,7 @@ internal sealed class ProtocolDowngradeRedirectHandler : DelegatingHandler
                 throw BlockedRedirect(response, currentRequest, request);
 
             if (IsHttpsToHttpDowngrade(currentRequest.RequestUri, redirectUri) &&
-                !IsHttpsToHttpDowngradeAllowed(currentRequest))
+                (_allowPublicRedirects || !IsHttpsToHttpDowngradeAllowed(currentRequest)))
             {
                 throw BlockedRedirect(response, currentRequest, request);
             }
