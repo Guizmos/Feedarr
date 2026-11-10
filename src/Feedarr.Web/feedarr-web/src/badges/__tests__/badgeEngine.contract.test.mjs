@@ -202,3 +202,14 @@ test("no reappear after seen on internal nav without new backend data", () => {
   assert.equal(afterInternalNav.updates.value, false);
 });
 
+
+
+test("release errors survive badge metadata selection and keep cached changelog", () => {
+  const release = { tagName: "v2.5.17", body: "Cached changelog" };
+  const latest = getBadgeDefinition("updates").selectLatest(null, {
+    error: "GitHub quota dépassé", latestRelease: release, releases: [release],
+  });
+  assert.equal(latest.meta.error, "GitHub quota dépassé");
+  assert.equal(latest.meta.latestRelease.body, "Cached changelog");
+  assert.equal(latest.meta.releases.length, 1);
+});

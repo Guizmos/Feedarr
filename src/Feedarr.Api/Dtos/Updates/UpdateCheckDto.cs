@@ -2,6 +2,7 @@ namespace Feedarr.Api.Dtos.Updates;
 
 public sealed class UpdateCheckDto
 {
+    public string? Error { get; set; }
     public bool Enabled { get; set; }
     public string CurrentVersion { get; set; } = "";
     public bool IsUpdateAvailable { get; set; }

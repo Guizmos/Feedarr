@@ -164,6 +164,7 @@ export const badgeRegistry = [
       return {
         cursor: latestTag,
         meta: {
+          error: String(updatePayload?.error || ""),
           isUpdateAvailable: !!updatePayload?.isUpdateAvailable,
           latestRelease: updatePayload?.latestRelease || null,
           releases: Array.isArray(updatePayload?.releases) ? updatePayload.releases : [],

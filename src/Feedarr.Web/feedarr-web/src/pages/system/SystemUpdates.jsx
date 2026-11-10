@@ -39,16 +39,17 @@ export default function SystemUpdates({
 }) {
   const statusLabel = useMemo(() => {
     if (!updatesEnabled) return "Désactivé";
-    if (!latestRelease?.tagName) return "Inconnu";
+    if (error) return "Erreur de récupération";
+    if (!latestRelease?.tagName) return loading ? "Chargement…" : "Aucune release disponible";
     if (isUpdateAvailable) return "Mise à jour disponible";
     return "À jour";
-  }, [updatesEnabled, latestRelease?.tagName, isUpdateAvailable]);
+  }, [updatesEnabled, latestRelease?.tagName, isUpdateAvailable, error, loading]);
 
   const statusClass = useMemo(() => {
-    if (!updatesEnabled) return "warn";
+    if (!updatesEnabled || error) return "warn";
     if (isUpdateAvailable) return "warn";
     return "ok";
-  }, [updatesEnabled, isUpdateAvailable]);
+  }, [updatesEnabled, isUpdateAvailable, error]);
 
   return (
     <>
