@@ -14,7 +14,7 @@ using System.Text.Json;
 
 namespace Feedarr.Api.Services.Backup;
 
-public sealed class BackupService
+public sealed class BackupService : IHostedService
 {
     private static readonly JsonSerializerOptions BackupJsonOptions = new()
     {
@@ -34,6 +34,64 @@ public sealed class BackupService
     private readonly IApiKeyProtectionService _apiKeyProtection;
     private readonly ILogger<BackupService> _logger;
     private readonly PendingRestoreStore _pending;
+
+    private readonly object _preparationLock = new();
+    private readonly CancellationTokenSource _preparationStopping = new();
+    private Task? _preparationTask;
+    private RestorePreparationStatus? _preparation;
+    internal TimeSpan PreparationTimeout { get; set; } = TimeSpan.FromHours(2);
+
+    public Task StartAsync(CancellationToken ct) => Task.CompletedTask;
+
+    public async Task StopAsync(CancellationToken ct)
+    {
+        _preparationStopping.Cancel();
+        Task? running;
+        lock (_preparationLock) running = _preparationTask;
+        if (running is not null) await running.WaitAsync(ct).ConfigureAwait(false);
+    }
+
+    public RestorePreparationStatus StartRestorePreparation(string name, string version, string? replacePendingId = null)
+    {
+        lock (_preparationLock)
+        {
+            EnsureRestartNotRequired();
+            if (_preparationStopping.IsCancellationRequested)
+                throw new BackupOperationException("Le serveur est en cours d’arrêt ; réessayez après son redémarrage.", 503);
+            if (_preparationTask is { IsCompleted: false } || _coordinator.GetState().IsBusy)
+                throw new BackupOperationException("Une opération de sauvegarde ou de restauration est déjà en cours.", 409);
+            _pending.EnsureCanPrepare(replacePendingId);
+            GetExistingBackupFile(name);
+            var id = Guid.NewGuid().ToString("N");
+            var accepted = new RestorePreparationStatus(id, "running");
+            _preparation = accepted;
+            _preparationTask = Task.Run(async () =>
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_preparationStopping.Token);
+                timeout.CancelAfter(PreparationTimeout);
+                var started = System.Diagnostics.Stopwatch.StartNew();
+                _logger.LogInformation("Restore preparation {PreparationId} started independently of HTTP", id);
+                try
+                {
+                    var result = await RestoreBackupAsync(name, version, timeout.Token, replacePendingId, id).ConfigureAwait(false);
+                    var pending = _pending.GetStatus();
+                    if (!pending.Pending || pending.State != "pending" || pending.Id != id)
+                        throw new BackupOperationException("Le manifeste de restauration préparée n'a pas pu être confirmé.");
+                    lock (_preparationLock) _preparation = new(id, "completed", Result: result);
+                    _logger.LogInformation("Restore preparation {PreparationId} published after {ElapsedMs}ms", id, started.ElapsedMilliseconds);
+                }
+                catch (Exception ex)
+                {
+                    var error = ex is OperationCanceledException
+                        ? (_preparationStopping.IsCancellationRequested ? "Préparation interrompue par l'arrêt du serveur." : "Délai maximal de préparation dépassé (2 heures).")
+                        : ErrorMessageSanitizer.ToOperationalMessage(ex, "Échec de préparation ; consultez les journaux du serveur.");
+                    lock (_preparationLock) _preparation = new(id, "failed", Error: error);
+                    _logger.LogError(ex, "Restore preparation {PreparationId} failed after {ElapsedMs}ms", id, started.ElapsedMilliseconds);
+                }
+            });
+            return accepted;
+        }
+    }
 
     private string DataDirAbs =>
         Path.IsPathRooted(_opts.DataDir)
@@ -81,8 +139,16 @@ public sealed class BackupService
             .ToList();
     }
 
+    private void EnsurePreparationNotRunning()
+    {
+        lock (_preparationLock)
+            if (_preparation?.State == "running")
+                throw new BackupOperationException("Une préparation de restauration est déjà en cours.", 409);
+    }
+
     public Task<int> PurgeBackupsAsync(CancellationToken ct = default)
     {
+        EnsurePreparationNotRunning();
         EnsureRestartNotRequired();
         return _coordinator.RunExclusiveAsync("purge", null, async opCt =>
         {
@@ -106,6 +172,7 @@ public sealed class BackupService
 
     public Task<BackupFileDto> CreateBackupAsync(string appVersion, CancellationToken ct = default)
     {
+        EnsurePreparationNotRunning();
         EnsureRestartNotRequired();
         return _coordinator.RunExclusiveAsync("create", null, async opCt =>
         {
@@ -179,6 +246,7 @@ public sealed class BackupService
 
     public async Task DeleteBackupAsync(string name, CancellationToken ct = default)
     {
+        EnsurePreparationNotRunning();
         await _coordinator.RunExclusiveAsync("delete", name, opCt =>
         {
             opCt.ThrowIfCancellationRequested();
@@ -266,11 +334,12 @@ public sealed class BackupService
     }
 
     public Task<BackupRestoreResult> RestoreBackupAsync(
-        string name, string currentAppVersion, CancellationToken ct = default, string? replacePendingId = null)
+        string name, string currentAppVersion, CancellationToken ct = default, string? replacePendingId = null, string? preparationId = null)
     {
         EnsureRestartNotRequired();
         return _coordinator.RunExclusiveAsync("prepare-restore", name, async opCt =>
         {
+            _pending.EnsureCanPrepare(replacePendingId);
             var (_, backupPath) = GetExistingBackupFile(name);
             var work = _pending.NewWorkDirectory();
             var extracted = Path.Combine(work, "incoming.db");
@@ -287,7 +356,7 @@ public sealed class BackupService
                 VerifySqliteIntegrity(extracted);
                 var credentials = NormalizeRestoredCredentials(extracted);
                 VerifySqliteIntegrity(extracted);
-                var status = _pending.Publish(work, name, replacePendingId, opCt);
+                var status = _pending.Publish(work, name, replacePendingId, opCt, preparationId);
                 return await Task.FromResult(new BackupRestoreResult
                 {
                     ReencryptedCredentials = credentials.Reencrypted,
@@ -295,6 +364,7 @@ public sealed class BackupService
                     MissingPosters = status.MissingPosters
                 });
             }
+            catch (OperationCanceledException) { throw; }
             catch (BackupOperationException) { throw; }
             catch (Exception ex)
             {
@@ -311,6 +381,16 @@ public sealed class BackupService
     public BackupOperationStateDto GetOperationState()
     {
         var state = _coordinator.GetState();
+        lock (_preparationLock)
+        {
+            state.Preparation = _preparation;
+            if (_preparation?.State == "running" && !state.IsBusy)
+            {
+                state.IsBusy = true;
+                state.Operation = "prepare-restore";
+                state.Phase = "running";
+            }
+        }
         state.RestorePending = _pending.GetStatus();
         state.NeedsRestart = IsRestartRequired() || state.RestorePending.Pending;
         return state;

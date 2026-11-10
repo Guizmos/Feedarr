@@ -192,6 +192,7 @@ builder.Services.AddSingleton<ApiRequestMetricsService>();
 builder.Services.AddSingleton<BackupExecutionCoordinator>();
 builder.Services.AddSingleton<BackupValidationService>();
 builder.Services.AddSingleton<BackupService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<BackupService>());
 builder.Services.AddSingleton<UnifiedCategoryService>();
 builder.Services.AddSingleton<UnifiedCategoryResolver>();
 builder.Services.AddMemoryCache();

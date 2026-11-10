@@ -1,63 +1,129 @@
-# Audit des régressions beta — 10 novembre 2026
+# Régressions beta — diagnostic réel et correctifs locaux, 10 novembre 2026
 
-## P1 — restauration différée : non reproduite, non déclarée corrigée
+Les correctifs P1 et P2 sont implémentés séparément. Le commit P2 `6219273` est
+conservé sans modification. Aucun push ni déploiement n'est effectué. La validation
+locale ne constitue pas une confirmation de résolution sur le conteneur de production.
 
-Aucun accès à l'instance concernée n'a été fourni pendant cet audit. Aucun manifeste,
-staging, conteneur ou fichier SQLite de production n'a été ouvert, modifié ou supprimé.
-Aucun conteneur de production n'a été redémarré. L'inventaire local du dépôt ne révèle
-pas de `restore-state` ou de fichier `.db` existant ; les tests emploient leurs propres
-répertoires temporaires. Docker n'est pas installé sur la machine de validation.
+## P1 — cause établie et limites du diagnostic
 
-### Parcours vérifié dans le code
+La production est bien `2.5.18-beta-sha.304572d`, révision OCI
+`304572d3c7662b7e10f6d8220273eb111a7fb764`, sur Synology/Portainer. Les rapports
+fournis par l'utilisateur confirment un bind mount persistant et accessible de
+`/volume1/Docker/Feedarr/data` vers `/app/data`, UID/GID effectifs 10001, de l'espace
+libre et aucun redémarrage/OOM du conteneur pendant la période observée.
 
-1. `pages/settings/hooks/useMaintenanceActions.js` ouvre la modale et envoie le
-   POST `/api/system/backups/{name}/restore` sans confirmation pour la prévisualisation.
-2. Après confirmation, le hook active `backupRestoreLoading` et attend le POST avec
-   `confirm=true`, éventuellement `replacePendingId`, et un timeout de 600 000 ms.
-3. `SystemBackupsController` délègue à `SystemApiCore.RestoreBackup`, qui attend
-   `BackupService.RestoreBackupAsync`.
-4. `BackupExecutionCoordinator.RunExclusiveAsync` attend le sémaphore des opérations.
-   La préparation utilise `blockSync: false` : elle n'attend pas le drainage RSS.
-5. `BackupService` extrait et valide l'archive, vérifie son checksum et l'intégrité
-   SQLite, normalise les credentials dans la copie temporaire, puis appelle `Publish`.
-6. `PendingRestoreStore.Publish` copie les posters, répare les références dans la copie,
-   flush les fichiers, écrit le manifeste, prend `operation.lock`, vérifie l'identité
-   d'une éventuelle restauration précédente, déplace le staging et publie atomiquement
-   `restore-state/pending.json` après synchronisation des répertoires.
-7. Le coordinateur libère ses états et son sémaphore. Le contrôleur renvoie un objet
-   JSON avec `ok: true`, `needsRestart: true`, les compteurs et l'avertissement éventuel.
-8. Le frontend émet `restore:changed`, ferme la modale, recharge liste/statut, puis
-   remet le loading à false dans `finally`. `api/client.js` borne l'attente du fetch
-   ET de son corps JSON avec le signal de timeout.
-9. `RestorePendingBanner` lit `/api/system/backups/restore-state` au montage, sur
-   l'événement et toutes les 15 secondes. Il conserve le dernier état lors d'une erreur
-   réseau. Le backend relit `pending.json` à chaque demande, sans TTL ni cache React.
+Les posters représentent **52 293 fichiers et 6 613 367 029 octets**. Le parcours de
+leurs métadonnées prend 0,262 s ; ce chiffre ne mesure ni la copie ni les fsync.
+Sur `304572d`, chaque préparation copie récursivement tous les posters, avec
+`Flush(true)` pour chaque fichier, avant de publier le manifeste. Elle reste exécutée
+dans le POST HTTP et reçoit son CancellationToken de la requête.
 
-La préparation retourne et le manifeste reste visible après recréation du store dans
-les tests. Un manifeste valide présent dans le même DataDir ne peut pas disparaître
-par une simple actualisation du navigateur dans ce parcours. Les observations de
-production ne suffisent donc pas à attribuer une cause exacte : il faut comparer le
-SHA effectivement déployé, les réponses réseau, les logs, les volumes et le contenu de
-`restore-state` sur l'instance concernée. Les différences de volume, plusieurs instances,
-une ancienne version frontend/backend ou une erreur d'E/S restent des hypothèses,
-pas des diagnostics établis.
+Les deux échecs, à 11:15:54.757962016 UTC et 11:16:31.462477563 UTC, sont chacun
+associés à `OperationCanceledException`, au contrôle d'annulation de `CopyTree`
+ligne 331 et à son appel depuis `Publish` ligne 92. La seconde stack comporte aussi
+la récursion ligne 337. **Le token HTTP était annulé au contrôle de la copie des
+posters, avant toute publication du manifeste.** Le `finally` de `BackupService`
+supprime alors le work non publié ; cela explique l'absence de pending, stage et
+résultat dans les inventaires suivants, sans perte de volume Docker.
 
-### Défauts de protection constatés, sans correctif supposé
+La défaillance de cycle de vie établie est l'attachement d'une préparation volumineuse
+à la connexion HTTP qui doit attendre sa fin. Les preuves ne permettent pas de dire
+si l'annulation vient du refresh, d'un timeout client/proxy ou d'une autre fermeture
+HTTP, ni de mesurer le temps effectivement passé en copie. Le correctif ne suppose
+aucun timeout Synology précis et ne prétend pas avoir mesuré un deadlock.
 
-- Le loading React seul ne protège pas deux appels synchrones avant le rerender.
-- Les callbacks refusent la fermeture pendant le loading, mais la croix du composant
-  `Modal` n'est pas visuellement désactivée.
-- Le hook accepte une réponse POST sans vérifier strictement `ok` ni relire le manifeste
-  pour confirmer l'identité de la préparation.
-- Le contrôle d'un pending existant intervient dans `Publish`, après extraction/copie ;
-  l'inventaire d'un staging incomplet n'est pas exposé avant une nouvelle préparation.
+L'utilisateur ne pouvait pas lire le bandeau derrière la modale. `SettingsBackup`
+affiche aussi un bandeau orange d'opération en cours avant tout manifeste, distinct
+de `RestorePendingBanner`. L'apparition rapide d'un bandeau ne prouve donc pas une
+préparation réussie. Les GET de diagnostic retournaient 401 ; ils ne contenaient
+aucun état JSON exploitable et n'ont pas été contournés.
 
-Ces points ne démontrent pas la cause du blocage et du bandeau éphémère. Aucun correctif
-P1 ni commit intitulé « resolve deferred restore preparation lifecycle » n'est créé à
-ce stade. Ne pas relancer une préparation en production avant l'inventaire du pending,
-des `building-*`, des `stages`, de `operation.json` et du volume monté. Ne rien effacer.
-Les protections supplémentaires demandées restent à mettre en œuvre avec le correctif
-P1, une fois son diagnostic établi.
+### Parcours corrigé
+
+1. Le frontend relit `/api/system/backups/state` avant soumission et demande une
+   confirmation explicite avec l'identité courante pour remplacer un pending.
+2. Le POST confirmé avec `background=true` vérifie les conflits, un pending existant
+   et les stagings incomplets, puis répond rapidement **HTTP 202** avec
+   `accepted: true`, `preparationId` et Location `/api/system/backups/state`.
+   Cette réponse signifie acceptation, jamais préparation réussie.
+3. `BackupService`, enregistré comme service hébergé, possède l'exécution et son
+   token. Une fermeture HTTP ne l'annule plus. L'arrêt de l'hôte ou le délai serveur
+   de deux heures demandent son annulation. Le travail et ses exceptions sont suivis.
+4. Les copies, checksums, fsync, règles de remplacement et publication atomique
+   préexistants restent en place. L'identité publiée est celle de la préparation.
+   La préparation ne se connecte jamais à SQLite active.
+5. Le frontend suit l'identité via les GET de statut ; seule la lecture serveur d'un
+   manifeste pending correspondant confirme la préparation. Il ferme alors la modale
+   et émet l'événement d'actualisation du bandeau. Un booléen React ou le HTTP 202 ne
+   suffit pas. Le manifeste persistant maintient le bandeau après un refresh.
+6. Un échec, une perte de suivi ou un timeout produit une erreur explicite et libère
+   le loading dans `finally`. Après trois erreurs de polling ou trente minutes de
+   suivi, le message précise que le serveur peut encore travailler : aucune nouvelle
+   soumission automatique. Chaque requête de suivi a son propre timeout de 15 s.
+7. Une ref de soumission bloque les doubles clics avant même un rerender. Boutons,
+   croix, Échap et fermeture extérieure sont bloqués pendant l'opération, pour
+   restauration et création de sauvegarde. Les erreurs sont lisibles dans les modales.
+8. Les erreurs de préparation restent visibles via l'état serveur lors d'une nouvelle
+   visite de la page. L'indicateur de copie en cours est distingué d'un pending prêt.
+
+Le contrat historique `/restore?confirm=true` reste synchrone sans le paramètre
+`background` : un ancien client ne doit pas interpréter un nouveau HTTP 202 comme une
+restauration terminée. Le nouveau frontend utilise explicitement le mode asynchrone.
+Il faut donc déployer backend et frontend ensemble et actualiser les anciens onglets.
+
+### Contrôle préalable et conservation
+
+Une préparation concurrente est refusée. Un pending existant exige son ID pour être
+remplacé ; son manifeste/stage doit être lisible. Des `building-*`, stages orphelins,
+temporaires de pending/journal ou un chemin de contrôle incohérent bloquent une
+nouvelle préparation avec une erreur de diagnostic. Ils ne sont pas effacés par ce
+contrôle. Les vérifications sous verrou au moment de publier sont conservées.
+Un échec du remplacement conserve le pending précédent. Les sauvegardes ZIP et le
+format de restauration ne changent pas. Les autres mutations de sauvegarde sont
+refusées pendant une préparation active plutôt que lancées en parallèle.
+
+### Fichiers P1
+
+- Backend : `Services/Backup/BackupService.cs`, `PendingRestoreStore.cs`,
+  `BackupOperationStateDto.cs`, `Controllers/SystemApiCore.cs`,
+  `Controllers/SystemBackupsController.cs`, `Program.cs`.
+- Frontend : `pages/settings/hooks/restorePreparation.js`, `useMaintenanceActions.js`,
+  `pages/settings/SettingsBackup.jsx`, `ui/Modal.jsx`.
+- Tests : `BackupServiceTests.cs`, `SystemControllerBackupRestartRequiredTests.cs`,
+  `restorePreparation.test.mjs`, `backupSubmission.test.mjs`,
+  `Modal.closeDisabled.test.mjs`, plus les tests de persistance existants.
+- Diagnostic fourni : `docker/diagnostics/diagnose-restore.py`, ses tests et
+  `docs/restore-diagnostic.md`. Aucun secret/log brut n'est enregistré dans le dépôt.
+
+### Reproduction et validation de P1
+
+Le test HTTP démarre un vrai Kestrel local sur un port éphémère, avec données
+entièrement temporaires. La copie est volontairement retenue par une barrière de test.
+Il vérifie réception complète du HTTP 202 et de son JSON pendant que la copie est
+encore bloquée, annulation du token client, GET d'état `running` sans pending,
+puis publication du manifeste correspondant après libération. Le même test vérifie
+que l'ancien contrat retourne toujours HTTP 200. Il ne démarre pas le Program de
+production et ne modifie ni l'authentification ni les politiques de sécurité.
+
+Les autres tests couvrent une copie lente, doubles soumissions, échec disque, délai
+serveur, arrêt de l'hôte, préservation du pending remplacé, staging incomplet conservé,
+confirmation uniquement par manifeste, polling temporairement défaillant/perdu,
+timeout de suivi, fermeture des modales et sortie du loading pour création/restauration.
+
+### Risques résiduels P1
+
+Le volume de 6,61 Go et les 52 293 écritures durables restent à traiter : le correctif
+résout le cycle de vie, pas le coût d'E/S. Le délai serveur est coopératif ; une E/S
+bloquée par le NAS peut retarder sa prise en compte, mais le suivi frontend est borné.
+L'état détaillé du job est en mémoire ; après arrêt brutal avant publication, aucune
+réussite n'est annoncée. La publication durable et le traitement au démarrage restent
+ceux du mécanisme existant. Aucun redémarrage de production n'est entrepris ici.
+
+Docker est absent de la machine de développement : pas de reproduction destructive
+sur un conteneur local. Les preuves du volume persistant viennent des diagnostics
+réels fournis ; la reproduction contrôlée du cycle HTTP emploie Kestrel et un staging
+sur disque temporaire. Le comportement du correctif sur le NAS reste à confirmer
+après un déploiement décidé par l'utilisateur.
 
 ## P2 — métadonnées de release : cause reproduite et correction ciblée
 
@@ -107,36 +173,41 @@ Frontend : `badges/useBadgeStore.js`, `badges/badgeRegistry.js`, `badges/badgeSt
 Tests : `ReleaseInfoServiceTests.cs`, `SystemUpdates.test.mjs`, `updateCache.test.mjs`,
 `badgeEngine.contract.test.mjs`.
 
-### Limites et déploiement
 
-La correction P2 est validée localement ; le conteneur de production n'a pas été testé.
-Le champ JSON `error` est additif. Les données précédemment en cache restent disponibles
-avec avertissement lors d'une panne GitHub. La fenêtre de récupération reste celle des
-dix dernières releases, comme auparavant. Un nouveau déploiement backend ET frontend
-est nécessaire pour appliquer P2. Le P1 demeure ouvert : ne pas annoncer que les deux
-régressions sont corrigées et ne pas pousser l'ensemble sur `origin/beta`.
+## Validation globale et Git
 
-## Validation exécutée
+- Tests ciblés Backup/Restore : **50/50 réussis**, dont le POST et les GET via Kestrel réel.
+- Suite backend finale : **1 052/1 052 réussis**, comprenant mises à jour, endpoints,
+  persistance des manifestes et non-régression SSRF/transports publics.
+- Suite frontend finale : **313/313 réussis**, incluant les vrais handlers du hook,
+  le suivi de préparation, les protections Modal et le bandeau pending existant.
+- Tests du script de diagnostic : **5/5 réussis** (sorties filtrées, erreurs, chemins
+  et liens symboliques, positions des exceptions). Aucun contact de production.
+- Compilation backend Release : réussie, **0 erreur / 0 avertissement**.
+- Vite, ESLint et `git diff --check` : réussis.
 
-- Backup/Restore ciblés : 42/42 réussis, répertoires SQLite temporaires uniquement.
-- Releases/DTO/endpoints/transports publics/SSRF ciblés : 111/111 réussis avant les deux
-  cas supplémentaires de sélection de track ; ces deux cas passent dans la suite finale.
-- Suite backend finale : 1 044/1 044 réussis (`dotnet test src/Feedarr.Api.Tests --no-restore`).
-- Une exécution intermédiaire a échoué sur un timeout de
-  `BadgeSignalCoalescingTests.NotifySeparatedByWindow_TriggersTwoFlushes`, test existant
-  sans modification. Une première suite complète puis la suite finale ont réussi.
-  Risque résiduel : ce test temporel peut être instable sous charge.
-- Suite frontend finale : 300/300 réussis (`npm test`).
-- `dotnet build src/Feedarr.Api/Feedarr.Api.csproj -c Release --no-restore` : réussi,
-  zéro erreur, zéro avertissement.
-- `npm run build` (Vite), `npm run lint` (ESLint) et `git diff --check` : réussis.
-- Les tests d'endpoint sont des appels au contrôleur avec vérification du DTO renvoyé ;
-  ce n'est pas une validation HTTP à travers le reverse proxy de production.
-- Reproduction Docker/volume persistant : non exécutée, Docker absent. La persistance
-  sur disque après recréation de store est couverte par les tests locaux.
+Commandes exécutées :
 
-## Git
+```sh
+dotnet test src/Feedarr.Api.Tests --no-restore --filter 'FullyQualifiedName~Backup|FullyQualifiedName~PendingRestore'
+dotnet test src/Feedarr.Api.Tests --no-restore
+dotnet build src/Feedarr.Api/Feedarr.Api.csproj -c Release --no-restore
+npm --prefix src/Feedarr.Web/feedarr-web test
+npm --prefix src/Feedarr.Web/feedarr-web run build
+npm --prefix src/Feedarr.Web/feedarr-web run lint
+python3 -B -m unittest discover -s docker/diagnostics/tests -v
+git diff --check
+```
 
-Seul le correctif P2 remplit les conditions de correction comprise et validée pour un
-commit `fix(updates): restore release metadata retrieval`. Pas de commit P1 supposé.
-Aucun push sur `origin/beta`, le diagnostic et la correction P1 restant incomplets.
+Lors de la phase P2, une exécution intermédiaire avait rencontré un timeout d'un test
+existant `BadgeSignalCoalescingTests.NotifySeparatedByWindow_TriggersTwoFlushes` ;
+ce test temporel n'a pas été modifié. Les suites complètes finales P1 ont réussi.
+Risque P2 résiduel : GitHub peut rester inaccessible ou limiter les requêtes ; l'erreur
+est désormais visible et le cache conserve le changelog disponible. La récupération
+reste limitée aux dix dernières releases, comme auparavant.
+Le correctif P2 reste dans `6219273` — `fix(updates): restore release metadata retrieval`.
+Le correctif P1 est validé pour le commit distinct
+`fix(backup): resolve deferred restore preparation lifecycle`.
+Aucun push sur `origin/beta`, conformément à la dernière instruction de l'utilisateur.
+Un nouveau déploiement backend et frontend est nécessaire pour appliquer les deux
+correctifs ; aucune confirmation de résolution en production n'est encore revendiquée.

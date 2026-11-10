@@ -7,6 +7,7 @@ export default function Modal({
   open,
   title,
   onClose,
+  closeDisabled = false,
   children,
   width = 560,
   titleClassName = "",
@@ -16,11 +17,11 @@ export default function Modal({
   useEffect(() => {
     if (!open) return;
     function onKey(e) {
-      if (e.key === "Escape") onClose?.();
+      if (e.key === "Escape" && !closeDisabled) onClose?.();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, onClose, closeDisabled]);
 
   useEffect(() => {
     if (!open || typeof document === "undefined") return;
@@ -73,7 +74,7 @@ export default function Modal({
   if (typeof document === "undefined") return null;
 
   return createPortal(
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={closeDisabled ? undefined : onClose}>
       <div
         className={`modal${modalClassName ? ` ${modalClassName}` : ""}`}
         style={{ width, ...modalStyle }}
@@ -83,7 +84,7 @@ export default function Modal({
       >
         <div className="modal-head">
           <div className={`modal-title${titleClassName ? ` ${titleClassName}` : ""}`}>{title}</div>
-          <button className="iconbtn" type="button" onClick={onClose} title="Fermer">
+          <button className="iconbtn" type="button" onClick={onClose} disabled={closeDisabled} title="Fermer">
             <AppIcon name="close" />
           </button>
         </div>

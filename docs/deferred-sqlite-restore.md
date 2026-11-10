@@ -123,3 +123,17 @@ unavailable and native Safari automation could not obtain a window. Library filt
 open/closed, narrow screens and light/dark layout must still be reviewed on-screen.
 Therefore the requested conditional commit/push is withheld; this is local work pending
 that important validation, not a claim that P1-03 is fully closed.
+
+
+## Production lifecycle correction (10 November 2026)
+
+The updated UI opts into `POST .../restore?confirm=true&background=true`. After
+filesystem preflight this returns HTTP 202 with `accepted` and `preparationId`.
+`GET /api/system/backups/state` includes `preparation` (id/state/error/result).
+The hosted BackupService owns the job independently of HTTP cancellation and uses
+the same ID in the atomically published manifest. The UI requires a server-read
+matching pending manifest before reporting preparation, with bounded polling and
+explicit errors. Without `background=true`, the historical synchronous completion
+contract is preserved for existing clients. The archive and startup-apply formats
+are unchanged. See [the production audit](production-regressions-2026-11-10.md) for
+NAS evidence, protections, validation and residual limits.

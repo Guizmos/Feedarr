@@ -2,6 +2,7 @@ namespace Feedarr.Api.Services.Backup;
 
 public sealed class BackupOperationStateDto
 {
+    public RestorePreparationStatus? Preparation { get; set; }
     public PendingRestoreStatus? RestorePending { get; set; }
     public bool IsBusy { get; set; }
     public bool NeedsRestart { get; set; }
@@ -15,3 +16,5 @@ public sealed class BackupOperationStateDto
     public int ActiveSyncActivities { get; set; }
     public bool SyncBlocked { get; set; }
 }
+
+public sealed record RestorePreparationStatus(string Id, string State, string? Error = null, BackupRestoreResult? Result = null);

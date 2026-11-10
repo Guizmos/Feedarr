@@ -74,6 +74,37 @@ public sealed class PendingRestoreStore
         { return new(File.Exists(Pointer), "failed", Error: "restore_state_unreadable"); }
     }
 
+    internal void EnsureCanPrepare(string? replacePendingId)
+    {
+        using var gate = OpenLock("operation.lock");
+        if (File.Exists(Journal)) throw new BackupOperationException("restore application already in progress", 409);
+        Manifest? previous;
+        try
+        {
+            if (Directory.Exists(Pointer) || Directory.Exists(Journal)) throw new InvalidDataException("Restore control path is a directory");
+            previous = File.Exists(Pointer) ? ReadManifest(Pointer) : null;
+            if (previous is not null)
+            {
+                var staged = ReadManifest(Path.Combine(Stage(previous.Id), "manifest.json"));
+                if (staged.Id != previous.Id || staged.DatabaseHash != previous.DatabaseHash ||
+                    !File.Exists(Path.Combine(Stage(previous.Id), "incoming.db")))
+                    throw new InvalidDataException("Incomplete pending restore staging");
+            }
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or InvalidDataException or UnauthorizedAccessException)
+        { throw new BackupOperationException("État de restauration illisible ; diagnostic du staging requis avant une nouvelle préparation.", ex, 409); }
+        if (previous is not null && previous.Id != replacePendingId)
+            throw new BackupOperationException("pending_restore_exists: confirm replacement using its current id", 409);
+        if (previous is null && replacePendingId is not null)
+            throw new BackupOperationException("pending_restore_changed: refresh before replacing", 409);
+        var stages = Path.Combine(_root, "stages");
+        if (File.Exists(Pointer + ".tmp") || Directory.Exists(Pointer + ".tmp") ||
+            File.Exists(Journal + ".tmp") || Directory.Exists(Journal + ".tmp") || File.Exists(stages) ||
+            Directory.EnumerateDirectories(_root, "building-*").Any() ||
+            (Directory.Exists(stages) && Directory.EnumerateDirectories(stages).Any(path => Path.GetFileName(path) != previous?.Id)))
+            throw new BackupOperationException("Staging de restauration incomplet détecté ; consultez les journaux et diagnostiquez-le avant de recommencer.", 409);
+    }
+
     internal string NewWorkDirectory()
     {
         var work = Path.Combine(_root, "building-" + Guid.NewGuid().ToString("N"));
@@ -82,20 +113,21 @@ public sealed class PendingRestoreStore
     }
 
     internal PendingRestoreStatus Publish(string work, string backupName, string? replacePendingId,
-        CancellationToken ct)
+        CancellationToken ct, string? preparationId = null)
     {
         // Work is owned by BackupService, beneath this persistent data volume.
         if (Path.GetDirectoryName(work) != _root || !Path.GetFileName(work).StartsWith("building-", StringComparison.Ordinal))
             throw new InvalidDataException("Invalid restore staging directory");
         var db = Path.Combine(work, "incoming.db");
         var posters = Path.Combine(work, "posters");
+        FaultPoint?.Invoke("copying-posters");
         CopyTree(Path.Combine(_data, "posters"), posters, ct, tolerateDisappearing: true);
         var missing = RepairUnavailablePosters(db, posters);
         using (var conn = OpenDatabase(db, readOnly: false)) conn.Execute("PRAGMA journal_mode=DELETE;");
         VerifyDatabase(db);
         FlushFile(db);
         var files = Inventory(posters);
-        var id = Guid.NewGuid().ToString("N");
+        var id = preparationId is null ? Guid.NewGuid().ToString("N") : ValidId(preparationId);
         var manifest = new Manifest(1, id, Path.GetFileName(backupName), DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             Hash(db), files, missing);
         WriteJson(Path.Combine(work, "manifest.json"), manifest);

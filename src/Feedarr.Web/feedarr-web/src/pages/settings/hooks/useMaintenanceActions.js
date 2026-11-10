@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiDelete, apiGet, apiPost, resolveApiUrl } from "../../../api/client.js";
+import { prepareRestore } from "./restorePreparation.js";
 import { triggerPosterPolling } from "../../../hooks/usePosterPollingService.js";
 
 export default function useMaintenanceActions() {
@@ -65,6 +66,7 @@ export default function useMaintenanceActions() {
   const [backupNotice, setBackupNotice] = useState("");
   const [backupState, setBackupState] = useState(null);
   const backupRestorePreviewRequestRef = useRef(0);
+  const backupSubmissionRef = useRef(false);
   const restartRequired = !!backupState?.needsRestart && !backupState?.restorePending?.pending;
   const backupLockedByRestartMessage = "Redemarrage requis apres restauration. Action impossible avant redemarrage.";
 
@@ -256,21 +258,23 @@ export default function useMaintenanceActions() {
   }
 
   function closeBackupCreate() {
-    if (backupCreateLoading) return;
+    if (backupCreateLoading || backupSubmissionRef.current) return;
     setBackupCreateOpen(false);
   }
 
   async function handleBackupCreate() {
-    if (backupState?.isBusy) return;
+    if (backupSubmissionRef.current || backupState?.isBusy) return;
     if (restartRequired) {
       setBackupError(backupLockedByRestartMessage);
       return;
     }
+    backupSubmissionRef.current = true;
     setBackupCreateLoading(true);
     setBackupError("");
     setBackupNotice("");
     try {
-      await apiPost("/api/system/backups", {});
+      const created = await apiPost("/api/system/backups", {}, { timeoutMs: 600000 });
+      if (!created?.name) throw new Error("Le serveur n’a pas confirmé la création de la sauvegarde.");
       setBackupCreateOpen(false);
       await loadBackups();
       await loadBackupState();
@@ -278,6 +282,7 @@ export default function useMaintenanceActions() {
     } catch (e) {
       setBackupError(e?.message || "Erreur sauvegarde");
     } finally {
+      backupSubmissionRef.current = false;
       setBackupCreateLoading(false);
     }
   }
@@ -371,7 +376,7 @@ export default function useMaintenanceActions() {
   }
 
   function closeBackupRestore() {
-    if (backupRestoreLoading) return;
+    if (backupRestoreLoading || backupSubmissionRef.current) return;
     backupRestorePreviewRequestRef.current += 1;
     setBackupRestoreOpen(false);
     setBackupRestoreTarget(null);
@@ -380,32 +385,25 @@ export default function useMaintenanceActions() {
   }
 
   async function handleBackupRestore() {
-    if (!backupRestoreTarget) return;
+    if (!backupRestoreTarget || backupSubmissionRef.current) return;
     if (backupState?.isBusy) return;
     if (backupRestorePreviewLoading || !backupRestorePreview?.dryRun) return;
     if (restartRequired) {
       setBackupError(backupLockedByRestartMessage);
       return;
     }
-    const pending = backupState?.restorePending;
-    if (pending?.pending && !window.confirm("Remplacer explicitement la restauration déjà en attente ?")) return;
-    const replaceQuery = pending?.pending ? `&replacePendingId=${encodeURIComponent(pending.id)}` : "";
+    backupSubmissionRef.current = true;
     setBackupRestoreLoading(true);
     setBackupError("");
     setBackupNotice("");
     try {
-      const res = await apiPost(
-        `/api/system/backups/${encodeURIComponent(backupRestoreTarget.name)}/restore?confirm=true${replaceQuery}`,
-        {},
-        { timeoutMs: 600000 }
-      );
-      const notices = [];
-      if (res?.needsRestart) {
-        notices.push("Restauration préparée. Elle sera appliquée au prochain redémarrage du conteneur.");
-      } else {
-        notices.push("Restauration terminée.");
-      }
-      if (res?.warning) notices.push(res.warning);
+      const res = await prepareRestore(backupRestoreTarget.name, {
+        get: apiGet, post: apiPost,
+        confirmReplacement: () => window.confirm("Remplacer explicitement la restauration déjà en attente ?"),
+      });
+      if (!res) return;
+      const notices = ["Restauration préparée. Elle sera appliquée au prochain redémarrage du conteneur."];
+      if (res?.clearedUndecryptableCredentials) notices.push(`${res.clearedUndecryptableCredentials} credential(s) indéchiffrables seront effacées après redémarrage.`);
       if (res?.missingPosters) notices.push(`${res.missingPosters} référence(s) de posters introuvables retirées de la copie préparée.`);
       window.dispatchEvent(new Event("restore:changed"));
       setBackupNotice(notices.join(" "));
@@ -417,6 +415,7 @@ export default function useMaintenanceActions() {
     } catch (e) {
       setBackupError(e?.message || "Erreur restauration backup");
     } finally {
+      backupSubmissionRef.current = false;
       setBackupRestoreLoading(false);
     }
   }

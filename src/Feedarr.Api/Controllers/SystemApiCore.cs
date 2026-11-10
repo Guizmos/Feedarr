@@ -253,7 +253,7 @@ public sealed partial class SystemApiCore : ControllerBase
     //   confirm=true explicitly, acknowledging that some credentials will be erased.
     //   Response: { ok: true, needsRestart: true, reencryptedCredentials: N, clearedUndecryptableCredentials: N }
     [HttpPost("backups/{name}/restore")]
-    public async Task<IActionResult> RestoreBackup([FromRoute] string name, [FromQuery] bool confirm = false, CancellationToken ct = default, [FromQuery] string? replacePendingId = null)
+    public async Task<IActionResult> RestoreBackup([FromRoute] string name, [FromQuery] bool confirm = false, CancellationToken ct = default, [FromQuery] string? replacePendingId = null, [FromQuery] bool background = false)
     {
         try
         {
@@ -276,6 +276,15 @@ public sealed partial class SystemApiCore : ControllerBase
                 });
             }
 
+            if (background)
+            {
+                // Accept quickly; the hosted service owns cancellation, not the HTTP connection.
+                ct.ThrowIfCancellationRequested();
+                var preparation = _backupService.StartRestorePreparation(name, GetAppVersion(), replacePendingId);
+                return Accepted("/api/system/backups/state", new { accepted = true, preparationId = preparation.Id });
+            }
+
+            // Preserve the synchronous contract for clients predating background preparation.
             // Prepare only: active database remains unchanged until process startup.
             var result = await _backupService.RestoreBackupAsync(name, GetAppVersion(), ct, replacePendingId);
 

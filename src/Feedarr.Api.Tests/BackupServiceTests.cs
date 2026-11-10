@@ -206,11 +206,159 @@ public sealed class BackupServiceTests
         Assert.DoesNotContain(workspace.RootDir, JsonSerializer.Serialize(pending));
     }
 
+    [Fact]
+    public async Task SlowPreparation_ReturnsBeforeCopy_AndSurvivesRequestCancellation()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        File.WriteAllText(Path.Combine(workspace.DataDir, "feedarr.db"), "live database must not be opened");
+        var pending = new PendingRestoreStore(workspace.DataDir, "feedarr.db");
+        var service = CreateBackupService(workspace, db, new SettingsRepository(db), new FakeApiKeyProtectionService(), pending);
+        CreateTestArchive(workspace);
+        using var copying = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        pending.FaultPoint = phase => { if (phase == "copying-posters") { copying.Set(); Assert.True(release.Wait(TimeSpan.FromSeconds(5))); } };
+        using var request = new CancellationTokenSource();
+        var accepted = service.StartRestorePreparation("job.zip", "1.0.0");
+        try
+        {
+            Assert.True(copying.Wait(TimeSpan.FromSeconds(5)));
+            request.Cancel(); // Closing the accepted HTTP request no longer owns the job token.
+            Assert.Equal("running", service.GetOperationState().Preparation?.State);
+            Assert.True(service.GetOperationState().IsBusy);
+            Assert.False(service.GetPendingRestore().Pending);
+            Assert.Equal(409, Assert.Throws<BackupOperationException>(() => service.StartRestorePreparation("job.zip", "1.0.0")).StatusCode);
+            Assert.Equal(409, (await Assert.ThrowsAsync<BackupOperationException>(() => service.CreateBackupAsync("1.0.0"))).StatusCode);
+        }
+        finally { release.Set(); }
+        await WaitForPreparation(service);
+        Assert.Equal("completed", service.GetOperationState().Preparation?.State);
+        Assert.Equal(accepted.Id, service.GetPendingRestore().Id);
+        Assert.Equal(accepted.Id, new PendingRestoreStore(workspace.DataDir, "feedarr.db").GetStatus().Id);
+        Assert.Equal("live database must not be opened", File.ReadAllText(Path.Combine(workspace.DataDir, "feedarr.db")));
+        await service.StopAsync(default);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PreparationFailureOrTimeout_LeavesNoPendingAndReleasesBusyState(bool timeout)
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        var pending = new PendingRestoreStore(workspace.DataDir, "feedarr.db");
+        var service = CreateBackupService(workspace, db, new SettingsRepository(db), new FakeApiKeyProtectionService(), pending);
+        CreateTestArchive(workspace);
+        if (timeout) service.PreparationTimeout = TimeSpan.FromMilliseconds(1);
+        pending.FaultPoint = phase =>
+        {
+            if (phase != "copying-posters") return;
+            if (timeout) Thread.Sleep(30);
+            else throw new IOException("simulated storage failure");
+        };
+        service.StartRestorePreparation("job.zip", "1.0.0");
+        await WaitForPreparation(service);
+        var state = service.GetOperationState();
+        Assert.Equal("failed", state.Preparation?.State);
+        Assert.NotEmpty(state.Preparation!.Error!);
+        Assert.False(state.IsBusy);
+        Assert.False(state.RestorePending!.Pending);
+        Assert.Empty(Directory.GetDirectories(Path.Combine(workspace.DataDir, "restore-state"), "building-*"));
+        await service.StopAsync(default);
+    }
+
+    [Theory]
+    [InlineData("building")]
+    [InlineData("orphan-stage")]
+    [InlineData("pending-temp")]
+    public void PreparationPreflight_RejectsIncompleteStagingWithoutDeletingIt(string kind)
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        var service = CreateBackupService(workspace, db, new SettingsRepository(db), new FakeApiKeyProtectionService());
+        CreateTestArchive(workspace);
+        var root = Path.Combine(workspace.DataDir, "restore-state");
+        var path = kind switch
+        {
+            "orphan-stage" => Path.Combine(root, "stages", Guid.NewGuid().ToString("N"), "incoming.db"),
+            "pending-temp" => Path.Combine(root, "pending.json.tmp"),
+            _ => Path.Combine(root, "building-" + Guid.NewGuid().ToString("N"), "incoming.db")
+        };
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "diagnose first");
+        Assert.Equal(409, Assert.Throws<BackupOperationException>(() => service.StartRestorePreparation("job.zip", "1.0.0")).StatusCode);
+        Assert.Equal("diagnose first", File.ReadAllText(path));
+        Assert.Null(service.GetOperationState().Preparation);
+    }
+
+    [Fact]
+    public async Task FailedBackgroundReplacement_KeepsThePreviouslyPublishedManifest()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        var pending = new PendingRestoreStore(workspace.DataDir, "feedarr.db");
+        var service = CreateBackupService(workspace, db, new SettingsRepository(db), new FakeApiKeyProtectionService(), pending);
+        CreateTestArchive(workspace);
+        await service.RestoreBackupAsync("job.zip", "1.0.0");
+        var previous = service.GetPendingRestore();
+        Assert.Equal(409, Assert.Throws<BackupOperationException>(() => service.StartRestorePreparation("job.zip", "1.0.0")).StatusCode);
+        pending.FaultPoint = phase => { if (phase == "copying-posters") throw new IOException("replacement failed"); };
+        service.StartRestorePreparation("job.zip", "1.0.0", previous.Id);
+        await WaitForPreparation(service);
+        Assert.Equal("failed", service.GetOperationState().Preparation?.State);
+        Assert.Equal(previous.Id, service.GetPendingRestore().Id);
+        await service.StopAsync(default);
+    }
+
+    [Fact]
+    public async Task HostShutdown_CancelsPreparationWithoutPublishingOrTouchingActiveDatabase()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        File.WriteAllText(Path.Combine(workspace.DataDir, "feedarr.db"), "live");
+        var pending = new PendingRestoreStore(workspace.DataDir, "feedarr.db");
+        var service = CreateBackupService(workspace, db, new SettingsRepository(db), new FakeApiKeyProtectionService(), pending);
+        CreateTestArchive(workspace);
+        using var copying = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        pending.FaultPoint = phase => { if (phase == "copying-posters") { copying.Set(); Assert.True(release.Wait(TimeSpan.FromSeconds(5))); } };
+        service.StartRestorePreparation("job.zip", "1.0.0");
+        Task stopped;
+        try
+        {
+            Assert.True(copying.Wait(TimeSpan.FromSeconds(5)));
+            stopped = service.StopAsync(default);
+        }
+        finally { release.Set(); }
+        await stopped;
+        Assert.Equal("failed", service.GetOperationState().Preparation?.State);
+        Assert.Contains("arrêt du serveur", service.GetOperationState().Preparation?.Error);
+        Assert.False(service.GetPendingRestore().Pending);
+        Assert.Equal("live", File.ReadAllText(Path.Combine(workspace.DataDir, "feedarr.db")));
+    }
+
+    private static void CreateTestArchive(TestWorkspace workspace)
+    {
+        var incoming = Path.Combine(workspace.RootDir, "job.db");
+        CreateIncomingBackupDatabase(incoming);
+        Directory.CreateDirectory(workspace.BackupsDir);
+        using var zip = ZipFile.Open(Path.Combine(workspace.BackupsDir, "job.zip"), ZipArchiveMode.Create);
+        zip.CreateEntryFromFile(incoming, "feedarr.db");
+        AddJsonEntry(zip, "info.json", new { version = "1.0.0", backupFormatVersion = 1, dbSha256 = ComputeFileSha256(incoming) });
+    }
+
+    private static async Task WaitForPreparation(BackupService service)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (service.GetOperationState().Preparation?.State == "running")
+            await Task.Delay(10, deadline.Token);
+    }
+
     private static BackupService CreateBackupService(
         TestWorkspace workspace,
         Db db,
         SettingsRepository settings,
-        IApiKeyProtectionService protection)
+        IApiKeyProtectionService protection, PendingRestoreStore? pending = null)
     {
         return new BackupService(
             db,
@@ -224,7 +372,7 @@ public sealed class BackupServiceTests
             new BackupValidationService(),
             new BackupExecutionCoordinator(),
             protection,
-            NullLogger<BackupService>.Instance);
+            NullLogger<BackupService>.Instance, pending);
     }
 
     private static void EnsureSettingsTable(Db db)

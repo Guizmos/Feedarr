@@ -47,15 +47,16 @@ export default function SettingsBackup({
   const operationBusy = !!backupState?.isBusy;
   const restartRequired = !!backupState?.needsRestart && !backupState?.restorePending?.pending;
   const isBusy = restartRequired || operationBusy || backupCreateLoading || backupRestoreLoading || backupDeleteLoading || !!backupDownloadName;
+  const preparationError = backupState?.preparation?.state === "failed" ? backupState.preparation.error : "";
   const wouldReencrypt = Number(backupRestorePreview?.wouldReencrypt ?? 0);
   const wouldClear = Number(backupRestorePreview?.wouldClear ?? 0);
   const restoreReady = !!backupRestorePreview?.dryRun && !backupRestorePreviewLoading;
 
   return (
     <>
-      {backupError && (
+      {(backupError || preparationError) && (
         <div className="onboarding__error" style={{ marginBottom: 12, gridColumn: "1 / -1" }}>
-          {backupError}
+          {backupError || preparationError}
         </div>
       )}
       {backupNotice && (
@@ -70,8 +71,11 @@ export default function SettingsBackup({
       )}
       {operationBusy && (
         <div className="onboarding__warn" style={{ marginBottom: 12, gridColumn: "1 / -1" }}>
-          Opération en cours: <strong>{backupState?.operation || "backup"}</strong> ({backupState?.phase || "running"}).
-          Les actions de sauvegarde sont temporairement verrouillées.
+          {backupState?.operation === "prepare-restore" ? (
+            <>Préparation de la restauration en cours. La copie des posters peut prendre plusieurs minutes ; vous pouvez revenir consulter son état.</>
+          ) : (
+            <>Opération en cours: <strong>{backupState?.operation || "backup"}</strong> ({backupState?.phase || "running"}). Les actions de sauvegarde sont temporairement verrouillées.</>
+          )}
         </div>
       )}
       <div className="indexer-list" style={{ gridColumn: "1 / -1" }}>
@@ -141,13 +145,14 @@ export default function SettingsBackup({
         )}
       </div>
 
-      <Modal open={backupCreateOpen} title="Nouvelle sauvegarde" onClose={closeBackupCreate} width={520}>
+      <Modal open={backupCreateOpen} title="Nouvelle sauvegarde" closeDisabled={backupCreateLoading} onClose={closeBackupCreate} width={520}>
         <div style={{ padding: 12 }}>
           <div style={{ fontWeight: 700, marginBottom: 8 }}>Créer une nouvelle sauvegarde ?</div>
           <div className="muted" style={{ marginBottom: 12 }}>
             Cette action crée une archive ZIP locale contenant la base de données et les métadonnées de configuration
             (sans exposer les secrets en clair dans `config.json`).
           </div>
+          {backupError && <div className="onboarding__error" role="alert">{backupError}</div>}
           <div className="formactions">
             <button
               className="btn btn-accent"
@@ -164,9 +169,10 @@ export default function SettingsBackup({
         </div>
       </Modal>
 
-      <Modal open={backupRestoreOpen} title="Restaurer une sauvegarde" onClose={closeBackupRestore} width={640}>
+      <Modal open={backupRestoreOpen} title="Restaurer une sauvegarde" closeDisabled={backupRestoreLoading} onClose={closeBackupRestore} width={640}>
         <div className="backup-confirm-modal__content">
-          <div className="backup-confirm-modal__lead">Confirmer la restauration ?</div>
+          <div className="backup-confirm-modal__lead">{backupRestoreLoading ? "Préparation de la restauration en cours" : "Confirmer la restauration ?"}</div>
+          {backupRestoreLoading && <p role="status">La copie des posters peut prendre plusieurs minutes. La préparation continue côté serveur même si la connexion est interrompue.</p>}
           <div className="muted backup-confirm-modal__text">
             Cette action prépare la restauration de la sauvegarde :
             <strong className="backup-confirm-modal__name">{backupRestoreTarget?.name || "-"}</strong>
@@ -195,6 +201,7 @@ export default function SettingsBackup({
               Analyse de la sauvegarde indisponible. La restauration reste bloquee tant que la previsualisation n&apos;est pas chargee.
             </div>
           )}
+          {backupError && <div className="onboarding__error" role="alert">{backupError}</div>}
           <div className="formactions">
             <button
               className="btn btn-danger"
