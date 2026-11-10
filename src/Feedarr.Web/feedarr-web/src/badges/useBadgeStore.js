@@ -50,6 +50,7 @@ function hasWindowStorage() {
 
 function normalizeUpdatePayload(payload) {
   return {
+    error: String(payload?.error || ""),
     isUpdateAvailable: !!payload?.isUpdateAvailable,
     latestRelease: payload?.latestRelease || null,
     releases: Array.isArray(payload?.releases) ? payload.releases : [],
@@ -61,6 +62,7 @@ function normalizeUpdatePayload(payload) {
 
 function getUpdateIntervalMs(payload) {
   const normalized = normalizeUpdatePayload(payload);
+  if (normalized.error) return 2 * 60 * 1000;
   return Math.max(1, normalized.checkIntervalHours) * 60 * 60 * 1000;
 }
 
@@ -74,7 +76,9 @@ function readCachedUpdate() {
 
     const hasLegacyShape = !!parsed.latestRelease && !Object.prototype.hasOwnProperty.call(parsed, "releases");
     const hasInvalidReleases = Object.prototype.hasOwnProperty.call(parsed, "releases") && !Array.isArray(parsed.releases);
-    if (hasLegacyShape || hasInvalidReleases) {
+    const hasLegacyEmptyResult = parsed.enabled !== false && !parsed.latestRelease
+      && !Object.prototype.hasOwnProperty.call(parsed, "error");
+    if (hasLegacyShape || hasInvalidReleases || hasLegacyEmptyResult) {
       window.localStorage.removeItem(UPDATE_CACHE_KEY);
       window.localStorage.removeItem(UPDATE_LAST_CHECK_TS_KEY);
       return null;
@@ -571,6 +575,7 @@ export function useBadgeStore({
         const suffix = force ? "?force=true" : "";
         const fetched = await apiGet(`/api/updates/latest${suffix}`);
         if (fetched && typeof fetched === "object") {
+          dispatch({ type: "SET_UPDATES_STATUS", patch: { error: String(fetched.error || "") } });
           payload = fetched;
           persistCachedUpdate(fetched);
           if (typeof window !== "undefined") {
@@ -579,12 +584,10 @@ export function useBadgeStore({
         }
       }
     } catch (error) {
-      if (!silent) {
-        dispatch({
-          type: "SET_UPDATES_STATUS",
-          patch: { error: error?.message || "Impossible de verifier les mises a jour" },
-        });
-      }
+      dispatch({
+        type: "SET_UPDATES_STATUS",
+        patch: { error: error?.message || "Impossible de verifier les mises a jour" },
+      });
     } finally {
       dispatch({
         type: "SET_UPDATES_STATUS",
@@ -931,7 +934,7 @@ export function useBadgeStore({
     updates: {
       loading: state.updatesStatus.loading,
       checking: state.updatesStatus.checking,
-      error: state.updatesStatus.error,
+      error: state.updatesStatus.error || updatesMeta.error,
       updatesEnabled: updatesMeta.enabled !== false,
       currentVersion: updatesMeta.currentVersion,
       isUpdateAvailable: !!updatesMeta.isUpdateAvailable,

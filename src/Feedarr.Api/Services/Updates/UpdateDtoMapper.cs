@@ -20,6 +20,7 @@ public static class UpdateDtoMapper
 
         return new UpdateCheckDto
         {
+            Error = result.Error,
             Enabled = result.Enabled,
             CurrentVersion = result.CurrentVersion,
             IsUpdateAvailable = result.IsUpdateAvailable,
