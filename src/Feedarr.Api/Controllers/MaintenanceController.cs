@@ -570,38 +570,18 @@ public sealed class MaintenanceController : ControllerBase
             var storeRoot = _posterFetch.PosterStoreDirPath;
             if (Directory.Exists(storeRoot))
             {
-                var canonicalStore = Path.GetFullPath(storeRoot);
-                if (!canonicalStore.EndsWith(Path.DirectorySeparatorChar))
-                    canonicalStore += Path.DirectorySeparatorChar;
-
                 var storeDirNames = Directory.GetDirectories(storeRoot, "*", SearchOption.TopDirectoryOnly)
-                    .Select(d => Path.GetFileName(d))
+                    .Select(Path.GetFileName)
                     .Where(n => !string.IsNullOrWhiteSpace(n))
-                    .Select(n => n!)
-                    .ToList();
+                    .Select(n => n!);
 
-                var orphanedStoreDirs = _releases.GetOrphanedStoreDirs(storeDirNames);
-                foreach (var dirName in orphanedStoreDirs)
+                foreach (var dirName in _releases.GetOrphanedStoreDirs(storeDirNames))
                 {
-                    var full = Path.GetFullPath(Path.Combine(storeRoot, dirName));
-                    if (!full.StartsWith(canonicalStore, StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    try
+                    var cleanup = _posterFetch.CleanupOrphanedStoreDir(dirName!, measureBytes: true);
+                    if (cleanup.Deleted)
                     {
-                        var dirSize = Directory.EnumerateFiles(full, "*", SearchOption.AllDirectories)
-                            .Sum(f => { try { return new FileInfo(f).Length; } catch { return 0L; } });
-
-                        Directory.Delete(full, recursive: true);
-                        if (!Directory.Exists(full))
-                        {
-                            storeFreedBytes += dirSize;
-                            storeDirsDeleted++;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _log.LogWarning(ex, "Failed to delete orphaned store dir: {Dir}", dirName);
+                        storeDirsDeleted++;
+                        storeFreedBytes += cleanup.FreedBytes;
                     }
                 }
             }
@@ -689,26 +669,32 @@ public sealed class MaintenanceController : ControllerBase
 
                 try
                 {
-                    Directory.CreateDirectory(storeDirFull);
-                    var ext = Path.GetExtension(row.PosterFile);
-                    if (string.IsNullOrWhiteSpace(ext)) ext = ".jpg";
-
-                    if (!storeResolver.TryResolveFile(storeDirFull, $"original{ext}", out var origFull))
+                    var storeLock = _posterFetch.GetStoreLock(rawStoreDir);
+                    await storeLock.WaitAsync(ct).ConfigureAwait(false);
+                    try
                     {
-                        skipped++;
-                        continue;
+                        Directory.CreateDirectory(storeDirFull);
+                        var ext = Path.GetExtension(row.PosterFile);
+                        if (string.IsNullOrWhiteSpace(ext)) ext = ".jpg";
+
+                        if (!storeResolver.TryResolveFile(storeDirFull, $"original{ext}", out var origFull))
+                        {
+                            skipped++;
+                            continue;
+                        }
+
+                        if (!System.IO.File.Exists(origFull))
+                        {
+                            System.IO.File.Copy(sourcePath, origFull, overwrite: false);
+                        }
+
+                        var bytes = await System.IO.File.ReadAllBytesAsync(origFull, ct).ConfigureAwait(false);
+                        await thumbService.GenerateThumbsAsync(bytes, storeDirFull, ct).ConfigureAwait(false);
+
+                        _releases.SavePosterWithStore(row.Id, null, null, row.PosterFile, posterKey, rawStoreDir);
+                        migrated++;
                     }
-
-                    if (!System.IO.File.Exists(origFull))
-                    {
-                        System.IO.File.Copy(sourcePath, origFull, overwrite: false);
-                    }
-
-                    var bytes = await System.IO.File.ReadAllBytesAsync(origFull, ct).ConfigureAwait(false);
-                    await thumbService.GenerateThumbsAsync(bytes, storeDirFull, ct).ConfigureAwait(false);
-
-                    _releases.SavePosterWithStore(row.Id, null, null, row.PosterFile, posterKey, rawStoreDir);
-                    migrated++;
+                    finally { storeLock.Release(); }
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)

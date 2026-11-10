@@ -3564,7 +3564,7 @@ LEFT JOIN media_entities me
     }
 
     /// <summary>
-    /// Returns storeDirs that have no row in <c>poster_store_refs</c> —
+    /// Returns storeDirs referenced by neither a release nor any entity —
     /// used by the GC to identify orphaned store directories.
     /// </summary>
     public IReadOnlyList<string> GetOrphanedStoreDirs(IEnumerable<string> candidateDirs)
@@ -3585,12 +3585,13 @@ LEFT JOIN media_entities me
             var chunk = dirs.Skip(i).Take(chunkSize).ToArray();
             var referenced = conn.Query<string>(
                 """
-                SELECT DISTINCT psr.store_dir
-                FROM poster_store_refs psr
-                JOIN releases r
-                  ON r.id = psr.release_id
-                WHERE psr.store_dir IN @chunk
-                  AND COALESCE(r.poster_store_dir, '') = psr.store_dir;
+                SELECT poster_store_dir
+                FROM releases
+                WHERE poster_store_dir COLLATE NOCASE IN @chunk
+                UNION
+                SELECT poster_store_dir
+                FROM media_entities
+                WHERE poster_store_dir COLLATE NOCASE IN @chunk;
                 """,
                 new { chunk }
             ).ToHashSet(StringComparer.OrdinalIgnoreCase);

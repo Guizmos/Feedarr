@@ -64,6 +64,7 @@ public sealed class PosterFetchService
     private readonly string _dataDirAbs;
     private readonly string _postersDirAbs;
     private readonly string _posterStoreDirAbs;
+    private readonly IPosterFileStore _fileStore;
     private PosterStorePathResolver? _storeResolver;
     // Per-storeDir semaphores to prevent concurrent races writing the same store directory.
     private readonly Dictionary<string, SemaphoreSlim> _storeLocks = new(StringComparer.OrdinalIgnoreCase);
@@ -106,9 +107,11 @@ public sealed class PosterFetchService
         ILogger<PosterFetchService> logger,
         PosterThumbService? thumbService = null,
         IPosterThumbQueue? thumbQueue = null,
-        IExternalProviderLimiter? externalProviderLimiter = null)
+        IExternalProviderLimiter? externalProviderLimiter = null,
+        IPosterFileStore? fileStore = null)
     {
         _releases = releases;
+        _fileStore = fileStore ?? new PosterFileStore();
         _activity = activity;
         _tmdb = tmdb;
         _fanart = fanart;
@@ -156,8 +159,9 @@ public sealed class PosterFetchService
         return _storeResolver;
     }
 
-    private SemaphoreSlim GetStoreLock(string storeDir)
+    internal SemaphoreSlim GetStoreLock(string storeDir)
     {
+        storeDir = storeDir.Trim();
         lock (_storeLocksGate)
         {
             if (!_storeLocks.TryGetValue(storeDir, out var sem))
@@ -351,6 +355,7 @@ public sealed class PosterFetchService
 
         var sem = GetStoreLock(storeDir);
         await sem.WaitAsync(ct).ConfigureAwait(false);
+        string? displacedDir = null;
         try
         {
             _logger.LogInformation(
@@ -369,8 +374,7 @@ public sealed class PosterFetchService
 
             if (!forceRefresh && originalPath is not null && existingThumbs.Length == PosterThumbService.SupportedWidths.Length)
             {
-                var displaced1 = _releases.SavePosterWithStore(releaseId, tmdbId, posterPath, legacyPosterFile, posterKey, storeDir);
-                TryCleanupDisplacedStoreDir(displaced1);
+                displacedDir = _releases.SavePosterWithStore(releaseId, tmdbId, posterPath, legacyPosterFile, posterKey, storeDir);
                 await EnqueueThumbWarmupAsync(storeDir, releaseId, ct).ConfigureAwait(false);
                 _logger.LogInformation(
                     "[POSTER_STORE] materialize skip storeDir={StoreDir} releaseId={ReleaseId} reason=already_up_to_date",
@@ -440,8 +444,7 @@ public sealed class PosterFetchService
                 .Where(width => !System.IO.File.Exists(Path.Combine(storeDirFull, $"w{width}.webp")))
                 .ToArray();
 
-            var displaced2 = _releases.SavePosterWithStore(releaseId, tmdbId, posterPath, legacyPosterFile, posterKey, storeDir);
-            TryCleanupDisplacedStoreDir(displaced2);
+            displacedDir = _releases.SavePosterWithStore(releaseId, tmdbId, posterPath, legacyPosterFile, posterKey, storeDir);
             await EnqueueThumbWarmupAsync(storeDir, releaseId, ct).ConfigureAwait(false);
 
             _logger.LogInformation(
@@ -465,6 +468,9 @@ public sealed class PosterFetchService
         finally
         {
             sem.Release();
+            // Never acquire an old store's lock while holding the new one's:
+            // concurrent A -> B and B -> A replacements must not deadlock.
+            TryCleanupDisplacedStoreDir(displacedDir);
         }
     }
 
@@ -493,26 +499,61 @@ public sealed class PosterFetchService
     /// </summary>
     private void TryCleanupDisplacedStoreDir(string? displacedDir)
     {
-        if (string.IsNullOrWhiteSpace(displacedDir)) return;
+        if (!string.IsNullOrWhiteSpace(displacedDir))
+            CleanupOrphanedStoreDir(displacedDir);
+    }
 
-        var orphaned = _releases.GetOrphanedStoreDirs([displacedDir]);
-        if (orphaned.Count == 0) return;
+    internal readonly record struct StoreCleanupResult(bool Deleted, bool Failed, long FreedBytes);
 
-        var resolver = GetStoreResolver();
-        if (!resolver.TryResolveStoreDir(displacedDir, out var fullPath)) return;
-        if (!Directory.Exists(fullPath)) return;
+    /// <summary>
+    /// All store collectors use the publisher's per-store lock. Candidate lists
+    /// are only hints: references are re-read under the lock immediately before
+    /// deletion. Entities without releases deliberately protect their stores.
+    /// Restore stages/rescue copies live outside this root and are never scanned.
+    /// </summary>
+    internal StoreCleanupResult CleanupOrphanedStoreDir(
+        string storeDir, bool measureBytes = false, CancellationToken ct = default)
+    {
+        if (!GetStoreResolver().TryResolveStoreDir(storeDir, out var fullPath))
+        {
+            _logger.LogWarning("[POSTER_STORE] delete skipped for unsafe storeDir={StoreDir}", storeDir);
+            return new(false, true, 0);
+        }
 
+        storeDir = Path.GetFileName(fullPath);
+        var sem = GetStoreLock(storeDir);
+        sem.Wait(ct);
         try
         {
-            Directory.Delete(fullPath, recursive: true);
-            _logger.LogInformation(
-                "[POSTER_STORE] displaced dir purged storeDir={StoreDir}", displacedDir);
+            ct.ThrowIfCancellationRequested();
+            if (!Directory.Exists(fullPath)) return default;
+
+            long bytes = 0;
+            if (measureBytes)
+            {
+                foreach (var file in Directory.EnumerateFiles(fullPath, "*", SearchOption.AllDirectories))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    bytes += new FileInfo(file).Length;
+                }
+            }
+
+            if (_releases.GetOrphanedStoreDirs([storeDir]).Count == 0) return default;
+            ct.ThrowIfCancellationRequested();
+            _fileStore.DeleteDirectory(fullPath);
+            if (Directory.Exists(fullPath))
+                throw new IOException("Poster store still exists after deletion");
+
+            _logger.LogInformation("[POSTER_STORE] orphan dir purged storeDir={StoreDir}", storeDir);
+            return new(true, false, bytes);
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex,
-                "[POSTER_STORE] failed to purge displaced dir storeDir={StoreDir}", displacedDir);
+            _logger.LogWarning(ex, "[POSTER_STORE] failed to purge orphan dir storeDir={StoreDir}", storeDir);
+            return new(false, true, 0);
         }
+        finally { sem.Release(); }
     }
 
     private async Task EnqueueThumbWarmupAsync(string? storeDir, long releaseId, CancellationToken ct)

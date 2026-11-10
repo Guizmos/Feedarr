@@ -154,42 +154,13 @@ public sealed class RetentionService
             .ToList();
         if (unique.Count == 0) return (0, 0);
 
-        var resolver = new PosterStorePathResolver(_posters.PosterStoreDirPath);
-        var orphaned = _releases.GetOrphanedStoreDirs(unique);
-        if (orphaned.Count == 0) return (0, 0);
-
         var purged = 0;
         var failedDeletes = 0;
-
-        foreach (var dir in orphaned)
+        foreach (var dir in _releases.GetOrphanedStoreDirs(unique))
         {
-            if (!resolver.TryResolveStoreDir(dir, out var fullPath))
-            {
-                failedDeletes++;
-                _log.LogWarning("Poster store delete skipped for unsafe dir={StoreDir}", dir);
-                continue;
-            }
-
-            try
-            {
-                if (Directory.Exists(fullPath))
-                {
-                    Directory.Delete(fullPath, recursive: true);
-                    if (Directory.Exists(fullPath))
-                    {
-                        failedDeletes++;
-                        _log.LogWarning("Poster store delete failed dir={StoreDir}", dir);
-                        continue;
-                    }
-                }
-
-                purged++;
-            }
-            catch (Exception ex)
-            {
-                failedDeletes++;
-                _log.LogWarning(ex, "Poster store delete failed dir={StoreDir}", dir);
-            }
+            var result = _posters.CleanupOrphanedStoreDir(dir);
+            if (result.Deleted) purged++;
+            if (result.Failed) failedDeletes++;
         }
 
         return (purged, failedDeletes);

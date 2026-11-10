@@ -16,7 +16,7 @@ using OptionsFactory = Microsoft.Extensions.Options.Options;
 
 namespace Feedarr.Api.Tests;
 
-public sealed class RetentionServiceTests
+public sealed partial class RetentionServiceTests
 {
     // -------------------------------------------------------------------------
     // Fix 3: single GetPosterFilesForReleaseIds call for both deletion passes
@@ -179,7 +179,7 @@ public sealed class RetentionServiceTests
         private readonly TestWebHostEnvironment _environment;
         private readonly Microsoft.Extensions.Options.IOptions<AppOptions> _options;
 
-        public RetentionTestContext(IPosterFileStore? fileStore = null)
+        public RetentionTestContext(IPosterFileStore? fileStore = null, IPosterThumbQueue? thumbQueue = null)
         {
             _workspace = new TestWorkspace();
             _environment = new TestWebHostEnvironment(_workspace.RootDir);
@@ -233,7 +233,7 @@ public sealed class RetentionServiceTests
                     new AudioMatchingStrategy(),
                     new GenericMatchingStrategy()),
                 resolver,
-                NullLogger<PosterFetchService>.Instance);
+                NullLogger<PosterFetchService>.Instance, thumbQueue: thumbQueue, fileStore: fileStore);
 
             Service = new RetentionService(Releases, Posters, fileStore ?? new PosterFileStore(), NullLogger<RetentionService>.Instance);
 
@@ -359,6 +359,11 @@ public sealed class RetentionServiceTests
             File.WriteAllBytes(path, new byte[] { 1, 2, 3, 4 });
             return path;
         }
+
+        public Feedarr.Api.Controllers.MaintenanceController CreateMaintenanceController() => new(
+            Db, Releases, Activity, null!, Posters, null!, null!, null!, null!, null!,
+            _options, _environment, new MaintenanceLockService(),
+            NullLogger<Feedarr.Api.Controllers.MaintenanceController>.Instance);
 
         public void Dispose()
         {

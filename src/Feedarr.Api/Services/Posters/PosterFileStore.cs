@@ -4,6 +4,7 @@ public interface IPosterFileStore
 {
     bool Exists(string fullPath);
     void Delete(string fullPath);
+    void DeleteDirectory(string fullPath) => Directory.Delete(fullPath, recursive: true);
 }
 
 public sealed class PosterFileStore : IPosterFileStore
