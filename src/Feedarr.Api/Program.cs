@@ -191,6 +191,7 @@ builder.Services.AddSingleton<ProviderStatsService>();
 builder.Services.AddSingleton<ApiRequestMetricsService>();
 builder.Services.AddSingleton<BackupExecutionCoordinator>();
 builder.Services.AddSingleton<BackupValidationService>();
+builder.Services.AddSingleton<Feedarr.Api.Services.Backup.Configuration.ConfigurationArchiveService>();
 builder.Services.AddSingleton<BackupService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<BackupService>());
 builder.Services.AddSingleton<UnifiedCategoryService>();
