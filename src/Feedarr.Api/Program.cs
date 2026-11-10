@@ -33,6 +33,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.XmlEncryption;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Options;
 using System.Data;
 using System.Diagnostics;
 using System.Globalization;
@@ -73,6 +74,8 @@ var dataProtectionBuilder = builder.Services.AddDataProtection()
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
+    options.KnownProxies.Clear();
+    options.KnownNetworks.Clear();
     options.ForwardedHeaders =
         ForwardedHeaders.XForwardedFor |
         ForwardedHeaders.XForwardedProto |
@@ -93,6 +96,10 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 
         options.KnownNetworks.Add(parsedNetwork);
     }
+
+    // Empty trust lists mean trust-all in ASP.NET Core: disable processing instead.
+    if (options.KnownProxies.Count == 0 && options.KnownNetworks.Count == 0)
+        options.ForwardedHeaders = ForwardedHeaders.None;
 });
 
 // Chiffrement des master keys selon la plateforme
@@ -618,6 +625,12 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 
+var forwardedOptions = app.Services.GetRequiredService<IOptions<ForwardedHeadersOptions>>().Value;
+app.Use((context, next) =>
+{
+    SmartAuthPolicy.CaptureConnection(context, forwardedOptions);
+    return next(context);
+});
 app.UseForwardedHeaders();
 
 // Correlation ID: must run early so downstream middleware and controllers

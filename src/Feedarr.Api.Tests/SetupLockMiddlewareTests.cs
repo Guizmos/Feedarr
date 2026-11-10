@@ -133,8 +133,10 @@ public sealed class SetupLockMiddlewareTests
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
     }
 
-    [Fact]
-    public async Task AfterSetup_GetRoot_IsAccessibleWithAuthNone()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AfterSetup_GetRoot_RequiresKnownLocalConnection(bool directLoopback)
     {
         using var workspace = new TestWorkspace();
         var db = CreateDb(workspace);
@@ -155,6 +157,7 @@ public sealed class SetupLockMiddlewareTests
 
         var context = new DefaultHttpContext();
         context.Request.Path = "/";
+        if (directLoopback) context.Connection.RemoteIpAddress = System.Net.IPAddress.Loopback;
         context.Response.Body = new MemoryStream();
 
         await middleware.InvokeAsync(
@@ -166,8 +169,8 @@ public sealed class SetupLockMiddlewareTests
             new AuthThrottleService(new BasicAuthThrottleOptions(), TimeProvider.System),
             NullLogger<BasicAuthMiddleware>.Instance);
 
-        Assert.True(nextCalled);
-        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(directLoopback, nextCalled);
+        Assert.Equal(directLoopback ? StatusCodes.Status200OK : StatusCodes.Status403Forbidden, context.Response.StatusCode);
     }
 
     private static Db CreateDb(TestWorkspace workspace)

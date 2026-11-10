@@ -11,6 +11,8 @@ using Feedarr.Api.Models.Settings;
 using Feedarr.Api.Options;
 using Feedarr.Api.Services.Security;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -1083,6 +1085,124 @@ public sealed class SmartAuthMiddlewareTests
         Assert.True(authPassed is bool b && b);
     }
 
+    [Theory]
+    [InlineData("localhost", "203.0.113.8")]
+    [InlineData("127.0.0.1", "203.0.113.8")]
+    [InlineData("feedarr.local", "203.0.113.8")]
+    [InlineData("feedarr.example", "203.0.113.8")]
+    [InlineData("localhost", "192.168.1.20")]
+    [InlineData("localhost", "172.17.0.1")]
+    [InlineData("localhost", "2001:db8::8")]
+    [InlineData("localhost", "::ffff:203.0.113.8")]
+    public async Task SmartMode_UntrustedConnection_CannotSpoofHost(string host, string ip)
+    {
+        using var fixture = new MiddlewareFixture();
+        fixture.SetupState.MarkSetupCompleted();
+        var (hash, salt) = HashPassword("P0Password!");
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        { AuthMode = "smart", Username = "admin", PasswordHash = hash, PasswordSalt = salt });
+
+        foreach (var valid in new[] { false, true })
+        {
+            var headers = new Dictionary<string, string>();
+            if (valid) headers["Authorization"] = ToBasicAuth("admin", "P0Password!");
+            var (called, context) = await fixture.InvokeAsync("/api/settings/security", host: host,
+                remoteIp: IPAddress.Parse(ip), headers: headers);
+            Assert.Equal(valid, called);
+            Assert.Equal(valid ? 200 : 401, context.Response.StatusCode);
+            Assert.Equal(valid, context.Items.ContainsKey(BasicAuthMiddleware.AuthPassedKey));
+            if (!valid) Assert.Equal("Basic realm=\"Feedarr\"", context.Response.Headers.WWWAuthenticate.ToString());
+        }
+    }
+
+    [Theory]
+    [InlineData("X-Forwarded-For", "127.0.0.1")]
+    [InlineData("X-Forwarded-For", "127.0.0.1, garbage")]
+    [InlineData("X-Forwarded-For", "::1, 203.0.113.8")]
+    [InlineData("X-Forwarded-Host", "localhost")]
+    [InlineData("X-Real-IP", "127.0.0.1")]
+    [InlineData("Forwarded", "for=127.0.0.1;host=localhost")]
+    [InlineData("X-Original-For", "127.0.0.1")]
+    public async Task SmartMode_ForwardingCannotGrantExemption(string name, string value)
+    {
+        foreach (var ip in new[] { "203.0.113.8", "127.0.0.1" })
+        {
+            using var fixture = new MiddlewareFixture();
+            fixture.SetupState.MarkSetupCompleted();
+            fixture.Settings.SaveSecurity(new SecuritySettings
+            { AuthMode = "smart", Username = "admin", PasswordHash = "hash", PasswordSalt = "salt" });
+            var headers = new Dictionary<string, string> { [name] = value };
+            var (called, context) = await fixture.InvokeAsync("/api/settings/security", remoteIp: IPAddress.Parse(ip), headers: headers);
+            Assert.False(called);
+            Assert.Equal(401, context.Response.StatusCode);
+            Assert.False(context.Items.ContainsKey(BasicAuthMiddleware.AuthPassedKey));
+            var (bootstrapCalled, bootstrap) = await fixture.InvokeAsync("/api/setup/bootstrap-token", "POST",
+                remoteIp: IPAddress.Parse(ip), headers: headers);
+            Assert.False(bootstrapCalled);
+            Assert.Equal(403, bootstrap.Response.StatusCode);
+        }
+    }
+
+    [Theory]
+    [InlineData("127.0.0.1", false, false)]
+    [InlineData("::1", false, false)]
+    [InlineData("::ffff:127.0.0.1", false, false)]
+    [InlineData("127.0.0.1", true, false)]
+    [InlineData("127.0.0.1", false, true)]
+    public async Task SmartMode_DirectLoopbackAndExistingOverrides(string ip, bool strict, bool publicUrl)
+    {
+        using var fixture = new MiddlewareFixture();
+        fixture.SetupState.MarkSetupCompleted();
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        { AuthMode = strict ? "strict" : "smart", PublicBaseUrl = publicUrl ? "https://feedarr.example" : "",
+          Username = "admin", PasswordHash = "hash", PasswordSalt = "salt" });
+        var (called, context) = await fixture.InvokeAsync("/api/sources", remoteIp: IPAddress.Parse(ip));
+        Assert.Equal(!strict && !publicUrl, called);
+        Assert.Equal(called ? 200 : 401, context.Response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("127.0.0.1", "203.0.113.8", true)]
+    [InlineData("127.0.0.1", "127.0.0.1", true)]
+    [InlineData("127.0.0.1", null, true)]
+    [InlineData("::1", "::1", true)]
+    [InlineData("::ffff:127.0.0.1", "127.0.0.1", true)]
+    [InlineData("192.168.1.2", "127.0.0.1", true)]
+    [InlineData("203.0.113.8", "127.0.0.1", false)]
+    [InlineData("127.0.0.1", "garbage", true)]
+    [InlineData("127.0.0.1", "127.0.0.1, garbage", true)]
+    public async Task SmartMode_ForwardedMiddleware_PreservesTransportBoundary(string peer, string? client, bool trusted)
+    {
+        using var fixture = new MiddlewareFixture();
+        fixture.SetupState.MarkSetupCompleted();
+        var (hash, salt) = HashPassword("P0Password!");
+        fixture.Settings.SaveSecurity(new SecuritySettings
+        { AuthMode = "smart", Username = "admin", PasswordHash = hash, PasswordSalt = salt });
+        var options = new ForwardedHeadersOptions
+        { ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedHost | ForwardedHeaders.XForwardedProto };
+        options.KnownProxies.Clear();
+        options.KnownNetworks.Clear();
+        options.KnownProxies.Add(IPAddress.Parse(trusted ? peer : "192.0.2.99"));
+        foreach (var credentials in new[] { false, true })
+        {
+            var headers = new Dictionary<string, string>();
+            if (client is not null) headers["X-Forwarded-For"] = client;
+            if (credentials) headers["Authorization"] = ToBasicAuth("admin", "P0Password!");
+            var (called, context) = await fixture.InvokeAsync("/api/settings/security", remoteIp: IPAddress.Parse(peer),
+                headers: headers, forwardedOptions: options);
+            Assert.Equal(credentials, called);
+            Assert.Equal(credentials ? 200 : 401, context.Response.StatusCode);
+            Assert.Equal(credentials, context.Items.ContainsKey(BasicAuthMiddleware.AuthPassedKey));
+            if (trusted && client == "203.0.113.8") Assert.Equal(IPAddress.Parse(client), context.Connection.RemoteIpAddress);
+        }
+        var bootstrapHeaders = new Dictionary<string, string>();
+        if (client is not null) bootstrapHeaders["X-Forwarded-For"] = client;
+        var (bootstrapCalled, bootstrap) = await fixture.InvokeAsync("/api/setup/bootstrap-token", "POST",
+            remoteIp: IPAddress.Parse(peer), headers: bootstrapHeaders, forwardedOptions: options);
+        Assert.False(bootstrapCalled);
+        Assert.Equal(403, bootstrap.Response.StatusCode);
+    }
+
     private static (string hash, string salt) HashPassword(string password)
     {
         var salt = RandomNumberGenerator.GetBytes(16);
@@ -1132,7 +1252,8 @@ public sealed class SmartAuthMiddlewareTests
             string host = "localhost",
             IPAddress? remoteIp = null,
             Dictionary<string, string>? headers = null,
-            RequestDelegate? onNext = null)
+            RequestDelegate? onNext = null,
+            ForwardedHeadersOptions? forwardedOptions = null)
         {
             var nextCalled = false;
             var middleware = new BasicAuthMiddleware(context =>
@@ -1156,14 +1277,18 @@ public sealed class SmartAuthMiddlewareTests
                     context.Request.Headers[key] = value;
             }
 
-            await middleware.InvokeAsync(
-                context,
-                Settings,
-                _cache,
-                SetupState,
-                BootstrapTokens,
-                AuthThrottle,
+            async Task Authenticate(HttpContext ctx) => await middleware.InvokeAsync(
+                ctx, Settings, _cache, SetupState, BootstrapTokens, AuthThrottle,
                 NullLogger<BasicAuthMiddleware>.Instance);
+            var options = forwardedOptions ?? new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.None };
+            if (forwardedOptions is null)
+            {
+                options.KnownProxies.Clear();
+                options.KnownNetworks.Clear();
+            }
+            SmartAuthPolicy.CaptureConnection(context, options);
+            await new ForwardedHeadersMiddleware(Authenticate, NullLoggerFactory.Instance,
+                OptionsFactory.Create(options)).Invoke(context);
 
             return (nextCalled, context);
         }
