@@ -4,6 +4,10 @@ set -eu
 PUID="${PUID:-10001}"
 PGID="${PGID:-10001}"
 DATA_DIR="${App__DataDir:-/app/data}"
+# Normalize trailing separators so the keys exclusion matches find's paths.
+while [ "$DATA_DIR" != "/" ] && [ "${DATA_DIR%/}" != "$DATA_DIR" ]; do
+    DATA_DIR="${DATA_DIR%/}"
+done
 
 echo "[Feedarr] PUID=${PUID}  PGID=${PGID}  DATA_DIR=${DATA_DIR}"
 
@@ -30,7 +34,17 @@ mkdir -p \
 # --- Correction de l'ownership sur le bind mount ---
 # Sur NAS, les volumes arrivent souvent avec un owner/ACL incompatible.
 chown -R feedarr:feedarr "$DATA_DIR" 2>/dev/null || true
-chmod -R u+rwX,g+rX     "$DATA_DIR" 2>/dev/null || true
+# Do not broaden permissions inside the secrets directory, even temporarily.
+find "$DATA_DIR" -path "$DATA_DIR/keys" -prune -o -exec chmod u+rwX,g+rX {} + 2>/dev/null || true
+
+# Secrets must remain owner-only on every start, including persistent volumes.
+# Fail explicitly if the volume cannot enforce ownership or POSIX permissions.
+if ! chown -R feedarr:feedarr "$DATA_DIR/keys" ||
+   ! find "$DATA_DIR/keys" -type d -exec chmod 700 {} + ||
+   ! find "$DATA_DIR/keys" -type f -exec chmod 600 {} +; then
+    echo "[Feedarr] Cannot secure secrets directory: $DATA_DIR/keys" >&2
+    exit 1
+fi
 
 echo "[Feedarr] Running as: uid=$(id -u feedarr) gid=$(id -g feedarr)"
 

@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Xml.Linq;
 using Microsoft.AspNetCore.DataProtection.XmlEncryption;
@@ -102,7 +101,10 @@ public sealed class FileMasterKeyProvider : IMasterKeyProvider
 
     public FileMasterKeyProvider(string keysPath)
     {
+        Directory.CreateDirectory(keysPath);
+        EnsurePrivatePermissions(keysPath, directory: true);
         var keyFilePath = Path.Combine(keysPath, ".master-key");
+        if (File.Exists(keyFilePath)) EnsurePrivatePermissions(keyFilePath, directory: false);
 
         // Priorité 1: Variable d'environnement (recommandé pour Docker secrets)
         var envKey = Environment.GetEnvironmentVariable("FEEDARR_MASTER_KEY");
@@ -132,12 +134,29 @@ public sealed class FileMasterKeyProvider : IMasterKeyProvider
         }
 
         _key = RandomNumberGenerator.GetBytes(32);
-        File.WriteAllBytes(keyFilePath, _key);
+        var fileOptions = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write };
+        if (!OperatingSystem.IsWindows())
+            fileOptions.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        using (var file = new FileStream(keyFilePath, fileOptions))
+            file.Write(_key);
+        EnsurePrivatePermissions(keyFilePath, directory: false);
+    }
 
-        // Permissions restrictives sur Linux (600)
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+    private static void EnsurePrivatePermissions(string path, bool directory)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var expected = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        if (directory) expected |= UnixFileMode.UserExecute;
+        try
         {
-            File.SetUnixFileMode(keyFilePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            if (File.GetUnixFileMode(path) != expected)
+                File.SetUnixFileMode(path, expected);
+            if (File.GetUnixFileMode(path) != expected)
+                throw new IOException("The filesystem did not preserve the required permissions");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            throw new InvalidOperationException($"Cannot secure master key {(directory ? "directory" : "file")} at '{path}'", ex);
         }
     }
 
