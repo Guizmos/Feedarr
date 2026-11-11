@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiGet, apiPost } from "../api/client.js";
+import Modal from "../ui/Modal.jsx";
+import InlineNotice from "./settings/InlineNotice.jsx";
 import { tr } from "../app/uiText.js";
 import Step0Language from "../components/setup/Step0Language.jsx";
 import Step1Intro from "../components/setup/Step1Intro.jsx";
@@ -50,7 +52,13 @@ export default function SetupWizard() {
   const [step, setStep] = useState(readStoredStep);
   const [maxStep, setMaxStep] = useState(step);
   const [finishing, setFinishing] = useState(false);
-  const [restoreMode, setRestoreMode] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("feedarr:setupRestore") === "true");
+  const [path, setPath] = useState(() => {
+    if (typeof window === "undefined") return null;
+    if (window.localStorage.getItem("feedarr:setupRestore") === "true") return "restore";
+    return window.localStorage.getItem("feedarr:setupPath") === "install" || readStoredStep() > MIN_STEP ? "install" : null;
+  });
+  const restoreMode = path === "restore";
+  const [leaveOpen, setLeaveOpen] = useState(false);
   const [restoreSteps, setRestoreSteps] = useState(null);
   const [restoreError, setRestoreError] = useState("");
   const [completionBootstrap, setCompletionBootstrap] = useState("");
@@ -87,23 +95,39 @@ export default function SetupWizard() {
     if (remaining?.length) {
       restoredStepsRef.current = remaining;
       setRestoreSteps(remaining); setStep(remaining[0]); setMaxStep(MAX_STEP);
-      setCompletionBootstrap(bootstrap); setRestoreMode(false);
+      setCompletionBootstrap(bootstrap); setPath("install");
     }
   };
   const restore = useSetupRestore(restoreMode, restored);
   const chooseRestore = value => {
     if (restore.locked) return;
-    if (!value) restore.reset();
-    setRestoreMode(value);
+    setPath(value ? "restore" : "install");
+    if (!value) { setStep(MIN_STEP); setMaxStep(MIN_STEP); }
     window.localStorage.setItem("feedarr:setupRestore", String(value));
+    window.localStorage.setItem("feedarr:setupPath", value ? "restore" : "install");
+  };
+  const showWelcome = () => {
+    setPath(null); setLeaveOpen(false); setCompletionBootstrap(""); setRestoreError("");
+    window.localStorage.removeItem("feedarr:setupRestore");
+    window.localStorage.removeItem("feedarr:setupPath");
+    window.localStorage.removeItem(STORAGE_KEY);
+    setStep(MIN_STEP); setMaxStep(MIN_STEP);
+  };
+  const returnToChoice = () => {
+    if (restoreMode) {
+      if (restore.busy || restore.checking || restore.state?.confirmed || restore.state?.applied) return;
+      if (restore.state?.pending) { setLeaveOpen(true); return; }
+      void restore.leave(false, showWelcome);
+    } else if (!restoreSteps && !finishing && !languageStepStatus.saving && !securityStepStatus.saving) showWelcome();
   };
 
   useEffect(() => {
+    if (!path) return;
     setMaxStep((prev) => Math.max(prev, step));
     if (typeof window !== "undefined") {
       window.localStorage.setItem(STORAGE_KEY, String(step));
     }
-  }, [step]);
+  }, [step, path]);
 
   useEffect(() => {
     let active = true;
@@ -139,7 +163,7 @@ export default function SetupWizard() {
         const remaining = resumeSetupSteps(state?.restoreSteps);
         restoredStepsRef.current = remaining?.length ? remaining : null;
         if (remaining?.length) {
-          setRestoreSteps(remaining); setStep(remaining[0]); setMaxStep(MAX_STEP); setRestoreMode(false);
+          setRestoreSteps(remaining); setStep(remaining[0]); setMaxStep(MAX_STEP); setPath("install");
           window.localStorage.removeItem("feedarr:setupRestore");
         }
         const prevHasJackett = window.localStorage.getItem(STORAGE_HAS_JACKETT_SOURCE);
@@ -189,6 +213,8 @@ export default function SetupWizard() {
       } else await apiPost("/api/system/onboarding/complete");
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(STORAGE_KEY);
+        window.localStorage.removeItem("feedarr:setupPath");
+        window.localStorage.removeItem("feedarr:setupRestore");
         window.localStorage.setItem(ONBOARDING_FLAG, "true");
       }
       navigate("/library", { replace: true });
@@ -272,6 +298,16 @@ export default function SetupWizard() {
     setStep((next < step ? candidates.at(-1) : candidates[0])?.id ?? step);
   }
 
+  if (!path) return <div className="setup-container">
+    <div className="setup-card setupWizardFrame"><div className="setupWizardBody"><div className="setup-card__content setup-step-group">
+      <div className="setup-step"><h2>Bienvenue dans Feedarr</h2><p className="muted">Choisissez comment configurer votre instance.</p></div>
+      <div className="indexer-list">
+        <div className="indexer-card"><div className="indexer-row indexer-row--settings"><span className="indexer-title">Configurer Feedarr pas à pas</span><div className="indexer-actions"><button className="btn btn-accent" type="button" onClick={() => chooseRestore(false)}>Nouvelle installation</button></div></div><div className="settings-help">Configurez Feedarr pas à pas, en commençant par la langue.</div></div>
+        <div className="indexer-card"><div className="indexer-row indexer-row--settings"><span className="indexer-title">Importer une sauvegarde existante</span><div className="indexer-actions"><button className="btn" type="button" onClick={() => chooseRestore(true)}>Restaurer une configuration</button></div></div><div className="settings-help">Importez une sauvegarde, vérifiez son contenu, puis restaurez votre configuration.</div></div>
+      </div>
+    </div></div></div>
+  </div>;
+
   return (
     <div className="setup-container">
       <div className="setup-stepper">
@@ -298,15 +334,8 @@ export default function SetupWizard() {
       <div className="setup-card setupWizardFrame">
         <div className="setupWizardBody">
           <div className="setup-card__content setup-step-group">
-            {!restoreSteps && step === MIN_STEP && (!restoreMode || restore.stage === 1) && <div className="setup-step">
-              <h2>Bienvenue dans Feedarr</h2>
-              <p className="muted">Choisissez comment configurer votre instance.</p>
-              <div className="settings-card__actions">
-                <button className={`btn${!restoreMode ? " btn-accent" : ""}`} type="button" aria-pressed={!restoreMode} onClick={() => chooseRestore(false)} disabled={restore.locked}>Nouvelle installation</button>
-                <button className={`btn${restoreMode ? " btn-accent" : ""}`} type="button" aria-pressed={restoreMode} onClick={() => chooseRestore(true)} disabled={restore.locked}>Restaurer une configuration</button>
-              </div>
-            </div>}
             {restoreMode ? <StepConfigurationRestore restore={restore} /> : current?.content}
+            {!!restoreSteps && <InlineNotice variant="info" message="La configuration restaurée est déjà appliquée. Terminez uniquement les étapes manquantes ; le retour au choix est indisponible." />}
             {restoreError && <div className="onboarding__error" role="alert">{restoreError}</div>}
             {!!restoreSteps && step === MAX_STEP && <div className="indexer-card"><div className="indexer-row indexer-row--settings">
               <label className="indexer-title" htmlFor="completion-bootstrap">Secret bootstrap</label>
@@ -316,18 +345,23 @@ export default function SetupWizard() {
         </div>
 
         {restoreMode ? <div className="setupWizardFooter">
-          <div className="setup-actions">
+          <div className="setup-actions settings-card__actions">
+            <div className="settings-card__actions">
+              <button className="btn" type="button" disabled={restore.busy || restore.checking || !!restore.state?.confirmed || !!restore.state?.applied} onClick={returnToChoice}>Retour au choix</button>
             {restore.stage === 2 && <button className="btn" type="button" disabled={restore.busy} onClick={restore.cancel}>Précédent</button>}
             {restore.stage === 3 && !restore.state?.confirmed && <button className="btn" type="button" disabled={restore.busy} onClick={() => restore.go(2)}>Précédent</button>}
+            </div>
             <div className="setup-actions-right" style={{ marginLeft: "auto" }}>
-              {restore.stage === 1 && <button className="btn btn-accent" type="button" disabled={restore.busy || restore.state?.legacyRestorePending} onClick={restore.prepare}>{restore.busy ? "Analyse en cours…" : "Analyser la sauvegarde"}</button>}
+              {restore.stage === 1 && <button className="btn btn-accent" type="button" disabled={!restore.canPrepare} onClick={restore.prepare}>{restore.busy ? "Analyse en cours…" : "Analyser la sauvegarde"}</button>}
               {restore.stage === 2 && <button className="btn btn-accent" type="button" disabled={restore.busy || !restore.canContinue} onClick={() => restore.go(3)}>Suivant</button>}
               {restore.stage === 3 && <button className="btn btn-accent" type="button" disabled={restore.busy} onClick={restore.state?.confirmed ? restore.checkRestart : restore.confirm}>{restore.busy ? "Opération en cours…" : restore.state?.confirmed ? "Vérifier après redémarrage" : "Confirmer la restauration"}</button>}
               {restore.stage === 4 && <button className="btn btn-accent" type="button" disabled={restore.busy} onClick={restore.finish}>{restore.busy ? "Vérification…" : "Continuer vers Feedarr"}</button>}
             </div>
           </div>
         </div> : <div className="setupWizardFooter">
-          <div className="setup-actions">
+          <div className="setup-actions settings-card__actions">
+            <div className="settings-card__actions">
+              <button className="btn" type="button" disabled={!!restoreSteps || finishing || languageStepStatus.saving || securityStepStatus.saving} onClick={returnToChoice}>Retour au choix</button>
             {step > visibleSteps[0]?.id && (
               <button
                 className="btn"
@@ -338,6 +372,7 @@ export default function SetupWizard() {
               </button>
             )}
 
+            </div>
             <div className="setup-actions-right" style={{ marginLeft: "auto" }}>
               {showSkip && (
                 <button
@@ -390,6 +425,11 @@ export default function SetupWizard() {
           </div>
         </div>}
       </div>
+      <Modal open={leaveOpen} title="Annuler l’analyse et revenir au choix ?" onClose={() => setLeaveOpen(false)} closeDisabled={restore.busy}>
+        <p className="settings-help">Le plan de restauration préparé sera annulé. Aucune configuration ne sera appliquée et les phrases secrètes seront effacées.</p>
+        <div className="formactions"><button className="btn" type="button" disabled={restore.busy} onClick={() => setLeaveOpen(false)}>Rester dans la restauration</button><button className="btn btn-danger" type="button" disabled={restore.busy} onClick={() => restore.leave(true, showWelcome)}>Annuler le plan et revenir au choix</button></div>
+        {restore.error && <InlineNotice variant="error" message={restore.error} />}
+      </Modal>
     </div>
   );
 }

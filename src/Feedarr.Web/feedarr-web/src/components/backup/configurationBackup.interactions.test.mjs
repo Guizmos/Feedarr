@@ -15,7 +15,7 @@ async function load(file) {
       b.onResolve({ filter: /api\/client\.js$/ }, () => ({ path: "api", namespace: "test" }));
       b.onResolve({ filter: /configurationBackupApi\.js$/ }, () => ({ path: "backup", namespace: "test" }));
       b.onResolve({ filter: /(?:InlineNotice|AppIcon|Modal|Step\w+|ConfigurationBackupPanel)\.jsx$/ }, args => args.importer ? ({ path: args.path, namespace: "child" }) : undefined);
-      b.onLoad({ filter: /.*/, namespace: "child" }, () => ({ contents: 'export default function Child() {}' }));
+      b.onLoad({ filter: /.*/, namespace: "child" }, () => ({ contents: 'export default function Child() {} export function ConfigurationPreview() {}' }));
       b.onLoad({ filter: /.*/, namespace: "test" }, args => ({ contents: {
         hooks: `const element=(type,props,...children)=>({type,props:{...props,children:children.flat(Infinity)}}); export default {createElement:element,lazy:()=>function Lazy(){}}; export const Suspense="Suspense";
           export const useCallback=fn=>fn; export const useMemo=fn=>fn();
@@ -26,9 +26,9 @@ async function load(file) {
         subbar: 'export const useSubbarSetter=()=>globalThis.__configUI.setContent;',
         'settings-controller': 'export default section=>({...globalThis.__configUI.controller,showBackup:section==="backup",showGeneral:section==="general"});',
         api: 'export const apiGet=(...a)=>globalThis.__configUI.get(...a); export const apiPost=(...a)=>globalThis.__configUI.post(...a);',
-        backup: `export const backupRoot=initial=>initial?'/api/setup/configuration-restore':'/api/configuration-backups';
+        backup: `export const MAX_CONFIGURATION_UPLOAD=64*1024*1024; export const backupRoot=initial=>initial?'/api/setup/configuration-restore':'/api/configuration-backups';
           export const configurationRequest=(...a)=>globalThis.__configUI.request(...a);
-          export const configurationUpload=(file,phrase)=>{if(!file?.size)throw new Error("Sélectionnez une archive");return {file,phrase};}; export const downloadConfiguration=(blob)=>globalThis.__configUI.download?.(blob);
+          export const configurationUpload=(file,phrase)=>{if(!file?.size||file.size>MAX_CONFIGURATION_UPLOAD)throw new Error("Sélectionnez une archive");return {file,phrase};}; export const downloadConfiguration=(blob)=>globalThis.__configUI.download?.(blob);
           export const resumeSetupSteps=steps=>Array.isArray(steps)?steps:null;`,
       }[args.path] }));
     } }], });
@@ -37,6 +37,7 @@ async function load(file) {
 const Panel = await load("./ConfigurationBackupPanel.jsx");
 const Restore = await load("../setup/useSetupRestore.js");
 const Settings = await load("../../pages/Settings.jsx");
+const RestoreView = await load("../setup/StepConfigurationRestore.jsx");
 const Wizard = await load("../../pages/SetupWizard.jsx");
 const flush = async () => { for(let i=0;i<12;i++) await Promise.resolve(); };
 const nodes = tree => !tree || typeof tree !== "object" ? [] : [tree,...(tree.props?.children||[]).flatMap(nodes)];
@@ -71,9 +72,10 @@ test("retention and initial sync remain separately confirmed and sync blocked by
 });
 test("wizard offers both paths and resume omits all already complete steps despite stale browser state",async()=>{
   const f=fixture();try{
-    let tree=f.render(Wizard);assert.ok(button(tree,'Nouvelle installation'));button(tree,'Restaurer une configuration').props.onClick();tree=f.render(Wizard);assert.equal(nodes(tree).filter(n=>n.props?.restore).length,1);
+    let tree=f.render(Wizard);assert.ok(button(tree,'Nouvelle installation'));assert.equal(nodes(tree).some(n=>n.props?.className==='setup-stepper'),false);button(tree,'Restaurer une configuration').props.onClick();tree=f.render(Wizard);assert.equal(nodes(tree).filter(n=>n.props?.restore).length,1);
     assert.deepEqual(nodes(tree).filter(n=>n.props?.className?.startsWith('setup-stepper-item')).map(n=>text(n.props.children[1])), ['Importer','Vérifier','Restaurer','Finaliser']);
     assert.ok(nodes(tree).some(n=>n.props?.className==='setupWizardFooter'));
+    button(tree,'Retour au choix').props.onClick();await flush();tree=f.render(Wizard);assert.equal(nodes(tree).some(n=>n.props?.className==='setup-stepper'),false);
     button(tree,'Nouvelle installation').props.onClick();tree=f.render(Wizard);
     assert.equal(nodes(tree).filter(n=>n.props?.className?.startsWith('setup-stepper-item')).length,8);
   }finally{f.close();}
@@ -83,6 +85,8 @@ test("wizard offers both paths and resume omits all already complete steps despi
     let finishOnboarding; const onboarding=new Promise(resolve=>{finishOnboarding=resolve;});
     resumed.h.get=async path=>path.endsWith('/state')?{restoreSteps:[3,8],authRequired:true,authConfigured:false}:onboarding;
     resumed.render(Wizard);await resumed.effects();const tree=resumed.render(Wizard);
+    assert.equal(button(tree,'Retour au choix').props.disabled,true);
+    assert.ok(nodes(tree).some(n=>/déjà appliquée/.test(n.props?.message)));
     assert.deepEqual(nodes(tree).filter(n=>n.props?.className?.startsWith('setup-stepper-item')).map(n=>n.props.children[0].props.children[0]),[3,8]);
     assert.equal(nodes(tree).find(n=>n.props?.['aria-current']==='step').props.children[0].props.children[0],3);
     finishOnboarding({onboardingDone:false}); await flush();
@@ -139,7 +143,7 @@ test("restore reload resumes confirmed/applied stages and exposes state errors",
 });
 test("classic wizard retains language validation, next/back navigation and security save behavior",()=>{
   const f=fixture();try{
-    let tree=f.render(Wizard);assert.equal(button(tree,'Suivant').props.disabled,true);
+    let tree=f.render(Wizard);button(tree,'Nouvelle installation').props.onClick();tree=f.render(Wizard);assert.equal(button(tree,'Suivant').props.disabled,true);
     nodes(tree).find(n=>n.props?.onStatusChange).props.onStatusChange({ready:true,saving:false});tree=f.render(Wizard);assert.equal(button(tree,'Suivant').props.disabled,false);
     button(tree,'Suivant').props.onClick();tree=f.render(Wizard);assert.ok(button(tree,'Precedent'));button(tree,'Precedent').props.onClick();tree=f.render(Wizard);assert.equal(button(tree,'Suivant').props.disabled,false);
     button(tree,'Suivant').props.onClick();button(f.render(Wizard),'Suivant').props.onClick();tree=f.render(Wizard);
@@ -201,4 +205,49 @@ test("parent subbar owns backup save/refresh actions, follows native visual stat
     register({canExport:false,busy:false,saveState:'idle',validationMessage:'Les phrases doivent être identiques.'});render('backup');await f.effects();assert.equal(action('Sauvegarder').props.disabled,true);assert.match(action('Sauvegarder').props.title,/identiques/);
     register(null);render('general');await f.effects();assert.equal(action('Sauvegarder'),undefined);assert.ok(action('Enregistrer'));
   }finally{f.close();}
+});
+test("welcome has no stepper and classic return does not write configuration",()=>{
+  const f=fixture();let writes=0;f.h.post=()=>writes++;f.h.request=()=>{writes++;return Promise.resolve({});};
+  try{
+    let tree=f.render(Wizard);assert.match(text(tree),/Bienvenue dans Feedarr/);assert.equal(nodes(tree).some(n=>n.props?.className==='setup-stepper'),false);assert.equal(button(tree,'Suivant'),undefined);
+    button(tree,'Nouvelle installation').props.onClick();tree=f.render(Wizard);assert.equal(nodes(tree).filter(n=>n.props?.className?.startsWith('setup-stepper-item')).length,8);assert.equal(nodes(tree).find(n=>n.props?.['aria-current']==='step').props.children[0].props.children[0],1);
+    button(tree,'Retour au choix').props.onClick();tree=f.render(Wizard);assert.equal(nodes(tree).some(n=>n.props?.className==='setup-stepper'),false);assert.equal(writes,0);assert.equal(f.data.has('feedarr:setupPath'),false);
+  }finally{f.close();}
+});
+test("return from prepared restore requires explicit cancellation and clears all sensitive state",async()=>{
+  const f=fixture();let server={},deletes=0;
+  f.h.request=async(path,options={})=>{if(path.endsWith('/prepare')){server={pending:{operationId:'plan'},confirmed:false};return server.pending;}if(options.method==='DELETE'){deletes++;server={};return;}return server;};
+  try{
+    button(f.render(Wizard),'Restaurer une configuration').props.onClick();let tree=f.render(Wizard),r=nodes(tree).find(n=>n.props?.restore).props.restore;
+    r.setFile(new File(['zip'],'chosen.zip'));r.setPhrase('private phrase');r.setBootstrap('private bootstrap');r=nodes(f.render(Wizard)).find(n=>n.props?.restore).props.restore;await r.prepare();
+    button(f.render(Wizard),'Retour au choix').props.onClick();tree=f.render(Wizard);assert.ok(nodes(tree).some(n=>n.props?.open===true));assert.equal(deletes,0);
+    button(tree,'Rester dans la restauration').props.onClick();assert.equal(deletes,0);button(f.render(Wizard),'Retour au choix').props.onClick();await button(f.render(Wizard),'Annuler le plan et revenir au choix').props.onClick();
+    tree=f.render(Wizard);assert.equal(deletes,1);assert.deepEqual(server,{});assert.equal(nodes(tree).some(n=>n.props?.className==='setup-stepper'),false);assert.ok(![...f.data.values()].some(value=>String(value).includes('private')));
+    button(tree,'Restaurer une configuration').props.onClick();r=nodes(f.render(Wizard)).find(n=>n.props?.restore).props.restore;assert.equal(r.file,null);assert.equal(r.phrase,'');assert.equal(r.bootstrap,'');assert.equal(r.analysisStatus,'none');
+  }finally{f.close();}
+});
+test("return refuses confirmed/applied operations and keeps cancellation failures visible",async()=>{
+  for(const server of [{pending:{operationId:'x'},confirmed:true},{applied:{operationId:'x'}}]){
+    const f=fixture();let left=false;try{f.h.request=async()=>server;await f.render(Restore,true).leave(true,()=>{left=true;});const r=f.render(Restore,true);assert.equal(left,false);assert.match(r.error,/confirmée ou appliquée/);assert.equal(r.locked,true);}finally{f.close();}
+  }
+  const f=fixture();let left=false;try{
+    f.h.request=async(path,options={})=>{if(options.method==='DELETE')throw new Error('Annulation refusée');return {pending:{operationId:'x'}};};f.render(Restore,true);await f.effects();
+    await f.render(Restore,true).leave(false,()=>{left=true;});assert.equal(left,false);assert.match(f.render(Restore,true).error,/explicitement/);
+    await f.render(Restore,true).leave(true,()=>{left=true;});assert.equal(left,false);assert.equal(f.render(Restore,true).error,'Annulation refusée');assert.ok(f.render(Restore,true).state.pending);
+  }finally{f.close();}
+});
+test("real filename/size and selection states remain accurate through replacement, analysis and errors",async()=>{
+  const f=fixture();let finish,deletes=0;const render=()=>f.render(Restore,true);const view=model=>{const v=fixture();try{return v.render(RestoreView,{restore:model});}finally{v.close();}};
+  try{
+    let r=render();assert.equal(r.canPrepare,false);assert.match(text(view(r)),/Aucun fichier sélectionné/);
+    r.setFile(new File([new Uint8Array(2048)],'my-real-backup.zip'));r=render();assert.equal(r.analysisStatus,'selected');assert.equal(r.canPrepare,true);let tree=view(r);assert.match(text(tree),/my-real-backup.zip — 2 KB/);assert.ok(nodes(tree).some(n=>n.props?.title==='Archive sélectionnée'));assert.ok(button(tree,'Remplacer le fichier'));assert.ok(button(tree,'Annuler la sélection'));
+    r.setPhrase('private phrase');r=render();f.h.request=()=>new Promise(resolve=>{finish=resolve;});const pending=r.prepare();r=render();assert.equal(r.analysisStatus,'analyzing');assert.equal(r.canPrepare,false);assert.equal(r.phrase,'');finish({operationId:'old',securityChangeRequiresConfirmation:true});await pending;r=render();assert.equal(r.analysisStatus,'valid');assert.ok(nodes(view(r)).some(n=>n.props?.title==='Archive analysée et valide'));
+    r.setConsent(true);r.setSecurityConsent(true);r.setPhrase('discard me');f.h.request=async(path,options)=>{assert.ok(path.endsWith('/old'));assert.equal(options.method,'DELETE');deletes++;};await render().setFile(new File(['replacement'],'replacement.zip'));r=render();assert.equal(deletes,1);assert.equal(r.state.pending,null);assert.equal(r.stage,1);assert.equal(r.analysisStatus,'selected');assert.equal(r.consent,false);assert.equal(r.securityConsent,false);assert.equal(r.phrase,'');assert.match(text(view(r)),/replacement.zip — 11 B/);
+    f.h.request=async()=>{throw new Error('Archive altérée');};await r.prepare();r=render();assert.equal(r.analysisStatus,'error');assert.equal(r.error,'Archive altérée');assert.ok(nodes(view(r)).some(n=>n.props?.title==='Archive refusée ou erreur'));
+    r.setFile({name:'too-big.zip',size:64*1024*1024+1});r=render();assert.equal(r.canPrepare,false);assert.equal(r.analysisStatus,'error');r.setFile(new File([],'empty.zip'));r=render();assert.equal(r.canPrepare,false);assert.match(text(view(r)),/empty.zip — 0 B/);
+    r.setFile(null);r=render();assert.equal(r.analysisStatus,'none');assert.equal(r.canPrepare,false);assert.equal(r.error,'');assert.equal(r.file,null);assert.equal(f.data.size,0);
+  }finally{f.close();}
+});
+test("confirmed restore reload resumes its own stepper without secrets or a fictional selected file",async()=>{
+  const f=fixture();try{f.data.set('feedarr:setupRestore','true');f.h.request=async()=>({pending:{operationId:'resume'},confirmed:true});f.render(Wizard);await f.effects();const tree=f.render(Wizard);assert.equal(nodes(tree).filter(n=>n.props?.className?.startsWith('setup-stepper-item')).length,4);assert.equal(button(tree,'Retour au choix').props.disabled,true);const r=nodes(tree).find(n=>n.props?.restore).props.restore;assert.equal(r.stage,3);assert.equal(r.phrase,'');assert.equal(r.bootstrap,'');assert.equal(r.file,null);}finally{f.close();}
 });
