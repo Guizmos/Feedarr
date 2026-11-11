@@ -16,6 +16,11 @@ html.auth-locked #root { visibility: hidden; }
 .auth-submit { min-height: 46px; width: 100%; }
 .auth-error { color: var(--danger, #c34646); line-height: 1.5; margin: 0 0 8px; font-size: 14px; }
 .auth-logout { position: relative; }
-.auth-logout .btn { font-size: 12px; padding: 8px 10px; }
+.auth-logout-action.subaction { width: 44px; min-width: 44px; height: 44px; color: var(--topbar-text); transition: color 150ms ease; }
+.auth-logout-action.subaction:hover:not(:disabled) { color: var(--accent); }
+.auth-logout-action:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--radius); }
+@media (prefers-reduced-motion: reduce) { .auth-logout-action.subaction { transition: none; } }
 .auth-logout-error { position: absolute; right: 0; top: 100%; width: 260px; padding: 12px; background: var(--panel); border: 1px solid var(--panel-border); border-radius: var(--radius); box-shadow: var(--panel-shadow); z-index: 100; }
 @media (max-width: 480px) { .auth-card { padding: 28px 22px; } .auth-card h1 { font-size: 22px; } }
+
+.auth-setup-login { display: grid; place-items: center; margin: 24px 0; }

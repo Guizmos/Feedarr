@@ -12,6 +12,7 @@ async function load(file) {
       b.onResolve({ filter: /useSettingsController\.js$/ }, () => ({ path: "settings-controller", namespace: "test" }));
       b.onResolve({ filter: /useSubbar\.js$/ }, () => ({ path: "subbar", namespace: "test" }));
       b.onResolve({ filter: /(?:SubAction|Loader|SettingsGeneral|SettingsProviders|SettingsBackup|SettingsMaintenance|SettingsUiPage|SettingsSecurityPage|SettingsArrPage)\.jsx$/ }, args => args.importer ? ({ path: "settings-child", namespace: "child" }) : undefined);
+      b.onResolve({ filter: /auth\/session\.js$/ }, () => ({ path: "auth", namespace: "test" }));
       b.onResolve({ filter: /^react-router-dom$/ }, () => ({ path: "router", namespace: "test" }));
       b.onResolve({ filter: /api\/client\.js$/ }, () => ({ path: "api", namespace: "test" }));
       b.onResolve({ filter: /configurationBackupApi\.js$/ }, () => ({ path: "backup", namespace: "test" }));
@@ -20,9 +21,11 @@ async function load(file) {
       b.onLoad({ filter: /.*/, namespace: "test" }, args => ({ contents: {
         hooks: `const element=(type,props,...children)=>type?.name==="ConfigurationArchiveInput"?type(props):({type,props:{...props,children:children.flat(Infinity)}}); export default {createElement:element,lazy:()=>function Lazy(){}}; export const Suspense="Suspense";
           export const useCallback=fn=>fn; export const useMemo=fn=>fn();
+          export const useSyncExternalStore=(_subscribe,snapshot)=>snapshot();
           export function useState(initial){const h=globalThis.__configUI,i=h.cursor++; if(!(i in h.values))h.values[i]=typeof initial==='function'?initial():initial; return [h.values[i],v=>{h.values[i]=typeof v==='function'?v(h.values[i]):v;}];}
           export function useRef(initial){const h=globalThis.__configUI,i=h.cursor++; if(!(i in h.values))h.values[i]={current:initial};return h.values[i];}
           export function useEffect(fn,deps){const h=globalThis.__configUI,i=h.cursor++,old=h.deps[i];if(!old||deps.some((d,j)=>d!==old[j])){h.deps[i]=deps;h.effects.push(fn);}}`,
+        auth: 'export const subscribeSession=()=>()=>{}; export const getSessionSnapshot=()=>({state:globalThis.__configUI.authState}); export const refreshSession=async()=>({setupCompleted:false});',
         router: 'export const useNavigate=()=>globalThis.__configUI.navigate; export const useLocation=()=>({pathname:globalThis.__configUI.path||"/settings/backup"});',
         subbar: 'export const useSubbarSetter=()=>globalThis.__configUI.setContent;',
         'settings-controller': 'export default section=>({...globalThis.__configUI.controller,showBackup:section==="backup",showGeneral:section==="general"});',

@@ -11,11 +11,46 @@ export const subscribeSession = (listener) => { listeners.add(listener); return 
 function publish(next) { snapshot = next; for (const listener of listeners) listener(); }
 
 export function sessionRoute(state) {
-  if (!state) return "checking";
-  if (state.authRequired && state.authConfigured && !state.authenticated) return "login";
+  if (typeof state?.setupCompleted !== "boolean") return "checking";
   if (!state.setupCompleted) return "setup";
+  if (["authRequired", "authConfigured", "authenticated"].some((key) => typeof state[key] !== "boolean")) return "checking";
+  if (state.authRequired && state.authConfigured && !state.authenticated) return "login";
   if (state.authRequired && !state.authConfigured) return "configuration";
   return "app";
+}
+
+// Only the auth gate owns route transitions. Unknown state must never imply a route.
+export function sessionRedirect(state, pathname, search = "", hash = "") {
+  const route = sessionRoute(state);
+  if (route === "setup" && pathname !== "/setup") return "/setup";
+  if (route === "login" && pathname !== "/login") return `/login?returnTo=${encodeURIComponent(pathname + search + hash)}`;
+  if (route === "app" && pathname === "/setup") return "/library";
+  return null;
+}
+
+export function authDenialKind(status, payload = {}) {
+  const code = payload.error || payload.code || payload.title;
+  if (code === "setup_required") return "setup";
+  if (code === "security_setup_required") return "configuration";
+  if (status === 401) return "unauthenticated";
+  return "forbidden";
+}
+
+async function recheckAfterDenial(kind) {
+  // Setup APIs may legitimately reject requests pending bootstrap/credentials.
+  // Do not lock/remount known incomplete setup for expected API denials.
+  if (snapshot.state?.setupCompleted === false) {
+    // Revoke stale session/configuration state in place, without unmounting setup.
+    if ((kind === "unauthenticated" && snapshot.state.authenticated) ||
+        (kind === "configuration" && snapshot.state.authConfigured)) {
+      try { await refreshSession(); } catch { /* Stable error/retry state. */ }
+    }
+    return;
+  }
+  if (snapshot.state?.setupCompleted !== true || kind === "forbidden") return;
+  lockSession();
+  try { await refreshSession({ deniedKind: kind }); }
+  catch { /* refreshSession exposes the stable retry/error state. */ }
 }
 
 export function safeDestination(value) {
@@ -36,7 +71,7 @@ export function lockSession() {
   publish({ phase: "checking", state: null, error: null });
 }
 
-export async function refreshSession() {
+export async function refreshSession({ deniedKind } = {}) {
   if (pending) return pending;
   const started = revision;
   pending = (async () => {
@@ -44,7 +79,11 @@ export async function refreshSession() {
       const response = await fetch(authUrl("session"), { credentials: "include", cache: "no-store", signal: AbortSignal.timeout(15000), headers: { Accept: "application/json", Authorization: "", "X-Feedarr-Web": "1" } });
       if (!response.ok) throw Object.assign(new Error("session_unavailable"), { status: response.status });
       const state = await response.json();
-      if (typeof state?.authRequired !== "boolean" || typeof state?.setupCompleted !== "boolean") throw new Error("invalid_session_response");
+      if (["authRequired", "authConfigured", "authenticated", "setupCompleted"].some((key) => typeof state?.[key] !== "boolean")) throw new Error("invalid_session_response");
+      const contradictsDenial = (deniedKind === "setup" && state.setupCompleted) ||
+        (deniedKind === "configuration" && state.authConfigured) ||
+        (deniedKind === "unauthenticated" && sessionRoute(state) === "app");
+      if (contradictsDenial) throw new Error("inconsistent_authorization_state");
       if (started === revision) publish({ phase: "ready", state, error: null });
       return state;
     } catch (error) {
@@ -101,15 +140,9 @@ export function createSessionFetch(nativeFetch, origin, root = base) {
     const started = revision;
     const response = await nativeFetch(input, { ...init, headers });
     if (!isAuth && started !== revision) throw new DOMException("Session changed", "AbortError");
-    if (!isAuth && response.status === 401) {
-      lockSession();
-      void refreshSession().catch(() => {});
-    } else if (!isAuth && response.status === 403) {
+    if (!isAuth && (response.status === 401 || response.status === 403)) {
       const denial = await response.clone().json().catch(() => ({}));
-      if (["setup_required", "security_setup_required"].includes(denial.error || denial.code || denial.title)) {
-        lockSession();
-        void refreshSession().catch(() => {});
-      }
+      void recheckAfterDenial(authDenialKind(response.status, denial));
     } else if (!isAuth && response.ok && method !== "GET" && action === "settings/security") {
       lockSession();
       void refreshSession().catch(() => {});

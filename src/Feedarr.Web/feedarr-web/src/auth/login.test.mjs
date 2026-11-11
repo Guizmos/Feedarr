@@ -27,3 +27,70 @@ test("rendered login supports password managers, remember-me and accessible resp
     assert.doesNotMatch(html, /Authorization|localStorage|sessionStorage/);
   } finally { globalThis.fetch = original; await server.close(); }
 });
+
+test("logout renders a touch-sized icon action with translated tooltip and accessible name", async () => {
+  const server = await createServer({ server: { middlewareMode: true, hmr: false, watch: null }, logLevel: "silent" });
+  const originalFetch = globalThis.fetch, originalDocument = globalThis.document;
+  try {
+    const session = await server.ssrLoadModule("/src/auth/session.js");
+    globalThis.fetch = async () => new Response(JSON.stringify({ authRequired: true, authConfigured: true, authenticated: true, setupCompleted: true }));
+    await session.refreshSession();
+    const { default: LogoutButton } = await server.ssrLoadModule("/src/auth/LogoutButton.jsx");
+    for (const [language, label] of [["fr-FR", "Déconnexion"], ["en-US", "Log out"]]) {
+      globalThis.document = { documentElement: { getAttribute: () => language } };
+      const html = renderToStaticMarkup(React.createElement(LogoutButton));
+      assert.ok(html.includes(`title="${label}"`));
+      assert.ok(html.includes(`aria-label="${label}"`));
+      assert.match(html, /class="subaction auth-logout-action"/);
+      assert.match(html, /lucide-log-out/);
+      assert.match(html, /aria-hidden="true"/);
+      assert.doesNotMatch(html, />Déconnexion<|>Log out<|class="btn"/);
+    }
+  } finally { globalThis.fetch = originalFetch; globalThis.document = originalDocument; await server.close(); }
+});
+
+test("rendered auth gate leaves incomplete setup mounted and unknown/error states stable", async () => {
+  const server = await createServer({ server: { middlewareMode: true, hmr: false, watch: null }, logLevel: "silent" });
+  const originalFetch = globalThis.fetch;
+  try {
+    const session = await server.ssrLoadModule("/src/auth/session.js");
+    const { default: AuthGate } = await server.ssrLoadModule("/src/auth/AuthGate.jsx");
+    const { Routes, Route } = await import("react-router-dom");
+    const render = () => renderToStaticMarkup(React.createElement(MemoryRouter, { initialEntries: ["/setup"] },
+      React.createElement(Routes, null, React.createElement(Route, { element: React.createElement(AuthGate) },
+        React.createElement(Route, { path: "/setup", element: React.createElement("div", null, "wizard-content") })))));
+    session.lockSession();
+    assert.match(render(), /Vérification de la session/);
+    assert.doesNotMatch(render(), /wizard-content/);
+    for (const authMode of ["strict", "smart"]) for (const authConfigured of [false, true]) {
+      globalThis.fetch = async () => new Response(JSON.stringify({ authRequired: true, authConfigured, authenticated: false, setupCompleted: false, authMode }));
+      await session.refreshSession();
+      assert.match(render(), /wizard-content/);
+    }
+    session.lockSession();
+    globalThis.fetch = async () => new Response("unavailable", { status: 500 });
+    await assert.rejects(session.refreshSession());
+    assert.match(render(), /Réessayer/);
+    assert.doesNotMatch(render(), /wizard-content/);
+  } finally { globalThis.fetch = originalFetch; await server.close(); }
+});
+
+test("configured incomplete setup shows wizard and reused login form together without leaving setup", async () => {
+  const server = await createServer({ server: { middlewareMode: true, hmr: false, watch: null }, logLevel: "silent" });
+  const original = globalThis.fetch;
+  try {
+    const session = await server.ssrLoadModule("/src/auth/session.js");
+    globalThis.fetch = async () => new Response(JSON.stringify({ authRequired: true, authConfigured: true, authenticated: false, setupCompleted: false, webSessionAvailable: true }));
+    await session.refreshSession();
+    const { default: AuthGate } = await server.ssrLoadModule("/src/auth/AuthGate.jsx");
+    const { default: SetupShell } = await server.ssrLoadModule("/src/layout/SetupShell.jsx");
+    const { Routes, Route } = await import("react-router-dom");
+    const html = renderToStaticMarkup(React.createElement(MemoryRouter, { initialEntries: ["/setup"] }, React.createElement(Routes, null,
+      React.createElement(Route, { element: React.createElement(AuthGate) }, React.createElement(Route, { path: "/setup", element: React.createElement(SetupShell) },
+        React.createElement(Route, { index: true, element: React.createElement("div", null, "wizard-content") }))))));
+    assert.match(html, /wizard-content/);
+    assert.match(html, /auth-setup-login/);
+    assert.match(html, /action="\/api\/auth\/login"/);
+    assert.match(html, /autoComplete="current-password"/);
+  } finally { globalThis.fetch = original; await server.close(); }
+});

@@ -1,13 +1,16 @@
-import React, { useEffect } from "react";
-import { Outlet, useNavigate } from "react-router-dom";
+import React, { useEffect, useSyncExternalStore } from "react";
+import { Outlet } from "react-router-dom";
 import { apiGet } from "../api/client.js";
 import { applyTheme } from "../app/theme.js";
 import { applyUiLanguage } from "../app/locale.js";
+import { getSessionSnapshot, subscribeSession } from "../auth/session.js";
+import Login from "../pages/Login.jsx";
 import RestorePendingBanner from "./RestorePendingBanner.jsx";
 import Topbar from "./Topbar.jsx";
 
 export default function SetupShell() {
-  const navigate = useNavigate();
+  const { state } = useSyncExternalStore(subscribeSession, getSessionSnapshot, getSessionSnapshot);
+  const needsLogin = state?.authRequired && state?.authConfigured && !state?.authenticated;
 
   useEffect(() => {
     let active = true;
@@ -23,30 +26,14 @@ export default function SetupShell() {
     return () => {
       active = false;
     };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    apiGet("/api/system/onboarding")
-      .then((status) => {
-        if (!active) return;
-        if (status?.onboardingDone) {
-          navigate("/library", { replace: true });
-        }
-      })
-      .catch((error) => {
-        console.error("Failed to load onboarding status on setup shell", error);
-      });
-    return () => {
-      active = false;
-    };
-  }, [navigate]);
+  }, [state?.authenticated]);
 
   return (
     <div className="app setup-shell">
       <Topbar onToggleNav={() => {}} />
       <RestorePendingBanner />
       <main className="setup-main">
+        {needsLogin && <Login embedded />}
         <Outlet />
       </main>
     </div>

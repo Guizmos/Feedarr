@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { refreshSession, getSessionSnapshot, subscribeSession } from "../auth/session.js";
 import { apiGet, apiPost } from "../api/client.js";
 import Modal from "../ui/Modal.jsx";
 import InlineNotice from "./settings/InlineNotice.jsx";
@@ -48,7 +48,8 @@ function readStoredStep() {
 }
 
 export default function SetupWizard() {
-  const navigate = useNavigate();
+  const { state: authState } = useSyncExternalStore(subscribeSession, getSessionSnapshot, getSessionSnapshot);
+  const authenticated = authState?.authenticated;
   const [step, setStep] = useState(readStoredStep);
   const [maxStep, setMaxStep] = useState(step);
   const [finishing, setFinishing] = useState(false);
@@ -91,7 +92,7 @@ export default function SetupWizard() {
   const restored = (setup, bootstrap) => {
     const remaining = resumeSetupSteps(setup.restoreSteps);
     window.localStorage.removeItem("feedarr:setupRestore");
-    if (setup.onboardingDone) { navigate("/library", { replace: true }); return; }
+    if (setup.onboardingDone) { void refreshSession().catch((error) => setRestoreError(error?.message || "Impossible de vérifier la session.")); return; }
     if (remaining?.length) {
       restoredStepsRef.current = remaining;
       setRestoreSteps(remaining); setStep(remaining[0]); setMaxStep(MAX_STEP);
@@ -148,7 +149,7 @@ export default function SetupWizard() {
         const prevDone = window.localStorage.getItem(ONBOARDING_FLAG) === "true";
         if (status?.onboardingDone) {
           window.localStorage.setItem(ONBOARDING_FLAG, "true");
-          navigate("/library", { replace: true });
+          void refreshSession().catch((error) => setRestoreError(error?.message || "Impossible de vérifier la session."));
           return;
         }
         if (prevDone) {
@@ -164,7 +165,7 @@ export default function SetupWizard() {
     return () => {
       active = false;
     };
-  }, [navigate]);
+  }, [authenticated]);
 
   useEffect(() => {
     let active = true;
@@ -212,7 +213,7 @@ export default function SetupWizard() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [authenticated]);
 
   const finish = useCallback(async () => {
     if (finishing) return;
@@ -228,12 +229,12 @@ export default function SetupWizard() {
         window.localStorage.removeItem("feedarr:setupRestore");
         window.localStorage.setItem(ONBOARDING_FLAG, "true");
       }
-      navigate("/library", { replace: true });
+      await refreshSession();
     } catch (error) {
       setRestoreError(error?.message || "Impossible de terminer la configuration.");
       setFinishing(false);
     }
-  }, [finishing, navigate, restoreSteps, completionBootstrap]);
+  }, [finishing, restoreSteps, completionBootstrap]);
 
   const steps = [
     {
