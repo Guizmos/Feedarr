@@ -306,7 +306,8 @@ test("return after verified empty restore state is local even when a later state
   const f=fixture(); let reads=0;
   try {
     f.h.request=async()=>{ reads++; if(reads>1) throw new Error('Autorisation requise'); return {}; };
-    button(f.render(Wizard),'Restaurer une configuration').props.onClick(); f.render(Wizard); await f.effects();
+    f.data.set('feedarr:setupRestore','true');
+    f.render(Wizard); await f.effects();
     let tree=f.render(Wizard); const restore=nodes(tree).find(n=>n.props?.restore).props.restore;
     restore.setPhrase('secret to discard');
     await button(f.render(Wizard),'Retour au choix').props.onClick(); await flush();
@@ -330,7 +331,8 @@ test("return lock and failed verification have visible explanations next to the 
   const f=fixture();
   try {
     f.h.request=async()=>{throw new Error('Autorisation requise');};
-    button(f.render(Wizard),'Restaurer une configuration').props.onClick(); f.render(Wizard); await f.effects();
+    f.data.set('feedarr:setupRestore','true');
+    f.render(Wizard); await f.effects();
     let tree=f.render(Wizard);await button(tree,'Retour au choix').props.onClick();await flush();tree=f.render(Wizard);
     assert.equal(button(tree,'Retour au choix').props['aria-describedby'],'setup-return-status');
     assert.ok(nodes(tree).some(n=>n.props?.id==='setup-return-status' && text(n).includes('Retour au choix impossible')));
@@ -351,5 +353,67 @@ test("a lost preparation response invalidates the verified empty state before re
     f.h.request=async()=>({pending:{operationId:'uncertain'},confirmed:true});
     await f.render(Restore,true).leave(false,()=>{left=true;});
     assert.equal(left,false);assert.match(f.render(Restore,true).leaveError,/confirmée ou appliquée/);
+  } finally {f.close();}
+});
+
+test("fresh welcome to restore to welcome needs no bootstrap and no authorized request", async () => {
+  const f=fixture(); let requests=0;
+  try {
+    f.h.request=async()=>{requests++;const e=new Error('Autorisation requise');e.status=403;throw e;};
+    button(f.render(Wizard),'Restaurer une configuration').props.onClick();f.render(Wizard);await f.effects();
+    let tree=f.render(Wizard),r=nodes(tree).find(n=>n.props?.restore).props.restore;
+    assert.equal(r.file,null);assert.equal(r.error,'');assert.equal(r.checking,false);
+    assert.equal(button(tree,'Retour au choix').props.disabled,false);
+    button(tree,'Retour au choix').props.onClick();await flush();tree=f.render(Wizard);
+    assert.match(text(tree),/Bienvenue dans Feedarr/);
+    await f.effects();assert.equal(requests,0);
+    assert.equal(f.data.has('feedarr:setupRestore'),false);
+  } finally {f.close();}
+});
+
+test("fresh local return clears selected archive and secrets without contacting the restore API", async () => {
+  const f=fixture();let requests=0;
+  try {
+    f.h.request=async()=>{requests++;throw new Error('Must not request');};
+    button(f.render(Wizard),'Restaurer une configuration').props.onClick();
+    let r=nodes(f.render(Wizard)).find(n=>n.props?.restore).props.restore;
+    r.setFile(new File(['zip'],'local.zip'));r.setPhrase('private phrase');r.setBootstrap('private bootstrap');
+    f.render(Wizard);await f.effects();
+    button(f.render(Wizard),'Retour au choix').props.onClick();await flush();
+    button(f.render(Wizard),'Restaurer une configuration').props.onClick();
+    r=nodes(f.render(Wizard)).find(n=>n.props?.restore).props.restore;
+    assert.equal(r.file,null);assert.equal(r.phrase,'');assert.equal(r.bootstrap,'');assert.equal(requests,0);
+  } finally {f.close();}
+});
+
+test("unknown resumed states remain blocked by 401 or 403, never inferred empty", async () => {
+  for(const status of [401,403]) {
+    const f=fixture();let requests=0;
+    try {
+      f.data.set('feedarr:setupRestore','true');
+      f.h.request=async()=>{requests++;const e=new Error('Autorisation requise');e.status=status;throw e;};
+      f.render(Wizard);await f.effects();
+      button(f.render(Wizard),'Retour au choix').props.onClick();await flush();
+      const tree=f.render(Wizard);
+      assert.ok(nodes(tree).some(n=>n.props?.restore));assert.equal(requests,2);
+      assert.match(nodes(tree).find(n=>n.props?.restore).props.restore.leaveError,/Autorisation requise/);
+    } finally {f.close();}
+  }
+});
+
+test("in-flight preparation blocks return and failed preparation requires authoritative verification", async () => {
+  const f=fixture();let fail,requests=0,left=false;
+  try {
+    let r=f.render(Restore,true);r.startFresh();r=f.render(Restore,true);
+    r.setFile(new File(['zip'],'local.zip'));
+    f.h.request=()=>{requests++;return new Promise((_,reject)=>{fail=reject;});};
+    const preparing=f.render(Restore,true).prepare();
+    r=f.render(Restore,true);assert.equal(r.busy,true);
+    await r.leave(false,()=>{left=true;});assert.equal(left,false);assert.equal(requests,1);
+    fail(new Error('Réponse perdue'));await preparing;
+    f.h.request=async()=>{requests++;throw new Error('Autorisation requise');};
+    await f.render(Restore,true).leave(false,()=>{left=true;});
+    assert.equal(left,false);assert.equal(requests,2);
+    assert.match(f.render(Restore,true).leaveError,/Autorisation requise/);
   } finally {f.close();}
 });

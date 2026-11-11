@@ -101,6 +101,7 @@ export default function SetupWizard() {
   const restore = useSetupRestore(restoreMode, restored);
   const chooseRestore = value => {
     if (restore.locked) return;
+    if (value) restore.startFresh();
     setPath(value ? "restore" : "install");
     if (!value) { setStep(MIN_STEP); setMaxStep(MIN_STEP); }
     window.localStorage.setItem("feedarr:setupRestore", String(value));

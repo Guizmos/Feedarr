@@ -18,18 +18,21 @@ export default function useSetupRestore(enabled, onApplied) {
   const [checking, setChecking] = useState(false);
   const [analysisStatus, setAnalysisStatus] = useState("none");
   const [leaveError, setLeaveError] = useState("");
+  const [resumeOnEntry, setResumeOnEntry] = useState(true);
+  const localOnly = useRef(false);
   const active = useRef(null);
   const sequence = useRef(0);
   const verifiedEmpty = useRef(false);
   const request = useCallback((path, options = {}) => configurationRequest(`${root}${path}`, { bootstrap, ...options }), [bootstrap]);
   const acceptState = useCallback(next => {
+    localOnly.current = false;
     verifiedEmpty.current = !!next && !next.pending && !next.confirmed && !next.applied;
     setState(next);
     if (next?.pending) { setStage(next.confirmed ? 3 : 2); setAnalysisStatus("valid"); }
     else if (next?.applied) setStage(4);
   }, []);
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !resumeOnEntry) return;
     let alive = true;
     setChecking(true);
     const current = ++sequence.current;
@@ -38,7 +41,7 @@ export default function useSetupRestore(enabled, onApplied) {
       if (alive && !active.current && current === sequence.current) { acceptState(next); }
     }).catch(e => { if (alive && !controller.signal.aborted && current === sequence.current) setError(e.message || "Impossible de charger la restauration."); }).finally(() => { if (alive) setChecking(false); });
     return () => { alive = false; controller.abort(); };
-  }, [enabled, request, acceptState]);
+  }, [enabled, resumeOnEntry, request, acceptState]);
   useEffect(() => () => active.current?.abort(), []);
   const run = async (action, kind) => {
     if (active.current) return;
@@ -51,6 +54,7 @@ export default function useSetupRestore(enabled, onApplied) {
   };
   const prepare = () => run(async signal => {
     const body = configurationUpload(file, phrase); setPhrase(""); setAnalysisStatus("analyzing");
+    localOnly.current = false;
     verifiedEmpty.current = false;
     const pending = await request("/prepare", { method: "POST", body, signal });
     setState({ pending, confirmed: false }); setConsent(false); setSecurityConsent(false); setStage(2); setAnalysisStatus("valid");
@@ -85,7 +89,15 @@ export default function useSetupRestore(enabled, onApplied) {
     if (next === 4 && state?.applied && !state.pending) setStage(4);
   };
   const canVisit = id => !busy && (id === stage || id === 1 && !state?.confirmed && !state?.applied || id === 2 && state?.pending && !state.confirmed || id === 3 && state?.confirmed || id === 4 && state?.applied && !state.pending);
-  const reset = () => { verifiedEmpty.current = false; setChecking(false); setAnalysisStatus("none"); sequence.current++; setFile(null); setPhrase(""); setBootstrap(""); setLeaveError(""); setState(null); setConsent(false); setSecurityConsent(false); setError(""); setNotice(""); setStage(1); };
+  const reset = () => { localOnly.current = false; setResumeOnEntry(true); verifiedEmpty.current = false; setChecking(false); setAnalysisStatus("none"); sequence.current++; setFile(null); setPhrase(""); setBootstrap(""); setLeaveError(""); setState(null); setConsent(false); setSecurityConsent(false); setError(""); setNotice(""); setStage(1); };
+  // Only an explicit choice from the welcome screen starts a known local flow.
+  // Reloaded/restored routes keep the default unknown state and its server check.
+  const startFresh = () => {
+    if (active.current || state?.confirmed || state?.applied || state?.pending) return;
+    reset();
+    localOnly.current = true;
+    setResumeOnEntry(false);
+  };
   const selectFile = next => {
     if (active.current || state?.confirmed || state?.applied) return;
     const update = () => {
@@ -106,6 +118,7 @@ export default function useSetupRestore(enabled, onApplied) {
     if (state?.confirmed || state?.applied) {
       throw new Error("La restauration est déjà confirmée ou appliquée. Poursuivez ce parcours pour la finaliser.");
     }
+    if (localOnly.current && !state?.pending) { reset(); onLeave(); return; }
     // An already verified empty state needs no server mutation or second read
     // to leave. Unknown/prepared plans still require authoritative verification.
     if (verifiedEmpty.current && !state?.pending) { reset(); onLeave(); return; }
@@ -122,7 +135,7 @@ export default function useSetupRestore(enabled, onApplied) {
   }, "leave");
   const validFile = !configurationFileError(file);
   return { stage, state, file, setFile: selectFile, phrase, setPhrase, bootstrap, setBootstrap, consent, setConsent, securityConsent, setSecurityConsent,
-    busy, checking, analysisStatus, error, leaveError, notice, prepare, cancel, confirm, checkRestart, finish, go, canVisit, reset, leave,
+    busy, checking, analysisStatus, error, leaveError, notice, prepare, cancel, confirm, checkRestart, finish, go, canVisit, reset, startFresh, leave,
     canPrepare: validFile && !busy && !checking && !state?.pending && !state?.confirmed && !state?.applied && !state?.legacyRestorePending,
     locked: busy || checking || !!state?.pending || !!state?.applied,
     canContinue: stage !== 2 || consent && (!state?.pending?.securityChangeRequiresConfirmation || securityConsent) };
