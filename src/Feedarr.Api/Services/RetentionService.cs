@@ -3,7 +3,7 @@ using Feedarr.Api.Services.Posters;
 
 namespace Feedarr.Api.Services;
 
-public sealed class RetentionService
+public sealed partial class RetentionService
 {
     private const long FullScanIntervalSeconds = 3600; // at most once per hour
 
@@ -12,17 +12,20 @@ public sealed class RetentionService
     private readonly IPosterFileStore _fileStore;
     private readonly ILogger<RetentionService> _log;
     private long _lastFullScanTs;
+    private readonly Feedarr.Api.Services.Backup.BackupExecutionCoordinator _historyCoordinator;
 
     public RetentionService(
         ReleaseRepository releases,
         PosterFetchService? posters,
         IPosterFileStore fileStore,
-        ILogger<RetentionService> log)
+        ILogger<RetentionService> log,
+        Feedarr.Api.Services.Backup.BackupExecutionCoordinator? historyCoordinator = null)
     {
         _releases = releases;
         _posters = posters;
         _fileStore = fileStore;
         _log = log;
+        _historyCoordinator = historyCoordinator ?? new();
     }
 
     public (ReleaseRepository.RetentionResult result, int postersPurged, int failedDeletes) ApplyRetention(
@@ -77,19 +80,13 @@ public sealed class RetentionService
 
             try
             {
-                if (_fileStore.Exists(full))
+                using var lease = _releases.PosterLifecycle.TryEnterCollection();
+                if (lease is null) continue;
+                if (_releases.DeleteHistoryPosterIfUnreferenced(file, () =>
                 {
-                    _fileStore.Delete(full);
-                    if (_fileStore.Exists(full))
-                    {
-                        failedDeletes++;
-                        _log.LogWarning("Poster delete failed file={File}", file);
-                        continue;
-                    }
-                }
-
-                _releases.ClearPosterFileReferences(file);
-                purged++;
+                    if (_fileStore.Exists(full)) _fileStore.Delete(full);
+                    if (_fileStore.Exists(full)) throw new IOException("Poster still exists after deletion");
+                })) purged++;
             }
             catch (Exception ex)
             {

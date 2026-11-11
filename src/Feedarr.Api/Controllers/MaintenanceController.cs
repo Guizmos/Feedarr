@@ -19,7 +19,7 @@ namespace Feedarr.Api.Controllers;
 
 [ApiController]
 [Route("api/maintenance")]
-public sealed class MaintenanceController : ControllerBase
+public sealed partial class MaintenanceController : ControllerBase
 {
     private static readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
 

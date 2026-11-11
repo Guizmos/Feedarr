@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useState } from "react";
+import HistoryRetentionMaintenance from "./HistoryRetentionMaintenance.jsx";
 import Modal from "../../ui/Modal.jsx";
 import AppIcon from "../../ui/AppIcon.jsx";
 import { fmtBytes } from "./settingsUtils.js";
@@ -122,9 +123,11 @@ export default function SettingsMaintenance({
   maintenancePulseKinds,
   restoreRecommendedDefaults,
 }) {
-  const anyLoading = clearCacheLoading || purgeSelectiveLoading || vacuumLoading
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const otherLoading = clearCacheLoading || purgeSelectiveLoading || vacuumLoading
     || cleanupPostersLoading || testProvidersLoading || reparseLoading
     || duplicatesLoading || duplicatesPurgeLoading;
+  const anyLoading = otherLoading || historyBusy;
   const notice = getMaintenancePerformanceNotice(maintenanceSettings);
   const advancedEnabled = !!maintenanceSettings?.maintenanceAdvancedOptionsEnabled;
   const manualRateLimits = maintenanceSettings?.providerRateLimitMode === "manual";
@@ -178,6 +181,7 @@ export default function SettingsMaintenance({
 
   return (
     <>
+      <HistoryRetentionMaintenance disabled={otherLoading} onBusyChange={setHistoryBusy} />
       {advancedEnabled && (
         <div className="settings-card settings-card--full" id="maintenance-advanced">
           <div className="settings-card__head">

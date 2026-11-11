@@ -704,6 +704,7 @@ public sealed class PosterFetchService
 
     public async Task<string?> SaveTmdbPosterAsync(long id, int tmdbId, string posterPath, CancellationToken ct, bool logSingle = true)
     {
+        using var publication = await _releases.PosterLifecycle.EnterPublicationAsync(ct).ConfigureAwait(false);
         if (tmdbId <= 0 || string.IsNullOrWhiteSpace(posterPath)) return null;
 
         Directory.CreateDirectory(PostersDirAbs);
@@ -717,6 +718,7 @@ public sealed class PosterFetchService
         var file = $"tmdb-{tmdbId}-manual{ext}";
         var full = Path.Combine(PostersDirAbs, file);
         await PosterImageWriter.WriteAsync(full, bytesTmdb, ct).ConfigureAwait(false);
+        _releases.ProtectManualEntity(id);
         _releases.SavePoster(id, tmdbId, posterPath, file);
         await TrySaveToStoreAsync(id, "tmdb", tmdbId.ToString(CultureInfo.InvariantCulture), ext, bytesTmdb, file, tmdbId, posterPath, ct).ConfigureAwait(false);
         var mediaType = (string?)_releases.GetForPoster(id)?.MediaType ?? "";
@@ -739,6 +741,7 @@ public sealed class PosterFetchService
 
     public async Task<string?> SaveIgdbPosterAsync(long id, int igdbId, string coverUrl, CancellationToken ct, bool logSingle = true)
     {
+        using var publication = await _releases.PosterLifecycle.EnterPublicationAsync(ct).ConfigureAwait(false);
         if (igdbId <= 0 || string.IsNullOrWhiteSpace(coverUrl)) return null;
 
         Directory.CreateDirectory(PostersDirAbs);
@@ -749,6 +752,7 @@ public sealed class PosterFetchService
         var file = $"igdb-{igdbId}-manual.jpg";
         var full = Path.Combine(PostersDirAbs, file);
         await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
+        _releases.ProtectManualEntity(id);
         _releases.SavePoster(id, igdbId, coverUrl, file);
         await TrySaveToStoreAsync(id, "igdb", igdbId.ToString(CultureInfo.InvariantCulture), ".jpg", bytes, file, null, null, ct).ConfigureAwait(false);
         await UpdateExternalDetailsFromIgdbAsync(id, igdbId, ct).ConfigureAwait(false);        var size = InferIgdbSize(coverUrl);
@@ -771,6 +775,7 @@ public sealed class PosterFetchService
 
     public async Task<string?> SaveRawgPosterAsync(long id, int rawgId, string coverUrl, CancellationToken ct, bool logSingle = true)
     {
+        using var publication = await _releases.PosterLifecycle.EnterPublicationAsync(ct).ConfigureAwait(false);
         if (rawgId <= 0 || string.IsNullOrWhiteSpace(coverUrl)) return null;
 
         Directory.CreateDirectory(PostersDirAbs);
@@ -781,6 +786,7 @@ public sealed class PosterFetchService
         var file = $"rawg-{rawgId}-manual.jpg";
         var full = Path.Combine(PostersDirAbs, file);
         await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
+        _releases.ProtectManualEntity(id);
         _releases.SavePoster(id, null, coverUrl, file);
         await TrySaveToStoreAsync(id, "rawg", rawgId.ToString(CultureInfo.InvariantCulture), ".jpg", bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(id, ExternalProviderKeys.Rawg, rawgId.ToString(CultureInfo.InvariantCulture),
@@ -796,6 +802,7 @@ public sealed class PosterFetchService
 
     public async Task<string?> SaveTheAudioDbPosterAsync(long id, string? providerId, string posterUrl, CancellationToken ct, bool logSingle = true)
     {
+        using var publication = await _releases.PosterLifecycle.EnterPublicationAsync(ct).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(posterUrl)) return null;
 
         Directory.CreateDirectory(PostersDirAbs);
@@ -810,6 +817,7 @@ public sealed class PosterFetchService
         var file = $"theaudiodb-{normalizedProviderId}-manual{ext}";
         var full = Path.Combine(PostersDirAbs, file);
         await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
+        _releases.ProtectManualEntity(id);
         _releases.SavePoster(id, null, posterUrl, file);
         await TrySaveToStoreAsync(id, ExternalProviderKeys.TheAudioDb, normalizedProviderId, ext, bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(
@@ -854,6 +862,7 @@ public sealed class PosterFetchService
 
     public async Task<string?> SaveGoogleBooksPosterAsync(long id, string? providerId, string posterUrl, CancellationToken ct, bool logSingle = true)
     {
+        using var publication = await _releases.PosterLifecycle.EnterPublicationAsync(ct).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(posterUrl)) return null;
 
         Directory.CreateDirectory(PostersDirAbs);
@@ -868,6 +877,7 @@ public sealed class PosterFetchService
         var file = $"googlebooks-{normalizedProviderId}-manual{ext}";
         var full = Path.Combine(PostersDirAbs, file);
         await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
+        _releases.ProtectManualEntity(id);
         _releases.SavePoster(id, null, posterUrl, file);
         await TrySaveToStoreAsync(id, ExternalProviderKeys.GoogleBooks, normalizedProviderId, ext, bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(
@@ -896,6 +906,7 @@ public sealed class PosterFetchService
 
     public async Task<string?> SaveOpenLibraryPosterAsync(long id, string? providerId, string posterUrl, CancellationToken ct, bool logSingle = true)
     {
+        using var publication = await _releases.PosterLifecycle.EnterPublicationAsync(ct).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(posterUrl)) return null;
 
         Directory.CreateDirectory(PostersDirAbs);
@@ -909,6 +920,7 @@ public sealed class PosterFetchService
         var file = $"openlibrary-{normalizedProviderId}-manual.jpg";
         var full = Path.Combine(PostersDirAbs, file);
         await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
+        _releases.ProtectManualEntity(id);
         _releases.SavePoster(id, null, posterUrl, file);
         await TrySaveToStoreAsync(id, ExternalProviderKeys.OpenLibrary, normalizedProviderId, ".jpg", bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(
@@ -937,6 +949,7 @@ public sealed class PosterFetchService
 
     public async Task<string?> SaveComicVinePosterAsync(long id, string? providerId, string posterUrl, CancellationToken ct, bool logSingle = true)
     {
+        using var publication = await _releases.PosterLifecycle.EnterPublicationAsync(ct).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(posterUrl)) return null;
 
         Directory.CreateDirectory(PostersDirAbs);
@@ -951,6 +964,7 @@ public sealed class PosterFetchService
         var file = $"comicvine-{normalizedProviderId}-manual{ext}";
         var full = Path.Combine(PostersDirAbs, file);
         await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
+        _releases.ProtectManualEntity(id);
         _releases.SavePoster(id, null, posterUrl, file);
         await TrySaveToStoreAsync(id, ExternalProviderKeys.ComicVine, normalizedProviderId, ext, bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(
@@ -979,6 +993,7 @@ public sealed class PosterFetchService
 
     public async Task<string?> SaveMusicBrainzPosterAsync(long id, string? providerId, string posterUrl, CancellationToken ct, bool logSingle = true)
     {
+        using var publication = await _releases.PosterLifecycle.EnterPublicationAsync(ct).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(posterUrl)) return null;
 
         Directory.CreateDirectory(PostersDirAbs);
@@ -994,6 +1009,7 @@ public sealed class PosterFetchService
         var file = $"musicbrainz-{normalizedProviderId}-manual{ext}";
         var full = Path.Combine(PostersDirAbs, file);
         await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
+        _releases.ProtectManualEntity(id);
         _releases.SavePoster(id, null, posterUrl, file);
         await TrySaveToStoreAsync(id, ExternalProviderKeys.MusicBrainz, normalizedProviderId, ext, bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(
@@ -1054,6 +1070,7 @@ public sealed class PosterFetchService
 
     public async Task<PosterFetchResult> FetchPosterAsync(long id, CancellationToken ct, bool logSingle, bool skipIfExists = true)
     {
+        using var publication = await _releases.PosterLifecycle.EnterPublicationAsync(ct).ConfigureAwait(false);
         Directory.CreateDirectory(PostersDirAbs);
         var forceRefresh = !skipIfExists;
 

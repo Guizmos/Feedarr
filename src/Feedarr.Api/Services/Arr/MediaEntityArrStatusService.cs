@@ -110,6 +110,7 @@ public sealed class MediaEntityArrStatusService
 
     private List<MediaEntityArrStatusRow> RefreshEntityStatusesInternal(IEnumerable<long> entityIds, long now)
     {
+        using var publication = _releases.PosterLifecycle.EnterPublication();
         var list = entityIds.Distinct().ToArray();
         if (list.Length == 0) return new List<MediaEntityArrStatusRow>();
 

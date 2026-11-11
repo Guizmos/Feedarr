@@ -15,7 +15,7 @@ using PosterServices = Feedarr.Api.Services.Posters;
 
 namespace Feedarr.Api.Data.Repositories;
 
-public sealed class ReleaseRepository
+public sealed partial class ReleaseRepository
 {
     private readonly Db _db;
     private readonly TitleParser _parser;
@@ -624,6 +624,7 @@ public sealed class ReleaseRepository
               unified_category,
               title_clean,
               year,
+              retention_origin,
               poster_file,
               poster_updated_at_ts,
               created_at_ts,
@@ -633,6 +634,7 @@ public sealed class ReleaseRepository
               r.unified_category,
               r.title_clean,
               r.year,
+              CASE WHEN COALESCE(r.title_manual_override,0)=1 THEN 'manual' ELSE 'automatic' END,
               NULL,
               NULL,
               @now,
@@ -646,7 +648,8 @@ public sealed class ReleaseRepository
               AND r.title_clean IS NOT NULL
               AND r.title_clean <> ''
             ON CONFLICT DO UPDATE SET
-              updated_at_ts = excluded.updated_at_ts;
+              updated_at_ts = excluded.updated_at_ts,
+              retention_origin = CASE WHEN excluded.retention_origin='manual' THEN 'manual' ELSE media_entities.retention_origin END;
             """,
             new { sid = sourceId, guids = guidList, now },
             tx
@@ -1667,6 +1670,7 @@ public sealed class ReleaseRepository
               unified_category,
               title_clean,
               year,
+              retention_origin,
               created_at_ts,
               updated_at_ts
             )
@@ -1674,11 +1678,12 @@ public sealed class ReleaseRepository
               @unifiedCategory,
               @titleClean,
               @year,
+              'manual',
               @now,
               @now
             )
             ON CONFLICT(unified_category, title_clean, IFNULL(year, -1)) DO UPDATE SET
-              updated_at_ts = excluded.updated_at_ts;
+              updated_at_ts = excluded.updated_at_ts, retention_origin = 'manual';
 
             UPDATE releases
             SET entity_id = (
@@ -3373,16 +3378,17 @@ LEFT JOIN media_entities me
             conn.Execute(
                 """
                 INSERT INTO media_entities(
-                  unified_category, title_clean, year,
+                  unified_category, title_clean, year, retention_origin,
                   created_at_ts, updated_at_ts
                 )
                 SELECT DISTINCT
-                  r.unified_category, r.title_clean, r.year,
+                  r.unified_category, r.title_clean, r.year, CASE WHEN COALESCE(r.title_manual_override,0)=1 THEN 'manual' ELSE 'automatic' END,
                   @now, @now
                 FROM releases r
                 WHERE r.id IN @ids
                 ON CONFLICT(unified_category, title_clean, IFNULL(year, -1)) DO UPDATE SET
-                  updated_at_ts = excluded.updated_at_ts;
+                  updated_at_ts = excluded.updated_at_ts,
+                  retention_origin = CASE WHEN excluded.retention_origin='manual' THEN 'manual' ELSE media_entities.retention_origin END;
                 """,
                 new { ids, now }, tx
             );
