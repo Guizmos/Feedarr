@@ -625,7 +625,7 @@ export default function OnboardingWizard({ open, status, onClose, onComplete }) 
 
   const titleNode = (
     <div className="onboarding__titlebar">
-      <img className="onboarding__logo" src={`${import.meta.env.BASE_URL}feedarr-logo.png`} alt="Feedarr" />
+      <img className="onboarding__logo" src={`${import.meta.env.BASE_URL}feedarr-logo.png?v=9d1d5be2bd5c`} alt="Feedarr" />
       <div className="onboarding__titletext">{current?.title || "Onboarding"}</div>
       <span className="onboarding__titlespacer" />
     </div>

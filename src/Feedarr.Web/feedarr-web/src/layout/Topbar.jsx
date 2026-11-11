@@ -3,7 +3,7 @@ import { useLocation, useSearchParams } from "react-router-dom";
 import AppIcon from "../ui/AppIcon.jsx";
 
 export default function Topbar({ onToggleNav }) {
-  const logoSrc = `${import.meta.env.BASE_URL}favicon-ios.png`;
+  const logoSrc = `${import.meta.env.BASE_URL}icon-192.png?v=9d1d5be2bd5c`;
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const isLibrary = location.pathname === "/library";

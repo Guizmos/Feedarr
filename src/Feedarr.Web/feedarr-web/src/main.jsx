@@ -29,7 +29,7 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
 
   window.addEventListener("load", () => {
     navigator.serviceWorker
-      .register(swUrl, { scope: normalizedBase })
+      .register(swUrl, { scope: normalizedBase, updateViaCache: "none" })
       .catch((error) => {
         console.error("Failed to register service worker", error);
       });
