@@ -25,7 +25,7 @@ export function ConfigurationPreview({ preview }) {
   </div>;
 }
 
-export default function ConfigurationBackupPanel({ initialSetup = false, onApplied, onBusyChange }) {
+export default function ConfigurationBackupPanel({ initialSetup = false, onApplied, onBusyChange, onActionsChange }) {
   const root = backupRoot(initialSetup);
   const [state, setState] = useState(null);
   const [error, setError] = useState("");
@@ -41,6 +41,8 @@ export default function ConfigurationBackupPanel({ initialSetup = false, onAppli
   const [operation, setOperation] = useState("");
   const [decision, setDecision] = useState(null);
   const archiveInput = useRef(null);
+  const exportRef = useRef(null);
+  const refreshRef = useRef(null);
   const active = useRef(null), sequence = useRef(0), submitting = useRef(false);
   const request = useCallback((path, options = {}) => configurationRequest(path, { bootstrap, ...options }), [bootstrap]);
   const refresh = useCallback(async () => {
@@ -103,14 +105,35 @@ export default function ConfigurationBackupPanel({ initialSetup = false, onAppli
     const next = await refresh();
     if (next.applied && !next.pending) setNotice("Configuration appliquée. Les données de bibliothèque ont été conservées.");
   });
+  const phraseError = passphrase.length < 12 || passphrase.length > 1024
+    ? "Utilisez une phrase secrète de 12 à 1 024 caractères." : "";
+  const confirmationError = passphrase !== confirmation ? "Les deux phrases secrètes doivent être identiques." : "";
+  const canExport = !busy && !phraseError && !confirmationError;
+  const exportState = operation !== "export" ? "idle" : busy ? "loading" : error ? "error" : notice ? "success" : "idle";
+  exportRef.current = exportArchive;
+  refreshRef.current = () => run(async () => {
+    await refresh();
+    setNotice("État des sauvegardes actualisé.");
+  });
+  useEffect(() => {
+    if (!onActionsChange) return;
+    onActionsChange({
+      canExport, busy, saveState: exportState,
+      validationMessage: phraseError || confirmationError,
+      export: () => exportRef.current?.(),
+      refresh: () => refreshRef.current?.(),
+    });
+    return () => onActionsChange(null);
+  }, [onActionsChange, canExport, busy, exportState, phraseError, confirmationError]);
+
   const fieldPrefix = initialSetup ? "setup-configuration" : "settings-configuration";
-  const sectionClass = initialSetup ? "setup-step" : "settings-card settings-card--full";
-  const title = label => initialSetup ? <h2>{label}</h2> : <div className="settings-card__head"><div className="settings-card__title">{label}</div></div>;
-  const secretRow = (key, label, value, update, hint) => <div className="indexer-card">
+  const sectionClass = initialSetup ? "setup-step" : "settings-card";
+  const title = label => initialSetup ? <h2>{label}</h2> : <div className="settings-card__title">{label}</div>;
+  const secretRow = (key, label, value, update, hint, validation = null) => <div className="indexer-card">
     <div className="indexer-row indexer-row--settings">
       <label className="indexer-title" htmlFor={`${fieldPrefix}-${key}`}>{label}</label>
-      <div className="indexer-actions"><div className="fieldWrap"><input id={`${fieldPrefix}-${key}`} type="password" autoComplete="off"
-        value={value} onChange={e => update(e.target.value)} disabled={busy} aria-describedby={hint ? `${fieldPrefix}-${key}-hint` : undefined} /></div></div>
+      <div className="indexer-actions"><div className={`fieldWrap${value && validation ? " fieldWrap--error" : value && validation === "" ? " fieldWrap--valid" : ""}`}><input id={`${fieldPrefix}-${key}`} type="password" autoComplete="off"
+        value={value} onChange={e => update(e.target.value)} disabled={busy} aria-invalid={!!value && !!validation} aria-describedby={hint ? `${fieldPrefix}-${key}-hint` : undefined} /></div></div>
     </div>
     {hint && <div className="settings-help" id={`${fieldPrefix}-${key}-hint`}>{hint}</div>}
   </div>;
@@ -121,12 +144,9 @@ export default function ConfigurationBackupPanel({ initialSetup = false, onAppli
       <p className="settings-help settings-help--spaced">Paramètres, intégrations et secrets chiffrés. Aucune release, entity ou image.</p>
       <form noValidate onSubmit={e => { e.preventDefault(); void exportArchive(); }}>
         <div className="indexer-list">
-          {secretRow("phrase", "Phrase secrète", passphrase, setPassphrase, "De 12 à 1 024 caractères. Conservez cette phrase séparément de la sauvegarde.")}
-          {secretRow("confirmation", "Confirmer la phrase secrète", confirmation, setConfirmation)}
+          {secretRow("phrase", "Phrase secrète", passphrase, setPassphrase, passphrase && phraseError ? phraseError : "De 12 à 1 024 caractères. Conservez cette phrase séparément de la sauvegarde.", phraseError)}
+          {secretRow("confirmation", "Confirmer la phrase secrète", confirmation, setConfirmation, confirmation && confirmationError ? confirmationError : "Saisissez à nouveau la même phrase secrète.", confirmationError)}
         </div>
-        <div className="formactions"><button className="btn btn-accent" type="submit" disabled={busy}>
-          {actionContent("export", "download", "Sauvegarder la configuration", "Chiffrement et téléchargement…")}
-        </button></div>
       </form>
       {operation === "export" && error && <InlineNotice variant="error" title="Sauvegarde impossible" message={error} />}
       {operation === "export" && notice && <InlineNotice variant="success" message={notice} />}

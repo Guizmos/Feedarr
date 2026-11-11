@@ -3,10 +3,10 @@ import ConfigurationBackupPanel from "../../components/backup/ConfigurationBacku
 import InlineNotice from "./InlineNotice.jsx";
 import { fmtBytes } from "./settingsUtils.js";
 
-export default function SettingsBackup({ backups = [], handleBackupDownload, backupDownloadName, backupError }) {
+export default function SettingsBackup({ backups = [], handleBackupDownload, backupDownloadName, backupError, onActionsChange }) {
   return <>
-    <ConfigurationBackupPanel />
-    {backups.length > 0 && <details className="settings-card settings-card--full">
+    <ConfigurationBackupPanel onActionsChange={onActionsChange} />
+    {backups.length > 0 && <details className="settings-card">
       <summary className="settings-card__title">Anciennes archives locales</summary>
       {backupError && <InlineNotice variant="error" message={backupError} />}
       <p className="settings-help settings-help--spaced">Téléchargez une archive, puis sélectionnez-la dans « Restaurer une configuration ». Seule sa configuration sera importée ; les secrets non récupérables seront signalés.</p>

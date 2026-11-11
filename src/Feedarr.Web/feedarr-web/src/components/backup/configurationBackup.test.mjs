@@ -22,6 +22,8 @@ test("setup offers import only; settings offer encrypted export and legacy impor
   const settings = render(Panel, {}); assert.match(settings, /Sauvegarder la configuration/); assert.match(settings, /Confirmer la phrase secrète/); assert.match(settings, /ancienne sauvegarde compatible/);
   assert.match(settings, /<form noValidate=""/);
   assert.match(settings, /De 12 à 1 024 caractères/);
+  assert.doesNotMatch(settings, /settings-card--full/);
+  assert.doesNotMatch(settings, /<button[^>]*type="submit"/);
   assert.equal(backupRoot(true), "/api/setup/configuration-restore"); assert.equal(backupRoot(false), "/api/configuration-backups");
 });
 test("preview warns about history, missing secrets and purge without rendering private fields", () => {

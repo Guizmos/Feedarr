@@ -8,18 +8,23 @@ async function load(file) {
   const bundle = await build({ entryPoints: [fileURLToPath(new URL(file, import.meta.url))], bundle: true, platform: "node", format: "esm", write: false,
     plugins: [{ name: "controlled-ui", setup(b) {
       b.onResolve({ filter: /^react$/ }, () => ({ path: "hooks", namespace: "test" }));
+      b.onResolve({ filter: /useSettingsController\.js$/ }, () => ({ path: "settings-controller", namespace: "test" }));
+      b.onResolve({ filter: /useSubbar\.js$/ }, () => ({ path: "subbar", namespace: "test" }));
+      b.onResolve({ filter: /(?:SubAction|Loader|SettingsGeneral|SettingsProviders|SettingsBackup|SettingsMaintenance|SettingsUiPage|SettingsSecurityPage|SettingsArrPage)\.jsx$/ }, () => ({ path: "settings-child", namespace: "child" }));
       b.onResolve({ filter: /^react-router-dom$/ }, () => ({ path: "router", namespace: "test" }));
       b.onResolve({ filter: /api\/client\.js$/ }, () => ({ path: "api", namespace: "test" }));
       b.onResolve({ filter: /configurationBackupApi\.js$/ }, () => ({ path: "backup", namespace: "test" }));
       b.onResolve({ filter: /(?:InlineNotice|AppIcon|Modal|Step\w+|ConfigurationBackupPanel)\.jsx$/ }, args => args.importer ? ({ path: args.path, namespace: "child" }) : undefined);
       b.onLoad({ filter: /.*/, namespace: "child" }, () => ({ contents: 'export default function Child() {}' }));
       b.onLoad({ filter: /.*/, namespace: "test" }, args => ({ contents: {
-        hooks: `const element=(type,props,...children)=>({type,props:{...props,children:children.flat(Infinity)}}); export default {createElement:element};
+        hooks: `const element=(type,props,...children)=>({type,props:{...props,children:children.flat(Infinity)}}); export default {createElement:element,lazy:()=>function Lazy(){}}; export const Suspense="Suspense";
           export const useCallback=fn=>fn; export const useMemo=fn=>fn();
           export function useState(initial){const h=globalThis.__configUI,i=h.cursor++; if(!(i in h.values))h.values[i]=typeof initial==='function'?initial():initial; return [h.values[i],v=>{h.values[i]=typeof v==='function'?v(h.values[i]):v;}];}
           export function useRef(initial){const h=globalThis.__configUI,i=h.cursor++; if(!(i in h.values))h.values[i]={current:initial};return h.values[i];}
           export function useEffect(fn,deps){const h=globalThis.__configUI,i=h.cursor++,old=h.deps[i];if(!old||deps.some((d,j)=>d!==old[j])){h.deps[i]=deps;h.effects.push(fn);}}`,
-        router: 'export const useNavigate=()=>globalThis.__configUI.navigate;',
+        router: 'export const useNavigate=()=>globalThis.__configUI.navigate; export const useLocation=()=>({pathname:globalThis.__configUI.path||"/settings/backup"});',
+        subbar: 'export const useSubbarSetter=()=>globalThis.__configUI.setContent;',
+        'settings-controller': 'export default section=>({...globalThis.__configUI.controller,showBackup:section==="backup",showGeneral:section==="general"});',
         api: 'export const apiGet=(...a)=>globalThis.__configUI.get(...a); export const apiPost=(...a)=>globalThis.__configUI.post(...a);',
         backup: `export const backupRoot=initial=>initial?'/api/setup/configuration-restore':'/api/configuration-backups';
           export const configurationRequest=(...a)=>globalThis.__configUI.request(...a);
@@ -31,6 +36,7 @@ async function load(file) {
 }
 const Panel = await load("./ConfigurationBackupPanel.jsx");
 const Restore = await load("../setup/useSetupRestore.js");
+const Settings = await load("../../pages/Settings.jsx");
 const Wizard = await load("../../pages/SetupWizard.jsx");
 const flush = async () => { for(let i=0;i<12;i++) await Promise.resolve(); };
 const nodes = tree => !tree || typeof tree !== "object" ? [] : [tree,...(tree.props?.children||[]).flatMap(nodes)];
@@ -94,7 +100,7 @@ test("export validates visibly, prevents duplicates and exposes download success
     submit(f.render(Panel));await flush();assert.ok(nodes(f.render(Panel)).some(n=>/identiques/.test(n.props?.message)));
     fill('long secret phrase');f.h.download=()=>downloaded++;
     f.h.request=(path,options)=>{calls++;assert.ok(path.endsWith('/export'));assert.equal(options.binary,true);assert.deepEqual(options.body,{passphrase:'long secret phrase'});return new Promise(r=>{finish=r;});};
-    tree=f.render(Panel);submit(tree);submit(tree);assert.equal(calls,1);assert.equal(button(f.render(Panel),'Chiffrement et téléchargement…').props.disabled,true);
+    tree=f.render(Panel);submit(tree);submit(tree);assert.equal(calls,1);assert.ok(nodes(f.render(Panel)).some(n=>n.props?.message==='Chiffrement et préparation du téléchargement…'));
     assert.equal(nodes(f.render(Panel)).find(n=>n.type==='input').props.value,'');finish(new Blob(['zip']));await flush();assert.equal(downloaded,1);
     assert.ok(nodes(f.render(Panel)).some(n=>n.props?.variant==='success'&&/Téléchargement/.test(n.props.message)));
     fill('long secret phrase');f.h.request=async()=>{throw new Error('Autorisation requise');};submit(f.render(Panel));await flush();assert.ok(nodes(f.render(Panel)).some(n=>n.props?.message==='Autorisation requise'));
@@ -156,4 +162,43 @@ test("retention and synchronization actions use the native modal and only send a
       button(tree,'Annuler').props.onClick();assert.equal(calls,0);button(f.render(Panel),label).props.onClick();await button(f.render(Panel),'Confirmer').props.onClick();assert.equal(calls,1);
     }finally{f.close();}
   }
+});
+
+test("backup header registration follows phrase validity, uses latest values and reports export states",async()=>{
+  const f=fixture();let actions,finish,calls=0,downloaded=0;
+  const props={onActionsChange:next=>{actions=next;}};
+  const render=()=>f.render(Panel,props);
+  const publish=async()=>{const tree=render();await f.effects();return tree;};
+  const fill=(phrase,confirmation=phrase)=>{const inputs=nodes(render()).filter(n=>n.type==='input'&&n.props.type==='password');inputs[0].props.onChange({target:{value:phrase}});inputs[1].props.onChange({target:{value:confirmation}});};
+  try{
+    let tree=await publish();assert.equal(actions.canExport,false);assert.match(actions.validationMessage,/12 à/);assert.equal(button(tree,'Sauvegarder la configuration'),undefined);
+    fill('too short');await publish();assert.equal(actions.canExport,false);
+    fill('long secret phrase','different phrase');tree=await publish();assert.equal(actions.canExport,false);assert.match(actions.validationMessage,/identiques/);assert.ok(nodes(tree).some(n=>n.props?.['aria-invalid']===true));
+    fill('long secret phrase');await publish();assert.equal(actions.canExport,true);const originalAction=actions.export;
+    fill('another valid secret');await publish();f.h.download=()=>downloaded++;
+    f.h.request=(path,options)=>{calls++;assert.ok(path.endsWith('/export'));assert.equal(options.body.passphrase,'another valid secret');return new Promise(r=>{finish=r;});};
+    const pending=originalAction();originalAction();await publish();assert.equal(calls,1);assert.equal(actions.canExport,false);assert.equal(actions.busy,true);assert.equal(actions.saveState,'loading');
+    finish(new Blob(['zip']));await pending;await publish();assert.equal(actions.saveState,'success');assert.equal(actions.canExport,false);assert.equal(downloaded,1);
+    fill('long secret phrase');await publish();f.h.request=async()=>{throw new Error('Export refusé');};await actions.export();tree=await publish();assert.equal(actions.saveState,'error');assert.ok(nodes(tree).some(n=>n.props?.message==='Export refusé'));
+  }finally{f.close();}
+});
+test("parent subbar owns backup save/refresh actions, follows native visual states and removes save on navigation",async()=>{
+  const f=fixture();let header,saved=0,refreshed=0,lists=0,states=0;
+  f.h.setContent=content=>{header=content;};
+  f.h.controller={settingsTitle:'Sauvegarde',loading:false,maintenance:{},backup:{loadBackups:()=>lists++,loadBackupState:()=>states++}};
+  const Page=f.render(Settings).type;
+  const render=section=>f.render(Page,{section});
+  const action=label=>nodes(header).find(n=>n.props?.label===label);
+  try{
+    let tree=render('backup');await f.effects();assert.equal(action('Sauvegarder').props.disabled,true);assert.equal(action('Rafraîchir').props.disabled,true);
+    const register=nodes(tree).find(n=>n.props?.onActionsChange).props.onActionsChange;
+    for(const [state,icon,cls] of [['idle','save',''],['loading','progress_activity','is-loading'],['success','check_circle','is-success'],['error','cancel','is-error']]){
+      register({canExport:state==='idle',busy:state==='loading',saveState:state,validationMessage:'',export:()=>saved++,refresh:()=>refreshed++});render('backup');await f.effects();
+      assert.equal(action('Sauvegarder').props.icon,icon);assert.equal(action('Sauvegarder').props.className,cls);assert.equal(action('Sauvegarder').props.disabled,state!=='idle');
+      if(state==='idle'){action('Sauvegarder').props.onClick();action('Rafraîchir').props.onClick();assert.equal(saved,1);assert.equal(refreshed,1);assert.equal(lists,1);assert.equal(states,1);}
+      if(state==='loading')assert.equal(action('Rafraîchir').props.disabled,true);
+    }
+    register({canExport:false,busy:false,saveState:'idle',validationMessage:'Les phrases doivent être identiques.'});render('backup');await f.effects();assert.equal(action('Sauvegarder').props.disabled,true);assert.match(action('Sauvegarder').props.title,/identiques/);
+    register(null);render('general');await f.effects();assert.equal(action('Sauvegarder'),undefined);assert.ok(action('Enregistrer'));
+  }finally{f.close();}
 });

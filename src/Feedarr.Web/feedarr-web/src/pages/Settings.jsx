@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import { useSubbarSetter } from "../layout/useSubbar.js";
 import SubAction from "../ui/SubAction.jsx";
 import Loader from "../ui/Loader.jsx";
+import { getSaveActionVisualState } from "./settings/settingsUiPageModel.js";
 
 import useSettingsController from "./settings/useSettingsController.js";
 import SettingsGeneral from "./settings/SettingsGeneral.jsx";
@@ -75,6 +76,14 @@ function SettingsStandardPage({ section }) {
   handleSaveRef.current = handleSave;
   openExternalModalAddRef.current = openExternalModalAdd;
   const [posterModalOpen, setPosterModalOpen] = useState(false);
+  const [backupActions, setBackupActions] = useState(null);
+  const backupRefreshRef = useRef(null);
+  backupRefreshRef.current = () => {
+    if (backupActions?.busy) return;
+    void backupActions?.refresh();
+    void backup.loadBackups();
+    void backup.loadBackupState();
+  };
 
 
   useEffect(() => {
@@ -83,7 +92,22 @@ function SettingsStandardPage({ section }) {
         className="settings-subbar-content"
         subbarClassName=""
       >
-        <SubAction icon="refresh" label="Rafraîchir" onClick={handleRefresh} />
+        <SubAction
+          icon="refresh"
+          label="Rafraîchir"
+          onClick={showBackup ? () => backupRefreshRef.current?.() : handleRefresh}
+          disabled={showBackup && (loading || !backupActions || backupActions.busy)}
+        />
+        {showBackup && (
+          <SubAction
+            icon={getSaveActionVisualState(backupActions?.saveState).icon}
+            label="Sauvegarder"
+            onClick={() => backupActions?.export()}
+            disabled={loading || !backupActions?.canExport}
+            className={getSaveActionVisualState(backupActions?.saveState).className}
+            title={backupActions?.validationMessage || "Sauvegarder la configuration"}
+          />
+        )}
         {showMaintenance && (
           <>
             <SubAction
@@ -169,6 +193,8 @@ function SettingsStandardPage({ section }) {
     handleRefresh,
     showMaintenance,
     showBackup,
+    backupActions,
+    loading,
     showExternals,
     saveState,
     canSave,
@@ -205,7 +231,7 @@ function SettingsStandardPage({ section }) {
               <SettingsMaintenance {...maintenance} />
             </Suspense>
           )}
-          {showBackup && <SettingsBackup {...backup} />}
+          {showBackup && <SettingsBackup {...backup} onActionsChange={setBackupActions} />}
         </div>
       )}
     </div>
