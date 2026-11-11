@@ -71,6 +71,8 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
     private readonly ReleaseRepository _releases;
     private readonly PosterFetchService _posters;
     private readonly TmdbHandler _tmdbHandler;
+    private readonly IgdbHandler _igdbHandler;
+    private readonly IgdbClient _igdbDetails;
 
     public PosterMatchingContractTestRig(PosterContractScenario scenario)
     {
@@ -109,7 +111,9 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         _tmdbHandler = new TmdbHandler(scenario);
         var tmdb = new TmdbClient(new HttpClient(_tmdbHandler), settings, stats, resolver);
         var fanart = new FanartClient(new HttpClient(new FanartHandler(scenario)), stats, resolver, settings);
-        var igdb = new IgdbClient(new HttpClient(new IgdbHandler(scenario)), stats, resolver);
+        _igdbHandler = new IgdbHandler(scenario);
+        var igdb = new IgdbClient(new HttpClient(_igdbHandler), stats, resolver);
+        _igdbDetails = igdb;
         var tvmaze = new TvMazeClient(new HttpClient(new TvMazeHandler(scenario)), stats, resolver);
         var jikan = new JikanClient(new HttpClient(new JikanHandler(scenario)), resolver, stats);
         var theAudioDb = new TheAudioDbClient(new HttpClient(new TheAudioDbHandler(scenario)), resolver, stats);
@@ -255,6 +259,12 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
 
     public ReleaseForPoster? GetReleaseForPoster(long releaseId)
         => _releases.GetForPoster(releaseId);
+
+    public ReleaseRepository Repository => _releases;
+    public void BeforeIgdbDetails(Func<Task> action) => _igdbHandler.BeforeDetails = action;
+    public Task<Microsoft.AspNetCore.Mvc.IActionResult> FetchIgdbDetailsAsync(long id)
+        => new Feedarr.Api.Controllers.ReleasesController(_releases, _db, new TitleParser(), _igdbDetails, null!,
+            NullLogger<Feedarr.Api.Controllers.ReleasesController>.Instance).FetchIgdbDetails(id, true, default);
 
     public int TmdbDetailsCalls => _tmdbHandler.DetailsCalls;
 
@@ -674,6 +684,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             _scenario = scenario;
         }
 
+        public Func<Task>? BeforeDetails { get; set; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var uri = request.RequestUri ?? new Uri("https://api.igdb.com/v4/games");
@@ -688,7 +699,10 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             {
                 var body = await request.Content!.ReadAsStringAsync(cancellationToken);
                 if (body.Contains("where id =", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (BeforeDetails is { } callback) { BeforeDetails = null; await callback(); }
                     return JsonResponse("[{\"id\":901,\"name\":\"Game Hit\",\"summary\":\"Mock\",\"genres\":[],\"total_rating\":0,\"total_rating_count\":0}]");
+                }
 
                 if (_scenario == PosterContractScenario.GameIgdbHit)
                     return JsonResponse("[{\"id\":901,\"name\":\"Game Hit\",\"first_release_date\":1640995200,\"cover\":{\"url\":\"//images.igdb.com/igdb/upload/t_thumb/game901.jpg\"}}]");

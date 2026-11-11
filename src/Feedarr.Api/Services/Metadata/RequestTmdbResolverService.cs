@@ -91,7 +91,7 @@ public sealed class RequestTmdbResolverService
             }
         }
 
-        var searchedTmdb = await TryResolveFromTitleSearchAsync(title, year, tvdbId, ct).ConfigureAwait(false);        if (searchedTmdb.HasValue)
+        var searchedTmdb = await TryResolveFromTitleSearchAsync(title, year, tvdbId, ct, matchingSnapshot?.Season, matchingSnapshot?.Episode).ConfigureAwait(false);        if (searchedTmdb.HasValue)
         {
             Persist(releaseId, searchedTmdb.Value, StatusResolvedTitleSearch, persistMainTmdb: true);
             return new RequestTmdbResolveResult(searchedTmdb, tvdbId, StatusResolvedTitleSearch, false);
@@ -113,7 +113,7 @@ public sealed class RequestTmdbResolverService
         }
     }
 
-    private async Task<int?> TryResolveFromTitleSearchAsync(string? title, int? year, int? expectedTvdbId, CancellationToken ct)
+    private async Task<int?> TryResolveFromTitleSearchAsync(string? title, int? year, int? expectedTvdbId, CancellationToken ct, int? season = null, int? episode = null)
     {
         if (string.IsNullOrWhiteSpace(title))
             return null;
@@ -158,8 +158,14 @@ public sealed class RequestTmdbResolverService
 
         foreach (var row in deduped)
         {
-            if (row.Score < minScore)
-                break;
+            if (row.Score < minScore) break;
+            var decision = TmdbMatchPolicy.Evaluate(title, year, UnifiedCategory.Serie,
+                TitleAmbiguityEvaluator.Evaluate(title, "series", year), row.Candidate, row.Score, false, minScore, 0.75f, season, episode);
+            if (!decision.Accepted)
+            {
+                _logger.LogInformation("Request TMDB candidate rejected tmdbId={TmdbId} reason={Reason}", row.Candidate.TmdbId, decision.Reason);
+                continue;
+            }
 
             if (expectedTvdbId.HasValue && expectedTvdbId.Value > 0)
             {

@@ -310,7 +310,7 @@ public sealed class PosterMatchCacheService
     {
         var baseValue = $"{key.MediaType}|{key.NormalizedTitle}|{key.Year?.ToString() ?? "null"}|{key.Season?.ToString() ?? "null"}|{key.Episode?.ToString() ?? "null"}";
         if (Services.Matching.TmdbIdentity.NormalizeType(key.MediaType) is { } type)
-            baseValue = $"tmdb-v2:{type}|{key.NormalizedTitle}|{key.Year?.ToString() ?? "null"}|{key.Season?.ToString() ?? "null"}|{key.Episode?.ToString() ?? "null"}";
+            baseValue = $"tmdb-v3:{type}|{key.NormalizedTitle}|{key.Year?.ToString() ?? "null"}|{key.Season?.ToString() ?? "null"}|{key.Episode?.ToString() ?? "null"}";
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(baseValue));
         return Convert.ToHexString(bytes).ToLowerInvariant();
     }

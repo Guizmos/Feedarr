@@ -5,7 +5,7 @@ namespace Feedarr.Api.Tests;
 public sealed class PosterFetchTvMazeMetadataRefreshTests
 {
     [Fact]
-    public async Task FetchPosterAsync_TvmazeCacheHit_WithEffectiveTmdbId_RefreshesMissingMetadata()
+    public async Task FetchPosterAsync_TvmazeCacheHit_WithoutMappingDoesNotReusePreviousTmdbId()
     {
         using var rig = new PosterMatchingContractTestRig(PosterContractScenario.SeriesTvmazeHitNoTvdb);
         var releaseId = rig.CreateRelease(
@@ -27,12 +27,13 @@ public sealed class PosterFetchTvMazeMetadataRefreshTests
 
         var result = await rig.FetchAsync(releaseId);
 
-        Assert.True(result.Ok);
+        Assert.True(result.Ok, System.Text.Json.JsonSerializer.Serialize(result.Body));
         var release = rig.GetReleaseForPoster(releaseId);
         Assert.NotNull(release);
-        Assert.True((release!.ExtUpdatedAtTs ?? 0) > 0);
-        Assert.Equal("tmdb", release.ExtProvider);
-        Assert.Equal(1, rig.TmdbDetailsCalls);
+        Assert.Null(release!.TmdbId);
+        Assert.Null(release.ExtUpdatedAtTs);
+        Assert.Null(release.ExtProvider);
+        Assert.Equal(0, rig.TmdbDetailsCalls);
     }
 
     [Fact]
@@ -48,7 +49,7 @@ public sealed class PosterFetchTvMazeMetadataRefreshTests
 
         var result = await rig.FetchAsync(releaseId);
 
-        Assert.True(result.Ok);
+        Assert.True(result.Ok, System.Text.Json.JsonSerializer.Serialize(result.Body));
         var release = rig.GetReleaseForPoster(releaseId);
         Assert.NotNull(release);
         Assert.True((release!.ExtUpdatedAtTs ?? 0) > 0);
@@ -57,7 +58,7 @@ public sealed class PosterFetchTvMazeMetadataRefreshTests
     }
 
     [Fact]
-    public async Task FetchPosterAsync_TvmazeDirectHit_WithExistingMetadata_DoesNotRefreshMetadata()
+    public async Task FetchPosterAsync_TvmazeDirectHit_WithUnverifiedMetadata_RepairsSnapshot()
     {
         using var rig = new PosterMatchingContractTestRig(PosterContractScenario.SeriesTvmazeHit);
         var existingTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 180;
@@ -73,12 +74,12 @@ public sealed class PosterFetchTvMazeMetadataRefreshTests
 
         var result = await rig.FetchAsync(releaseId);
 
-        Assert.True(result.Ok);
+        Assert.True(result.Ok, System.Text.Json.JsonSerializer.Serialize(result.Body));
         var release = rig.GetReleaseForPoster(releaseId);
         Assert.NotNull(release);
-        Assert.Equal(existingTs, release!.ExtUpdatedAtTs);
-        Assert.Equal("already present", release.ExtOverview);
-        Assert.Equal(0, rig.TmdbDetailsCalls);
+        Assert.True(release!.ExtUpdatedAtTs >= existingTs);
+        Assert.NotEqual("already present", release.ExtOverview);
+        Assert.Equal(1, rig.TmdbDetailsCalls);
     }
 
     [Fact]
@@ -94,7 +95,7 @@ public sealed class PosterFetchTvMazeMetadataRefreshTests
 
         var result = await rig.FetchAsync(releaseId);
 
-        Assert.True(result.Ok);
+        Assert.True(result.Ok, System.Text.Json.JsonSerializer.Serialize(result.Body));
         var release = rig.GetReleaseForPoster(releaseId);
         Assert.NotNull(release);
         Assert.Null(release!.ExtUpdatedAtTs);

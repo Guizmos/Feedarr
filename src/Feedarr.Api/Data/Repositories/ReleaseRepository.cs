@@ -1368,6 +1368,7 @@ public sealed partial class ReleaseRepository
             """
             WITH base AS (
               SELECT
+                CASE WHEN me.ext_provider IS NOT NULL THEN me.ext_snapshot_version ELSE r.ext_snapshot_version END as SnapshotVersion,
                 r.id as ReleaseId,
                 CAST(COALESCE(me.tmdb_id, r.tmdb_id) AS INTEGER) as TmdbId,
                 CASE
@@ -1417,6 +1418,7 @@ public sealed partial class ReleaseRepository
             WHERE TmdbId IN @ids
               AND MediaTypeNormalized IS NOT NULL
               AND ExtProvider = 'tmdb'
+              AND SnapshotVersion = 1
               AND ExtProviderId = CAST(TmdbId AS TEXT)
               AND IFNULL(ExtUpdatedAtTs, 0) > 0
             ORDER BY TmdbId ASC, MediaTypeNormalized ASC, ExtUpdatedAtTs DESC, ReleaseId DESC;
@@ -1847,6 +1849,7 @@ public sealed partial class ReleaseRepository
                 COALESCE(releases.poster_updated_at_ts, me.poster_updated_at_ts, 0) as PosterUpdatedAtTs,
                 poster_last_attempt_ts as PosterLastAttemptTs,
                 poster_last_error as PosterLastError,
+                CASE WHEN me.ext_provider IS NOT NULL THEN me.ext_snapshot_version ELSE releases.ext_snapshot_version END as ExtSnapshotVersion,
                 COALESCE(me.ext_provider, releases.ext_provider) as ExtProvider,
                 COALESCE(me.ext_provider_id, releases.ext_provider_id) as ExtProviderId,
                 COALESCE(me.ext_title, releases.ext_title) as ExtTitle,
@@ -1873,7 +1876,7 @@ public sealed partial class ReleaseRepository
     }
 
 
-    public void SavePoster(long id, int? tmdbId, string? posterPath, string posterFile, string? tmdbMediaType = null)
+    public void SavePoster(long id, int? tmdbId, string? posterPath, string posterFile, string? tmdbMediaType = null, string? identityProvider = null, string? identityProviderId = null)
     {
         if (string.IsNullOrWhiteSpace(posterFile))
             throw new ArgumentException("posterFile cannot be null or empty", nameof(posterFile));
@@ -1891,6 +1894,10 @@ public sealed partial class ReleaseRepository
         ValidateMatching(conn, tx, id, tmdbId, tmdbType: tmdbMediaType);
         try
         {
+            var provider = identityProvider ?? (tmdbId.HasValue ? "tmdb" : null);
+            var providerId = identityProviderId ?? tmdbId?.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (provider is not null && providerId is not null)
+                PrepareExternalIdentity(conn, tx, id, provider, providerId, tmdbMediaType, tmdbId, publishingPoster: true);
             if (entityId.HasValue && entityId.Value > 0)
             {
                 conn.Execute(
@@ -1920,6 +1927,7 @@ public sealed partial class ReleaseRepository
                 tx
             );
 
+            AdvanceMatchingSnapshot(conn, tx, id);
             tx.Commit();
         }
         catch
@@ -2060,6 +2068,7 @@ LEFT JOIN media_entities me
             return;
         }
 
+        PrepareExternalIdentity(conn, tx, id, "tmdb", tmdbId.ToString(System.Globalization.CultureInfo.InvariantCulture), tmdbMediaType ?? seed.MediaType, tmdbId, publishingPoster: false);
         var currentEntityId = seed.EntityId;
         if (currentEntityId.HasValue && currentEntityId.Value > 0)
         {
@@ -2095,11 +2104,7 @@ LEFT JOIN media_entities me
             tmdbMediaType ?? seed.MediaType,
             seed.UnifiedCategory);
 
-        if (_matchingSnapshot.Value is { } snapshot)
-        {
-            snapshot.EntityId = conn.ExecuteScalar<long?>("SELECT entity_id FROM releases WHERE id=@id", new { id }, tx);
-            snapshot.MatchRevision = conn.ExecuteScalar<string>("SELECT match_revision FROM media_entities WHERE id=@entity", new { entity = snapshot.EntityId }, tx);
-        }
+        AdvanceMatchingSnapshot(conn, tx, id);
         tx.Commit();
     }
 
@@ -2404,6 +2409,8 @@ LEFT JOIN media_entities me
         using var conn = _db.Open();
         using var tx = conn.BeginTransaction(deferred: false);
         ValidateMatching(conn, tx, id, provider: provider, providerId: providerId, tmdbType: Feedarr.Api.Services.Matching.TmdbIdentity.NormalizeType(tmdbMediaType));
+        PrepareExternalIdentity(conn, tx, id, provider, providerId, tmdbMediaType,
+            provider == "tmdb" && int.TryParse(providerId, out var parsedId) ? parsedId : null, publishingPoster: false);
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         var entityId = conn.ExecuteScalar<long?>(
@@ -2416,19 +2423,19 @@ LEFT JOIN media_entities me
             conn.Execute(
                 """
                 UPDATE media_entities
-                SET ext_provider = @provider,
+                SET ext_snapshot_version = 1, ext_provider = @provider,
                     ext_provider_id = @providerId,
-                    ext_title = COALESCE(@title, ext_title),
-                    ext_overview = COALESCE(@overview, ext_overview),
-                    ext_tagline = COALESCE(@tagline, ext_tagline),
-                    ext_genres = COALESCE(@genres, ext_genres),
-                    ext_release_date = COALESCE(@releaseDate, ext_release_date),
-                    ext_runtime_minutes = COALESCE(@runtimeMinutes, ext_runtime_minutes),
-                    ext_rating = COALESCE(@rating, ext_rating),
-                    ext_votes = COALESCE(@votes, ext_votes),
-                    ext_directors = COALESCE(@directors, ext_directors),
-                    ext_writers = COALESCE(@writers, ext_writers),
-                    ext_cast = COALESCE(@cast, ext_cast),
+                    ext_title = @title,
+                    ext_overview = @overview,
+                    ext_tagline = @tagline,
+                    ext_genres = @genres,
+                    ext_release_date = @releaseDate,
+                    ext_runtime_minutes = @runtimeMinutes,
+                    ext_rating = @rating,
+                    ext_votes = @votes,
+                    ext_directors = @directors,
+                    ext_writers = @writers,
+                    ext_cast = @cast,
                     ext_updated_at_ts = @ts,
                     updated_at_ts = @ts
                 WHERE id = @entityId;
@@ -2457,25 +2464,26 @@ LEFT JOIN media_entities me
         conn.Execute(
             """
             UPDATE releases
-            SET ext_provider = @provider,
+            SET ext_snapshot_version = 1, ext_provider = @provider,
                 ext_provider_id = @providerId,
-                ext_title = COALESCE(@title, ext_title),
-                ext_overview = COALESCE(@overview, ext_overview),
-                ext_tagline = COALESCE(@tagline, ext_tagline),
-                ext_genres = COALESCE(@genres, ext_genres),
-                ext_release_date = COALESCE(@releaseDate, ext_release_date),
-                ext_runtime_minutes = COALESCE(@runtimeMinutes, ext_runtime_minutes),
-                ext_rating = COALESCE(@rating, ext_rating),
-                ext_votes = COALESCE(@votes, ext_votes),
-                ext_directors = COALESCE(@directors, ext_directors),
-                ext_writers = COALESCE(@writers, ext_writers),
-                ext_cast = COALESCE(@cast, ext_cast),
+                ext_title = @title,
+                ext_overview = @overview,
+                ext_tagline = @tagline,
+                ext_genres = @genres,
+                ext_release_date = @releaseDate,
+                ext_runtime_minutes = @runtimeMinutes,
+                ext_rating = @rating,
+                ext_votes = @votes,
+                ext_directors = @directors,
+                ext_writers = @writers,
+                ext_cast = @cast,
                 ext_updated_at_ts = @ts
-            WHERE id = @id;
+            WHERE id = @id OR (@entityId IS NOT NULL AND entity_id=@entityId);
             """,
             new
             {
                 id,
+                entityId,
                 provider,
                 providerId,
                 title,
@@ -2518,6 +2526,7 @@ LEFT JOIN media_entities me
                 new { fp }, tx
             );
         }
+        AdvanceMatchingSnapshot(conn, tx, id);
         tx.Commit();
     }
 
@@ -3620,6 +3629,7 @@ LEFT JOIN media_entities me
                 tx
             );
 
+            AdvanceMatchingSnapshot(conn, tx, id);
             tx.Commit();
         }
         catch

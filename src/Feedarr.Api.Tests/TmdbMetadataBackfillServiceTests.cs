@@ -357,7 +357,7 @@ public sealed class TmdbMetadataBackfillServiceTests
                   ext_provider,
                   ext_provider_id,
                   ext_overview,
-                  ext_updated_at_ts
+                  ext_updated_at_ts, ext_snapshot_version
                 )
                 VALUES(
                   @sourceId,
@@ -374,7 +374,7 @@ public sealed class TmdbMetadataBackfillServiceTests
                   @extProvider,
                   @extProviderId,
                   @extOverview,
-                  @extUpdatedAtTs
+                  @extUpdatedAtTs, CASE WHEN @extProvider IS NOT NULL THEN 1 END
                 );
                 SELECT last_insert_rowid();
                 """,

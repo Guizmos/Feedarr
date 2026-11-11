@@ -30,7 +30,6 @@ public sealed partial class PosterFetchService
 {
     private const int TmdbCandidateLimit = 10;
     private const float TmdbScoreThreshold = 0.50f;      // Réduit de 0.62 pour améliorer le matching
-    private const float TmdbWeakScoreThreshold = 0.25f;  // Réduit de 0.30 pour plus de tolérance
 
     private const float HighConfidenceThreshold = 0.80f;
     private const float TmdbCommonTitleThreshold = 0.75f;
@@ -589,6 +588,9 @@ public sealed partial class PosterFetchService
             : options.ThumbEnqueueTimeoutMs;
         return TimeSpan.FromMilliseconds(Math.Clamp(timeoutMs, 100, 30000));
     }
+
+    private static string? NormalizePosterProviderId(string? providerId)
+        => providerId?.Contains(':') == true ? providerId[(providerId.LastIndexOf(':') + 1)..] : providerId;
 
     private static bool TryResolveStoreIdentity(
         string? provider,
@@ -1240,7 +1242,7 @@ public sealed partial class PosterFetchService
         var reuseKey = string.IsNullOrWhiteSpace(titleCleanRaw) ? title : titleCleanRaw;
         var normalizedReuseKey = TitleNormalizer.NormalizeTitle(reuseKey);
         var reuseMediaType = string.IsNullOrWhiteSpace(mediaType) || mediaType == "unknown" ? null : mediaType;
-        var allowReuse = !ambiguity.IsLikelyChannelOrProgram;
+        var allowReuse = !forceRefresh && !ambiguity.IsLikelyChannelOrProgram;
         if (!year.HasValue && mediaType == "series" && ambiguity.SignificantTokenCount < MinTokensForYearlessSeriesReuse)
             allowReuse = false;
         if (!year.HasValue && ambiguity.IsAmbiguous)
@@ -1249,6 +1251,16 @@ public sealed partial class PosterFetchService
         if (allowReuse)
         {
             var reuse = _releases.GetPosterForTitleClean(id, reuseKey, normalizedReuseKey, reuseMediaType, year);
+            if (reuse is not null && TmdbIdentity.NormalizeType(mediaType) is not null)
+            {
+                var donor = _releases.GetForPoster(reuse.Id);
+                var donorYear = DateTime.TryParse(donor?.ExtReleaseDate, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date) ? date.Year : (int?)null;
+                var candidate = new TmdbClient.SearchResult(donor?.TmdbId ?? 0, donor?.ExtTitle ?? "", null, null, donor?.TmdbMediaType ?? donor?.MediaType ?? "unknown", donorYear, null);
+                if (donor?.ExtSnapshotVersion != 1 || donorYear is null ||
+                    !TmdbMatchPolicy.IsAcceptable(title, year, unifiedCategory, ambiguity, candidate,
+                        MatchScorer.ScoreCandidate(title, year, unifiedCategory, candidate.Title, null, donorYear, candidate.MediaType),
+                        false, PosterProviderSelector.GetTmdbStrongThreshold(ambiguity), TmdbCommonTitleThreshold, season, episode)) reuse = null;
+            }
             if (reuse is not null)
             {
                 var reuseFile = (string?)reuse.PosterFile;
@@ -1287,7 +1299,7 @@ public sealed partial class PosterFetchService
                             var reuseExtCast = (string?)reuse.ExtCast;
                             if (string.IsNullOrWhiteSpace(reuseHash))
                                 reuseHash = ComputeSha256Hex(await System.IO.File.ReadAllBytesAsync(reusePath, ct).ConfigureAwait(false));
-                            _releases.SavePoster(id, reuseTmdbId, reusePosterPath, reuseFile, mediaType);
+                            _releases.SavePoster(id, reuseTmdbId, reusePosterPath, reuseFile, mediaType, reuseExtProvider ?? reuseProvider, reuseExtProviderId ?? reuseProviderId);
                             var reuseStoreResult = await TryMaterializeStoreForReleaseAsync(
                                 id,
                                 reuseProvider,
@@ -1461,7 +1473,7 @@ public sealed partial class PosterFetchService
                         var file = $"igdb-{igdbMatch.Value.igdbId}-cover.jpg";
                         var full = Path.Combine(PostersDirAbs, file);
                         await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
-                        _releases.SavePoster(id, null, igdbMatch.Value.coverUrl, file);
+                        _releases.SavePoster(id, null, igdbMatch.Value.coverUrl, file, identityProvider: "igdb", identityProviderId: igdbMatch.Value.igdbId.ToString(CultureInfo.InvariantCulture));
                         var igdbStoreResult = await TryMaterializeStoreForReleaseAsync(
                             id,
                             "igdb",
@@ -1554,70 +1566,32 @@ public sealed partial class PosterFetchService
         var tmdbTvOnly = unifiedCategory == UnifiedCategory.Emission;
         LogProviderAttempted(sourceId, logSingle, "tmdb", new { releaseId = id, query = title, year, mediaType, tvOnly = tmdbTvOnly });
         var tmdbCandidates = await GetTmdbCandidatesAsync(title, year, mediaType, ct, tmdbTvOnly).ConfigureAwait(false);
-        var scoredAnyCandidates = ScoreCandidates(title, year, unifiedCategory, tmdbCandidates, requirePoster: false);
-        var bestAny = scoredAnyCandidates.FirstOrDefault();
-
-        var scoredPosterCandidates = ScoreCandidates(title, year, unifiedCategory, tmdbCandidates, requirePoster: true);
-        var bestPoster = scoredPosterCandidates.FirstOrDefault();
-
         var tmdbStrongThreshold = PosterProviderSelector.GetTmdbStrongThreshold(ambiguity);
-        if (ambiguity.IsCommonTitle)
-            tmdbStrongThreshold = Math.Max(tmdbStrongThreshold, TmdbCommonTitleThreshold);
-
+        if (ambiguity.IsCommonTitle) tmdbStrongThreshold = Math.Max(tmdbStrongThreshold, TmdbCommonTitleThreshold);
         var allowWeak = !ambiguity.IsAmbiguous && !ambiguity.IsCommonTitle && year.HasValue;
-        var hasConfidentAny = scoredAnyCandidates.Count > 0 && bestAny.Score >= tmdbStrongThreshold;
-        var hasWeakAny = allowWeak && scoredAnyCandidates.Count > 0 &&
-            IsWeakTmdbMatchAcceptable(title, year, unifiedCategory, bestAny.Candidate, bestAny.Score);
-        var hasWeakPoster = allowWeak && scoredPosterCandidates.Count > 0 &&
-            IsWeakTmdbMatchAcceptable(title, year, unifiedCategory, bestPoster.Candidate, bestPoster.Score);
+        var assessed = ScoreCandidates(title, year, unifiedCategory, tmdbCandidates, requirePoster: false)
+            .Select(row => (row.Candidate, row.Score, Decision: TmdbMatchPolicy.Evaluate(title, year,
+                unifiedCategory, ambiguity, row.Candidate, row.Score, allowWeak, tmdbStrongThreshold,
+                TmdbCommonTitleThreshold, context.Season, context.Episode))).ToList();
+        foreach (var rejected in assessed.Where(row => !row.Decision.Accepted))
+            _logger.LogInformation("TMDB candidate rejected releaseId={ReleaseId} tmdbId={TmdbId} type={Type} queryYear={QueryYear} candidateYear={CandidateYear} score={Score} reason={Reason}",
+                id, rejected.Candidate.TmdbId, rejected.Candidate.MediaType, year, rejected.Candidate.Year,
+                Math.Round(rejected.Score, 3), rejected.Decision.Reason);
+        var accepted = assessed.Where(row => row.Decision.Accepted).ToList();
+        var posterCandidate = accepted.FirstOrDefault(row => !string.IsNullOrWhiteSpace(row.Candidate.PosterPath));
+        var tmdbMatch = (Candidate: posterCandidate.Candidate, Score: posterCandidate.Score);
+        // IDs, images and details must all refer to the actually selected work.
+        var idsCandidate = posterCandidate.Candidate is not null ? posterCandidate : accepted.FirstOrDefault();
+        var tmdbMatchForIds = (Candidate: idsCandidate.Candidate, Score: idsCandidate.Score);
 
-        if (!hasConfidentAny && logSingle)
-        {
-            // Logs détaillés: top 5 candidats avec leurs scores pour faciliter le diagnostic
-            var top5Candidates = scoredAnyCandidates
-                .Take(5)
-                .Select(c => new
-                {
-                    tmdbId = c.Candidate.TmdbId,
-                    title = c.Candidate.Title,
-                    originalTitle = c.Candidate.OriginalTitle,
-                    year = c.Candidate.Year,
-                    type = c.Candidate.MediaType,
-                    score = Math.Round(c.Score, 3),
-                    hasPoster = !string.IsNullOrWhiteSpace(c.Candidate.PosterPath)
-                })
-                .ToList();
-
-            LogActivity(sourceId, "info", "poster_fetch", "TMDB no confident match", new
-            {
-                releaseId = id,
-                searchTitle = title,
-                searchYear = year,
-                searchMediaType = mediaType,
-                threshold = tmdbStrongThreshold,
-                bestScore = scoredAnyCandidates.Count == 0 ? (double?)null : Math.Round(bestAny.Score, 3),
-                totalCandidates = scoredAnyCandidates.Count,
-                topCandidates = top5Candidates
-            });
-        }
-
-        var tmdbMatch = bestPoster.Candidate is not null &&
-            TmdbMatchPolicy.IsAcceptable(title, year, unifiedCategory, ambiguity, bestPoster.Candidate, bestPoster.Score, allowWeak, tmdbStrongThreshold, TmdbCommonTitleThreshold)
-                ? bestPoster
-                : default;
-        var tmdbMatchForIds = bestAny.Candidate is not null &&
-            TmdbMatchPolicy.IsAcceptable(title, year, unifiedCategory, ambiguity, bestAny.Candidate, bestAny.Score, allowWeak, tmdbStrongThreshold, TmdbCommonTitleThreshold)
-                ? bestAny
-                : default;
-
-        int? tvdbIdResolved = tvdbIdStored;
+        int? tvdbIdResolved = tmdbMatchForIds.Candidate?.TmdbId == tmdbIdStored ? tvdbIdStored : null;
         if (mediaType == "series" && tmdbMatchForIds.Candidate is not null && !tvdbIdResolved.HasValue)
         {
             var tvdbId = await RunTmdbAsync(innerCt => _tmdb.GetTvdbIdAsync(tmdbMatchForIds.Candidate.TmdbId, innerCt), ct).ConfigureAwait(false);
             if (tvdbId.HasValue)
             {
                 tvdbIdResolved = tvdbId.Value;
-                _releases.SaveTvdbId(id, tvdbId.Value);
+
             }
         }
 
@@ -1647,6 +1621,7 @@ public sealed partial class PosterFetchService
                 var full = Path.Combine(PostersDirAbs, file);
                 await PosterImageWriter.WriteAsync(full, bytesTmdb, ct).ConfigureAwait(false);
                 _releases.SavePoster(id, tmdbMatch.Candidate.TmdbId, selectedPosterPath, file, identity.MediaType);
+                if (tvdbIdResolved.HasValue) _releases.SaveTvdbId(id, tvdbIdResolved.Value);
                 var tmdbStoreResult = await TryMaterializeStoreForReleaseAsync(
                     id,
                     "tmdb",
@@ -1729,8 +1704,8 @@ public sealed partial class PosterFetchService
         // null-poster record would set last_attempt_ts without a real result
         // and could overwrite a previously good confidence value on conflict.
         // If Fanart succeeds below it will write the correct cache entry.
-        var tmdbIdForFanart = tmdbMatchForIds.Candidate?.TmdbId ?? tmdbIdStored;
-        var tvdbIdForFanart = tvdbIdResolved ?? tvdbIdStored;
+        var tmdbIdForFanart = tmdbMatchForIds.Candidate?.TmdbId;
+        var tvdbIdForFanart = tvdbIdResolved;
 
         if (mediaType == "series" && !tvdbIdForFanart.HasValue && tmdbIdForFanart.HasValue)
         {
@@ -1738,7 +1713,6 @@ public sealed partial class PosterFetchService
             if (tvdbId.HasValue)
             {
                 tvdbIdForFanart = tvdbId.Value;
-                _releases.SaveTvdbId(id, tvdbId.Value);
             }
         }
 
@@ -1832,6 +1806,7 @@ public sealed partial class PosterFetchService
 
         await PosterImageWriter.WriteAsync(fanartFull, fanartBytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, tmdbIdForFanart.Value, fanartUrl, fanartFile, fanartType);
+        if (tvdbIdForFanart.HasValue) _releases.SaveTvdbId(id, tvdbIdForFanart.Value);
         var fanartProviderId = mediaType == "series" && tvdbIdForFanart.HasValue
             ? tvdbIdForFanart.Value.ToString(CultureInfo.InvariantCulture)
             : tmdbIdForFanart.Value.ToString(CultureInfo.InvariantCulture);
@@ -1937,7 +1912,7 @@ public sealed partial class PosterFetchService
         var ext = InferFileExtensionFromUrl(match.ImageUrl, ".jpg");
         var file = $"jikan-{match.MalId}{ext}";
         await SavePosterFileAsync(file, bytes, ct).ConfigureAwait(false);
-        _releases.SavePoster(id, null, match.ImageUrl, file);
+        _releases.SavePoster(id, null, match.ImageUrl, file, identityProvider: "jikan", identityProviderId: match.MalId.ToString(CultureInfo.InvariantCulture));
         var jikanStoreResult = await TryMaterializeStoreForReleaseAsync(
             id,
             ExternalProviderKeys.Jikan,
@@ -2041,7 +2016,7 @@ public sealed partial class PosterFetchService
                     var mbExt = InferFileExtensionFromUrl(mbMatch.CoverUrl, ".jpg");
                     var mbFile = $"musicbrainz-{mbMatch.Mbid}{mbExt}";
                     await SavePosterFileAsync(mbFile, mbBytes, ct).ConfigureAwait(false);
-                    _releases.SavePoster(id, null, mbMatch.CoverUrl, mbFile);
+                    _releases.SavePoster(id, null, mbMatch.CoverUrl, mbFile, identityProvider: "musicbrainz", identityProviderId: mbMatch.Mbid);
                     var musicBrainzStoreResult = await TryMaterializeStoreForReleaseAsync(
                         id,
                         ExternalProviderKeys.MusicBrainz,
@@ -2128,7 +2103,7 @@ public sealed partial class PosterFetchService
         var ext = InferFileExtensionFromUrl(match.PosterUrl, ".jpg");
         var file = $"theaudiodb-{match.ProviderId}{ext}";
         await SavePosterFileAsync(file, bytes, ct).ConfigureAwait(false);
-        _releases.SavePoster(id, null, match.PosterUrl, file);
+        _releases.SavePoster(id, null, match.PosterUrl, file, identityProvider: "theaudiodb", identityProviderId: match.ProviderId);
         var theAudioDbStoreResult = await TryMaterializeStoreForReleaseAsync(
             id,
             ExternalProviderKeys.TheAudioDb,
@@ -2253,7 +2228,7 @@ public sealed partial class PosterFetchService
         var ext = InferFileExtensionFromUrl(match.ThumbnailUrl, ".jpg");
         var file = $"googlebooks-{SanitizeForFile(match.VolumeId)}{ext}";
         await SavePosterFileAsync(file, bytes, ct).ConfigureAwait(false);
-        _releases.SavePoster(id, null, match.ThumbnailUrl, file);
+        _releases.SavePoster(id, null, match.ThumbnailUrl, file, identityProvider: "googlebooks", identityProviderId: match.VolumeId);
         var googleBooksStoreResult = await TryMaterializeStoreForReleaseAsync(
             id,
             ExternalProviderKeys.GoogleBooks,
@@ -2332,7 +2307,7 @@ public sealed partial class PosterFetchService
 
         var olFile = $"openlibrary-{SanitizeForFile(olMatch.WorkId)}.jpg";
         await SavePosterFileAsync(olFile, olBytes, ct).ConfigureAwait(false);
-        _releases.SavePoster(context.ReleaseId, null, olMatch.CoverUrl, olFile);
+        _releases.SavePoster(context.ReleaseId, null, olMatch.CoverUrl, olFile, identityProvider: "openlibrary", identityProviderId: olMatch.WorkId);
         var openLibraryStoreResult = await TryMaterializeStoreForReleaseAsync(
             context.ReleaseId,
             ExternalProviderKeys.OpenLibrary,
@@ -2422,7 +2397,7 @@ public sealed partial class PosterFetchService
         var file = $"rawg-{rawgMatch.Value.rawgId}-cover.jpg";
         var full = Path.Combine(PostersDirAbs, file);
         await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
-        _releases.SavePoster(id, null, rawgMatch.Value.coverUrl, file);
+        _releases.SavePoster(id, null, rawgMatch.Value.coverUrl, file, identityProvider: "rawg", identityProviderId: rawgMatch.Value.rawgId.ToString(CultureInfo.InvariantCulture));
         var rawgStoreResult = await TryMaterializeStoreForReleaseAsync(
             id,
             ExternalProviderKeys.Rawg,
@@ -2501,7 +2476,7 @@ public sealed partial class PosterFetchService
         var ext = InferFileExtensionFromUrl(match.CoverUrl, ".jpg");
         var file = $"comicvine-{match.ProviderId}{ext}";
         await SavePosterFileAsync(file, bytes, ct).ConfigureAwait(false);
-        _releases.SavePoster(id, null, match.CoverUrl, file);
+        _releases.SavePoster(id, null, match.CoverUrl, file, identityProvider: "comicvine", identityProviderId: match.ProviderId);
         var comicVineStoreResult = await TryMaterializeStoreForReleaseAsync(
             id,
             ExternalProviderKeys.ComicVine,
@@ -2599,6 +2574,8 @@ public sealed partial class PosterFetchService
         }
 
         if (cached is null) return null;
+        if (TmdbIdentity.NormalizeType(mediaType) is not null && cached.Fingerprint !=
+            PosterMatchCacheService.BuildFingerprint(new(cached.MediaType, cached.NormalizedTitle, cached.Year, cached.Season, cached.Episode))) return null;
         var cachedProvider = cached.PosterProvider ?? cached.MatchSource;
         if ((cachedProvider is "tmdb" or "fanart" || cached.PosterFile?.StartsWith("tmdb-", StringComparison.OrdinalIgnoreCase) == true || cached.PosterFile?.StartsWith("fanart-", StringComparison.OrdinalIgnoreCase) == true) &&
             (!IsTypedVideoPoster(cached.PosterFile, mediaType) ||
@@ -2615,7 +2592,7 @@ public sealed partial class PosterFetchService
                 var tmdbIdResolved = cachedIds?.TmdbId;
                 if (!tmdbIdResolved.HasValue && cachedIds?.TvdbId is int cachedTvdbId)
                     tmdbIdResolved = await TryResolveTmdbFromTvdbAsync(cachedTvdbId, ct).ConfigureAwait(false);
-                _releases.SavePoster(id, tmdbIdResolved, null, cached.PosterFile, mediaType);
+                _releases.SavePoster(id, tmdbIdResolved, null, cached.PosterFile, mediaType, cached.PosterProvider ?? cached.MatchSource, NormalizePosterProviderId(cached.PosterProviderId));
                 var cachedStoreResult = await TryMaterializeStoreForReleaseAsync(
                     id,
                     cached.PosterProvider ?? cached.MatchSource,
@@ -2686,14 +2663,13 @@ public sealed partial class PosterFetchService
             var full = Path.Combine(PostersDirAbs, file);
             await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
             var tmdbIdResolved = cachedIds.TmdbId;
-            if (show.TvdbId.HasValue)
-                _releases.SaveTvdbId(id, show.TvdbId.Value);
             if (!tmdbIdResolved.HasValue && show.TvdbId.HasValue)
                 tmdbIdResolved = await TryResolveTmdbFromTvdbAsync(show.TvdbId.Value, ct).ConfigureAwait(false);
             if (tmdbIdResolved.HasValue)
                 _releases.SaveTmdbId(id, tmdbIdResolved.Value, mediaType);
 
-            _releases.SavePoster(id, tmdbIdResolved, imageUrl, file);
+            _releases.SavePoster(id, tmdbIdResolved, imageUrl, file, "tv", "tvmaze", show.Id.ToString(CultureInfo.InvariantCulture));
+            if (show.TvdbId.HasValue) _releases.SaveTvdbId(id, show.TvdbId.Value);
             var tvmazeCachedStoreResult = await TryMaterializeStoreForReleaseAsync(
                 id,
                 "tvmaze",
@@ -2751,7 +2727,7 @@ public sealed partial class PosterFetchService
                 });
             }
 
-            var effectiveTmdbId = tmdbIdResolved ?? knownIds.TmdbId;
+            var effectiveTmdbId = tmdbIdResolved;
             await EnsureTmdbMetadataIfMissingAsync(
                 id,
                 effectiveTmdbId,
@@ -2832,13 +2808,12 @@ public sealed partial class PosterFetchService
         await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
         int? tmdbIdResolved = null;
         if (best.Candidate.TvdbId.HasValue)
-            _releases.SaveTvdbId(id, best.Candidate.TvdbId.Value);
-        if (best.Candidate.TvdbId.HasValue)
             tmdbIdResolved = await TryResolveTmdbFromTvdbAsync(best.Candidate.TvdbId.Value, ct).ConfigureAwait(false);
         if (tmdbIdResolved.HasValue)
             _releases.SaveTmdbId(id, tmdbIdResolved.Value, "series");
 
-        _releases.SavePoster(id, tmdbIdResolved, imageUrl, file);
+        _releases.SavePoster(id, tmdbIdResolved, imageUrl, file, "tv", "tvmaze", best.Candidate.Id.ToString(CultureInfo.InvariantCulture));
+        if (best.Candidate.TvdbId.HasValue) _releases.SaveTvdbId(id, best.Candidate.TvdbId.Value);
         var tvmazeStoreResult = await TryMaterializeStoreForReleaseAsync(
             id,
             "tvmaze",
@@ -2892,7 +2867,7 @@ public sealed partial class PosterFetchService
             });
         }
 
-        var effectiveTmdbId = tmdbIdResolved ?? knownIds.TmdbId;
+        var effectiveTmdbId = tmdbIdResolved;
         await EnsureTmdbMetadataIfMissingAsync(
             id,
             effectiveTmdbId,
@@ -2968,7 +2943,7 @@ public sealed partial class PosterFetchService
             results.AddRange(await RunTmdbAsync(innerCt => _tmdb.SearchTvListAsync(title, year, innerCt, TmdbCandidateLimit), ct).ConfigureAwait(false));
             if (year.HasValue)
                 results.AddRange(await RunTmdbAsync(innerCt => _tmdb.SearchTvListAsync(title, null, innerCt, TmdbCandidateLimit), ct).ConfigureAwait(false));
-            return DedupCandidates(results.Where(item => TmdbIdentity.NormalizeType(mediaType) is not { } type || TmdbIdentity.NormalizeType(item.MediaType) == type));
+            return DedupCandidates(results);
         }
 
         if (mediaType == "series")
@@ -2990,7 +2965,7 @@ public sealed partial class PosterFetchService
                 results.AddRange(await RunTmdbAsync(innerCt => _tmdb.SearchTvListAsync(title, null, innerCt, TmdbCandidateLimit), ct).ConfigureAwait(false));
         }
 
-        return DedupCandidates(results.Where(item => TmdbIdentity.NormalizeType(mediaType) is not { } type || TmdbIdentity.NormalizeType(item.MediaType) == type));
+        return DedupCandidates(results);
     }
 
     private static List<(TmdbClient.SearchResult Candidate, float Score)> ScoreCandidates(
@@ -3028,25 +3003,6 @@ public sealed partial class PosterFetchService
             list.Add(item);
         }
         return list;
-    }
-
-    private static bool IsWeakTmdbMatchAcceptable(
-        string title,
-        int? year,
-        UnifiedCategory category,
-        TmdbClient.SearchResult candidate,
-        float score)
-    {
-        if (score < TmdbWeakScoreThreshold) return false;
-        if (!year.HasValue || !candidate.Year.HasValue || candidate.Year != year) return false;
-        var expectedMediaType = UnifiedCategoryMappings.ToMediaType(category);
-        if (!string.IsNullOrWhiteSpace(expectedMediaType) &&
-            expectedMediaType != "unknown" &&
-            !string.Equals(expectedMediaType, candidate.MediaType, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        var overlap = CountSignificantTokenOverlap(title, candidate.Title, candidate.OriginalTitle);
-        return overlap > 0;
     }
 
     private static int CountSignificantTokenOverlap(string query, string candidate, string? originalCandidate)
@@ -3157,7 +3113,7 @@ public sealed partial class PosterFetchService
         if (snapshot is null)
             return;
 
-        if (snapshot.ExtUpdatedAtTs.HasValue && snapshot.ExtUpdatedAtTs.Value > 0)
+        if (snapshot.ExtSnapshotVersion == 1 && snapshot.ExtUpdatedAtTs.HasValue && snapshot.ExtUpdatedAtTs.Value > 0)
             return;
 
         try

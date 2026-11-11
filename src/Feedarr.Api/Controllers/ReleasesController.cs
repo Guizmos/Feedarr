@@ -522,6 +522,9 @@ public sealed class ReleasesController : ControllerBase
     {
         var r = _releases.GetForPoster(id);
         if (r is null) return NotFound(new { error = "release not found" });
+        using var matching = _releases.BeginMatching(r);
+        if (r.ManualMatchProvider is not null && r.ManualMatchProvider != "igdb")
+            return Conflict(new { error = "manual_identity_locked" });
 
         var unifiedValue = (string?)r.UnifiedCategory;
         UnifiedCategoryMappings.TryParse(unifiedValue, out var unifiedCategory);
@@ -544,7 +547,7 @@ public sealed class ReleasesController : ControllerBase
             (extRating is not null && extRating > 0) ||
             (extVotes is not null && extVotes > 0);
 
-        if (hasDetails && force != true)
+        if (hasDetails && r.ExtSnapshotVersion == 1 && extProvider == "igdb" && force != true)
         {
             return Ok(new
             {
@@ -563,8 +566,8 @@ public sealed class ReleasesController : ControllerBase
             });
         }
 
-        int? igdbId = null;
-        if (string.Equals(extProvider, "igdb", StringComparison.OrdinalIgnoreCase) &&
+        int? igdbId = r.ManualMatchProvider == "igdb" && int.TryParse(r.ManualMatchId, out var manualId) ? manualId : null;
+        if (!igdbId.HasValue && string.Equals(extProvider, "igdb", StringComparison.OrdinalIgnoreCase) &&
             int.TryParse(extProviderId, out var extIgdbId))
         {
             igdbId = extIgdbId;
@@ -624,22 +627,31 @@ public sealed class ReleasesController : ControllerBase
         if (details is null)
             return StatusCode(502, new { error = "igdb details not available" });
 
-        _releases.UpdateExternalDetails(
-            id,
-            "igdb",
-            igdbId.Value.ToString(CultureInfo.InvariantCulture),
-            details.Title,
-            details.Summary,
-            null,
-            details.Genres,
-            details.ReleaseDate,
-            null,
-            details.Rating,
-            details.Votes,
-            null,
-            null,
-            null
-        );
+        try
+        {
+            _releases.UpdateExternalDetails(
+                id,
+                "igdb",
+                igdbId.Value.ToString(CultureInfo.InvariantCulture),
+                details.Title,
+                details.Summary,
+                null,
+                details.Genres,
+                details.ReleaseDate,
+                null,
+                details.Rating,
+                details.Votes,
+                null,
+                null,
+                null
+            );
+
+        }
+        catch (ReleaseRepository.StaleMatchException)
+        {
+            _log.LogInformation("Discarded obsolete IGDB metadata releaseId={ReleaseId}", id);
+            return Conflict(new { error = "matching_identity_changed" });
+        }
 
         return Ok(new
         {

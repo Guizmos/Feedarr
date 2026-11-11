@@ -164,6 +164,7 @@ public sealed partial class PosterFetchStoreMaterializationTests
 
         ctx.WriteLegacyPoster("tmdb-100-w500.jpg", PosterStoreContext.CreateValidImageBytes());
 
+        using (var db = ctx.Db.Open()) db.Execute("UPDATE releases SET ext_snapshot_version=1,ext_provider_id='100' WHERE id=@id", new { id = releaseId });
         var result = await ctx.Posters.FetchPosterAsync(releaseId, CancellationToken.None, logSingle: false, skipIfExists: true);
 
         Assert.True(result.Ok);
@@ -439,6 +440,9 @@ public sealed partial class PosterFetchStoreMaterializationTests
             _imageMode = imageMode;
         }
 
+        public string? MovieSearchJson { get; set; }
+        public string? TvSearchJson { get; set; }
+        public Func<Task>? BeforeMovieDetails { get; set; }
         public Func<Task>? BeforeMovieSearch { get; set; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -446,6 +450,11 @@ public sealed partial class PosterFetchStoreMaterializationTests
             {
                 BeforeMovieSearch = null;
                 await callback();
+            }
+            if (request.RequestUri!.AbsolutePath == "/3/movie/100" && BeforeMovieDetails is { } detailsCallback)
+            {
+                BeforeMovieDetails = null;
+                await detailsCallback();
             }
             return await SendCoreAsync(request, cancellationToken);
         }
@@ -456,12 +465,13 @@ public sealed partial class PosterFetchStoreMaterializationTests
 
             if (path.Contains("/search/movie"))
             {
+                if (MovieSearchJson is not null) return Task.FromResult(JsonResponse(MovieSearchJson));
                 return Task.FromResult(JsonResponse(
                     "{\"results\":[{\"id\":100,\"title\":\"The Matrix\",\"original_title\":\"The Matrix\",\"poster_path\":\"/tmdb/matrix-search.jpg\",\"release_date\":\"1999-03-31\",\"original_language\":\"en\"}]}"));
             }
 
             if (path.Contains("/search/tv"))
-                return Task.FromResult(JsonResponse("{\"results\":[]}"));
+                return Task.FromResult(JsonResponse(TvSearchJson ?? "{\"results\":[]}"));
 
             if (path.Contains("/movie/100/images"))
             {

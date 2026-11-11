@@ -26,12 +26,16 @@ public sealed partial class ReleaseRepository
         var current = conn.QueryFirstOrDefault<ReleaseForPoster>("""
             SELECT r.entity_id EntityId, me.match_revision MatchRevision,
                    me.manual_match_provider ManualMatchProvider, me.manual_match_id ManualMatchId,
-                   me.manual_match_type ManualMatchType
+                   me.manual_match_type ManualMatchType,
+                   COALESCE(me.tmdb_id,r.tmdb_id) TmdbId, COALESCE(me.tmdb_media_type,r.tmdb_media_type) TmdbMediaType,
+                   COALESCE(me.ext_provider,r.ext_provider) ExtProvider, COALESCE(me.ext_provider_id,r.ext_provider_id) ExtProviderId
             FROM releases r LEFT JOIN media_entities me ON me.id=r.entity_id WHERE r.id=@id
             """, new { id }, tx);
         var expected = _matchingSnapshot.Value;
         if (current is null || (expected is not null &&
-            (current.EntityId != expected.EntityId || current.MatchRevision != expected.MatchRevision)))
+            (current.EntityId != expected.EntityId || current.MatchRevision != expected.MatchRevision ||
+             current.TmdbId != expected.TmdbId || current.TmdbMediaType != expected.TmdbMediaType ||
+             current.ExtProvider != expected.ExtProvider || current.ExtProviderId != expected.ExtProviderId)))
             throw new StaleMatchException();
         if (current.EntityId.HasValue && conn.ExecuteScalar<int>("""
             SELECT COUNT(DISTINCT CASE
@@ -54,6 +58,20 @@ public sealed partial class ReleaseRepository
         using var conn = _db.Open();
         using var tx = conn.BeginTransaction();
         ValidateMatching(conn, tx, id);
+    }
+
+    private void AdvanceMatchingSnapshot(IDbConnection conn, IDbTransaction tx, long id)
+    {
+        if (_matchingSnapshot.Value is not { } snapshot) return;
+        var row = conn.QuerySingle<ReleaseForPoster>("""
+            SELECT r.entity_id EntityId, me.match_revision MatchRevision,
+              COALESCE(me.tmdb_id,r.tmdb_id) TmdbId, COALESCE(me.tmdb_media_type,r.tmdb_media_type) TmdbMediaType,
+              COALESCE(me.ext_provider,r.ext_provider) ExtProvider, COALESCE(me.ext_provider_id,r.ext_provider_id) ExtProviderId
+            FROM releases r LEFT JOIN media_entities me ON me.id=r.entity_id WHERE r.id=@id
+            """, new { id }, tx);
+        snapshot.EntityId = row.EntityId; snapshot.MatchRevision = row.MatchRevision;
+        snapshot.TmdbId = row.TmdbId; snapshot.TmdbMediaType = row.TmdbMediaType;
+        snapshot.ExtProvider = row.ExtProvider; snapshot.ExtProviderId = row.ExtProviderId;
     }
 
     /// <summary>One user choice applies atomically to all releases sharing the entity.</summary>
@@ -86,7 +104,7 @@ public sealed partial class ReleaseRepository
               tmdb_id=CASE WHEN @provider='tmdb' THEN CAST(@externalId AS INTEGER) END, tmdb_media_type=@tmdbType,
               tvdb_id=NULL, request_tmdb_id=NULL, request_tmdb_status=NULL, request_tmdb_updated_at_ts=NULL,
               poster_file=NULL, poster_key=NULL, poster_store_dir=NULL, poster_updated_at_ts=NULL,
-              ext_provider=NULL, ext_provider_id=NULL, ext_title=NULL, ext_overview=NULL, ext_tagline=NULL,
+              ext_snapshot_version=NULL, ext_provider=NULL, ext_provider_id=NULL, ext_title=NULL, ext_overview=NULL, ext_tagline=NULL,
               ext_genres=NULL, ext_release_date=NULL, ext_runtime_minutes=NULL, ext_rating=NULL, ext_votes=NULL,
               ext_directors=NULL, ext_writers=NULL, ext_cast=NULL, ext_updated_at_ts=NULL
             WHERE id=@entity;
@@ -96,7 +114,7 @@ public sealed partial class ReleaseRepository
               tvdb_id=NULL, poster_file=NULL, poster_path=NULL,
               poster_key=NULL, poster_store_dir=NULL, poster_updated_at_ts=NULL,
               poster_provider=NULL, poster_provider_id=NULL, poster_hash=NULL,
-              ext_provider=NULL, ext_provider_id=NULL, ext_title=NULL, ext_overview=NULL, ext_tagline=NULL,
+              ext_snapshot_version=NULL, ext_provider=NULL, ext_provider_id=NULL, ext_title=NULL, ext_overview=NULL, ext_tagline=NULL,
               ext_genres=NULL, ext_release_date=NULL, ext_runtime_minutes=NULL, ext_rating=NULL, ext_votes=NULL,
               ext_directors=NULL, ext_writers=NULL, ext_cast=NULL, ext_updated_at_ts=NULL
             WHERE entity_id=@entity;
@@ -105,13 +123,13 @@ public sealed partial class ReleaseRepository
         tx.Commit();
     }
 
-    private static void InvalidateMatchingTitles(IDbConnection conn, IDbTransaction tx, long entity)
+    private static void InvalidateMatchingTitles(IDbConnection conn, IDbTransaction tx, long entity, long? releaseId = null)
     {
         var releases = conn.Query<ReleaseForPoster>("""
             SELECT r.title_clean TitleClean, r.media_type MediaType, r.year Year, r.unified_category UnifiedCategory,
               COALESCE(me.tmdb_media_type,r.tmdb_media_type) TmdbMediaType
-            FROM releases r JOIN media_entities me ON me.id=r.entity_id WHERE me.id=@entity
-            """, new { entity }, tx);
+            FROM releases r LEFT JOIN media_entities me ON me.id=r.entity_id WHERE me.id=@entity OR r.id=@releaseId
+            """, new { entity, releaseId }, tx);
         foreach (var release in releases)
         {
             var types = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { release.MediaType ?? "unknown" };

@@ -45,6 +45,7 @@ public sealed class ReleaseForPoster
     public string? PosterLastError { get; set; }
 
     // Détails externes
+    public int? ExtSnapshotVersion { get; set; }
     public string? ExtProvider { get; set; }
     public string? ExtProviderId { get; set; }
     public string? ExtTitle { get; set; }
