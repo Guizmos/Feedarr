@@ -301,3 +301,55 @@ test("background restore state refresh does not erase an archive selection error
     assert.equal(render().analysisStatus, "error");
   } finally { f.close(); }
 });
+
+test("return after verified empty restore state is local even when a later state request fails", async () => {
+  const f=fixture(); let reads=0;
+  try {
+    f.h.request=async()=>{ reads++; if(reads>1) throw new Error('Autorisation requise'); return {}; };
+    button(f.render(Wizard),'Restaurer une configuration').props.onClick(); f.render(Wizard); await f.effects();
+    let tree=f.render(Wizard); const restore=nodes(tree).find(n=>n.props?.restore).props.restore;
+    restore.setPhrase('secret to discard');
+    await button(f.render(Wizard),'Retour au choix').props.onClick(); await flush();
+    tree=f.render(Wizard); assert.match(text(tree),/Bienvenue dans Feedarr/); assert.equal(reads,1);
+    button(tree,'Restaurer une configuration').props.onClick();
+    assert.equal(nodes(f.render(Wizard)).find(n=>n.props?.restore).props.restore.phrase,'');
+  } finally { f.close(); }
+});
+
+test("an unverified local selection cannot bypass a confirmed server plan", async () => {
+  const f=fixture(); let left=false, reads=0;
+  try {
+    f.h.request=async()=>{reads++;return {pending:{operationId:'remote'},confirmed:true};};
+    f.render(Restore,true).setFile(new File(['zip'],'local.zip'));
+    await f.render(Restore,true).leave(false,()=>{left=true;});
+    assert.equal(left,false);assert.equal(reads,1);assert.match(f.render(Restore,true).error,/confirmée ou appliquée/);
+  } finally {f.close();}
+});
+
+test("return lock and failed verification have visible explanations next to the return button", async () => {
+  const f=fixture();
+  try {
+    f.h.request=async()=>{throw new Error('Autorisation requise');};
+    button(f.render(Wizard),'Restaurer une configuration').props.onClick(); f.render(Wizard); await f.effects();
+    let tree=f.render(Wizard);await button(tree,'Retour au choix').props.onClick();await flush();tree=f.render(Wizard);
+    assert.equal(button(tree,'Retour au choix').props['aria-describedby'],'setup-return-status');
+    assert.ok(nodes(tree).some(n=>n.props?.id==='setup-return-status' && text(n).includes('Retour au choix impossible')));
+    f.h.request=async()=>({pending:{operationId:'locked'},confirmed:true});
+    await nodes(tree).find(n=>n.props?.restore).props.restore.leave(false,()=>{});tree=f.render(Wizard);
+    assert.equal(button(tree,'Retour au choix').props.disabled,true);
+    assert.ok(nodes(tree).some(n=>n.props?.id==='setup-return-status' && text(n).includes('déjà confirmée ou appliquée')));
+  } finally {f.close();}
+});
+
+test("a lost preparation response invalidates the verified empty state before returning", async () => {
+  const f=fixture();let left=false;
+  try {
+    f.render(Restore,true);await f.effects();
+    f.render(Restore,true).setFile(new File(['zip'],'configuration.zip'));
+    f.h.request=async()=>{throw new Error('Connexion perdue');};
+    await f.render(Restore,true).prepare();
+    f.h.request=async()=>({pending:{operationId:'uncertain'},confirmed:true});
+    await f.render(Restore,true).leave(false,()=>{left=true;});
+    assert.equal(left,false);assert.match(f.render(Restore,true).leaveError,/confirmée ou appliquée/);
+  } finally {f.close();}
+});

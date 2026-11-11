@@ -121,6 +121,16 @@ export default function SetupWizard() {
     } else if (!restoreSteps && !finishing && !languageStepStatus.saving && !securityStepStatus.saving) showWelcome();
   };
 
+  const returnBlockReason = restoreMode
+    ? restore.state?.confirmed || restore.state?.applied
+      ? "La restauration est déjà confirmée ou appliquée. Poursuivez ce parcours pour la finaliser ; le retour au choix est indisponible."
+      : restore.busy ? "Attendez la fin de l’opération avant de revenir au choix."
+      : restore.checking ? "Vérification du plan de restauration en cours. Le retour sera disponible après cette vérification." : ""
+    : restoreSteps ? "La configuration restaurée est déjà appliquée. Terminez les étapes manquantes avant de quitter ce parcours."
+      : finishing || languageStepStatus.saving || securityStepStatus.saving ? "Attendez la fin de l’enregistrement avant de revenir au choix." : "";
+  const returnFeedback = returnBlockReason || (restoreMode && restore.leaveError
+    ? `Retour au choix impossible : ${restore.leaveError} Vérifiez l’accès au serveur et le secret bootstrap, puis réessayez.` : "");
+
   useEffect(() => {
     if (!path) return;
     setMaxStep((prev) => Math.max(prev, step));
@@ -351,9 +361,10 @@ export default function SetupWizard() {
         </div>
 
         {restoreMode ? <div className="setupWizardFooter">
+          {returnFeedback && <div className="setup-return-feedback" id="setup-return-status"><InlineNotice variant={returnBlockReason ? "info" : "error"} message={returnFeedback} /></div>}
           <div className="setup-actions settings-card__actions">
             <div className="settings-card__actions">
-              <button className="btn" type="button" disabled={restore.busy || restore.checking || !!restore.state?.confirmed || !!restore.state?.applied} onClick={returnToChoice}>Retour au choix</button>
+              <button className="btn" type="button" disabled={restore.busy || restore.checking || !!restore.state?.confirmed || !!restore.state?.applied} aria-describedby={returnFeedback ? "setup-return-status" : undefined} onClick={returnToChoice}>Retour au choix</button>
             {restore.stage === 2 && <button className="btn" type="button" disabled={restore.busy} onClick={restore.cancel}>Précédent</button>}
             {restore.stage === 3 && !restore.state?.confirmed && <button className="btn" type="button" disabled={restore.busy} onClick={() => restore.go(2)}>Précédent</button>}
             </div>
@@ -365,9 +376,10 @@ export default function SetupWizard() {
             </div>
           </div>
         </div> : <div className="setupWizardFooter">
+          {returnFeedback && <div className="setup-return-feedback" id="setup-return-status"><InlineNotice message={returnFeedback} /></div>}
           <div className="setup-actions settings-card__actions">
             <div className="settings-card__actions">
-              <button className="btn" type="button" disabled={!!restoreSteps || finishing || languageStepStatus.saving || securityStepStatus.saving} onClick={returnToChoice}>Retour au choix</button>
+              <button className="btn" type="button" disabled={!!restoreSteps || finishing || languageStepStatus.saving || securityStepStatus.saving} aria-describedby={returnFeedback ? "setup-return-status" : undefined} onClick={returnToChoice}>Retour au choix</button>
             {step > visibleSteps[0]?.id && (
               <button
                 className="btn"

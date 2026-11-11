@@ -17,10 +17,13 @@ export default function useSetupRestore(enabled, onApplied) {
   const [notice, setNotice] = useState("");
   const [checking, setChecking] = useState(false);
   const [analysisStatus, setAnalysisStatus] = useState("none");
+  const [leaveError, setLeaveError] = useState("");
   const active = useRef(null);
   const sequence = useRef(0);
+  const verifiedEmpty = useRef(false);
   const request = useCallback((path, options = {}) => configurationRequest(`${root}${path}`, { bootstrap, ...options }), [bootstrap]);
   const acceptState = useCallback(next => {
+    verifiedEmpty.current = !!next && !next.pending && !next.confirmed && !next.applied;
     setState(next);
     if (next?.pending) { setStage(next.confirmed ? 3 : 2); setAnalysisStatus("valid"); }
     else if (next?.applied) setStage(4);
@@ -41,17 +44,20 @@ export default function useSetupRestore(enabled, onApplied) {
     if (active.current) return;
     const controller = new AbortController(); active.current = controller; sequence.current++;
     setBusy(true); setError(""); setNotice("");
+    if (kind === "leave") setLeaveError("");
     try { await action(controller.signal); }
-    catch (e) { if (!controller.signal.aborted) { setError(e.message || "La restauration a échoué."); if (kind === "analysis") setAnalysisStatus("error"); } }
+    catch (e) { if (!controller.signal.aborted) { setError(e.message || "La restauration a échoué."); if (kind === "analysis") setAnalysisStatus("error"); if (kind === "leave") setLeaveError(e.message || "La vérification du plan a échoué."); } }
     finally { active.current = null; setBusy(false); }
   };
   const prepare = () => run(async signal => {
     const body = configurationUpload(file, phrase); setPhrase(""); setAnalysisStatus("analyzing");
+    verifiedEmpty.current = false;
     const pending = await request("/prepare", { method: "POST", body, signal });
     setState({ pending, confirmed: false }); setConsent(false); setSecurityConsent(false); setStage(2); setAnalysisStatus("valid");
   }, "analysis");
   const cancel = () => run(async signal => {
     await request(`/${state.pending.operationId}`, { method: "DELETE", signal });
+    verifiedEmpty.current = true;
     setState(null); setConsent(false); setSecurityConsent(false); setStage(1);
     setAnalysisStatus(file ? "selected" : "none"); setNotice("Analyse annulée. Vous pouvez sélectionner une autre archive.");
   });
@@ -79,7 +85,7 @@ export default function useSetupRestore(enabled, onApplied) {
     if (next === 4 && state?.applied && !state.pending) setStage(4);
   };
   const canVisit = id => !busy && (id === stage || id === 1 && !state?.confirmed && !state?.applied || id === 2 && state?.pending && !state.confirmed || id === 3 && state?.confirmed || id === 4 && state?.applied && !state.pending);
-  const reset = () => { setChecking(false); setAnalysisStatus("none"); sequence.current++; setFile(null); setPhrase(""); setBootstrap(""); setState(null); setConsent(false); setSecurityConsent(false); setError(""); setNotice(""); setStage(1); };
+  const reset = () => { verifiedEmpty.current = false; setChecking(false); setAnalysisStatus("none"); sequence.current++; setFile(null); setPhrase(""); setBootstrap(""); setLeaveError(""); setState(null); setConsent(false); setSecurityConsent(false); setError(""); setNotice(""); setStage(1); };
   const selectFile = next => {
     if (active.current || state?.confirmed || state?.applied) return;
     const update = () => {
@@ -91,11 +97,18 @@ export default function useSetupRestore(enabled, onApplied) {
     };
     if (state?.pending) return run(async signal => {
       await request(`/${state.pending.operationId}`, { method: "DELETE", signal });
+      verifiedEmpty.current = true;
       update();
     });
     update();
   };
   const leave = (cancelPending, onLeave) => run(async signal => {
+    if (state?.confirmed || state?.applied) {
+      throw new Error("La restauration est déjà confirmée ou appliquée. Poursuivez ce parcours pour la finaliser.");
+    }
+    // An already verified empty state needs no server mutation or second read
+    // to leave. Unknown/prepared plans still require authoritative verification.
+    if (verifiedEmpty.current && !state?.pending) { reset(); onLeave(); return; }
     const next = await request("/state", { signal });
     if (next?.confirmed || next?.applied) {
       acceptState(next);
@@ -106,10 +119,10 @@ export default function useSetupRestore(enabled, onApplied) {
       await request(`/${next.pending.operationId}`, { method: "DELETE", signal });
     }
     reset(); onLeave();
-  });
+  }, "leave");
   const validFile = !configurationFileError(file);
   return { stage, state, file, setFile: selectFile, phrase, setPhrase, bootstrap, setBootstrap, consent, setConsent, securityConsent, setSecurityConsent,
-    busy, checking, analysisStatus, error, notice, prepare, cancel, confirm, checkRestart, finish, go, canVisit, reset, leave,
+    busy, checking, analysisStatus, error, leaveError, notice, prepare, cancel, confirm, checkRestart, finish, go, canVisit, reset, leave,
     canPrepare: validFile && !busy && !checking && !state?.pending && !state?.confirmed && !state?.applied && !state?.legacyRestorePending,
     locked: busy || checking || !!state?.pending || !!state?.applied,
     canContinue: stage !== 2 || consent && (!state?.pending?.securityChangeRequiresConfirmation || securityConsent) };
