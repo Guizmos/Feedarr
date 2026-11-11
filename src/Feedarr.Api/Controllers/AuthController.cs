@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.RateLimiting;
 
 namespace Feedarr.Api.Controllers;
 
-// JSON-only preparation for Auth V2.2; existing browser navigation remains Basic.
+// Web login and session state; explicit API Basic remains supported.
 [ApiController]
 [Route("api/auth")]
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
@@ -25,13 +25,12 @@ public sealed class AuthController(
     {
         if (!WebSessionSecurity.HasSameOrigin(Request)) return ForbiddenCsrf();
         if (!Request.IsHttps) return Failure(400, "https_required");
-        if (!setup.IsSetupCompleted()) return Failure(403, "setup_required");
 
         // Read the generation first: changes during validation make Create fail closed.
         var generation = sessions.Generation();
         var security = settings.GetSecurity(new SecuritySettings());
         if (!SmartAuthPolicy.IsAuthConfigured(security, null))
-            return Failure(409, "credentials_not_configured");
+            return !setup.IsSetupCompleted() ? Failure(403, "setup_required") : Failure(409, "credentials_not_configured");
 
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var username = request.Username ?? "";
@@ -57,7 +56,7 @@ public sealed class AuthController(
     public IActionResult Session()
     {
         var security = settings.GetSecurity(new SecuritySettings());
-        var session = setup.IsSetupCompleted() && SmartAuthPolicy.IsAuthConfigured(security, null)
+        var session = SmartAuthPolicy.IsAuthConfigured(security, null)
             ? sessions.Authenticate(HttpContext) : null;
         return Ok(State(security, session));
     }
@@ -80,7 +79,7 @@ public sealed class AuthController(
         authConfigured = SmartAuthPolicy.IsAuthConfigured(security, null),
         authMode = SmartAuthPolicy.NormalizeAuthMode(security),
         setupCompleted = setup.IsSetupCompleted(),
-        webSessionAvailable = Request.IsHttps && setup.IsSetupCompleted() && SmartAuthPolicy.IsAuthConfigured(security, null),
+        webSessionAvailable = Request.IsHttps && SmartAuthPolicy.IsAuthConfigured(security, null),
         csrfToken = session?.CsrfToken,
         expiresAt = session?.ExpiresAt,
         absoluteExpiresAt = session?.AbsoluteExpiresAt,

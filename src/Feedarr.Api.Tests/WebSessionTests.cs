@@ -297,9 +297,8 @@ public sealed class WebSessionTests
         Assert.Equal(403, protectedRequest.Response.StatusCode);
         var login = f.Context("/api/auth/login", "POST", cookie);
         Assert.True(await f.Invoke(login));
-        Assert.Equal(403, Assert.IsType<ObjectResult>(f.Controller(login).Login(new("admin", Fixture.Password))).StatusCode);
+        Assert.IsType<OkObjectResult>(f.Controller(login).Login(new("admin", Fixture.Password)));
         var state = JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(f.Controller(f.Context()).Session()).Value);
-        Assert.False(state.GetProperty("authenticated").GetBoolean());
         Assert.False(state.GetProperty("setupCompleted").GetBoolean());
         var unknown = f.Context("/api/auth/login/child");
         Assert.False(await f.Invoke(unknown));
@@ -460,6 +459,68 @@ public sealed class WebSessionTests
         Assert.Null(f.Sessions.Authenticate(f.Context(cookie: "__Host-FeedarrSession=invalid")));
         f.Sessions.Revoke(f.Context(cookie: cookie));
         Assert.Null(new WebSessionService(f.Db, f.Clock, f.Settings).Authenticate(f.Context(cookie: cookie)));
+    }
+
+    [Theory]
+    [InlineData("/")]
+    [InlineData("/login")]
+    [InlineData("/library")]
+    [InlineData("/settings/users")]
+    [InlineData("/setup")]
+    public async Task NeutralShell_IsPublic_ButApiAndUnknownFilesRemainProtected(string path)
+    {
+        using var f = new Fixture();
+        f.Setup.ResetSetupCompleted();
+        var shell = f.Context(path);
+        Assert.True(await f.Invoke(shell));
+        Assert.Equal("public-v1", shell.Response.Headers["X-Feedarr-Shell"].ToString());
+        Assert.False(shell.Response.Headers.ContainsKey("WWW-Authenticate"));
+        foreach (var privatePath in new[] { "/api/feed/releases", "/api/sources", "/private.json", "/login/private.json" })
+        {
+            var api = f.Context(privatePath);
+            Assert.False(await f.Invoke(api));
+            Assert.False(api.Response.Headers.ContainsKey("X-Feedarr-Shell"));
+        }
+    }
+
+    [Theory]
+    [InlineData("/api/feed/releases")]
+    [InlineData("/api/feed/top")]
+    [InlineData("/api/sources")]
+    [InlineData("/api/releases/7/download")]
+    [InlineData("/api/posters/7")]
+    public async Task BrowserUnauthorized_IsJsonWithoutChallenge_ExplicitBasicKeepsItsContract(string path)
+    {
+        using var f = new Fixture();
+        var web = f.Context(path);
+        web.Request.Headers["X-Feedarr-Web"] = "1";
+        Assert.False(await f.Invoke(web));
+        Assert.Equal(401, web.Response.StatusCode);
+        Assert.False(web.Response.Headers.ContainsKey("WWW-Authenticate"));
+        Assert.False(web.Response.Headers.ContainsKey("Location"));
+        Assert.Equal("authentication_required", ReadJson(web).GetProperty("error").GetString());
+        var basic = f.Context(path);
+        basic.Request.Headers["X-Feedarr-Web"] = "1";
+        basic.Request.Headers.Authorization = Basic("admin", "wrong");
+        Assert.False(await f.Invoke(basic));
+        Assert.Equal("Basic realm=\"Feedarr\"", basic.Response.Headers.WWWAuthenticate.ToString());
+        Assert.Equal(0, basic.Response.Body.Length);
+    }
+
+    [Fact]
+    public async Task ConfiguredSetupSession_CanContinueWizard_ButCannotReadPrivateFeed()
+    {
+        using var f = new Fixture();
+        f.Setup.ResetSetupCompleted();
+        var (cookie, session) = f.Login();
+        var setup = f.Context("/api/settings/ui", "PUT", cookie);
+        setup.Request.Headers[WebSessionSecurity.CsrfHeader] = session.CsrfToken;
+        Assert.True(await f.Invoke(setup));
+        Assert.True(setup.Items.ContainsKey(WebSessionSecurity.SessionKey));
+        var feed = f.Context("/api/feed/releases", cookie: cookie);
+        Assert.False(await f.Invoke(feed));
+        Assert.Equal(403, feed.Response.StatusCode);
+        Assert.Equal("setup_required", ReadJson(feed).GetProperty("error").GetString());
     }
 
     private static JsonElement ReadJson(DefaultHttpContext context)
