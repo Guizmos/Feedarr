@@ -27,6 +27,32 @@ public sealed class AntiCsrfOriginMiddleware
         ILogger<AntiCsrfOriginMiddleware> log)
     {
         var request = context.Request;
+        // Cookie authentication must never inherit the legacy Basic/bootstrap exemptions.
+        if (!RequestForgeryProtection.IsSafeMethod(request.Method) &&
+            context.Items.TryGetValue(WebSessionSecurity.SessionKey, out var authenticated) &&
+            authenticated is WebSession session)
+        {
+            if (!WebSessionSecurity.HasSameOrigin(request) ||
+                !WebSessionSecurity.HasValidCsrf(request, session))
+            {
+                await RejectAsync(context, log, "session_csrf_invalid", null).ConfigureAwait(false);
+                return;
+            }
+            await _next(context).ConfigureAwait(false);
+            return;
+        }
+
+        if (WebSessionSecurity.IsAuthEndpoint(request))
+        {
+            if (!RequestForgeryProtection.IsSafeMethod(request.Method) && !WebSessionSecurity.HasSameOrigin(request))
+            {
+                await RejectAsync(context, log, "origin_not_allowed", null).ConfigureAwait(false);
+                return;
+            }
+            await _next(context).ConfigureAwait(false);
+            return;
+        }
+
         if (IsExemptPath(request.Path.Value))
         {
             await _next(context).ConfigureAwait(false);            return;

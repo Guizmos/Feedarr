@@ -57,13 +57,22 @@ public sealed class BasicAuthMiddleware
         SetupStateService setupState,
         BootstrapTokenService bootstrapTokens,
         AuthThrottleService authThrottle,
-        ILogger<BasicAuthMiddleware> log)
+        ILogger<BasicAuthMiddleware> log,
+        WebSessionService? webSessions = null)
     {
         // Docker's readiness probe must reach the SQLite check without credentials.
         // Exact GET only: do not open /health/deep or mark this as authenticated.
         if (HttpMethods.IsGet(context.Request.Method) &&
             context.Request.Path.Equals("/health", StringComparison.OrdinalIgnoreCase))
         {
+            await _next(context).ConfigureAwait(false);
+            return;
+        }
+
+        if (WebSessionSecurity.IsAuthEndpoint(context.Request) && !WebSessionSecurity.HasExplicitBasic(context.Request))
+        {
+            WebSessionSecurity.DisableCaching(context);
+            context.Items[AuthPassedKey] = true;
             await _next(context).ConfigureAwait(false);
             return;
         }
@@ -121,6 +130,21 @@ public sealed class BasicAuthMiddleware
         var authRequired = SmartAuthPolicy.IsAuthRequired(context, security);
         var authConfigured = SmartAuthPolicy.IsAuthConfigured(security, bootstrapSecret);
         var authMode = SmartAuthPolicy.NormalizeAuthMode(security);
+
+        if (webSessions is not null && setupState.IsSetupCompleted() && authConfigured &&
+            !WebSessionSecurity.HasExplicitBasic(context.Request) &&
+            !SmartAuthPolicy.HasValidBootstrapSecretHeader(context, bootstrapSecret))
+        {
+            var session = webSessions.Authenticate(context);
+            if (session is not null)
+            {
+                context.Items[WebSessionSecurity.SessionKey] = session;
+                context.Items[AuthPassedKey] = true;
+                WebSessionSecurity.DisableCaching(context);
+                await _next(context).ConfigureAwait(false);
+                return;
+            }
+        }
 
         if (!authRequired)
         {
@@ -215,7 +239,7 @@ public sealed class BasicAuthMiddleware
             await _next(context).ConfigureAwait(false);            return;
         }
 
-        if (!Validate(user, pass, security))
+        if (!CredentialValidator.Validate(user, pass, security))
         {
             authThrottle.RegisterFailure(remoteIp, user);
             Challenge(context);
@@ -351,47 +375,6 @@ public sealed class BasicAuthMiddleware
             user = decoded[..idx];
             pass = decoded[(idx + 1)..];
             return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static bool Validate(string user, string pass, SecuritySettings settings)
-    {
-        if (string.IsNullOrWhiteSpace(settings.Username)) return false;
-
-        // Constant-time username comparison with a fixed 512-byte buffer — prevents both
-        // username enumeration and length-based timing leaks (no Math.Max branch on lengths).
-        const int UsernameFixedBytes = 512;
-        Span<byte> userBuf = stackalloc byte[UsernameFixedBytes];     // zero-initialised
-        Span<byte> expectedBuf = stackalloc byte[UsernameFixedBytes]; // zero-initialised
-        var userEncoded = Encoding.UTF8.GetBytes(user);
-        var expectedEncoded = Encoding.UTF8.GetBytes(settings.Username);
-        userEncoded.AsSpan(0, Math.Min(userEncoded.Length, UsernameFixedBytes)).CopyTo(userBuf);
-        expectedEncoded.AsSpan(0, Math.Min(expectedEncoded.Length, UsernameFixedBytes)).CopyTo(expectedBuf);
-        var usernameMatch = CryptographicOperations.FixedTimeEquals(userBuf, expectedBuf);
-
-        if (string.IsNullOrWhiteSpace(settings.PasswordHash) || string.IsNullOrWhiteSpace(settings.PasswordSalt))
-            return false;
-
-        // Always verify the password (even when the username didn't match) so that an
-        // attacker cannot enumerate valid usernames by timing the PBKDF2 computation.
-        var passwordMatch = VerifyPassword(pass, settings.PasswordHash, settings.PasswordSalt);
-
-        return usernameMatch && passwordMatch;
-    }
-
-    private static bool VerifyPassword(string password, string hashBase64, string saltBase64)
-    {
-        try
-        {
-            var salt = Convert.FromBase64String(saltBase64);
-            var expected = Convert.FromBase64String(hashBase64);
-            using var pbkdf2 = new Rfc2898DeriveBytes(password, salt, 100_000, HashAlgorithmName.SHA256);
-            var actual = pbkdf2.GetBytes(expected.Length);
-            return CryptographicOperations.FixedTimeEquals(actual, expected);
         }
         catch
         {
