@@ -42,6 +42,8 @@ public sealed class TmdbMetadataBackfillService
             .Select(group => group.First())
             .ToList();
 
+        var snapshots = scopedSeeds.ToDictionary(seed => seed.ReleaseId, seed => _releases.GetForPoster(seed.ReleaseId));
+
         var tmdbIds = scopedSeeds
             .Select(seed => seed.TmdbId)
             .Where(id => id > 0)
@@ -69,6 +71,8 @@ public sealed class TmdbMetadataBackfillService
             {
                 if (TryApplyExternalDetails(
                     seed.ReleaseId,
+                    snapshots[seed.ReleaseId],
+                    seed.MediaTypeNormalized,
                     provider: donor.ExtProvider ?? "tmdb",
                     providerId: donor.ExtProviderId ?? seed.TmdbId.ToString(CultureInfo.InvariantCulture),
                     title: donor.ExtTitle,
@@ -138,6 +142,8 @@ public sealed class TmdbMetadataBackfillService
             {
                 if (TryApplyExternalDetails(
                     seed.ReleaseId,
+                    snapshots[seed.ReleaseId],
+                    seed.MediaTypeNormalized,
                     provider: "tmdb",
                     providerId: seed.TmdbId.ToString(CultureInfo.InvariantCulture),
                     title: details.Title,
@@ -176,6 +182,8 @@ public sealed class TmdbMetadataBackfillService
 
     private bool TryApplyExternalDetails(
         long releaseId,
+        Feedarr.Api.Models.ReleaseForPoster? snapshot,
+        string tmdbMediaType,
         string provider,
         string providerId,
         string? title,
@@ -192,6 +200,8 @@ public sealed class TmdbMetadataBackfillService
     {
         try
         {
+            if (snapshot is null) return false;
+            using var matching = _releases.BeginMatching(snapshot);
             _releases.UpdateExternalDetails(
                 releaseId,
                 provider,
@@ -206,7 +216,7 @@ public sealed class TmdbMetadataBackfillService
                 votes,
                 directors,
                 writers,
-                cast);
+                cast, tmdbMediaType);
             return true;
         }
         catch (Exception ex)

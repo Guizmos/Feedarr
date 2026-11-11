@@ -22,6 +22,11 @@ public sealed class ReleaseForPoster
     public string? MediaType { get; set; }
 
     // IDs externes
+    public string? TmdbMediaType { get; set; }
+    public string? ManualMatchProvider { get; set; }
+    public string? ManualMatchType { get; set; }
+    public string? ManualMatchId { get; set; }
+    public string? MatchRevision { get; set; }
     public int? TmdbId { get; set; }
     public int? TvdbId { get; set; }
 

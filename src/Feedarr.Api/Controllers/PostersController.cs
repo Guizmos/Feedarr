@@ -286,6 +286,7 @@ public sealed class PostersController : ControllerBase
     {
         public string? Provider { get; set; }
         public int? TmdbId { get; set; }
+        public string? MediaType { get; set; }
         public string? PosterPath { get; set; }
         public int? IgdbId { get; set; }
         public string? ProviderId { get; set; }
@@ -305,6 +306,10 @@ public sealed class PostersController : ControllerBase
         public string? PosterLang { get; set; }
         public string? PosterSize { get; set; }
     }
+
+    [HttpDelete("release/{id:long}/manual")]
+    public IActionResult ClearManualMatch([FromRoute] long id)
+        => _releases.ClearManualMatch(id) ? Ok(new { ok = true }) : NotFound();
 
     // POST /api/posters/release/{id}/manual
     [HttpPost("release/{id:long}/manual")]
@@ -345,7 +350,7 @@ public sealed class PostersController : ControllerBase
             if (dto?.TmdbId is null || string.IsNullOrWhiteSpace(dto?.PosterPath))
                 return BadRequest(new { error = "tmdbId/posterPath missing" });
 
-            var posterUrl = await _posterFetch.SaveTmdbPosterAsync(id, dto.TmdbId.Value, dto.PosterPath!, ct);
+            var posterUrl = await _posterFetch.SaveTmdbPosterAsync(id, dto.TmdbId.Value, dto.PosterPath!, ct, mediaType: dto.MediaType);
             if (string.IsNullOrWhiteSpace(posterUrl))
                 return StatusCode(500, new { error = "poster download failed" });
 
@@ -1005,7 +1010,11 @@ public sealed class PostersController : ControllerBase
     private static string BuildSearchDedupKey(PosterSearchResult result)
     {
         var provider = (result.Provider ?? "").Trim().ToLowerInvariant();
-        if (result.TmdbId.HasValue) return $"{provider}:tmdb:{result.TmdbId.Value}";
+        if (result.TmdbId.HasValue)
+        {
+            var type = Feedarr.Api.Services.Matching.TmdbIdentity.NormalizeType(result.MediaType) ?? "unknown";
+            return $"{provider}:{type}:{result.TmdbId.Value}";
+        }
         if (result.IgdbId.HasValue) return $"{provider}:igdb:{result.IgdbId.Value}";
         var title = (result.Title ?? "").Trim().ToLowerInvariant();
         var year = result.Year?.ToString() ?? "";

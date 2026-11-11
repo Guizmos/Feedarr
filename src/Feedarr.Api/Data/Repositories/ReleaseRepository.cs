@@ -63,6 +63,8 @@ public sealed partial class ReleaseRepository
     private const long DefaultMissingPosterHardFailCooldownSeconds = 24 * 60 * 60;
     private const string SqlTmdbMediaTypeNormalizedExpr = """
         CASE
+          WHEN COALESCE(me.tmdb_media_type, r.tmdb_media_type) = 'tv' THEN 'series'
+          WHEN COALESCE(me.tmdb_media_type, r.tmdb_media_type) = 'movie' THEN 'movie'
           WHEN lower(trim(COALESCE(r.media_type, ''))) IN ('series', 'tv', 'show') THEN 'series'
           WHEN lower(trim(COALESCE(r.media_type, ''))) IN ('movie', 'film') THEN 'movie'
           WHEN lower(trim(COALESCE(r.unified_category, ''))) IN ('serie', 'series', 'emission') THEN 'series'
@@ -1322,6 +1324,8 @@ public sealed partial class ReleaseRepository
                 r.entity_id as EntityId,
                 CAST(COALESCE(me.tmdb_id, r.tmdb_id) AS INTEGER) as TmdbId,
                 CASE
+                  WHEN COALESCE(me.tmdb_media_type,r.tmdb_media_type) = 'tv' THEN 'series'
+                  WHEN COALESCE(me.tmdb_media_type,r.tmdb_media_type) = 'movie' THEN 'movie'
                   WHEN lower(trim(COALESCE(r.media_type, ''))) IN ('series', 'tv', 'show') THEN 'series'
                   WHEN lower(trim(COALESCE(r.media_type, ''))) IN ('movie', 'film') THEN 'movie'
                   ELSE NULL
@@ -1367,6 +1371,8 @@ public sealed partial class ReleaseRepository
                 r.id as ReleaseId,
                 CAST(COALESCE(me.tmdb_id, r.tmdb_id) AS INTEGER) as TmdbId,
                 CASE
+                  WHEN COALESCE(me.tmdb_media_type,r.tmdb_media_type) = 'tv' THEN 'series'
+                  WHEN COALESCE(me.tmdb_media_type,r.tmdb_media_type) = 'movie' THEN 'movie'
                   WHEN lower(trim(COALESCE(r.media_type, ''))) IN ('series', 'tv', 'show') THEN 'series'
                   WHEN lower(trim(COALESCE(r.media_type, ''))) IN ('movie', 'film') THEN 'movie'
                   ELSE NULL
@@ -1411,6 +1417,7 @@ public sealed partial class ReleaseRepository
             WHERE TmdbId IN @ids
               AND MediaTypeNormalized IS NOT NULL
               AND ExtProvider = 'tmdb'
+              AND ExtProviderId = CAST(TmdbId AS TEXT)
               AND IFNULL(ExtUpdatedAtTs, 0) > 0
             ORDER BY TmdbId ASC, MediaTypeNormalized ASC, ExtUpdatedAtTs DESC, ReleaseId DESC;
             """,
@@ -1493,7 +1500,10 @@ public sealed partial class ReleaseRepository
                     LIMIT 1
                 )),
                 updated_at_ts = @now
-            WHERE (tmdb_id IS NULL OR tmdb_id <= 0 OR tvdb_id IS NULL OR tvdb_id <= 0)
+            WHERE manual_match_provider IS NULL
+              AND (SELECT COUNT(DISTINCT r.tmdb_id) FROM releases r WHERE r.entity_id=media_entities.id AND r.tmdb_id>0) <= 1
+              AND (SELECT COUNT(DISTINCT lower(r.media_type)) FROM releases r WHERE r.entity_id=media_entities.id) <= 1
+              AND (tmdb_id IS NULL OR tmdb_id <= 0 OR tvdb_id IS NULL OR tvdb_id <= 0)
               AND id IN (
                   SELECT id
                   FROM media_entities
@@ -1644,6 +1654,8 @@ public sealed partial class ReleaseRepository
 
         if (seed is null) return null;
 
+        var previousEntity = conn.ExecuteScalar<long?>("SELECT entity_id FROM releases WHERE id=@id", new { id }, tx);
+        if (previousEntity.HasValue) InvalidateMatchingTitles(conn, tx, previousEntity.Value);
         var unifiedCategory = ResolveUnifiedCategory(seed);
         var unifiedCategoryText = unifiedCategory.ToString();
         var parsed = _parser.Parse(newTitle, unifiedCategory);
@@ -1654,6 +1666,12 @@ public sealed partial class ReleaseRepository
             UPDATE releases
             SET title = @title,
                 title_manual_override = 1,
+                tmdb_id=NULL, tmdb_media_type=NULL, tvdb_id=NULL,
+                poster_file=NULL, poster_path=NULL, poster_key=NULL, poster_store_dir=NULL,
+                poster_provider=NULL, poster_provider_id=NULL, poster_hash=NULL, poster_updated_at_ts=NULL,
+                ext_provider=NULL, ext_provider_id=NULL, ext_title=NULL, ext_overview=NULL, ext_tagline=NULL,
+                ext_genres=NULL, ext_release_date=NULL, ext_runtime_minutes=NULL, ext_rating=NULL, ext_votes=NULL,
+                ext_directors=NULL, ext_writers=NULL, ext_cast=NULL, ext_updated_at_ts=NULL,
                 title_clean = @titleClean,
                 year = @year,
                 season = @season,
@@ -1715,6 +1733,9 @@ public sealed partial class ReleaseRepository
             tx
         );
 
+        var correctedEntity = conn.ExecuteScalar<long?>("SELECT entity_id FROM releases WHERE id=@id", new { id }, tx);
+        if (correctedEntity.HasValue) InvalidateMatchingTitles(conn, tx, correctedEntity.Value);
+        conn.Execute("UPDATE media_entities SET match_revision=lower(hex(randomblob(16))) WHERE id=@entity", new { entity = correctedEntity }, tx);
         var result = conn.QueryFirstOrDefault<RenameRebindResult>(
             """
             SELECT
@@ -1792,6 +1813,11 @@ public sealed partial class ReleaseRepository
         return conn.QueryFirstOrDefault<ReleaseForPoster>(
             """
             SELECT
+                COALESCE(me.tmdb_media_type, releases.tmdb_media_type) as TmdbMediaType,
+                me.manual_match_provider as ManualMatchProvider,
+                me.manual_match_type as ManualMatchType,
+                me.manual_match_id as ManualMatchId,
+                me.match_revision as MatchRevision,
                 releases.id as Id,
                 releases.source_id as SourceId,
                 releases.entity_id as EntityId,
@@ -1806,7 +1832,7 @@ public sealed partial class ReleaseRepository
                 spec_category_id as SpecCategoryId,
                 releases.unified_category as UnifiedCategory,
                 category_ids as CategoryIds,
-                media_type as MediaType,
+                CASE COALESCE(me.tmdb_media_type,releases.tmdb_media_type) WHEN 'tv' THEN 'series' WHEN 'movie' THEN 'movie' ELSE media_type END as MediaType,
                 COALESCE(me.tmdb_id, releases.tmdb_id) as TmdbId,
                 COALESCE(me.tvdb_id, releases.tvdb_id) as TvdbId,
                 poster_path as PosterPath,
@@ -1847,7 +1873,7 @@ public sealed partial class ReleaseRepository
     }
 
 
-    public void SavePoster(long id, int? tmdbId, string? posterPath, string posterFile)
+    public void SavePoster(long id, int? tmdbId, string? posterPath, string posterFile, string? tmdbMediaType = null)
     {
         if (string.IsNullOrWhiteSpace(posterFile))
             throw new ArgumentException("posterFile cannot be null or empty", nameof(posterFile));
@@ -1861,6 +1887,8 @@ public sealed partial class ReleaseRepository
         );
 
         using var tx = conn.BeginTransaction();
+        tmdbMediaType = Feedarr.Api.Services.Matching.TmdbIdentity.NormalizeType(tmdbMediaType);
+        ValidateMatching(conn, tx, id, tmdbId, tmdbType: tmdbMediaType);
         try
         {
             if (entityId.HasValue && entityId.Value > 0)
@@ -1868,13 +1896,13 @@ public sealed partial class ReleaseRepository
                 conn.Execute(
                     """
                     UPDATE media_entities
-                    SET tmdb_id = COALESCE(@tmdbId, tmdb_id),
+                    SET tmdb_media_type = COALESCE(@tmdbMediaType, tmdb_media_type), tmdb_id = COALESCE(@tmdbId, tmdb_id),
                         poster_file = @posterFile,
                         poster_updated_at_ts = @ts,
                         updated_at_ts = @ts
                     WHERE id = @entityId;
                     """,
-                    new { entityId, tmdbId, posterFile, ts = now },
+                    new { entityId, tmdbId, tmdbMediaType, posterFile, ts = now },
                     tx
                 );
             }
@@ -1882,13 +1910,13 @@ public sealed partial class ReleaseRepository
             conn.Execute(
                 """
                 UPDATE releases
-                SET tmdb_id = COALESCE(@tmdbId, tmdb_id),
+                SET tmdb_media_type = COALESCE(@tmdbMediaType, tmdb_media_type), tmdb_id = COALESCE(@tmdbId, tmdb_id),
                     poster_path = COALESCE(@posterPath, poster_path),
                     poster_file = @posterFile,
                     poster_updated_at_ts = @ts
                 WHERE id = @id;
                 """,
-                new { id, tmdbId, posterPath, posterFile, ts = now },
+                new { id, tmdbId, tmdbMediaType, posterPath, posterFile, ts = now },
                 tx
             );
 
@@ -2005,12 +2033,14 @@ LEFT JOIN media_entities me
         return result;
     }
 
-    public void SaveTmdbId(long id, int tmdbId)
+    public void SaveTmdbId(long id, int tmdbId, string? tmdbMediaType = null)
     {
         if (tmdbId <= 0) return;
 
         using var conn = _db.Open();
         using var tx = conn.BeginTransaction();
+        tmdbMediaType = Feedarr.Api.Services.Matching.TmdbIdentity.NormalizeType(tmdbMediaType);
+        ValidateMatching(conn, tx, id, tmdbId, tmdbType: tmdbMediaType);
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var seed = conn.QueryFirstOrDefault<TmdbRebindReleaseSeedRow>(
             """
@@ -2036,11 +2066,11 @@ LEFT JOIN media_entities me
             conn.Execute(
                 """
                 UPDATE media_entities
-                SET tmdb_id = COALESCE(@tmdbId, tmdb_id),
+                SET tmdb_media_type = COALESCE(@tmdbMediaType, tmdb_media_type), tmdb_id = COALESCE(@tmdbId, tmdb_id),
                     updated_at_ts = @ts
                 WHERE id = @entityId;
                 """,
-                new { entityId = currentEntityId.Value, tmdbId, ts = now },
+                new { entityId = currentEntityId.Value, tmdbId, tmdbMediaType, ts = now },
                 tx
             );
         }
@@ -2048,22 +2078,28 @@ LEFT JOIN media_entities me
         conn.Execute(
             """
             UPDATE releases
-            SET tmdb_id = COALESCE(@tmdbId, tmdb_id)
+            SET tmdb_media_type = COALESCE(@tmdbMediaType, tmdb_media_type), tmdb_id = COALESCE(@tmdbId, tmdb_id)
             WHERE id = @id;
             """,
-            new { id, tmdbId },
+            new { id, tmdbId, tmdbMediaType },
             tx
         );
 
+        if (conn.ExecuteScalar<string>("SELECT manual_match_provider FROM media_entities WHERE id=@entity", new { entity = currentEntityId }, tx) is null)
         _ = TryRebindReleaseToCanonicalTmdbEntity(
             conn,
             tx,
             id,
             tmdbId,
             currentEntityId,
-            seed.MediaType,
+            tmdbMediaType ?? seed.MediaType,
             seed.UnifiedCategory);
 
+        if (_matchingSnapshot.Value is { } snapshot)
+        {
+            snapshot.EntityId = conn.ExecuteScalar<long?>("SELECT entity_id FROM releases WHERE id=@id", new { id }, tx);
+            snapshot.MatchRevision = conn.ExecuteScalar<string>("SELECT match_revision FROM media_entities WHERE id=@entity", new { entity = snapshot.EntityId }, tx);
+        }
         tx.Commit();
     }
 
@@ -2128,6 +2164,12 @@ LEFT JOIN media_entities me
                 ON me.id = r.entity_id
               WHERE IFNULL(CAST(COALESCE(me.tmdb_id, r.tmdb_id) AS INTEGER), 0) = @tmdbId
                 AND {SqlTmdbMediaTypeNormalizedExpr} = @mediaTypeNormalized
+                AND me.manual_match_provider IS NULL
+                AND NOT EXISTS (SELECT 1 FROM releases sibling WHERE sibling.entity_id=me.id
+                  AND COALESCE(me.tmdb_media_type,sibling.tmdb_media_type,CASE
+                    WHEN lower(sibling.media_type) IN ('series','tv','show') THEN 'tv'
+                    WHEN lower(sibling.media_type) IN ('movie','film') THEN 'movie' ELSE 'unknown' END)
+                    <> CASE @mediaTypeNormalized WHEN 'series' THEN 'tv' ELSE 'movie' END)
                 AND IFNULL(r.entity_id, 0) > 0
               GROUP BY me.id
             )
@@ -2178,9 +2220,11 @@ LEFT JOIN media_entities me
     public void SaveTvdbId(long id, int tvdbId)
     {
         using var conn = _db.Open();
+        using var tx = conn.BeginTransaction(deferred: false);
+        ValidateMatching(conn, tx, id);
         var entityId = conn.ExecuteScalar<long?>(
             "SELECT entity_id FROM releases WHERE id = @id",
-            new { id }
+            new { id }, tx
         );
 
         if (entityId.HasValue && entityId.Value > 0)
@@ -2192,14 +2236,15 @@ LEFT JOIN media_entities me
                     updated_at_ts = @ts
                 WHERE id = @entityId;
                 """,
-                new { entityId, tvdbId, ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds() }
+                new { entityId, tvdbId, ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds() }, tx
             );
         }
 
         conn.Execute(
             "UPDATE releases SET tvdb_id = @tvdbId WHERE id = @id;",
-            new { id, tvdbId }
+            new { id, tvdbId }, tx
         );
+        tx.Commit();
     }
 
     public void SaveRequestTmdbResolution(long releaseId, int? requestTmdbId, string status)
@@ -2207,9 +2252,11 @@ LEFT JOIN media_entities me
         if (releaseId <= 0) return;
 
         using var conn = _db.Open();
+        using var tx = conn.BeginTransaction(deferred: false);
+        ValidateMatching(conn, tx, releaseId, requestTmdbId);
         var entityId = conn.ExecuteScalar<long?>(
             "SELECT entity_id FROM releases WHERE id = @releaseId",
-            new { releaseId }
+            new { releaseId }, tx
         );
 
         if (!entityId.HasValue || entityId.Value <= 0)
@@ -2234,8 +2281,9 @@ LEFT JOIN media_entities me
                 requestTmdbId = value,
                 status = cleanStatus,
                 now
-            }
+            }, tx
         );
+        tx.Commit();
     }
 
     public void UpsertArrStatus(IEnumerable<ReleaseArrStatusRow> rows)
@@ -2288,6 +2336,8 @@ LEFT JOIN media_entities me
         string? hash)
     {
         using var conn = _db.Open();
+        using var tx = conn.BeginTransaction(deferred: false);
+        ValidateMatching(conn, tx, id);
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         conn.Execute(
             """
@@ -2301,8 +2351,9 @@ LEFT JOIN media_entities me
                 poster_last_error = NULL
             WHERE id = @id;
             """,
-            new { id, provider, providerId, lang, size, hash, ts = now }
+            new { id, provider, providerId, lang, size, hash, ts = now }, tx
         );
+        tx.Commit();
     }
 
     public void UpdatePosterAttemptFailure(
@@ -2314,6 +2365,8 @@ LEFT JOIN media_entities me
         string? error)
     {
         using var conn = _db.Open();
+        using var tx = conn.BeginTransaction(deferred: false);
+        ValidateMatching(conn, tx, id);
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         conn.Execute(
             """
@@ -2326,8 +2379,9 @@ LEFT JOIN media_entities me
                 poster_last_error = @error
             WHERE id = @id;
             """,
-            new { id, provider, providerId, lang, size, error, ts = now }
+            new { id, provider, providerId, lang, size, error, ts = now }, tx
         );
+        tx.Commit();
     }
 
     public void UpdateExternalDetails(
@@ -2344,14 +2398,17 @@ LEFT JOIN media_entities me
         int? votes,
         string? directors,
         string? writers,
-        string? cast)
+        string? cast,
+        string? tmdbMediaType = null)
     {
         using var conn = _db.Open();
+        using var tx = conn.BeginTransaction(deferred: false);
+        ValidateMatching(conn, tx, id, provider: provider, providerId: providerId, tmdbType: Feedarr.Api.Services.Matching.TmdbIdentity.NormalizeType(tmdbMediaType));
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         var entityId = conn.ExecuteScalar<long?>(
             "SELECT entity_id FROM releases WHERE id = @id",
-            new { id }
+            new { id }, tx
         );
 
         if (entityId.HasValue && entityId.Value > 0)
@@ -2393,7 +2450,7 @@ LEFT JOIN media_entities me
                     writers,
                     cast,
                     ts = now
-                }
+                }, tx
             );
         }
 
@@ -2433,7 +2490,7 @@ LEFT JOIN media_entities me
                 writers,
                 cast,
                 ts = now
-            }
+            }, tx
         );
 
         // Invalidate the cached poster match for this release.
@@ -2445,7 +2502,7 @@ LEFT JOIN media_entities me
                    season as Season, episode as Episode
             FROM releases WHERE id = @id;
             """,
-            new { id }
+            new { id }, tx
         );
         if (titleKey.TitleClean is not null)
         {
@@ -2458,9 +2515,10 @@ LEFT JOIN media_entities me
                 titleKey.Episode));
             conn.Execute(
                 "DELETE FROM poster_matches WHERE fingerprint = @fp;",
-                new { fp }
+                new { fp }, tx
             );
         }
+        tx.Commit();
     }
 
     public sealed record RetentionResult(
@@ -3227,7 +3285,7 @@ LEFT JOIN media_entities me
               FROM releases r
               JOIN media_entities me
                 ON me.id = r.entity_id
-              WHERE IFNULL(r.entity_id, 0) > 0
+              WHERE me.manual_match_provider IS NULL AND IFNULL(r.entity_id, 0) > 0
                 AND IFNULL(CAST(COALESCE(me.tmdb_id, r.tmdb_id) AS INTEGER), 0) > 0
             )
             SELECT
@@ -3275,7 +3333,7 @@ LEFT JOIN media_entities me
                     FROM releases r
                     JOIN media_entities me
                       ON me.id = r.entity_id
-                    WHERE IFNULL(r.entity_id, 0) > 0
+                    WHERE me.manual_match_provider IS NULL AND IFNULL(r.entity_id, 0) > 0
                       AND IFNULL(CAST(COALESCE(me.tmdb_id, r.tmdb_id) AS INTEGER), 0) = @tmdbId
                       AND {SqlTmdbMediaTypeNormalizedExpr} = @mediaTypeNormalized
                     ORDER BY r.id ASC;
@@ -3358,6 +3416,7 @@ LEFT JOIN media_entities me
                 SELECT id AS Id, unified_category AS UnifiedCategory, title_clean AS TitleClean, year AS Year
                 FROM releases
                 WHERE needs_rebind = 1
+                  AND NOT EXISTS (SELECT 1 FROM media_entities locked WHERE locked.id=releases.entity_id AND locked.manual_match_provider IS NOT NULL)
                   AND id > @lastId
                   {sourceFilterSql}
                   AND unified_category IS NOT NULL AND unified_category <> ''
@@ -3374,6 +3433,11 @@ LEFT JOIN media_entities me
             var ids = rows.Select(r => r.Id).ToList();
 
             using var tx = conn.BeginTransaction();
+            ids = conn.Query<long>("""
+                SELECT id FROM releases WHERE id IN @ids
+                  AND NOT EXISTS (SELECT 1 FROM media_entities locked WHERE locked.id=releases.entity_id AND locked.manual_match_provider IS NOT NULL)
+                """, new { ids }, tx).AsList();
+            if (ids.Count == 0) continue;
 
             conn.Execute(
                 """
@@ -3475,7 +3539,7 @@ LEFT JOIN media_entities me
     /// </summary>
     public string? SavePosterWithStore(
         long id, int? tmdbId, string? posterPath, string posterFile,
-        string posterKey, string storeDir)
+        string posterKey, string storeDir, string? tmdbMediaType = null)
     {
         if (string.IsNullOrWhiteSpace(posterFile))
             throw new ArgumentException("posterFile cannot be null or empty", nameof(posterFile));
@@ -3500,6 +3564,8 @@ LEFT JOIN media_entities me
         );
 
         using var tx = conn.BeginTransaction();
+        tmdbMediaType = Feedarr.Api.Services.Matching.TmdbIdentity.NormalizeType(tmdbMediaType);
+        ValidateMatching(conn, tx, id, tmdbId, tmdbType: tmdbMediaType);
         try
         {
             if (entityId.HasValue && entityId.Value > 0)
@@ -3507,7 +3573,7 @@ LEFT JOIN media_entities me
                 conn.Execute(
                     """
                     UPDATE media_entities
-                    SET tmdb_id = COALESCE(@tmdbId, tmdb_id),
+                    SET tmdb_media_type = COALESCE(@tmdbMediaType, tmdb_media_type), tmdb_id = COALESCE(@tmdbId, tmdb_id),
                         poster_file = @posterFile,
                         poster_key = @posterKey,
                         poster_store_dir = @storeDir,
@@ -3515,7 +3581,7 @@ LEFT JOIN media_entities me
                         updated_at_ts = @ts
                     WHERE id = @entityId;
                     """,
-                    new { entityId, tmdbId, posterFile, posterKey, storeDir, ts = now },
+                    new { entityId, tmdbId, tmdbMediaType, posterFile, posterKey, storeDir, ts = now },
                     tx
                 );
             }
@@ -3523,7 +3589,7 @@ LEFT JOIN media_entities me
             conn.Execute(
                 """
                 UPDATE releases
-                SET tmdb_id = COALESCE(@tmdbId, tmdb_id),
+                SET tmdb_media_type = COALESCE(@tmdbMediaType, tmdb_media_type), tmdb_id = COALESCE(@tmdbId, tmdb_id),
                     poster_path = COALESCE(@posterPath, poster_path),
                     poster_file = @posterFile,
                     poster_key = @posterKey,
@@ -3531,7 +3597,7 @@ LEFT JOIN media_entities me
                     poster_updated_at_ts = @ts
                 WHERE id = @id;
                 """,
-                new { id, tmdbId, posterPath, posterFile, posterKey, storeDir, ts = now },
+                new { id, tmdbId, tmdbMediaType, posterPath, posterFile, posterKey, storeDir, ts = now },
                 tx
             );
 

@@ -26,6 +26,7 @@ public sealed class MediaEntityRepository
               title_clean as TitleClean,
               year as Year,
               tmdb_id as TmdbId,
+              tmdb_media_type as TmdbMediaType,
               tvdb_id as TvdbId
             FROM media_entities
             WHERE id IN @ids;
@@ -59,6 +60,7 @@ public sealed class MediaEntityInfo
     public string? TitleClean { get; set; }
     public int? Year { get; set; }
     public int? TmdbId { get; set; }
+    public string? TmdbMediaType { get; set; }
     public int? TvdbId { get; set; }
 }
 

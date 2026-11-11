@@ -46,6 +46,7 @@ internal enum PosterContractScenario
     CacheReuseMovie,
     GameIgdbHit,
     GameIgdbMiss,
+    GameRawgHit,
     AnimeJikanHit,
     AudioAudioDbHit,
     BookGoogleBooksHit,
@@ -96,6 +97,9 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             NullLogger<ExternalProviderInstanceRepository>.Instance);
 
         SeedExternalInstances(externalInstances);
+        if (scenario == PosterContractScenario.GameRawgHit)
+            externalInstances.Create(new ExternalProviderCreateDto { ProviderKey = ExternalProviderKeys.Rawg, Enabled = true,
+                Auth = new Dictionary<string, string?> { ["apiKey"] = "rawg-test-key" } });
 
         var resolver = new ActiveExternalProviderConfigResolver(
             externalInstances,
@@ -123,7 +127,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             new GenericMatchingStrategy());
 
         var openLibrary = new OpenLibraryClient(new HttpClient(new NullHttpHandler()), stats);
-        var rawg = new RawgClient(new HttpClient(new NullHttpHandler()), stats, resolver);
+        var rawg = new RawgClient(new HttpClient(scenario == PosterContractScenario.GameRawgHit ? new RawgContractHandler() : new NullHttpHandler()), stats, resolver);
         var musicBrainz = new MusicBrainzClient(new HttpClient(new NullHttpHandler()), resolver, stats);
 
         _posters = new PosterFetchService(
@@ -495,6 +499,17 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             catch
             {
             }
+        }
+    }
+
+    private sealed class RawgContractHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            if (request.RequestUri!.Host == "api.rawg.io")
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(
+                    """{"results":[{"id":123,"name":"Game Hit","released":"2022-01-01","background_image":"https://rawg.test/cover.jpg"}]}""", Encoding.UTF8, "application/json") });
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(PosterTestImage.Create()) });
         }
     }
 

@@ -26,7 +26,7 @@ namespace Feedarr.Api.Services.Posters;
 
 public sealed record PosterFetchResult(bool Ok, int StatusCode, object? Body, long? SourceId);
 
-public sealed class PosterFetchService
+public sealed partial class PosterFetchService
 {
     private const int TmdbCandidateLimit = 10;
     private const float TmdbScoreThreshold = 0.50f;      // Réduit de 0.62 pour améliorer le matching
@@ -318,7 +318,7 @@ public sealed class PosterFetchService
             posterFile,
             bytes,
             null,
-            forceRefresh: false,
+            forceRefresh: true,
             tmdbId,
             posterPath,
             ext,
@@ -343,6 +343,13 @@ public sealed class PosterFetchService
         if (string.IsNullOrWhiteSpace(legacyPosterFile))
             return new StoreMaterializationResult(StoreMaterializationStatus.Skip, null, "missing_legacy_poster_file");
 
+        // Only a typed filename can supply a missing namespace; never infer it from legacy bytes.
+        if (string.Equals(provider, "tmdb", StringComparison.OrdinalIgnoreCase) && providerId is not null && !providerId.Contains(':'))
+        {
+            foreach (var type in new[] { "movie", "tv" })
+                if (legacyPosterFile.StartsWith($"tmdb-{type}-{providerId}-", StringComparison.OrdinalIgnoreCase))
+                    providerId = $"{type}:{providerId}";
+        }
         if (!TryResolveStoreIdentity(provider, providerId, existingPosterKey, out var normalizedProvider, out var normalizedProviderId, out var posterKey, out var storeDir))
             return new StoreMaterializationResult(StoreMaterializationStatus.Skip, null, "missing_store_identity");
 
@@ -365,6 +372,7 @@ public sealed class PosterFetchService
                 normalizedProvider,
                 normalizedProviderId);
 
+            _releases.ValidateMatching(releaseId);
             Directory.CreateDirectory(storeDirFull);
 
             var originalPath = Directory.EnumerateFiles(storeDirFull, "original.*", SearchOption.TopDirectoryOnly).FirstOrDefault();
@@ -374,7 +382,7 @@ public sealed class PosterFetchService
 
             if (!forceRefresh && originalPath is not null && existingThumbs.Length == PosterThumbService.SupportedWidths.Length)
             {
-                displacedDir = _releases.SavePosterWithStore(releaseId, tmdbId, posterPath, legacyPosterFile, posterKey, storeDir);
+                displacedDir = _releases.SavePosterWithStore(releaseId, tmdbId, posterPath, legacyPosterFile, posterKey, storeDir, normalizedProvider == "tmdb" ? normalizedProviderId.Split(':')[0] : null);
                 await EnqueueThumbWarmupAsync(storeDir, releaseId, ct).ConfigureAwait(false);
                 _logger.LogInformation(
                     "[POSTER_STORE] materialize skip storeDir={StoreDir} releaseId={ReleaseId} reason=already_up_to_date",
@@ -444,7 +452,7 @@ public sealed class PosterFetchService
                 .Where(width => !System.IO.File.Exists(Path.Combine(storeDirFull, $"w{width}.webp")))
                 .ToArray();
 
-            displacedDir = _releases.SavePosterWithStore(releaseId, tmdbId, posterPath, legacyPosterFile, posterKey, storeDir);
+            displacedDir = _releases.SavePosterWithStore(releaseId, tmdbId, posterPath, legacyPosterFile, posterKey, storeDir, normalizedProvider == "tmdb" ? normalizedProviderId.Split(':')[0] : null);
             await EnqueueThumbWarmupAsync(storeDir, releaseId, ct).ConfigureAwait(false);
 
             _logger.LogInformation(
@@ -456,10 +464,8 @@ public sealed class PosterFetchService
 
             return new StoreMaterializationResult(StoreMaterializationStatus.Ok, storeDir, "materialized", generated, missing);
         }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
+        catch (OperationCanceledException) { throw; }
+        catch (ReleaseRepository.StaleMatchException) { throw; }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[POSTER_STORE] materialize fail storeDir={StoreDir} releaseId={ReleaseId}", storeDir, releaseId);
@@ -607,6 +613,13 @@ public sealed class PosterFetchService
             }
         }
 
+        if (normalizedProvider == "tmdb" &&
+            !(normalizedProviderId.StartsWith("movie:", StringComparison.Ordinal) || normalizedProviderId.StartsWith("tv:", StringComparison.Ordinal)))
+        {
+            resolvedPosterKey = string.Empty;
+            storeDir = string.Empty;
+            return false;
+        }
         var sanitizedProviderId = PosterStorePathResolver.SanitizeStoreDir(normalizedProviderId);
         if (string.IsNullOrWhiteSpace(normalizedProvider) || string.IsNullOrWhiteSpace(normalizedProviderId) || string.IsNullOrWhiteSpace(sanitizedProviderId))
         {
@@ -702,11 +715,14 @@ public sealed class PosterFetchService
         return cleared;
     }
 
-    public async Task<string?> SaveTmdbPosterAsync(long id, int tmdbId, string posterPath, CancellationToken ct, bool logSingle = true)
+    public async Task<string?> SaveTmdbPosterAsync(long id, int tmdbId, string posterPath, CancellationToken ct, bool logSingle = true, string? mediaType = null)
     {
         using var publication = await _releases.PosterLifecycle.EnterPublicationAsync(ct).ConfigureAwait(false);
         if (tmdbId <= 0 || string.IsNullOrWhiteSpace(posterPath)) return null;
 
+        var seed = _releases.GetForPoster(id);
+        var type = TmdbIdentity.NormalizeType(mediaType ?? seed?.TmdbMediaType ?? seed?.MediaType);
+        if (seed is null || type is null) return null;
         Directory.CreateDirectory(PostersDirAbs);
 
         var bytesTmdb = await RunTmdbAsync(innerCt => _tmdb.DownloadPosterW500Async(posterPath, innerCt), ct).ConfigureAwait(false);
@@ -715,14 +731,14 @@ public sealed class PosterFetchService
         var ext = Path.GetExtension(posterPath);
         if (string.IsNullOrWhiteSpace(ext)) ext = ".jpg";
 
-        var file = $"tmdb-{tmdbId}-manual{ext}";
+        var file = $"tmdb-{type}-{tmdbId}-manual-{Guid.NewGuid():N}{ext}";
         var full = Path.Combine(PostersDirAbs, file);
         await PosterImageWriter.WriteAsync(full, bytesTmdb, ct).ConfigureAwait(false);
-        _releases.ProtectManualEntity(id);
-        _releases.SavePoster(id, tmdbId, posterPath, file);
-        await TrySaveToStoreAsync(id, "tmdb", tmdbId.ToString(CultureInfo.InvariantCulture), ext, bytesTmdb, file, tmdbId, posterPath, ct).ConfigureAwait(false);
-        var mediaType = (string?)_releases.GetForPoster(id)?.MediaType ?? "";
-        await UpdateExternalDetailsFromTmdbAsync(id, tmdbId, mediaType, ct).ConfigureAwait(false);        var hash = ComputeSha256Hex(bytesTmdb);
+        _releases.SetManualMatch(id, "tmdb", type, tmdbId.ToString(CultureInfo.InvariantCulture));
+        using var matching = _releases.BeginMatching(_releases.GetForPoster(id)!);
+        _releases.SavePoster(id, tmdbId, posterPath, file, type);
+        await TrySaveToStoreAsync(id, "tmdb", $"{type}:{tmdbId}", ext, bytesTmdb, file, tmdbId, posterPath, ct).ConfigureAwait(false);
+        await UpdateExternalDetailsFromTmdbAsync(id, tmdbId, type, ct).ConfigureAwait(false);        var hash = ComputeSha256Hex(bytesTmdb);
         PosterAudit.UpdateAttemptSuccess(_releases, id, "tmdb", tmdbId.ToString(CultureInfo.InvariantCulture), null, "w500", hash);
 
         if (logSingle)
@@ -749,11 +765,12 @@ public sealed class PosterFetchService
         var bytes = await RunIgdbAsync(innerCt => _igdb.DownloadCoverAsync(coverUrl, innerCt), ct).ConfigureAwait(false);
         if (bytes is null || bytes.Length == 0) return null;
 
-        var file = $"igdb-{igdbId}-manual.jpg";
+        var file = $"igdb-{igdbId}-manual-{Guid.NewGuid():N}.jpg";
         var full = Path.Combine(PostersDirAbs, file);
         await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
-        _releases.ProtectManualEntity(id);
-        _releases.SavePoster(id, igdbId, coverUrl, file);
+        _releases.SetManualMatch(id, "igdb", "game", igdbId.ToString(CultureInfo.InvariantCulture));
+        using var matching = _releases.BeginMatching(_releases.GetForPoster(id)!);
+        _releases.SavePoster(id, null, coverUrl, file);
         await TrySaveToStoreAsync(id, "igdb", igdbId.ToString(CultureInfo.InvariantCulture), ".jpg", bytes, file, null, null, ct).ConfigureAwait(false);
         await UpdateExternalDetailsFromIgdbAsync(id, igdbId, ct).ConfigureAwait(false);        var size = InferIgdbSize(coverUrl);
         var hash = ComputeSha256Hex(bytes);
@@ -783,10 +800,11 @@ public sealed class PosterFetchService
         var bytes = await RunOthersAsync(innerCt => _rawg.DownloadCoverAsync(coverUrl, innerCt), ct).ConfigureAwait(false);
         if (bytes is null || bytes.Length == 0) return null;
 
-        var file = $"rawg-{rawgId}-manual.jpg";
+        var file = $"rawg-{rawgId}-manual-{Guid.NewGuid():N}.jpg";
         var full = Path.Combine(PostersDirAbs, file);
         await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
-        _releases.ProtectManualEntity(id);
+        _releases.SetManualMatch(id, "rawg", "game", rawgId.ToString(CultureInfo.InvariantCulture));
+        using var matching = _releases.BeginMatching(_releases.GetForPoster(id)!);
         _releases.SavePoster(id, null, coverUrl, file);
         await TrySaveToStoreAsync(id, "rawg", rawgId.ToString(CultureInfo.InvariantCulture), ".jpg", bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(id, ExternalProviderKeys.Rawg, rawgId.ToString(CultureInfo.InvariantCulture),
@@ -814,10 +832,11 @@ public sealed class PosterFetchService
         var normalizedProviderId = string.IsNullOrWhiteSpace(providerId)
             ? Guid.NewGuid().ToString("N")
             : SanitizeForFile(providerId);
-        var file = $"theaudiodb-{normalizedProviderId}-manual{ext}";
+        var file = $"theaudiodb-{normalizedProviderId}-manual-{Guid.NewGuid():N}{ext}";
         var full = Path.Combine(PostersDirAbs, file);
         await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
-        _releases.ProtectManualEntity(id);
+        _releases.SetManualMatch(id, ExternalProviderKeys.TheAudioDb, "audio", providerId?.Trim() ?? normalizedProviderId);
+        using var matching = _releases.BeginMatching(_releases.GetForPoster(id)!);
         _releases.SavePoster(id, null, posterUrl, file);
         await TrySaveToStoreAsync(id, ExternalProviderKeys.TheAudioDb, normalizedProviderId, ext, bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(
@@ -874,10 +893,11 @@ public sealed class PosterFetchService
         var normalizedProviderId = string.IsNullOrWhiteSpace(providerId)
             ? Guid.NewGuid().ToString("N")
             : SanitizeForFile(providerId);
-        var file = $"googlebooks-{normalizedProviderId}-manual{ext}";
+        var file = $"googlebooks-{normalizedProviderId}-manual-{Guid.NewGuid():N}{ext}";
         var full = Path.Combine(PostersDirAbs, file);
         await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
-        _releases.ProtectManualEntity(id);
+        _releases.SetManualMatch(id, ExternalProviderKeys.GoogleBooks, "book", providerId?.Trim() ?? normalizedProviderId);
+        using var matching = _releases.BeginMatching(_releases.GetForPoster(id)!);
         _releases.SavePoster(id, null, posterUrl, file);
         await TrySaveToStoreAsync(id, ExternalProviderKeys.GoogleBooks, normalizedProviderId, ext, bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(
@@ -917,10 +937,11 @@ public sealed class PosterFetchService
         var normalizedProviderId = string.IsNullOrWhiteSpace(providerId)
             ? Guid.NewGuid().ToString("N")
             : SanitizeForFile(providerId);
-        var file = $"openlibrary-{normalizedProviderId}-manual.jpg";
+        var file = $"openlibrary-{normalizedProviderId}-manual-{Guid.NewGuid():N}.jpg";
         var full = Path.Combine(PostersDirAbs, file);
         await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
-        _releases.ProtectManualEntity(id);
+        _releases.SetManualMatch(id, ExternalProviderKeys.OpenLibrary, "book", providerId?.Trim() ?? normalizedProviderId);
+        using var matching = _releases.BeginMatching(_releases.GetForPoster(id)!);
         _releases.SavePoster(id, null, posterUrl, file);
         await TrySaveToStoreAsync(id, ExternalProviderKeys.OpenLibrary, normalizedProviderId, ".jpg", bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(
@@ -961,10 +982,11 @@ public sealed class PosterFetchService
         var normalizedProviderId = string.IsNullOrWhiteSpace(providerId)
             ? Guid.NewGuid().ToString("N")
             : SanitizeForFile(providerId);
-        var file = $"comicvine-{normalizedProviderId}-manual{ext}";
+        var file = $"comicvine-{normalizedProviderId}-manual-{Guid.NewGuid():N}{ext}";
         var full = Path.Combine(PostersDirAbs, file);
         await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
-        _releases.ProtectManualEntity(id);
+        _releases.SetManualMatch(id, ExternalProviderKeys.ComicVine, "comic", providerId?.Trim() ?? normalizedProviderId);
+        using var matching = _releases.BeginMatching(_releases.GetForPoster(id)!);
         _releases.SavePoster(id, null, posterUrl, file);
         await TrySaveToStoreAsync(id, ExternalProviderKeys.ComicVine, normalizedProviderId, ext, bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(
@@ -1006,10 +1028,11 @@ public sealed class PosterFetchService
             ? Guid.NewGuid().ToString("N")
             : SanitizeForFile(providerId);
 
-        var file = $"musicbrainz-{normalizedProviderId}-manual{ext}";
+        var file = $"musicbrainz-{normalizedProviderId}-manual-{Guid.NewGuid():N}{ext}";
         var full = Path.Combine(PostersDirAbs, file);
         await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
-        _releases.ProtectManualEntity(id);
+        _releases.SetManualMatch(id, ExternalProviderKeys.MusicBrainz, "audio", providerId?.Trim() ?? normalizedProviderId);
+        using var matching = _releases.BeginMatching(_releases.GetForPoster(id)!);
         _releases.SavePoster(id, null, posterUrl, file);
         await TrySaveToStoreAsync(id, ExternalProviderKeys.MusicBrainz, normalizedProviderId, ext, bytes, file, null, null, ct).ConfigureAwait(false);
         _releases.UpdateExternalDetails(
@@ -1070,11 +1093,24 @@ public sealed class PosterFetchService
 
     public async Task<PosterFetchResult> FetchPosterAsync(long id, CancellationToken ct, bool logSingle, bool skipIfExists = true)
     {
+        var snapshot = _releases.GetForPoster(id);
+        if (snapshot is null) return new(false, 404, new { error = "release not found" }, null);
+        using var matching = _releases.BeginMatching(snapshot);
+        try { return await FetchPosterCoreAsync(id, snapshot, ct, logSingle, skipIfExists).ConfigureAwait(false); }
+        catch (ReleaseRepository.StaleMatchException)
+        {
+            _logger.LogInformation("Discarded obsolete poster match releaseId={ReleaseId}", id);
+            return new(false, 409, new { error = "matching_identity_changed" }, snapshot.SourceId);
+        }
+    }
+
+    private async Task<PosterFetchResult> FetchPosterCoreAsync(long id, ReleaseForPoster snapshot, CancellationToken ct, bool logSingle, bool skipIfExists)
+    {
         using var publication = await _releases.PosterLifecycle.EnterPublicationAsync(ct).ConfigureAwait(false);
         Directory.CreateDirectory(PostersDirAbs);
         var forceRefresh = !skipIfExists;
 
-        var r = _releases.GetForPoster(id);
+        var r = snapshot;
         if (r is null)
         {
             if (logSingle)
@@ -1084,6 +1120,10 @@ public sealed class PosterFetchService
             PosterAudit.UpdateAttemptFailure(_releases, id, null, null, null, null, "release not found");
             return new PosterFetchResult(false, 404, new { error = "release not found" }, null);
         }
+
+        if (r.ManualMatchProvider is not null ||
+            (r.MatchRevision is null && r.PosterFile?.Contains("-manual", StringComparison.OrdinalIgnoreCase) == true))
+            return await RefreshManualMatchAsync(r, ct).ConfigureAwait(false);
 
         string? existingFile = (string?)r.PosterFile;
         long? sourceId = (long?)r.SourceId;
@@ -1144,6 +1184,8 @@ public sealed class PosterFetchService
         mediaType = mediaType.ToLowerInvariant();
         if (unifiedCategory == UnifiedCategory.Emission)
             mediaType = "series";
+        if (tmdbIdStored.HasValue && mediaType == "unknown" && r.TmdbMediaType is null)
+            return new(false, 409, new { error = "ambiguous_historical_tmdb_identity" }, sourceId);
 
         if (string.IsNullOrWhiteSpace(title))
         {
@@ -1174,7 +1216,7 @@ public sealed class PosterFetchService
         var ambiguity = TitleAmbiguityEvaluator.Evaluate(normalizedTitle, mediaType, year);
         var titleKey = new PosterTitleKey(mediaType, normalizedTitle, year, season, episode);
         var fingerprint = PosterMatchCacheService.BuildFingerprint(titleKey);
-        var knownIds = new PosterMatchIds(tmdbIdStored, tvdbIdStored, null, null, null);
+        var knownIds = new PosterMatchIds(tmdbIdStored, tvdbIdStored, null, null, null, r.TmdbMediaType ?? mediaType);
         var tvmazeEnabled = IsTvmazeEnabled();
 
         var cacheResult = await TryReuseFromMatchCacheAsync(
@@ -1210,14 +1252,14 @@ public sealed class PosterFetchService
             if (reuse is not null)
             {
                 var reuseFile = (string?)reuse.PosterFile;
-                if (!string.IsNullOrWhiteSpace(reuseFile))
+                if (!string.IsNullOrWhiteSpace(reuseFile) && (!(reuseFile.StartsWith("tmdb-", StringComparison.OrdinalIgnoreCase) || reuseFile.StartsWith("fanart-", StringComparison.OrdinalIgnoreCase)) || IsTypedVideoPoster(reuseFile, mediaType)))
                 {
                     var reusePath = Path.Combine(PostersDirAbs, reuseFile);
                     if (System.IO.File.Exists(reusePath))
                     {
                         var reuseTmdbId = reuse.TmdbId is null ? (int?)null : Convert.ToInt32(reuse.TmdbId);
                         var reuseTvdbId = reuse.TvdbId is null ? (int?)null : Convert.ToInt32(reuse.TvdbId);
-                        var reuseIds = new PosterMatchIds(reuseTmdbId, reuseTvdbId, null, null, null);
+                        var reuseIds = new PosterMatchIds(reuseTmdbId, reuseTvdbId, null, null, null, mediaType);
                         if (ambiguity.IsAmbiguous && !reuseIds.Overlaps(knownIds))
                         {
                             reuse = null;
@@ -1245,7 +1287,7 @@ public sealed class PosterFetchService
                             var reuseExtCast = (string?)reuse.ExtCast;
                             if (string.IsNullOrWhiteSpace(reuseHash))
                                 reuseHash = ComputeSha256Hex(await System.IO.File.ReadAllBytesAsync(reusePath, ct).ConfigureAwait(false));
-                            _releases.SavePoster(id, reuseTmdbId, reusePosterPath, reuseFile);
+                            _releases.SavePoster(id, reuseTmdbId, reusePosterPath, reuseFile, mediaType);
                             var reuseStoreResult = await TryMaterializeStoreForReleaseAsync(
                                 id,
                                 reuseProvider,
@@ -1419,7 +1461,7 @@ public sealed class PosterFetchService
                         var file = $"igdb-{igdbMatch.Value.igdbId}-cover.jpg";
                         var full = Path.Combine(PostersDirAbs, file);
                         await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
-                        _releases.SavePoster(id, igdbMatch.Value.igdbId, igdbMatch.Value.coverUrl, file);
+                        _releases.SavePoster(id, null, igdbMatch.Value.coverUrl, file);
                         var igdbStoreResult = await TryMaterializeStoreForReleaseAsync(
                             id,
                             "igdb",
@@ -1428,7 +1470,7 @@ public sealed class PosterFetchService
                             bytes,
                             legacyPosterPath: full,
                             forceRefresh,
-                            tmdbId: igdbMatch.Value.igdbId,
+                            tmdbId: null,
                             posterPath: igdbMatch.Value.coverUrl,
                             preferredOriginalExtension: ".jpg",
                             existingPosterKey: null,
@@ -1597,17 +1639,18 @@ public sealed class PosterFetchService
             }
 
             var bytesTmdb = await RunTmdbAsync(innerCt => _tmdb.DownloadPosterW500Async(selectedPosterPath, innerCt), ct).ConfigureAwait(false);
+            var identity = new TmdbIdentity(TmdbIdentity.NormalizeType(tmdbMatch.Candidate.MediaType)!, tmdbMatch.Candidate.TmdbId);
             string? posterFileFinal = null;
             if (bytesTmdb is not null && bytesTmdb.Length > 0)
             {
-                var file = $"tmdb-{tmdbMatch.Candidate.TmdbId}-w500.jpg";
+                var file = $"tmdb-{identity.MediaType}-{identity.Id}-w500.jpg";
                 var full = Path.Combine(PostersDirAbs, file);
                 await PosterImageWriter.WriteAsync(full, bytesTmdb, ct).ConfigureAwait(false);
-                _releases.SavePoster(id, tmdbMatch.Candidate.TmdbId, selectedPosterPath, file);
+                _releases.SavePoster(id, tmdbMatch.Candidate.TmdbId, selectedPosterPath, file, identity.MediaType);
                 var tmdbStoreResult = await TryMaterializeStoreForReleaseAsync(
                     id,
                     "tmdb",
-                    tmdbMatch.Candidate.TmdbId.ToString(CultureInfo.InvariantCulture),
+                    identity.ProviderId,
                     file,
                     bytesTmdb,
                     legacyPosterPath: full,
@@ -1618,15 +1661,15 @@ public sealed class PosterFetchService
                     existingPosterKey: null,
                     ct).ConfigureAwait(false);
                 LogStoreOutcome("download", id, file, tmdbStoreResult);
-                await UpdateExternalDetailsFromTmdbAsync(id, tmdbMatch.Candidate.TmdbId, mediaType, ct).ConfigureAwait(false);
+                await UpdateExternalDetailsFromTmdbAsync(id, tmdbMatch.Candidate.TmdbId, identity.MediaType, ct).ConfigureAwait(false);
                 var hash = ComputeSha256Hex(bytesTmdb);
-                PosterAudit.UpdateAttemptSuccess(_releases, id, "tmdb", tmdbMatch.Candidate.TmdbId.ToString(CultureInfo.InvariantCulture), null, "w500", hash);
+                PosterAudit.UpdateAttemptSuccess(_releases, id, "tmdb", identity.Id.ToString(CultureInfo.InvariantCulture), null, "w500", hash);
                 posterFileFinal = file;
             }
 
             if (!string.IsNullOrWhiteSpace(posterFileFinal))
             {
-                var tmdbIds = new PosterMatchIds(tmdbMatch.Candidate.TmdbId, tvdbIdResolved, null, null, null);
+                var tmdbIds = new PosterMatchIds(tmdbMatch.Candidate.TmdbId, tvdbIdResolved, null, null, null, identity.MediaType);
                 var tmdbConfidence = AdjustConfidence(tmdbMatch.Score, ambiguity, unifiedCategory == UnifiedCategory.Emission);
                 _matchCache.Upsert(new PosterMatch(
                     fingerprint,
@@ -1640,7 +1683,7 @@ public sealed class PosterFetchService
                     "tmdb",
                     posterFileFinal,
                     "tmdb",
-                    tmdbMatch.Candidate.TmdbId.ToString(CultureInfo.InvariantCulture),
+                    identity.ProviderId,
                     null,
                     "w500",
                     DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
@@ -1783,14 +1826,16 @@ public sealed class PosterFetchService
 
         var ext = Path.GetExtension(fanartUrl);
         if (string.IsNullOrWhiteSpace(ext)) ext = ".jpg";
-        var fanartFile = $"fanart-{tmdbIdForFanart.Value}{ext}";
+        var fanartType = TmdbIdentity.NormalizeType(mediaType)!;
+        var fanartFile = $"fanart-{fanartType}-{tmdbIdForFanart.Value}{ext}";
         var fanartFull = Path.Combine(PostersDirAbs, fanartFile);
 
         await PosterImageWriter.WriteAsync(fanartFull, fanartBytes, ct).ConfigureAwait(false);
-        _releases.SavePoster(id, tmdbIdForFanart.Value, fanartUrl, fanartFile);
+        _releases.SavePoster(id, tmdbIdForFanart.Value, fanartUrl, fanartFile, fanartType);
         var fanartProviderId = mediaType == "series" && tvdbIdForFanart.HasValue
             ? tvdbIdForFanart.Value.ToString(CultureInfo.InvariantCulture)
             : tmdbIdForFanart.Value.ToString(CultureInfo.InvariantCulture);
+        fanartProviderId = $"{fanartType}:{fanartProviderId}";
         var fanartStoreResult = await TryMaterializeStoreForReleaseAsync(
             id,
             "fanart",
@@ -1808,7 +1853,7 @@ public sealed class PosterFetchService
         await UpdateExternalDetailsFromTmdbAsync(id, tmdbIdForFanart.Value, mediaType, ct).ConfigureAwait(false);
         var fanartHash = ComputeSha256Hex(fanartBytes);
         PosterAudit.UpdateAttemptSuccess(_releases, id, "fanart", fanartProviderId, null, "original", fanartHash);
-        var fanartIds = new PosterMatchIds(tmdbIdForFanart.Value, tvdbIdForFanart, null, null, null);
+        var fanartIds = new PosterMatchIds(tmdbIdForFanart.Value, tvdbIdForFanart, null, null, null, fanartType);
         var fanartBaseScore = tmdbMatchForIds.Candidate is not null ? tmdbMatchForIds.Score : 0.5f;
         var fanartConfidence = AdjustConfidence(fanartBaseScore, ambiguity, unifiedCategory == UnifiedCategory.Emission);
         _matchCache.Upsert(new PosterMatch(
@@ -2535,6 +2580,7 @@ public sealed class PosterFetchService
         bool logSingle,
         long? sourceId)
     {
+        if (forceRefresh) return null;
         var cached = _matchCache.TryGet(fingerprint);
 
         if (cached is null && !year.HasValue)
@@ -2553,6 +2599,10 @@ public sealed class PosterFetchService
         }
 
         if (cached is null) return null;
+        var cachedProvider = cached.PosterProvider ?? cached.MatchSource;
+        if ((cachedProvider is "tmdb" or "fanart" || cached.PosterFile?.StartsWith("tmdb-", StringComparison.OrdinalIgnoreCase) == true || cached.PosterFile?.StartsWith("fanart-", StringComparison.OrdinalIgnoreCase) == true) &&
+            (!IsTypedVideoPoster(cached.PosterFile, mediaType) ||
+             TmdbIdentity.NormalizeType(cached.MediaType) != TmdbIdentity.NormalizeType(mediaType))) return null;
 
         _matchCache.TouchSeen(cached.Fingerprint);
         var cachedIds = PosterMatchCacheService.DeserializeIds(cached.IdsJson);
@@ -2565,7 +2615,7 @@ public sealed class PosterFetchService
                 var tmdbIdResolved = cachedIds?.TmdbId;
                 if (!tmdbIdResolved.HasValue && cachedIds?.TvdbId is int cachedTvdbId)
                     tmdbIdResolved = await TryResolveTmdbFromTvdbAsync(cachedTvdbId, ct).ConfigureAwait(false);
-                _releases.SavePoster(id, tmdbIdResolved, null, cached.PosterFile);
+                _releases.SavePoster(id, tmdbIdResolved, null, cached.PosterFile, mediaType);
                 var cachedStoreResult = await TryMaterializeStoreForReleaseAsync(
                     id,
                     cached.PosterProvider ?? cached.MatchSource,
@@ -2581,7 +2631,7 @@ public sealed class PosterFetchService
                     ct).ConfigureAwait(false);
                 LogStoreOutcome("cache", id, cached.PosterFile, cachedStoreResult);
                 if (tmdbIdResolved.HasValue)
-                    _releases.SaveTmdbId(id, tmdbIdResolved.Value);
+                    _releases.SaveTmdbId(id, tmdbIdResolved.Value, mediaType);
                 if (cachedIds?.TvdbId is not null)
                     _releases.SaveTvdbId(id, cachedIds.TvdbId.Value);
 
@@ -2641,7 +2691,7 @@ public sealed class PosterFetchService
             if (!tmdbIdResolved.HasValue && show.TvdbId.HasValue)
                 tmdbIdResolved = await TryResolveTmdbFromTvdbAsync(show.TvdbId.Value, ct).ConfigureAwait(false);
             if (tmdbIdResolved.HasValue)
-                _releases.SaveTmdbId(id, tmdbIdResolved.Value);
+                _releases.SaveTmdbId(id, tmdbIdResolved.Value, mediaType);
 
             _releases.SavePoster(id, tmdbIdResolved, imageUrl, file);
             var tvmazeCachedStoreResult = await TryMaterializeStoreForReleaseAsync(
@@ -2786,7 +2836,7 @@ public sealed class PosterFetchService
         if (best.Candidate.TvdbId.HasValue)
             tmdbIdResolved = await TryResolveTmdbFromTvdbAsync(best.Candidate.TvdbId.Value, ct).ConfigureAwait(false);
         if (tmdbIdResolved.HasValue)
-            _releases.SaveTmdbId(id, tmdbIdResolved.Value);
+            _releases.SaveTmdbId(id, tmdbIdResolved.Value, "series");
 
         _releases.SavePoster(id, tmdbIdResolved, imageUrl, file);
         var tvmazeStoreResult = await TryMaterializeStoreForReleaseAsync(
@@ -2918,7 +2968,7 @@ public sealed class PosterFetchService
             results.AddRange(await RunTmdbAsync(innerCt => _tmdb.SearchTvListAsync(title, year, innerCt, TmdbCandidateLimit), ct).ConfigureAwait(false));
             if (year.HasValue)
                 results.AddRange(await RunTmdbAsync(innerCt => _tmdb.SearchTvListAsync(title, null, innerCt, TmdbCandidateLimit), ct).ConfigureAwait(false));
-            return DedupCandidates(results);
+            return DedupCandidates(results.Where(item => TmdbIdentity.NormalizeType(mediaType) is not { } type || TmdbIdentity.NormalizeType(item.MediaType) == type));
         }
 
         if (mediaType == "series")
@@ -2940,7 +2990,7 @@ public sealed class PosterFetchService
                 results.AddRange(await RunTmdbAsync(innerCt => _tmdb.SearchTvListAsync(title, null, innerCt, TmdbCandidateLimit), ct).ConfigureAwait(false));
         }
 
-        return DedupCandidates(results);
+        return DedupCandidates(results.Where(item => TmdbIdentity.NormalizeType(mediaType) is not { } type || TmdbIdentity.NormalizeType(item.MediaType) == type));
     }
 
     private static List<(TmdbClient.SearchResult Candidate, float Score)> ScoreCandidates(
@@ -2969,12 +3019,12 @@ public sealed class PosterFetchService
 
     private static List<TmdbClient.SearchResult> DedupCandidates(IEnumerable<TmdbClient.SearchResult> items)
     {
-        var seen = new HashSet<int>();
+        var seen = new HashSet<TmdbIdentity>();
         var list = new List<TmdbClient.SearchResult>();
         foreach (var item in items)
         {
             if (item.TmdbId <= 0) continue;
-            if (!seen.Add(item.TmdbId)) continue;
+            if (!seen.Add(new TmdbIdentity(TmdbIdentity.NormalizeType(item.MediaType) ?? "unknown", item.TmdbId))) continue;
             list.Add(item);
         }
         return list;
@@ -3055,8 +3105,7 @@ public sealed class PosterFetchService
         }
         else
         {
-            details = await RunTmdbAsync(innerCt => _tmdb.GetMovieDetailsAsync(tmdbId, innerCt), ct).ConfigureAwait(false);
-            details ??= await RunTmdbAsync(innerCt => _tmdb.GetTvDetailsAsync(tmdbId, innerCt), ct).ConfigureAwait(false);
+            return; // Historical ambiguous identity: do not guess movie versus TV.
         }
 
         if (details is null) return;
@@ -3075,7 +3124,8 @@ public sealed class PosterFetchService
             details.Votes,
             details.Directors,
             details.Writers,
-            details.Cast
+            details.Cast,
+            normalizedMediaType
         );
     }
 

@@ -52,7 +52,7 @@ public sealed class PosterFetchServiceProviderLimiterTests
         Assert.False(string.IsNullOrWhiteSpace(posterUrl));
         var release = ctx.Releases.GetForPoster(releaseId);
         Assert.NotNull(release);
-        Assert.Equal("tmdb-4242-manual.jpg", release!.PosterFile);
+        Assert.StartsWith("tmdb-tv-4242-manual-", release!.PosterFile);
     }
 
     private sealed class PosterFetchLimiterContext : IDisposable

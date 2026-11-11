@@ -45,6 +45,10 @@ public sealed class RequestTmdbResolverService
     public async Task<RequestTmdbResolveResult> ResolveAsync(RequestTmdbResolveInput input, CancellationToken ct)
     {
         var releaseId = input.ReleaseId.HasValue && input.ReleaseId.Value > 0 ? input.ReleaseId.Value : (long?)null;
+        var matchingSnapshot = releaseId.HasValue ? _releases.GetForPoster(releaseId.Value) : null;
+        using var matching = matchingSnapshot is null ? null : _releases.BeginMatching(matchingSnapshot);
+        if (matchingSnapshot?.ManualMatchProvider == "tmdb" && int.TryParse(matchingSnapshot.ManualMatchId, out var manualId))
+            return new RequestTmdbResolveResult(manualId, matchingSnapshot.TvdbId, StatusFromExistingTmdb, false);
         var seed = releaseId.HasValue ? _releases.GetRequestTmdbSeed(releaseId.Value) : null;
         var mediaType = NormalizeMediaType(input.MediaType ?? seed?.MediaType);
 

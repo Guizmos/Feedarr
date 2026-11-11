@@ -992,7 +992,7 @@ export default function Library() {
         payload = { provider: "rawg", providerId: result.providerId || null, posterPath };
       } else {
         if (!result.posterPath) return;
-        payload = { provider: "tmdb", tmdbId: result.tmdbId, posterPath: result.posterPath };
+        payload = { provider: "tmdb", tmdbId: result.tmdbId, mediaType: result.mediaType, posterPath: result.posterPath };
       }
       const res = await apiPost(`/api/posters/release/${manualTarget.id}/manual`, payload);
       const responseEntityId = Number(res?.entityId || manualTarget.entityId || 0) || null;

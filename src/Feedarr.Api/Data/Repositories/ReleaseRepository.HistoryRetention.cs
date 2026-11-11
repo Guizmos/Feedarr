@@ -29,7 +29,7 @@ public sealed partial class ReleaseRepository
     private static readonly HashSet<string> HistoryKnownEntityColumns = new(StringComparer.OrdinalIgnoreCase)
     {
         "id", "unified_category", "title_clean", "year", "poster_file", "poster_updated_at_ts", "created_at_ts", "updated_at_ts",
-        "tmdb_id", "tvdb_id", "imdb_id", "ext_provider", "ext_provider_id", "ext_title", "ext_overview", "ext_tagline", "ext_genres",
+        "tmdb_id", "tmdb_media_type", "tvdb_id", "imdb_id", "ext_provider", "ext_provider_id", "ext_title", "ext_overview", "ext_tagline", "ext_genres",
         "ext_release_date", "ext_runtime_minutes", "ext_rating", "ext_votes", "ext_updated_at_ts", "ext_directors", "ext_writers", "ext_cast",
         "request_tmdb_id", "request_tmdb_status", "request_tmdb_updated_at_ts", "poster_key", "poster_store_dir", "retention_origin", "orphaned_at_ts"
     };

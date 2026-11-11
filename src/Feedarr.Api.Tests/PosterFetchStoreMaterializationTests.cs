@@ -23,7 +23,7 @@ using OptionsFactory = Microsoft.Extensions.Options.Options;
 
 namespace Feedarr.Api.Tests;
 
-public sealed class PosterFetchStoreMaterializationTests
+public sealed partial class PosterFetchStoreMaterializationTests
 {
     [Fact]
     public async Task FetchPosterAsync_AutoDownload_MaterializesStore()
@@ -37,19 +37,19 @@ public sealed class PosterFetchStoreMaterializationTests
 
         var release = ctx.Releases.GetForPoster(releaseId);
         Assert.NotNull(release);
-        Assert.Equal("tmdb:100", release!.PosterKey);
-        Assert.Equal("tmdb-100", release.PosterStoreDir);
-        Assert.True(File.Exists(Path.Combine(ctx.StoreDir, "tmdb-100", "w500.webp")));
+        Assert.Equal("tmdb:movie:100", release!.PosterKey);
+        Assert.Equal("tmdb-movie-100", release.PosterStoreDir);
+        Assert.True(File.Exists(Path.Combine(ctx.StoreDir, "tmdb-movie-100", "w500.webp")));
 
         using var conn = ctx.Db.Open();
         var refCount = conn.ExecuteScalar<int>(
             "SELECT COUNT(*) FROM poster_store_refs WHERE store_dir = @storeDir AND release_id = @releaseId;",
-            new { storeDir = "tmdb-100", releaseId });
+            new { storeDir = "tmdb-movie-100", releaseId });
         Assert.Equal(1, refCount);
     }
 
     [Fact]
-    public async Task FetchPosterAsync_SkipIfExists_MaterializesStoreFromLegacyFile()
+    public async Task FetchPosterAsync_SkipIfExists_PreservesAmbiguousLegacyFileWithoutMaterializing()
     {
         using var ctx = new PosterStoreContext(ImagePayloadMode.ValidImage);
         var releaseId = ctx.CreateRelease(
@@ -68,16 +68,12 @@ public sealed class PosterFetchStoreMaterializationTests
 
         var release = ctx.Releases.GetForPoster(releaseId);
         Assert.NotNull(release);
-        Assert.Equal("tmdb:550", release!.PosterKey);
-        Assert.Equal("tmdb-550", release.PosterStoreDir);
-        Assert.True(File.Exists(Path.Combine(ctx.StoreDir, "tmdb-550", "original.jpg")));
-        Assert.True(File.Exists(Path.Combine(ctx.StoreDir, "tmdb-550", "w500.webp")));
-
+        Assert.Null(release!.PosterKey);
+        Assert.Null(release.PosterStoreDir);
+        Assert.True(File.Exists(Path.Combine(ctx.PostersDir, "tmdb-550-w500.jpg")));
+        Assert.False(Directory.Exists(Path.Combine(ctx.StoreDir, "tmdb-550")));
         using var conn = ctx.Db.Open();
-        var refCount = conn.ExecuteScalar<int>(
-            "SELECT COUNT(*) FROM poster_store_refs WHERE store_dir = @storeDir AND release_id = @releaseId;",
-            new { storeDir = "tmdb-550", releaseId });
-        Assert.Equal(1, refCount);
+        Assert.Equal(0, conn.ExecuteScalar<int>("SELECT COUNT(*) FROM poster_store_refs WHERE release_id=@releaseId", new { releaseId }));
     }
 
     [Fact]
@@ -93,7 +89,7 @@ public sealed class PosterFetchStoreMaterializationTests
         Assert.NotNull(release);
         Assert.True(string.IsNullOrEmpty(release!.PosterFile));
         Assert.False(File.Exists(Path.Combine(ctx.PostersDir, "tmdb-100-w500.jpg")));
-        Assert.False(File.Exists(Path.Combine(ctx.StoreDir, "tmdb-100", "w500.webp")));
+        Assert.False(File.Exists(Path.Combine(ctx.StoreDir, "tmdb-movie-100", "w500.webp")));
     }
 
     [Fact]
@@ -127,23 +123,23 @@ public sealed class PosterFetchStoreMaterializationTests
         using var ctx = new PosterStoreContext(ImagePayloadMode.ValidImage);
         var releaseId = ctx.CreateRelease("Cache Movie", "Cache Movie", 2022);
 
-        ctx.WriteLegacyPoster("tmdb-100-w500.jpg", PosterStoreContext.CreateValidImageBytes());
+        ctx.WriteLegacyPoster("tmdb-movie-100-w500.jpg", PosterStoreContext.CreateValidImageBytes());
         ctx.SeedPosterMatch(
             mediaType: "movie",
             titleClean: "Cache Movie",
             year: 2022,
-            posterFile: "tmdb-100-w500.jpg",
+            posterFile: "tmdb-movie-100-w500.jpg",
             tmdbId: 100,
             matchSource: "tmdb",
             posterProvider: "tmdb",
-            posterProviderId: "100");
+            posterProviderId: "movie:100");
 
         var result = await ctx.Posters.FetchPosterAsync(releaseId, CancellationToken.None, logSingle: false, skipIfExists: true);
 
         Assert.True(result.Ok);
         var release = ctx.Releases.GetForPoster(releaseId);
         Assert.NotNull(release);
-        Assert.Equal("tmdb-100-w500.jpg", release!.PosterFile);
+        Assert.Equal("tmdb-movie-100-w500.jpg", release!.PosterFile);
         Assert.True((release.ExtUpdatedAtTs ?? 0) > 0);
         Assert.Equal("tmdb", release.ExtProvider);
         Assert.Equal(1, ctx.TmdbHandler.MovieDetailsCalls);
@@ -443,7 +439,17 @@ public sealed class PosterFetchStoreMaterializationTests
             _imageMode = imageMode;
         }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        public Func<Task>? BeforeMovieSearch { get; set; }
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsolutePath.Contains("/search/movie") && BeforeMovieSearch is { } callback)
+            {
+                BeforeMovieSearch = null;
+                await callback();
+            }
+            return await SendCoreAsync(request, cancellationToken);
+        }
+        private Task<HttpResponseMessage> SendCoreAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var uri = request.RequestUri ?? new Uri("https://api.themoviedb.org/3/");
             var path = uri.AbsolutePath.ToLowerInvariant();

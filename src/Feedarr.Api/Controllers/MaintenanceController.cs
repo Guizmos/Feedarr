@@ -645,8 +645,19 @@ public sealed partial class MaintenanceController : ControllerBase
                     continue;
                 }
 
-                var rawStoreDir = $"{row.PosterProvider.ToLowerInvariant()}-{PosterStorePathResolver.SanitizeStoreDir(row.PosterProviderId)}";
-                var posterKey = $"{row.PosterProvider.ToLowerInvariant()}:{row.PosterProviderId}";
+                var snapshot = _releases.GetForPoster(row.Id);
+                if (snapshot is null) { skipped++; continue; }
+                using var matching = _releases.BeginMatching(snapshot);
+                var providerId = row.PosterProviderId;
+                if (row.PosterProvider.Equals("tmdb", StringComparison.OrdinalIgnoreCase) || row.PosterProvider.Equals("fanart", StringComparison.OrdinalIgnoreCase))
+                {
+                    var type = row.PosterFile.StartsWith($"{row.PosterProvider}-movie-", StringComparison.OrdinalIgnoreCase) ? "movie"
+                        : row.PosterFile.StartsWith($"{row.PosterProvider}-tv-", StringComparison.OrdinalIgnoreCase) ? "tv" : null;
+                    if (type is null) { skipped++; continue; }
+                    if (!providerId.StartsWith(type + ":", StringComparison.Ordinal)) providerId = $"{type}:{providerId}";
+                }
+                var rawStoreDir = $"{row.PosterProvider.ToLowerInvariant()}-{PosterStorePathResolver.SanitizeStoreDir(providerId)}";
+                var posterKey = $"{row.PosterProvider.ToLowerInvariant()}:{providerId}";
 
                 if (!storeResolver.TryResolveStoreDir(rawStoreDir, out var storeDirFull))
                 {
@@ -673,6 +684,7 @@ public sealed partial class MaintenanceController : ControllerBase
                     await storeLock.WaitAsync(ct).ConfigureAwait(false);
                     try
                     {
+                        _releases.ValidateMatching(row.Id);
                         Directory.CreateDirectory(storeDirFull);
                         var ext = Path.GetExtension(row.PosterFile);
                         if (string.IsNullOrWhiteSpace(ext)) ext = ".jpg";

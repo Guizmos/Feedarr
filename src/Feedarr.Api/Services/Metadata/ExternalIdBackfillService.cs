@@ -32,6 +32,8 @@ public sealed class ExternalIdBackfillService
         var missingTmdbRows = _releases.GetSeriesMissingTmdbWithTvdb(lim);
         var missingTvdbRows = _releases.GetSeriesMissingTvdbWithTmdb(lim);
 
+        var snapshots = missingTmdbRows.Concat(missingTvdbRows).Select(row => row.ReleaseId).Distinct()
+            .ToDictionary(id => id, id => _releases.GetForPoster(id));
         var tmdbByTvdb = new Dictionary<int, int?>();
         var tvdbByTmdb = new Dictionary<int, int?>();
         var tmdbScope = new HashSet<string>(StringComparer.Ordinal);
@@ -43,6 +45,9 @@ public sealed class ExternalIdBackfillService
         {
             if (!tmdbScope.Add(BuildScopeKey(row))) continue;
 
+            var captured = snapshots[row.ReleaseId];
+            if (captured is null || captured.TvdbId != row.TvdbId ||
+                Feedarr.Api.Services.Matching.TmdbIdentity.NormalizeType(captured.TmdbMediaType ?? captured.MediaType) != "tv") continue;
             var tvdbId = row.TvdbId ?? 0;
             if (tvdbId <= 0) continue;
 
@@ -53,8 +58,10 @@ public sealed class ExternalIdBackfillService
 
             if (tmdbId.HasValue && tmdbId.Value > 0)
             {
-                _releases.SaveTmdbId(row.ReleaseId, tmdbId.Value);
-                resolvedTmdb++;
+                if (snapshots[row.ReleaseId] is not { } snapshot) continue;
+                using var matching = _releases.BeginMatching(snapshot);
+                try { _releases.SaveTmdbId(row.ReleaseId, tmdbId.Value, "tv"); resolvedTmdb++; }
+                catch (ReleaseRepository.StaleMatchException) { _logger.LogInformation("Discarded obsolete external ID releaseId={ReleaseId}", row.ReleaseId); }
             }
         }
 
@@ -62,6 +69,9 @@ public sealed class ExternalIdBackfillService
         {
             if (!tvdbScope.Add(BuildScopeKey(row))) continue;
 
+            var captured = snapshots[row.ReleaseId];
+            if (captured is null || captured.TmdbId != row.TmdbId ||
+                Feedarr.Api.Services.Matching.TmdbIdentity.NormalizeType(captured.TmdbMediaType ?? captured.MediaType) != "tv") continue;
             var tmdbId = row.TmdbId ?? 0;
             if (tmdbId <= 0) continue;
 
@@ -72,8 +82,10 @@ public sealed class ExternalIdBackfillService
 
             if (tvdbId.HasValue && tvdbId.Value > 0)
             {
-                _releases.SaveTvdbId(row.ReleaseId, tvdbId.Value);
-                resolvedTvdb++;
+                if (snapshots[row.ReleaseId] is not { } snapshot) continue;
+                using var matching = _releases.BeginMatching(snapshot);
+                try { _releases.SaveTvdbId(row.ReleaseId, tvdbId.Value); resolvedTvdb++; }
+                catch (ReleaseRepository.StaleMatchException) { _logger.LogInformation("Discarded obsolete external ID releaseId={ReleaseId}", row.ReleaseId); }
             }
         }
 

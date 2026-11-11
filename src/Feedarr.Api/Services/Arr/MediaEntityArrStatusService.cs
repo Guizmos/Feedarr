@@ -132,7 +132,7 @@ public sealed class MediaEntityArrStatusService
             .Select(e => new EntityWork
             {
                 Entity = e,
-                MediaType = ResolveMediaType(e.UnifiedCategory),
+                MediaType = e.TmdbMediaType == "tv" ? "series" : e.TmdbMediaType ?? ResolveMediaType(e.UnifiedCategory),
                 NormalizedTitle = TitleNormalizer.NormalizeTitleStrict(e.TitleClean)
             })
             .ToList();

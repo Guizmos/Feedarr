@@ -30,6 +30,19 @@ public sealed class GameMatchingStrategyContractTests
         AssertSnapshot("game_igdb_miss", actual);
     }
 
+    [Fact]
+    public async Task Game_RawgFallback_PreservesProviderIdentityWithoutTmdbPollution()
+    {
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.GameRawgHit);
+        var id = rig.CreateRelease("Game Hit", "Game Hit", 2022, UnifiedCategory.JeuWindows, "game");
+        var actual = await rig.FetchSnapshotAsync(id);
+        Assert.True(actual.Ok);
+        Assert.Equal("rawg", actual.PosterProvider);
+        Assert.Equal("rawg-123-cover.jpg", actual.PosterFile);
+        Assert.Null(actual.TmdbId);
+        Assert.True((await rig.FetchSnapshotAsync(id)).Cached);
+    }
+
     private static void AssertSnapshot(string key, PosterContractSnapshot actual)
     {
         var expectedMap = LoadExpected();
