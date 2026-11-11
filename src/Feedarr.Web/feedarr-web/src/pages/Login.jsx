@@ -4,7 +4,7 @@ import { appUrl, getSessionSnapshot, subscribeSession, login, safeDestination, s
 import { tr } from "../app/uiText.js";
 import AppIcon from "../ui/AppIcon.jsx";
 
-export default function Login() {
+export default function Login({ embedded = false }) {
   const { state } = useSyncExternalStore(subscribeSession, getSessionSnapshot, getSessionSnapshot);
   const [params] = useSearchParams();
   const submitting = useRef(false);
@@ -12,7 +12,7 @@ export default function Login() {
   const [visible, setVisible] = useState(false);
   const [error, setError] = useState("");
   const destination = safeDestination(params.get("returnTo"));
-  if (sessionRoute(state) === "app") return <Navigate replace to={destination} />;
+  if (sessionRoute(state) === "app") return embedded ? null : <Navigate replace to={destination} />;
 
   async function submit(event) {
     event.preventDefault();
@@ -23,7 +23,7 @@ export default function Login() {
     const fields = new FormData(form);
     try {
       const next = await login(String(fields.get("username")), String(fields.get("password")), fields.get("rememberMe") === "on");
-      window.location.replace(appUrl(next.setupCompleted ? destination : "/setup"));
+      if (!embedded) window.location.replace(appUrl(next.setupCompleted ? destination : "/setup"));
     } catch (failure) {
       const message = failure.status === 401 ? tr("Identifiant ou mot de passe incorrect.", "Incorrect username or password.")
         : failure.status === 429 ? tr("Trop de tentatives. Patientez avant de réessayer.", "Too many attempts. Please wait before retrying.")
@@ -36,7 +36,8 @@ export default function Login() {
     } finally { submitting.current = false; setBusy(false); }
   }
 
-  return <main className="auth-page">
+  const Container = embedded ? "section" : "main";
+  return <Container className={embedded ? "auth-setup-login" : "auth-page"}>
     <section className="auth-card" aria-labelledby="login-title">
       <img className="auth-logo" src={`${import.meta.env.BASE_URL}icon-192.png?v=9d1d5be2bd5c`} alt="Feedarr" width="76" height="76" />
       <h1 id="login-title">{tr("Connexion à Feedarr", "Sign in to Feedarr")}</h1>
@@ -55,5 +56,5 @@ export default function Login() {
         <button className="btn btn-accent auth-submit" type="submit" disabled={busy || !state?.webSessionAvailable}>{busy ? tr("Connexion…", "Signing in…") : tr("Se connecter", "Sign in")}</button>
       </form>
     </section>
-  </main>;
+  </Container>;
 }

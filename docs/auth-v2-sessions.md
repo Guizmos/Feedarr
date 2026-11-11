@@ -121,6 +121,18 @@ Page hiding masks the root; revalidation gates restored private React trees.
 Logout revokes server-side, broadcasts invalidation to other tabs and replaces the
 page to discard module/React state while preserving non-sensitive preferences.
 
+An explicitly incomplete setup always takes precedence over login, regardless of
+mode, credentials, or session. Unknown state stays loading; server/network errors
+stay on a retry screen. The auth gate owns route transitions. Wizard completion and
+applied restoration refresh server session state before the gate leaves setup;
+legacy onboarding redirects no longer compete with an older session snapshot.
+Setup 401/403 responses remain denied and do not lock/remount the wizard repeatedly.
+A stale session can refresh in place; credentials can be entered through the reused
+login form embedded on `/setup`, without navigation or resetting wizard state.
+Outside setup, contradictory session/authorization responses produce a stable error
+rather than an automatic remount/retry loop. Ordinary forbidden responses do not
+imply session expiry.
+
 During incomplete setup, configured credentials may create a session so the wizard
 can continue after its security step. The existing setup lock runs before cookie
 validation on API requests: a setup session cannot read the private feed. Unconfigured

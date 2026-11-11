@@ -27,6 +27,7 @@ import {
   ListOrdered,
   Loader2,
   Lock,
+  LogOut,
   Menu,
   Pencil,
   RefreshCcw,
@@ -49,6 +50,7 @@ import {
 } from "lucide-react";
 
 const ICON_MAP = {
+  logout: LogOut,
   add_circle: CirclePlus,
   arrow_downward: ArrowDown,
   arrow_upward: ArrowUp,
