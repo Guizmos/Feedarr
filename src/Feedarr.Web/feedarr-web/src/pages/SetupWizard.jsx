@@ -302,8 +302,14 @@ export default function SetupWizard() {
     <div className="setup-card setupWizardFrame"><div className="setupWizardBody"><div className="setup-card__content setup-step-group">
       <div className="setup-step"><h2>Bienvenue dans Feedarr</h2><p className="muted">Choisissez comment configurer votre instance.</p></div>
       <div className="indexer-list">
-        <div className="indexer-card"><div className="indexer-row indexer-row--settings"><span className="indexer-title">Configurer Feedarr pas à pas</span><div className="indexer-actions"><button className="btn btn-accent" type="button" onClick={() => chooseRestore(false)}>Nouvelle installation</button></div></div><div className="settings-help">Configurez Feedarr pas à pas, en commençant par la langue.</div></div>
-        <div className="indexer-card"><div className="indexer-row indexer-row--settings"><span className="indexer-title">Importer une sauvegarde existante</span><div className="indexer-actions"><button className="btn" type="button" onClick={() => chooseRestore(true)}>Restaurer une configuration</button></div></div><div className="settings-help">Importez une sauvegarde, vérifiez son contenu, puis restaurez votre configuration.</div></div>
+        <button className="indexer-card setup-choice" type="button" onClick={() => chooseRestore(false)} aria-labelledby="setup-new-title" aria-describedby="setup-new-description">
+          <span className="indexer-title" id="setup-new-title">Nouvelle installation</span>
+          <span className="settings-help" id="setup-new-description">Configurez Feedarr pas à pas, en commençant par la langue.</span>
+        </button>
+        <button className="indexer-card setup-choice" type="button" onClick={() => chooseRestore(true)} aria-labelledby="setup-restore-title" aria-describedby="setup-restore-description">
+          <span className="indexer-title" id="setup-restore-title">Restaurer une configuration</span>
+          <span className="settings-help" id="setup-restore-description">Importez une sauvegarde, vérifiez son contenu, puis restaurez votre configuration.</span>
+        </button>
       </div>
     </div></div></div>
   </div>;

@@ -79,7 +79,6 @@ export default function useMaintenanceActions() {
       setBackups(Array.isArray(list) ? list : []);
     } catch (e) {
       setBackupError(e?.message || "Erreur chargement backups");
-      setBackups([]);
     } finally {
       setBackupsLoading(false);
     }
@@ -422,35 +421,40 @@ export default function useMaintenanceActions() {
 
   // Backup delete functions
   function openBackupDelete(item) {
-    if (restartRequired || backupState?.isBusy) return;
+    if (backupSubmissionRef.current || restartRequired || backupState?.isBusy) return;
+    setBackupError(""); setBackupNotice("");
     setBackupDeleteTarget(item);
     setBackupDeleteOpen(true);
   }
 
   function closeBackupDelete() {
+    if (backupSubmissionRef.current) return;
     setBackupDeleteOpen(false);
     setBackupDeleteTarget(null);
   }
 
   async function handleBackupDelete() {
-    if (!backupDeleteTarget) return;
+    if (!backupDeleteTarget || backupSubmissionRef.current) return;
     if (backupState?.isBusy) return;
     if (restartRequired) {
       setBackupError(backupLockedByRestartMessage);
       return;
     }
+    backupSubmissionRef.current = true;
     setBackupDeleteLoading(true);
     setBackupError("");
     setBackupNotice("");
     try {
       await apiDelete(`/api/system/backups/${encodeURIComponent(backupDeleteTarget.name)}`);
-      closeBackupDelete();
+      setBackupDeleteOpen(false);
+      setBackupDeleteTarget(null);
       await loadBackups();
       await loadBackupState();
       setBackupNotice("Sauvegarde supprimée.");
     } catch (e) {
       setBackupError(e?.message || "Erreur suppression backup");
     } finally {
+      backupSubmissionRef.current = false;
       setBackupDeleteLoading(false);
     }
   }

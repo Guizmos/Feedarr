@@ -252,6 +252,9 @@ public sealed class BackupService : IHostedService
         var path = Path.Combine(BackupDirAbs, safeName);
         if (!System.IO.File.Exists(path))
             throw new BackupOperationException("backup not found", StatusCodes.Status404NotFound);
+        // Never follow an archive symlink/reparse point outside the local store.
+        if ((System.IO.File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            throw new BackupOperationException("invalid backup name", StatusCodes.Status400BadRequest);
 
         return (safeName, path);
     }
@@ -699,7 +702,9 @@ public sealed class BackupService : IHostedService
     {
         if (string.IsNullOrWhiteSpace(name)) return "";
 
-        var fileName = Path.GetFileName(name.Trim());
+        // Reject paths rather than silently turning them into a local filename.
+        if (name != name.Trim() || name.Contains('/') || name.Contains('\\') || Path.IsPathRooted(name)) return "";
+        var fileName = Path.GetFileName(name);
         if (!fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
             return "";
 

@@ -26,7 +26,7 @@ const bundle = await build({
     ` : `
       export const apiGet = (...args) => globalThis.__backupApi.get(...args);
       export const apiPost = (...args) => globalThis.__backupApi.post(...args);
-      export const apiDelete = () => {};
+      export const apiDelete = (...args) => globalThis.__backupApi.delete(...args);
       export const resolveApiUrl = path => path;
     ` }));
   } }],
@@ -116,5 +116,56 @@ test("creation timeout keeps modal open, displays error and permits a later retr
     globalThis.__backupApi.post = async () => ({ name: "retry.zip" });
     await render().handleBackupCreate();
     assert.equal(render().backupCreateOpen, false);
+  } finally { globalThis.__backupHookStore = oldStore; globalThis.__backupApi = oldApi; }
+});
+
+test("archive deletion requires explicit confirmation, blocks duplicate submission and refreshes after success", async () => {
+  const oldStore = globalThis.__backupHookStore, oldApi = globalThis.__backupApi;
+  globalThis.__backupHookStore = { values: [], cursor: 0 };
+  let finish, calls = 0, refreshes = 0;
+  globalThis.__backupApi = {
+    get: async path => { if (path.endsWith("/backups")) refreshes++; return path.endsWith("/backups") ? [] : {}; },
+    delete: path => { assert.equal(path, "/api/system/backups/local%20archive.zip"); calls++; return new Promise(resolve => { finish = resolve; }); },
+  };
+  try {
+    render().openBackupDelete({ name: "local archive.zip" });
+    assert.equal(calls, 0);
+    assert.equal(render().backupDeleteTarget.name, "local archive.zip");
+    const hook = render(), first = hook.handleBackupDelete();
+    await hook.handleBackupDelete(); hook.closeBackupDelete();
+    assert.equal(calls, 1); assert.equal(render().backupDeleteOpen, true); assert.equal(render().backupDeleteLoading, true);
+    finish(); await first;
+    assert.equal(refreshes, 1); assert.equal(render().backupDeleteOpen, false);
+    assert.equal(render().backupDeleteLoading, false); assert.deepEqual(render().backups, []);
+    assert.match(render().backupNotice, /supprimée/);
+  } finally { globalThis.__backupHookStore = oldStore; globalThis.__backupApi = oldApi; }
+});
+
+test("archive deletion failure keeps confirmation and archive, exposes error and allows retry", async () => {
+  const oldStore = globalThis.__backupHookStore, oldApi = globalThis.__backupApi;
+  globalThis.__backupHookStore = { values: [], cursor: 0 };
+  let calls = 0;
+  globalThis.__backupApi = { get: async () => [{ name: "local.zip" }], delete: async () => { calls++; throw new Error("Suppression refusée"); } };
+  try {
+    await render().loadBackups(); render().openBackupDelete({ name: "local.zip" });
+    await render().handleBackupDelete();
+    assert.equal(render().backupDeleteOpen, true); assert.equal(render().backupDeleteLoading, false);
+    assert.equal(render().backups.length, 1); assert.match(render().backupError, /Suppression refusée/);
+    await render().handleBackupDelete(); assert.equal(calls, 2);
+  } finally { globalThis.__backupHookStore = oldStore; globalThis.__backupApi = oldApi; }
+});
+
+test("archive list read failure preserves displayed archives and never requests deletion", async () => {
+  const oldStore = globalThis.__backupHookStore, oldApi = globalThis.__backupApi;
+  globalThis.__backupHookStore = { values: [], cursor: 0 };
+  let fail = false, deletes = 0;
+  globalThis.__backupApi = {
+    get: async () => { if (fail) throw new Error("Lecture impossible"); return [{ name: "local.zip" }]; },
+    delete: async () => { deletes++; },
+  };
+  try {
+    await render().loadBackups(); fail = true; await render().loadBackups();
+    assert.deepEqual(render().backups, [{ name: "local.zip" }]);
+    assert.match(render().backupError, /Lecture impossible/); assert.equal(deletes, 0);
   } finally { globalThis.__backupHookStore = oldStore; globalThis.__backupApi = oldApi; }
 });

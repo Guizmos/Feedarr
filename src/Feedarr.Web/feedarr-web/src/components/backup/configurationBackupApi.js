@@ -47,8 +47,17 @@ export async function configurationRequest(path, { method = "GET", body, bootstr
   } finally { clearTimeout(timer); signal?.removeEventListener("abort", abort); }
 }
 
+export function configurationFileError(file) {
+  if (!file) return "Sélectionnez une archive.";
+  if (!/\.zip$/i.test(file.name || "")) return "Format incorrect : sélectionnez une archive ZIP (.zip).";
+  if (!file.size) return "Le fichier est vide.";
+  if (file.size > MAX_CONFIGURATION_UPLOAD) return "Fichier trop volumineux (64 Mio maximum).";
+  return "";
+}
+
 export function configurationUpload(file, passphrase) {
-  if (!file || !file.size || file.size > MAX_CONFIGURATION_UPLOAD) throw new Error("Sélectionnez une archive de 64 Mio maximum.");
+  const error = configurationFileError(file);
+  if (error) throw new Error(error);
   const body = new FormData(); body.append("passphrase", passphrase); body.append("archive", file); return body;
 }
 

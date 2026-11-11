@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet } from "../../api/client.js";
 import AppIcon from "../../ui/AppIcon.jsx";
+import ConfigurationArchiveInput from "./ConfigurationArchiveInput.jsx";
 import Modal from "../../ui/Modal.jsx";
 import InlineNotice from "../../pages/settings/InlineNotice.jsx";
-import { backupRoot, configurationRequest, configurationUpload, downloadConfiguration } from "./configurationBackupApi.js";
+import { backupRoot, configurationFileError, configurationRequest, configurationUpload, downloadConfiguration } from "./configurationBackupApi.js";
 
 export function ConfigurationPreview({ preview }) {
   if (!preview) return null;
@@ -40,7 +41,7 @@ export default function ConfigurationBackupPanel({ initialSetup = false, onAppli
   const [securityConsent, setSecurityConsent] = useState(false);
   const [operation, setOperation] = useState("");
   const [decision, setDecision] = useState(null);
-  const archiveInput = useRef(null);
+  const [analysisStatus, setAnalysisStatus] = useState("none");
   const exportRef = useRef(null);
   const refreshRef = useRef(null);
   const active = useRef(null), sequence = useRef(0), submitting = useRef(false);
@@ -71,7 +72,7 @@ export default function ConfigurationBackupPanel({ initialSetup = false, onAppli
     submitting.current = true; sequence.current++; setBusy(true); setOperation(kind); setError(""); setNotice("");
     const controller = new AbortController(); active.current = controller;
     try { await action(controller.signal); }
-    catch (e) { if (!controller.signal.aborted) setError(e?.message || "L’opération a échoué."); }
+    catch (e) { if (!controller.signal.aborted) { setError(e?.message || "L’opération a échoué."); if (kind === "prepare") setAnalysisStatus("error"); } }
     finally { active.current = null; submitting.current = false; setBusy(false); }
   };
   const exportArchive = () => run(async signal => {
@@ -84,7 +85,9 @@ export default function ConfigurationBackupPanel({ initialSetup = false, onAppli
   const prepare = () => run(async signal => {
     const phrase = importPhrase; setImportPhrase("");
     const body = configurationUpload(file, phrase);
+    setAnalysisStatus("analyzing");
     const preview = await request(`${root}/prepare`, { method: "POST", body, signal });
+    setAnalysisStatus("valid");
     setState(previous => ({ ...previous, pending: preview, confirmed: false })); setConsent(false); setSecurityConsent(false); setNotice("Archive analysée. Vérifiez l’aperçu avant de confirmer.");
   }, "prepare");
   const confirm = () => run(async signal => {
@@ -92,7 +95,7 @@ export default function ConfigurationBackupPanel({ initialSetup = false, onAppli
     setState(next); setNotice("Restauration confirmée. Redémarrez le conteneur Feedarr pour l’appliquer.");
   });
   const cancel = () => run(async signal => {
-    await request(`${root}/${state.pending.operationId}`, { method: "DELETE", signal }); await refresh(); setConsent(false); setSecurityConsent(false); setNotice("Restauration préparée annulée.");
+    await request(`${root}/${state.pending.operationId}`, { method: "DELETE", signal }); await refresh(); setAnalysisStatus(file ? "selected" : "none"); setConsent(false); setSecurityConsent(false); setNotice("Restauration préparée annulée.");
   });
   const appliedAction = (action, question) => {
     setDecision({ action, question });
@@ -137,7 +140,6 @@ export default function ConfigurationBackupPanel({ initialSetup = false, onAppli
     </div>
     {hint && <div className="settings-help" id={`${fieldPrefix}-${key}-hint`}>{hint}</div>}
   </div>;
-  const actionContent = (kind, icon, label, loading) => <>{busy && operation === kind ? <AppIcon name="progress_activity" className="iconbtn--spin" /> : <AppIcon name={icon} />}{busy && operation === kind ? loading : label}</>;
   return <>
     {!initialSetup && <section className={sectionClass} aria-label="Sauvegarder la configuration">
       {title("Sauvegarder la configuration")}
@@ -159,16 +161,14 @@ export default function ConfigurationBackupPanel({ initialSetup = false, onAppli
         {initialSetup && secretRow("bootstrap", "Secret bootstrap", bootstrap, setBootstrap, "Uniquement si votre accès distant le demande.")}
         {state?.legacyRestorePending && <InlineNotice variant="warning" message="Une restauration V1 est en attente. Appliquez-la ou annulez-la via le bandeau existant avant tout import V2." />}
         {!state?.pending && <>
-          <div className="indexer-card"><div className="indexer-row indexer-row--settings">
-            <span className="indexer-title">Archive de configuration</span>
-            <div className="indexer-actions">
-              <input ref={archiveInput} id={`${fieldPrefix}-archive`} aria-label="Archive de configuration" type="file" hidden accept=".zip,application/zip" onChange={e => { setFile(e.target.files?.[0] || null); setImportPhrase(""); }} disabled={busy || state?.legacyRestorePending} />
-              <button className="btn" type="button" onClick={() => archiveInput.current?.click()} disabled={busy || !!state?.legacyRestorePending}><AppIcon name="save" />Choisir un fichier</button>
-            </div>
-          </div><div className="settings-help card-meta__value">{file ? file.name : "Aucun fichier sélectionné"} — 64 Mio maximum.</div></div>
+          <ConfigurationArchiveInput id={`${fieldPrefix}-archive`} file={file} disabled={busy || !!state?.legacyRestorePending}
+            status={analysisStatus} error={error} onChange={next => {
+              setFile(next); setImportPhrase(""); setNotice(""); setError(next ? configurationFileError(next) : "");
+              setAnalysisStatus(next ? configurationFileError(next) ? "error" : "selected" : "none");
+            }} />
           {secretRow("import-phrase", "Phrase secrète", importPhrase, setImportPhrase, "Laissez vide pour une ancienne archive non chiffrée.")}
-          <div className="formactions"><button className="btn btn-accent" type="button" onClick={prepare} disabled={busy || state?.legacyRestorePending}>
-            {actionContent("prepare", "search", "Analyser la sauvegarde", "Analyse en cours…")}
+          <div className="formactions"><button className="btn btn-accent" type="button" onClick={prepare} disabled={busy || !!state?.legacyRestorePending || !!configurationFileError(file)}>
+            {busy && operation === "prepare" ? "Analyse en cours…" : "Analyser la sauvegarde"}
           </button></div>
         </>}
         <ConfigurationPreview preview={state?.pending} />

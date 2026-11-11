@@ -6460,6 +6460,33 @@ input.is-valid{
   color: var(--muted);
 }
 
+.configuration-archive .inline-notice__message{ overflow-wrap: anywhere; }
+:root[data-theme="dark"] .configuration-archive .inline-notice{ color: var(--text); }
+
+/* Native buttons keep card choices keyboard and touch accessible. */
+.setup-choice{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color .18s ease, border-color .18s ease;
+}
+.setup-choice:hover, .setup-choice:active{
+  background: color-mix(in srgb, var(--panel), var(--accent) 8%);
+  border-color: var(--accent);
+}
+.setup-choice:focus-visible{
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce){
+  .setup-choice{ transition: none; }
+}
+
 /* buttons (Sonarr-like) */
 .btn{
   height: 34px;

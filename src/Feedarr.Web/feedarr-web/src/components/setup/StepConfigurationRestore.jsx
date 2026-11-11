@@ -1,11 +1,9 @@
-import React, { useRef } from "react";
-import AppIcon from "../../ui/AppIcon.jsx";
-import { fmtBytes } from "../../pages/settings/settingsUtils.js";
+import React from "react";
+import ConfigurationArchiveInput from "../backup/ConfigurationArchiveInput.jsx";
 import InlineNotice from "../../pages/settings/InlineNotice.jsx";
 import { ConfigurationPreview } from "../backup/ConfigurationBackupPanel.jsx";
 
 export default function StepConfigurationRestore({ restore }) {
-  const archiveInput = useRef(null);
   const { stage, state, busy } = restore;
   const secretRow = (key, label, value, update, hint) => <div className="indexer-card">
     <div className="indexer-row indexer-row--settings">
@@ -18,17 +16,8 @@ export default function StepConfigurationRestore({ restore }) {
     {stage === 1 && <>
       <p className="muted">Sélectionnez une archive V2 ou une ancienne sauvegarde compatible. Seule la configuration sera importée.</p>
       <div className="indexer-list">
-        <div className="indexer-card"><div className="indexer-row indexer-row--settings">
-          <span className="indexer-title">Archive de configuration</span><div className="indexer-actions">
-            <input ref={archiveInput} type="file" hidden accept=".zip,application/zip" aria-label="Archive de configuration" disabled={busy} onChange={e => { const next = e.target.files?.[0]; if (next) void restore.setFile(next); e.target.value = ""; }} />
-            <button className="btn" type="button" disabled={busy} onClick={() => archiveInput.current?.click()}><AppIcon name="save" />{restore.file ? "Remplacer le fichier" : "Choisir un fichier"}</button>
-          {restore.file && <button className="btn" type="button" disabled={busy} onClick={() => restore.setFile(null)}>Annuler la sélection</button>}
-          </div></div>
-          <div className="settings-help card-meta__value" role="status">{restore.file ? `${restore.file.name} — ${fmtBytes(restore.file.size) || "0 B"}` : "Aucun fichier sélectionné"}</div>
-          <div className="settings-help">Archive non vide de 64 Mio maximum.</div>
-        </div>
-        {restore.file && restore.analysisStatus === "selected" && <InlineNotice variant="info" title="Archive sélectionnée" message="Cette archive n’a pas encore été analysée." />}
-        {restore.analysisStatus === "error" && <InlineNotice variant="error" title="Archive refusée ou erreur" message="L’archive n’a pas été validée. Vérifiez le fichier et la phrase secrète avant de réessayer." />}
+        <ConfigurationArchiveInput file={restore.file} onChange={restore.setFile} disabled={busy}
+          status={restore.analysisStatus} error={restore.error} id="restore-archive" />
         {secretRow("phrase", "Phrase secrète", restore.phrase, restore.setPhrase, "Laissez vide pour une ancienne archive non chiffrée.")}
         {secretRow("bootstrap", "Secret bootstrap", restore.bootstrap, restore.setBootstrap, "Uniquement si votre accès distant le demande.")}
       </div>

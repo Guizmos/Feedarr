@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet } from "../../api/client.js";
-import { backupRoot, configurationRequest, configurationUpload, MAX_CONFIGURATION_UPLOAD } from "../backup/configurationBackupApi.js";
+import { backupRoot, configurationRequest, configurationUpload, configurationFileError } from "../backup/configurationBackupApi.js";
 
 const root = backupRoot(true);
 
@@ -32,7 +32,7 @@ export default function useSetupRestore(enabled, onApplied) {
     const current = ++sequence.current;
     const controller = new AbortController();
     request("/state", { signal: controller.signal }).then(next => {
-      if (alive && !active.current && current === sequence.current) { acceptState(next); setError(""); }
+      if (alive && !active.current && current === sequence.current) { acceptState(next); }
     }).catch(e => { if (alive && !controller.signal.aborted && current === sequence.current) setError(e.message || "Impossible de charger la restauration."); }).finally(() => { if (alive) setChecking(false); });
     return () => { alive = false; controller.abort(); };
   }, [enabled, request, acceptState]);
@@ -85,8 +85,8 @@ export default function useSetupRestore(enabled, onApplied) {
     const update = () => {
       sequence.current++; setFile(next); setPhrase(""); setConsent(false); setSecurityConsent(false);
       setState(previous => ({ ...previous, pending: null, confirmed: false })); setStage(1); setNotice("");
-      const invalid = next && (!next.size || next.size > MAX_CONFIGURATION_UPLOAD);
-      setError(invalid ? "Sélectionnez une archive non vide de 64 Mio maximum." : "");
+      const invalid = next ? configurationFileError(next) : "";
+      setError(invalid);
       setAnalysisStatus(invalid ? "error" : next ? "selected" : "none");
     };
     if (state?.pending) return run(async signal => {
@@ -107,7 +107,7 @@ export default function useSetupRestore(enabled, onApplied) {
     }
     reset(); onLeave();
   });
-  const validFile = !!file && file.size > 0 && file.size <= MAX_CONFIGURATION_UPLOAD;
+  const validFile = !configurationFileError(file);
   return { stage, state, file, setFile: selectFile, phrase, setPhrase, bootstrap, setBootstrap, consent, setConsent, securityConsent, setSecurityConsent,
     busy, checking, analysisStatus, error, notice, prepare, cancel, confirm, checkRestart, finish, go, canVisit, reset, leave,
     canPrepare: validFile && !busy && !checking && !state?.pending && !state?.confirmed && !state?.applied && !state?.legacyRestorePending,

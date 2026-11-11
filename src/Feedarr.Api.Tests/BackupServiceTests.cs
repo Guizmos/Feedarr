@@ -19,6 +19,53 @@ namespace Feedarr.Api.Tests;
 
 public sealed class BackupServiceTests
 {
+    [Theory]
+    [InlineData("../local.zip")]
+    [InlineData("sub/local.zip")]
+    [InlineData("sub\\local.zip")]
+    [InlineData("/tmp/local.zip")]
+    [InlineData("local.zip ")]
+    [InlineData("local.db")]
+    public async Task DeleteBackup_RejectsPathsAndNonArchives_WithoutDeletingLocalArchive(string name)
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        var service = CreateBackupService(workspace, db, new SettingsRepository(db), new FakeApiKeyProtectionService());
+        var local = Path.Combine(workspace.BackupsDir, "local.zip");
+        File.WriteAllText(local, "archive");
+        await Assert.ThrowsAsync<BackupOperationException>(() => service.DeleteBackupAsync(name));
+        Assert.True(File.Exists(local));
+    }
+
+    [Fact]
+    public async Task DeleteBackup_RemovesOnlyTheRequestedLocalArchive()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        var service = CreateBackupService(workspace, db, new SettingsRepository(db), new FakeApiKeyProtectionService());
+        var local = Path.Combine(workspace.BackupsDir, "local.zip");
+        var other = Path.Combine(workspace.BackupsDir, "other.zip");
+        File.WriteAllText(local, "archive"); File.WriteAllText(other, "other archive");
+        await service.DeleteBackupAsync("local.zip");
+        Assert.False(File.Exists(local)); Assert.True(File.Exists(other));
+        await Assert.ThrowsAsync<BackupOperationException>(() => service.DeleteBackupAsync("local.zip"));
+        Assert.True(File.Exists(other));
+    }
+
+    [Fact]
+    public async Task DeleteBackup_RejectsSymbolicLinks_AndPreservesTarget()
+    {
+        using var workspace = new TestWorkspace();
+        var db = CreateDb(workspace);
+        var service = CreateBackupService(workspace, db, new SettingsRepository(db), new FakeApiKeyProtectionService());
+        var target = Path.Combine(workspace.RootDir, "outside.zip");
+        File.WriteAllText(target, "outside archive");
+        var link = Path.Combine(workspace.BackupsDir, "link.zip");
+        File.CreateSymbolicLink(link, target);
+        await Assert.ThrowsAsync<BackupOperationException>(() => service.DeleteBackupAsync("link.zip"));
+        Assert.True(File.Exists(target)); Assert.True(File.Exists(link));
+    }
+
     [Fact]
     public async Task CreateBackup_RedactsExternalSecretsInConfig()
     {

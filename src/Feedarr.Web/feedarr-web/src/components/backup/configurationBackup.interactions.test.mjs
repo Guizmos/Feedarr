@@ -1,4 +1,5 @@
 import test from "node:test";
+import { configurationFileError } from "./configurationBackupApi.js";
 import assert from "node:assert/strict";
 import { build } from "esbuild";
 import { fileURLToPath } from "node:url";
@@ -10,14 +11,14 @@ async function load(file) {
       b.onResolve({ filter: /^react$/ }, () => ({ path: "hooks", namespace: "test" }));
       b.onResolve({ filter: /useSettingsController\.js$/ }, () => ({ path: "settings-controller", namespace: "test" }));
       b.onResolve({ filter: /useSubbar\.js$/ }, () => ({ path: "subbar", namespace: "test" }));
-      b.onResolve({ filter: /(?:SubAction|Loader|SettingsGeneral|SettingsProviders|SettingsBackup|SettingsMaintenance|SettingsUiPage|SettingsSecurityPage|SettingsArrPage)\.jsx$/ }, () => ({ path: "settings-child", namespace: "child" }));
+      b.onResolve({ filter: /(?:SubAction|Loader|SettingsGeneral|SettingsProviders|SettingsBackup|SettingsMaintenance|SettingsUiPage|SettingsSecurityPage|SettingsArrPage)\.jsx$/ }, args => args.importer ? ({ path: "settings-child", namespace: "child" }) : undefined);
       b.onResolve({ filter: /^react-router-dom$/ }, () => ({ path: "router", namespace: "test" }));
       b.onResolve({ filter: /api\/client\.js$/ }, () => ({ path: "api", namespace: "test" }));
       b.onResolve({ filter: /configurationBackupApi\.js$/ }, () => ({ path: "backup", namespace: "test" }));
       b.onResolve({ filter: /(?:InlineNotice|AppIcon|Modal|Step\w+|ConfigurationBackupPanel)\.jsx$/ }, args => args.importer ? ({ path: args.path, namespace: "child" }) : undefined);
       b.onLoad({ filter: /.*/, namespace: "child" }, () => ({ contents: 'export default function Child() {} export function ConfigurationPreview() {}' }));
       b.onLoad({ filter: /.*/, namespace: "test" }, args => ({ contents: {
-        hooks: `const element=(type,props,...children)=>({type,props:{...props,children:children.flat(Infinity)}}); export default {createElement:element,lazy:()=>function Lazy(){}}; export const Suspense="Suspense";
+        hooks: `const element=(type,props,...children)=>type?.name==="ConfigurationArchiveInput"?type(props):({type,props:{...props,children:children.flat(Infinity)}}); export default {createElement:element,lazy:()=>function Lazy(){}}; export const Suspense="Suspense";
           export const useCallback=fn=>fn; export const useMemo=fn=>fn();
           export function useState(initial){const h=globalThis.__configUI,i=h.cursor++; if(!(i in h.values))h.values[i]=typeof initial==='function'?initial():initial; return [h.values[i],v=>{h.values[i]=typeof v==='function'?v(h.values[i]):v;}];}
           export function useRef(initial){const h=globalThis.__configUI,i=h.cursor++; if(!(i in h.values))h.values[i]={current:initial};return h.values[i];}
@@ -26,7 +27,7 @@ async function load(file) {
         subbar: 'export const useSubbarSetter=()=>globalThis.__configUI.setContent;',
         'settings-controller': 'export default section=>({...globalThis.__configUI.controller,showBackup:section==="backup",showGeneral:section==="general"});',
         api: 'export const apiGet=(...a)=>globalThis.__configUI.get(...a); export const apiPost=(...a)=>globalThis.__configUI.post(...a);',
-        backup: `export const MAX_CONFIGURATION_UPLOAD=64*1024*1024; export const backupRoot=initial=>initial?'/api/setup/configuration-restore':'/api/configuration-backups';
+        backup: `export const configurationFileError=${configurationFileError.toString()}; export const MAX_CONFIGURATION_UPLOAD=64*1024*1024; export const backupRoot=initial=>initial?'/api/setup/configuration-restore':'/api/configuration-backups';
           export const configurationRequest=(...a)=>globalThis.__configUI.request(...a);
           export const configurationUpload=(file,phrase)=>{if(!file?.size||file.size>MAX_CONFIGURATION_UPLOAD)throw new Error("Sélectionnez une archive");return {file,phrase};}; export const downloadConfiguration=(blob)=>globalThis.__configUI.download?.(blob);
           export const resumeSetupSteps=steps=>Array.isArray(steps)?steps:null;`,
@@ -39,10 +40,11 @@ const Restore = await load("../setup/useSetupRestore.js");
 const Settings = await load("../../pages/Settings.jsx");
 const RestoreView = await load("../setup/StepConfigurationRestore.jsx");
 const Wizard = await load("../../pages/SetupWizard.jsx");
+const BackupSettings = await load("../../pages/settings/SettingsBackup.jsx");
 const flush = async () => { for(let i=0;i<12;i++) await Promise.resolve(); };
 const nodes = tree => !tree || typeof tree !== "object" ? [] : [tree,...(tree.props?.children||[]).flatMap(nodes)];
-const text = tree => typeof tree === "string" ? tree : (tree?.props?.children||[]).map(text).join("");
-const button = (tree,label) => nodes(tree).find(n=>n.type==="button" && text(n)===label);
+const text = tree => typeof tree === "string" ? tree : (tree?.props?.message || "") + (tree?.props?.children||[]).map(text).join("");
+const button = (tree,label) => nodes(tree).find(n=>n.type==="button" && text(n).startsWith(label));
 function fixture() {
   const previous={window:globalThis.window,ui:globalThis.__configUI}; const data=new Map();
   const h={cursor:0,values:[],deps:[],effects:[],navigate:()=>{},get:async()=>({}),post:async()=>{},request:async()=>({})};
@@ -53,7 +55,7 @@ test("import clears phrase, prevents duplicate submissions and requires both con
   const f=fixture();let finish, calls=0;f.h.request=(path)=>{if(path.endsWith('/prepare')){calls++;return new Promise(r=>{finish=r;});}return Promise.resolve({});};
   try {
     let tree=f.render(Panel); const inputs=nodes(tree).filter(n=>n.type==='input');
-    inputs.find(n=>n.props.type==='file').props.onChange({target:{files:[new Blob(['zip'])]}});
+    inputs.find(n=>n.props.type==='file').props.onChange({target:{files:[new File(['zip'],'backup.zip')]}});
     inputs.at(-1).props.onChange({target:{value:'private phrase'}});tree=f.render(Panel);
     const submit=button(tree,'Analyser la sauvegarde');const pending=submit.props.onClick();submit.props.onClick();assert.equal(calls,1);
     tree=f.render(Panel);assert.equal(nodes(tree).filter(n=>n.type==='input').at(-1).props.value,'');assert.equal(button(tree,'Analyse en cours…').props.disabled,true);
@@ -105,7 +107,7 @@ test("export validates visibly, prevents duplicates and exposes download success
     fill('long secret phrase');f.h.download=()=>downloaded++;
     f.h.request=(path,options)=>{calls++;assert.ok(path.endsWith('/export'));assert.equal(options.binary,true);assert.deepEqual(options.body,{passphrase:'long secret phrase'});return new Promise(r=>{finish=r;});};
     tree=f.render(Panel);submit(tree);submit(tree);assert.equal(calls,1);assert.ok(nodes(f.render(Panel)).some(n=>n.props?.message==='Chiffrement et préparation du téléchargement…'));
-    assert.equal(nodes(f.render(Panel)).find(n=>n.type==='input').props.value,'');finish(new Blob(['zip']));await flush();assert.equal(downloaded,1);
+    assert.equal(nodes(f.render(Panel)).find(n=>n.type==='input').props.value,'');finish(new File(['zip'],'backup.zip'));await flush();assert.equal(downloaded,1);
     assert.ok(nodes(f.render(Panel)).some(n=>n.props?.variant==='success'&&/Téléchargement/.test(n.props.message)));
     fill('long secret phrase');f.h.request=async()=>{throw new Error('Autorisation requise');};submit(f.render(Panel));await flush();assert.ok(nodes(f.render(Panel)).some(n=>n.props?.message==='Autorisation requise'));
   }finally{f.close();}
@@ -115,7 +117,7 @@ test("restore wizard analyzes once, requires both consents, handles confirm erro
   const render=()=>{f.h.cursor=0;return Restore(true,(setup,bootstrap)=>{applied={setup,bootstrap};});};
   try {
     await render().prepare();assert.match(render().error,/Sélectionnez/);
-    let r=render();r.setFile(new Blob(['zip']));r.setPhrase('secret');
+    let r=render();r.setFile(new File(['zip'],'backup.zip'));r.setPhrase('secret');
     f.h.request=(path,options)=>{calls++;assert.equal(options.body.phrase,'secret');return new Promise(resolve=>{finish=resolve;});};
     r=render();const pending=r.prepare();r.prepare();assert.equal(calls,1);assert.equal(render().busy,true);assert.equal(render().phrase,'');
     finish({operationId:'x',securityChangeRequiresConfirmation:true});await pending;r=render();assert.equal(r.stage,2);assert.equal(r.locked,true);assert.equal(r.canContinue,false);
@@ -130,7 +132,7 @@ test("restore wizard analyzes once, requires both consents, handles confirm erro
 test("restore back cancels the server preview and preserves file; changing path clears secrets",async()=>{
   const f=fixture();const render=()=>f.render(Restore,true);
   try {
-    let r=render();r.setFile(new Blob(['zip']));r.setPhrase('secret');r.setBootstrap('bootstrap');f.h.request=async()=>({operationId:'x'});await render().prepare();
+    let r=render();r.setFile(new File(['zip'],'backup.zip'));r.setPhrase('secret');r.setBootstrap('bootstrap');f.h.request=async()=>({operationId:'x'});await render().prepare();
     f.h.request=async(path,options)=>{assert.ok(path.endsWith('/x'));assert.equal(options.method,'DELETE');};await render().cancel();r=render();assert.equal(r.stage,1);assert.equal(r.locked,false);assert.ok(r.file);assert.equal(r.consent,false);
     r.reset();r=render();assert.equal(r.file,null);assert.equal(r.phrase,'');assert.equal(r.bootstrap,'');
   }finally{f.close();}
@@ -182,7 +184,7 @@ test("backup header registration follows phrase validity, uses latest values and
     fill('another valid secret');await publish();f.h.download=()=>downloaded++;
     f.h.request=(path,options)=>{calls++;assert.ok(path.endsWith('/export'));assert.equal(options.body.passphrase,'another valid secret');return new Promise(r=>{finish=r;});};
     const pending=originalAction();originalAction();await publish();assert.equal(calls,1);assert.equal(actions.canExport,false);assert.equal(actions.busy,true);assert.equal(actions.saveState,'loading');
-    finish(new Blob(['zip']));await pending;await publish();assert.equal(actions.saveState,'success');assert.equal(actions.canExport,false);assert.equal(downloaded,1);
+    finish(new File(['zip'],'backup.zip'));await pending;await publish();assert.equal(actions.saveState,'success');assert.equal(actions.canExport,false);assert.equal(downloaded,1);
     fill('long secret phrase');await publish();f.h.request=async()=>{throw new Error('Export refusé');};await actions.export();tree=await publish();assert.equal(actions.saveState,'error');assert.ok(nodes(tree).some(n=>n.props?.message==='Export refusé'));
   }finally{f.close();}
 });
@@ -239,15 +241,63 @@ test("return refuses confirmed/applied operations and keeps cancellation failure
 test("real filename/size and selection states remain accurate through replacement, analysis and errors",async()=>{
   const f=fixture();let finish,deletes=0;const render=()=>f.render(Restore,true);const view=model=>{const v=fixture();try{return v.render(RestoreView,{restore:model});}finally{v.close();}};
   try{
-    let r=render();assert.equal(r.canPrepare,false);assert.match(text(view(r)),/Aucun fichier sélectionné/);
-    r.setFile(new File([new Uint8Array(2048)],'my-real-backup.zip'));r=render();assert.equal(r.analysisStatus,'selected');assert.equal(r.canPrepare,true);let tree=view(r);assert.match(text(tree),/my-real-backup.zip — 2 KB/);assert.ok(nodes(tree).some(n=>n.props?.title==='Archive sélectionnée'));assert.ok(button(tree,'Remplacer le fichier'));assert.ok(button(tree,'Annuler la sélection'));
+    let r=render();assert.equal(r.canPrepare,false);assert.match(text(view(r)),/Aucune archive sélectionnée/);
+    r.setFile(new File([new Uint8Array(2048)],'my-real-backup.zip'));r=render();assert.equal(r.analysisStatus,'selected');assert.equal(r.canPrepare,true);let tree=view(r);assert.match(text(tree),/my-real-backup.zip — 2 KB/);assert.ok(nodes(tree).some(n=>n.props?.variant==='success' && n.props?.message?.includes('contenu non encore vérifié')));assert.ok(button(tree,'Remplacer le fichier'));assert.ok(button(tree,'Annuler la sélection'));
     r.setPhrase('private phrase');r=render();f.h.request=()=>new Promise(resolve=>{finish=resolve;});const pending=r.prepare();r=render();assert.equal(r.analysisStatus,'analyzing');assert.equal(r.canPrepare,false);assert.equal(r.phrase,'');finish({operationId:'old',securityChangeRequiresConfirmation:true});await pending;r=render();assert.equal(r.analysisStatus,'valid');assert.ok(nodes(view(r)).some(n=>n.props?.title==='Archive analysée et valide'));
     r.setConsent(true);r.setSecurityConsent(true);r.setPhrase('discard me');f.h.request=async(path,options)=>{assert.ok(path.endsWith('/old'));assert.equal(options.method,'DELETE');deletes++;};await render().setFile(new File(['replacement'],'replacement.zip'));r=render();assert.equal(deletes,1);assert.equal(r.state.pending,null);assert.equal(r.stage,1);assert.equal(r.analysisStatus,'selected');assert.equal(r.consent,false);assert.equal(r.securityConsent,false);assert.equal(r.phrase,'');assert.match(text(view(r)),/replacement.zip — 11 B/);
-    f.h.request=async()=>{throw new Error('Archive altérée');};await r.prepare();r=render();assert.equal(r.analysisStatus,'error');assert.equal(r.error,'Archive altérée');assert.ok(nodes(view(r)).some(n=>n.props?.title==='Archive refusée ou erreur'));
+    f.h.request=async()=>{throw new Error('Archive altérée');};await r.prepare();r=render();assert.equal(r.analysisStatus,'error');assert.equal(r.error,'Archive altérée');assert.ok(nodes(view(r)).some(n=>n.props?.variant==='error' && n.props?.message?.includes('Archive altérée')));
     r.setFile({name:'too-big.zip',size:64*1024*1024+1});r=render();assert.equal(r.canPrepare,false);assert.equal(r.analysisStatus,'error');r.setFile(new File([],'empty.zip'));r=render();assert.equal(r.canPrepare,false);assert.match(text(view(r)),/empty.zip — 0 B/);
     r.setFile(null);r=render();assert.equal(r.analysisStatus,'none');assert.equal(r.canPrepare,false);assert.equal(r.error,'');assert.equal(r.file,null);assert.equal(f.data.size,0);
   }finally{f.close();}
 });
 test("confirmed restore reload resumes its own stepper without secrets or a fictional selected file",async()=>{
   const f=fixture();try{f.data.set('feedarr:setupRestore','true');f.h.request=async()=>({pending:{operationId:'resume'},confirmed:true});f.render(Wizard);await f.effects();const tree=f.render(Wizard);assert.equal(nodes(tree).filter(n=>n.props?.className?.startsWith('setup-stepper-item')).length,4);assert.equal(button(tree,'Retour au choix').props.disabled,true);const r=nodes(tree).find(n=>n.props?.restore).props.restore;assert.equal(r.stage,3);assert.equal(r.phrase,'');assert.equal(r.bootstrap,'');assert.equal(r.file,null);}finally{f.close();}
+});
+
+test("legacy archive rows expose delete and a named confirmation with busy/error feedback", () => {
+  const f = fixture(); let target, confirmed = 0;
+  const props = { backups: [{ name: "local archive.zip", sizeBytes: 2048 }], openBackupDelete: item => { target = item; },
+    backupDeleteOpen: true, backupDeleteTarget: { name: "local archive.zip" }, handleBackupDelete: () => { confirmed++; }, closeBackupDelete: () => {} };
+  try {
+    let tree = f.render(BackupSettings, props);
+    button(tree, "Supprimer").props.onClick(); assert.equal(target.name, "local archive.zip"); assert.equal(confirmed, 0);
+    let modal = nodes(tree).find(n => n.props?.title === "Supprimer l’archive locale");
+    assert.equal(modal.props.open, true); assert.match(text(modal), /local archive.zip/);
+    button(modal, "Supprimer").props.onClick(); assert.equal(confirmed, 1);
+    tree = f.render(BackupSettings, { ...props, backupDeleteLoading: true, backupError: "Accès refusé" });
+    modal = nodes(tree).find(n => n.props?.title === "Supprimer l’archive locale");
+    assert.equal(modal.props.closeDisabled, true); assert.equal(button(modal, "Suppression…").props.disabled, true);
+    assert.ok(nodes(modal).some(n => n.props?.variant === "error" && n.props.message === "Accès refusé"));
+    tree = f.render(BackupSettings, { backups: [], backupNotice: "Sauvegarde supprimée." });
+    assert.ok(nodes(tree).some(n => n.props?.variant === "success" && n.props.message === "Sauvegarde supprimée."));
+  } finally { f.close(); }
+});
+
+test("settings and wizard use the same archive input and reject invalid selection before analysis", () => {
+  const f = fixture();
+  try {
+    let tree = f.render(Panel), select = nodes(tree).find(n => n.type === "input" && n.props.type === "file");
+    assert.equal(button(tree, "Analyser la sauvegarde").props.disabled, true);
+    select.props.onChange({ target: { files: [new File(["x"], "wrong.txt")] } }); tree = f.render(Panel);
+    assert.equal(button(tree, "Analyser la sauvegarde").props.disabled, true);
+    assert.ok(nodes(tree).some(n => n.props?.variant === "error" && n.props.message?.includes("Format incorrect")));
+    select = nodes(tree).find(n => n.type === "input" && n.props.type === "file");
+    select.props.onChange({ target: { files: [new File(["x"], "good.zip")] } }); tree = f.render(Panel);
+    assert.equal(button(tree, "Analyser la sauvegarde").props.disabled, false);
+    assert.ok(nodes(tree).some(n => n.props?.variant === "success" && n.props.message?.includes("good.zip") && n.props.message.includes("contenu non encore vérifié")));
+    button(tree, "Annuler la sélection").props.onClick(); tree = f.render(Panel);
+    assert.equal(button(tree, "Analyser la sauvegarde").props.disabled, true);
+    assert.ok(nodes(tree).some(n => n.props?.variant === "warning" && n.props.message === "Aucune archive sélectionnée — 64 Mio maximum"));
+  } finally { f.close(); }
+});
+
+test("background restore state refresh does not erase an archive selection error", async () => {
+  const f = fixture(), render = () => f.render(Restore, true);
+  try {
+    render().setFile(new File([], "empty.zip"));
+    render().setBootstrap("changed-bootstrap"); render();
+    await f.effects();
+    assert.match(render().error, /vide/);
+    assert.equal(render().analysisStatus, "error");
+  } finally { f.close(); }
 });
