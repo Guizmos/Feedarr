@@ -1,6 +1,6 @@
 import { isSsrfBlocked, ssrfBlockedMessage } from "../utils/ssrfErrors.js";
 
-const API_BASE = ((import.meta.env?.VITE_API_BASE) || "").replace(/\/+$/, "");
+const API_BASE = ((import.meta.env?.VITE_API_BASE) || (import.meta.env?.BASE_URL || "").replace(/\/$/, "")).replace(/\/+$/, "");
 const TRUSTED_REQUEST_HEADER = "X-Feedarr-Request";
 
 export function resolveApiUrl(path) {

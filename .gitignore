@@ -61,5 +61,6 @@ docker/*.env
 # Generated frontend build output copied to API wwwroot
 src/Feedarr.Api/wwwroot/assets/
 src/Feedarr.Api/wwwroot/index.html
+src/Feedarr.Api/wwwroot/pwa-assets.json
 .tmp-build/
 .tmp-test-obj/

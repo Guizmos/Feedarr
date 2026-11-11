@@ -1,5 +1,7 @@
 import React from "react";
 import { createBrowserRouter, Navigate } from "react-router-dom";
+import AuthGate from "../auth/AuthGate.jsx";
+import Login from "../pages/Login.jsx";
 import Shell from "../layout/Shell.jsx";
 import SetupShell from "../layout/SetupShell.jsx";
 import RouteErrorBoundary from "../ui/RouteErrorBoundary.jsx";
@@ -39,7 +41,10 @@ const basename = rawBasename !== "/" && rawBasename.endsWith("/")
   ? rawBasename.slice(0, -1)
   : rawBasename;
 
-export const router = createBrowserRouter([
+export const router = createBrowserRouter([{
+  element: <AuthGate />,
+  children: [
+  { path: "/login", element: <Login /> },
   {
     path: "/setup",
     element: <SetupShell />,
@@ -77,4 +82,5 @@ export const router = createBrowserRouter([
       { path: "settings/about", element: <Navigate to="/system/updates" replace /> },
     ],
   },
-], { basename });
+  ],
+}], { basename });

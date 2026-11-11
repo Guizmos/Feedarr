@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
+import LogoutButton from "../auth/LogoutButton.jsx";
 import AppIcon from "../ui/AppIcon.jsx";
 
 export default function Topbar({ onToggleNav }) {
@@ -113,6 +114,7 @@ export default function Topbar({ onToggleNav }) {
       </div>
 
       <div className="topbar-right">
+        <LogoutButton />
         {isLibrary && (
           <button
             type="button"

@@ -69,6 +69,21 @@ public sealed class BasicAuthMiddleware
             return;
         }
 
+        // Only neutral React HTML and explicitly public assets, never API/data routes.
+        if (WebSessionSecurity.IsPublicShell(context.Request))
+        {
+            context.Response.Headers["X-Feedarr-Shell"] = "public-v1";
+            context.Items[AuthPassedKey] = true;
+            await _next(context).ConfigureAwait(false);
+            return;
+        }
+        if (IsPublicStaticAssetRequest(context.Request))
+        {
+            context.Items[AuthPassedKey] = true;
+            await _next(context).ConfigureAwait(false);
+            return;
+        }
+
         if (WebSessionSecurity.IsAuthEndpoint(context.Request) && !WebSessionSecurity.HasExplicitBasic(context.Request))
         {
             WebSessionSecurity.DisableCaching(context);
@@ -84,12 +99,6 @@ public sealed class BasicAuthMiddleware
                 context.Request.Method,
                 context.Request.Path.Value ?? "/");
             await HandleSetupLockRejection(context).ConfigureAwait(false);            return;
-        }
-
-        if (IsPublicStaticAssetRequest(context.Request))
-        {
-            context.Items[AuthPassedKey] = true;
-            await _next(context).ConfigureAwait(false);            return;
         }
 
         var security = cache.GetOrCreate(SecuritySettingsCache.CacheKey, entry =>
@@ -124,7 +133,7 @@ public sealed class BasicAuthMiddleware
         var authConfigured = SmartAuthPolicy.IsAuthConfigured(security, bootstrapSecret);
         var authMode = SmartAuthPolicy.NormalizeAuthMode(security);
 
-        if (webSessions is not null && setupState.IsSetupCompleted() && authConfigured &&
+        if (webSessions is not null && authConfigured &&
             !WebSessionSecurity.HasExplicitBasic(context.Request) &&
             !SmartAuthPolicy.HasValidBootstrapSecretHeader(context, bootstrapSecret))
         {
@@ -169,14 +178,14 @@ public sealed class BasicAuthMiddleware
                             context.Request.Path.Value ?? "/");
                     }
 
-                    Challenge(context);
+                    await ChallengeAsync(context).ConfigureAwait(false);
                     return;
                 }
 
                 var tokenStatus = bootstrapTokens.GetStatus(issuedToken);
                 if (tokenStatus is BootstrapTokenService.TokenStatus.Unknown or BootstrapTokenService.TokenStatus.Expired or BootstrapTokenService.TokenStatus.Missing)
                 {
-                    Challenge(context);
+                    await ChallengeAsync(context).ConfigureAwait(false);
                     return;
                 }
 
@@ -211,7 +220,7 @@ public sealed class BasicAuthMiddleware
 
         if (!TryGetBasicCredentials(context, out var user, out var pass))
         {
-            Challenge(context);
+            await ChallengeAsync(context).ConfigureAwait(false);
             return;
         }
 
@@ -235,7 +244,7 @@ public sealed class BasicAuthMiddleware
         if (!CredentialValidator.Validate(user, pass, security))
         {
             authThrottle.RegisterFailure(remoteIp, user);
-            Challenge(context);
+            await ChallengeAsync(context).ConfigureAwait(false);
             return;
         }
 
@@ -247,8 +256,17 @@ public sealed class BasicAuthMiddleware
         context.Items[AuthPassedKey] = true;
         await _next(context).ConfigureAwait(false);    }
 
-    private static void Challenge(HttpContext context)
+    private static async Task ChallengeAsync(HttpContext context)
     {
+        if (WebSessionSecurity.IsBrowserApiRequest(context.Request))
+        {
+            WebSessionSecurity.DisableCaching(context);
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            context.Response.ContentType = "application/json";
+            // No redirect and no native Basic prompt on the explicit web path.
+            await context.Response.WriteAsJsonAsync(new { error = "authentication_required" }).ConfigureAwait(false);
+            return;
+        }
         context.Response.Headers.WWWAuthenticate = "Basic realm=\"Feedarr\"";
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
     }
@@ -416,9 +434,14 @@ public sealed class BasicAuthMiddleware
         if (PathEqualsOrUnder(path, "/assets"))
             return true;
 
-        if (path.Equals("/manifest.webmanifest", StringComparison.OrdinalIgnoreCase) ||
+        if (path.Equals("/pwa-assets.json", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("/manifest.webmanifest", StringComparison.OrdinalIgnoreCase) ||
             path.Equals("/service-worker.js", StringComparison.OrdinalIgnoreCase) ||
-            path.Equals("/favicon.ico", StringComparison.OrdinalIgnoreCase))
+            path.Equals("/favicon.ico", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("/icon-192.png", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("/icon-512.png", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("/icon-maskable-512.png", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("/feedarr-logo.png", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }

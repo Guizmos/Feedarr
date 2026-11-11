@@ -15,6 +15,25 @@ internal static class WebSessionSecurity
                 PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0
             }));
 
+    private static readonly HashSet<string> PublicShellPaths = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "/", "/index.html", "/login", "/setup", "/library", "/library/top", "/activity", "/history",
+        "/indexers", "/system", "/system/statistics", "/system/indexers", "/system/storage", "/system/providers",
+        "/system/updates", "/settings", "/settings/ui", "/settings/providers", "/settings/indexers",
+        "/settings/externals", "/settings/applications", "/settings/users", "/settings/maintenance",
+        "/settings/backup", "/settings/about"
+    };
+
+    internal static bool IsPublicShell(HttpRequest request)
+        => (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method)) &&
+           PublicShellPaths.Contains(request.Path.Value ?? "");
+
+    internal static bool IsBrowserApiRequest(HttpRequest request)
+        => !HasExplicitBasic(request) && request.Path.StartsWithSegments("/api") &&
+           (request.Headers["X-Feedarr-Web"] == "1" ||
+            request.Headers["Sec-Fetch-Mode"] == "navigate" ||
+            (request.Headers["Sec-Fetch-Site"] == "same-origin" && request.Headers["Sec-Fetch-Dest"] == "image"));
+
     internal static void DisableCaching(HttpContext context)
     {
         context.Response.Headers.CacheControl = "no-store";

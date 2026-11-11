@@ -6,7 +6,14 @@ import path from "node:path";
 const srcDir = fileURLToPath(new URL("./src", import.meta.url));
 
 export default defineConfig({
-  plugins: [react()],
+  define: { __FEEDARR_BUILD__: JSON.stringify(Date.now().toString(36)) },
+  plugins: [react(), {
+    name: "feedarr-public-pwa-assets",
+    generateBundle(_options, bundle) {
+      const assets = Object.keys(bundle).filter((name) => /^assets\/.*\.(js|css|woff2?|png|svg)$/.test(name));
+      this.emitFile({ type: "asset", fileName: "pwa-assets.json", source: JSON.stringify(assets) });
+    },
+  }],
   build: {
     rollupOptions: {
       output: {

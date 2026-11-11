@@ -6,8 +6,11 @@ import ErrorBoundary from "./ui/ErrorBoundary.jsx";
 import { applyUiLanguage, getStoredUiLanguage } from "./app/locale.js";
 import { initRuntimeTranslation } from "./app/runtimeTranslation.js";
 import "./styles/tokens.css";
+import "./styles/auth.css";
+import { installSessionTransport } from "./auth/session.js";
 import "./styles/styles.css";
 
+installSessionTransport();
 applyUiLanguage(getStoredUiLanguage());
 initRuntimeTranslation();
 
@@ -25,7 +28,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   const baseUrl = import.meta.env.BASE_URL || "/";
   const normalizedBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-  const swUrl = `${normalizedBase}service-worker.js`;
+  const swUrl = `${normalizedBase}service-worker.js?v=${__FEEDARR_BUILD__}`;
 
   window.addEventListener("load", () => {
     navigator.serviceWorker
