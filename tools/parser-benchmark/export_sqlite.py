@@ -23,7 +23,7 @@ PARSED_FIELDS = ("TitleClean", "Year", "Season", "Episode", "AirDate", "Resoluti
                  "Source", "Codec", "ReleaseGroup", "MediaType")
 READ_COLUMNS = {
     "sources": {"name"},
-    "media_entities": {"id", "poster_file", "manual_match_provider", "tmdb_id", "tmdb_media_type", "tvdb_id"},
+    "media_entities": {"id", "poster_file", "manual_match_provider", "tmdb_id", "tmdb_media_type", "tvdb_id", "match_revision"},
     "releases": {"id", "source_id", "title", "unified_category", "poster_file", "entity_id", "published_at_ts",
                  "created_at_ts", "title_clean", "year", "season", "episode", "resolution", "source", "codec",
                  "release_group", "media_type", "tmdb_id", "tmdb_media_type", "tvdb_id", "ext_provider",
@@ -88,7 +88,7 @@ def readonly_connection(path, local_snapshot=False):
         if action == sqlite3.SQLITE_READ:
             return sqlite3.SQLITE_OK if arg1 in READ_COLUMNS and (not arg2 or arg2 in READ_COLUMNS[arg1]) else sqlite3.SQLITE_DENY
         if action == sqlite3.SQLITE_FUNCTION:
-            return sqlite3.SQLITE_OK if (arg2 or "").lower() in {"coalesce", "max", "length", "lower", "instr", "row_number", "like", "glob"} else sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK if (arg2 or "").lower() in {"count", "coalesce", "max", "length", "lower", "instr", "row_number", "like", "glob"} else sqlite3.SQLITE_DENY
         return sqlite3.SQLITE_OK if action in allowed else sqlite3.SQLITE_DENY
 
     connection.set_authorizer(authorize)
@@ -111,7 +111,7 @@ def classify_error(error_expression):
       ELSE 'other' END"""
 
 
-def export(connection, size=1500, seed="feedarr-parser-v2.1"):
+def export(connection, size=1500, seed="feedarr-parser-v2.1", all_admissible=False):
     if not 1 <= size <= 2000:
         raise ValueError("size must be between 1 and 2000")
     rc, ec = columns(connection, "releases"), columns(connection, "media_entities")
@@ -133,6 +133,9 @@ def export(connection, size=1500, seed="feedarr-parser-v2.1"):
     error = classify_error(r("poster_last_error"))
     ts = r("published_at_ts", r("created_at_ts", "0"))
     connection.execute("BEGIN")
+    population = connection.execute("SELECT COUNT(*) FROM releases").fetchone()[0]
+    if all_admissible and population > 10000:
+        raise ValueError("complete export population exceeds 10000; refusing truncation")
     max_ts = connection.execute(f"SELECT COALESCE(MAX({ts}),0) FROM releases r").fetchone()[0]
     cutoff = int(max_ts or 0) - 180 * 86400
     source_names = "0"
@@ -155,9 +158,11 @@ def export(connection, size=1500, seed="feedarr-parser-v2.1"):
         projection.append(f"{expression} AS {name}")
     projection += [f"{e('manual_match_provider')} AS manual_provider",
                    f"{e('tmdb_id')} AS entity_tmdb_id", f"{e('tmdb_media_type')} AS entity_tmdb_type",
-                   f"{e('tvdb_id')} AS entity_tvdb_id"]
+                   f"{e('tvdb_id')} AS entity_tvdb_id",
+                   f"CASE WHEN {e('match_revision')} IS NULL AND instr(lower(COALESCE({poster},'')),'-manual')>0 THEN 1 ELSE 0 END AS legacy_manual"]
     numeric_seed = int(hashlib.sha256(seed.encode()).hexdigest()[:7], 16)
-    per_stratum = size
+    per_stratum = 10000 if all_admissible else size
+    candidate_limit = 10000 if all_admissible else max(100, size * 12)
     # Bounded projection, no source URLs, credentials, GUIDs, JSON metadata or file paths.
     # Reads/sorts can still scan releases; use a quiet period and an OS read-only view.
     sql = f"""WITH projected AS (
@@ -172,7 +177,7 @@ def export(connection, size=1500, seed="feedarr-parser-v2.1"):
       ORDER BY sample_rank,((id * 1103515245 + {numeric_seed}) & 2147483647),id LIMIT ?"""
     excluded = collections.Counter()
     candidates = []
-    for row in connection.execute(sql, (per_stratum, max(100, size * 12))):
+    for row in connection.execute(sql, (per_stratum, candidate_limit)):
         if row["contains_source_name"]:
             excluded["source_name"] += 1
             continue
@@ -188,7 +193,7 @@ def export(connection, size=1500, seed="feedarr-parser-v2.1"):
                        "tmdbType": tmdb_type if tmdb_type in {"movie", "tv", "series"} else None,
                        "tvdbId": row["tvdb_id"] or row["entity_tvdb_id"],
                        "provider": provider, "providerId": provider_id,
-                       "manualMatch": bool(row["manual_provider"])}
+                       "manualMatch": bool(row["manual_provider"]) or bool(row["legacy_manual"])}
         associated = any(association[k] is not None for k in ("tmdbId", "tvdbId", "providerId"))
         entry = {"id": token(seed, "release", row["id"]), "raw": row["title"],
                  "category": row["unified_category"] if row["unified_category"] in CATEGORIES else "Autre",
@@ -204,10 +209,11 @@ def export(connection, size=1500, seed="feedarr-parser-v2.1"):
             continue
         candidates.append(entry)
     connection.rollback()
-    selected = sample(candidates, size, seed)
+    selected = sorted(candidates, key=lambda row: row["id"]) if all_admissible else sample(candidates, size, seed)
     return {"schemaVersion": 1, "origin": "production-export", "seed": seed,
-            "selection": {"requested": size, "missingPosterTarget": .7,
-                          "candidateLimit": max(100, size * 12), "candidatesAccepted": len(candidates),
+            "selection": {"requested": population if all_admissible else size, "missingPosterTarget": .7,
+                          "populationTotal": population, "allAdmissible": all_admissible,
+                          "candidateLimit": candidate_limit, "candidatesAccepted": len(candidates),
                           "excluded": dict(sorted(excluded.items())), "ageCutoffBasis": "max-publication-minus-180-days",
                           "missingOptionalColumns": sorted(set(names) - rc)}, "entries": selected}
 
@@ -244,10 +250,13 @@ def main():
     parser.add_argument("--seed", default="feedarr-parser-v2.1")
     parser.add_argument("--local-snapshot", action="store_true",
                         help="Independent consistent backup under local/, no sidecars; never use on a live database")
+    parser.add_argument("--all-admissible", action="store_true", help="Complete local snapshot export, max population 10000; no truncation")
     args = parser.parse_args()
     try:
+        if args.all_admissible and not args.local_snapshot:
+            raise ValueError("complete export requires local snapshot mode")
         with readonly_connection(args.db, local_snapshot=args.local_snapshot) as connection:
-            output = export(connection, args.size, args.seed)
+            output = export(connection, args.size, args.seed, all_admissible=args.all_admissible)
         print(json.dumps(output, sort_keys=True, ensure_ascii=False))
     except (OSError, ValueError, sqlite3.Error):
         # Errors must not disclose paths, SQL values, usernames or raw titles.

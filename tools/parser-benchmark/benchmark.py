@@ -103,9 +103,11 @@ def validate_corpus(corpus):
         raise ValueError("invalid_seed")
     selection = corpus.get("selection", {})
     if not isinstance(selection, dict) or set(selection) - {"requested", "missingPosterTarget", "candidateLimit",
-            "candidatesAccepted", "excluded", "ageCutoffBasis", "missingOptionalColumns"}:
+            "candidatesAccepted", "excluded", "ageCutoffBasis", "missingOptionalColumns", "populationTotal", "allAdmissible"}:
         raise ValueError("invalid_selection_metadata")
-    for key in ("requested", "candidateLimit", "candidatesAccepted"):
+    if "allAdmissible" in selection and type(selection["allAdmissible"]) is not bool:
+        raise ValueError("invalid_all_admissible_flag")
+    for key in ("requested", "candidateLimit", "candidatesAccepted", "populationTotal"):
         if key in selection and (type(selection[key]) is not int or selection[key] < 0):
             raise ValueError("invalid_selection_count")
     if "missingPosterTarget" in selection and selection["missingPosterTarget"] != .7:

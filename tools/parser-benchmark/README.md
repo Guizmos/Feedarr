@@ -196,3 +196,79 @@ Codes de retour : 0 = opération réussie/conformité, 1 = écart validé (`chec
 régression validée (`compare`), 2 = données/contexte invalides ou indisponibles.
 `check` refuse aussi un résultat sans aucune référence validée. Les erreurs ne
 réaffichent ni titres, ni chemins, ni valeurs SQL sensibles.
+
+## Identification offline V2.3-C
+
+Le mode complet est limité aux copies locales autonomes et refuse une population
+supérieure à 10 000 lignes plutôt que tronquer silencieusement. Les filtres de
+confidentialité restent identiques. Toutes les données générées restent privées.
+
+```sh
+umask 077
+python3 tools/parser-benchmark/export_sqlite.py \
+  --db tools/parser-benchmark/local/feedarr-parser-benchmark.db \
+  --local-snapshot --all-admissible \
+  > tools/parser-benchmark/local/v23c-corpus.json
+python3 tools/parser-benchmark/identification.py \
+  --corpus tools/parser-benchmark/local/v23c-corpus.json \
+  --out tools/parser-benchmark/local/v23c-results \
+  --review-selection tools/parser-benchmark/local/real-review-selection.json \
+  --parser-references tools/parser-benchmark/local/v22a-references.json
+```
+
+Les deux options de revue sont facultatives si ces anciens artefacts ne sont pas
+présents. Lorsqu'ils existent, les annotations lexicales sont conservées séparément
+des références provider ; les associations SQL ne deviennent jamais des attentes.
+
+Le runner compile en Release les sources actuelles via le projet API, mais ne lance
+pas l'API, sa configuration, ses services, ni ses repositories. L'assembly console
+utilise le nom friend déjà autorisé pour accéder aux composants V2.3 internes.
+Les helpers statiques historiques sont appelés directement ; le corps réel de la
+planification TMDB et le bloc réel de validation sont extraits à la compilation,
+avec empreintes et refus en cas de dérive incompatible. Le sink des requêtes ne
+contient aucun transport réseau : ses collections vides ne sont **pas** des
+réponses provider et ne sont jamais utilisées comme preuves de rejet.
+
+Les plans historiques sont conditionnels au passage dans la branche de recherche :
+configuration providers, cache, fichiers et réutilisation d'identité ne sont pas
+rejoués. RAWG/IGDB : préparation de requête réelle, décisions client non simulées.
+Une génération shadow sans verrous sert uniquement au diagnostic ; elle n'est
+jamais admissible à l'application d'une identité. Les IDs stockés, même ambigus,
+sont protégés conservativement sans les déclarer validés.
+
+Sans réponses providers : décisions d'identification et précision **indisponibles**,
+et non « zéro rejet ». Les retours des verrous sont comptés à part. `--responses`
+est réservé aux tests explicitement `synthetic-fixture` avec `--synthetic-fixtures` ;
+les captures réelles sont refusées tant qu'un contrat de provenance/couverture des
+requêtes n'est pas implémenté. Les tests illustrent les adaptateurs, jamais un gain
+sur les identités réelles.
+
+Sorties sous `local/` : `results.json`, `summary.json`, `performance.json`, entrées
+canoniques, sources historiques générées et logs de compilation privés. Avec la
+sélection de revue : `manual-review-120.json`. Les empreintes pincent corpus,
+parser, ranking, helpers historiques et runner. Le temps et les allocations portent
+sur le rejeu offline complet, hors compilation/sérialisation et avec warmup ; ce
+n'est ni une latence provider ni une comparaison de vitesse des moteurs isolés.
+
+```sh
+python3 -m unittest discover -s tools/parser-benchmark/tests
+```
+
+## Captures providers V2.3-D
+
+Le nouveau flux `provider_capture.py prepare|collect|compare` ajoute la provenance,
+la pagination, les quotas et la comparaison des captures réelles ; l'ancien
+`identification.py --responses` reste réservé aux fixtures synthétiques.
+
+Consulter [le rapport et la procédure d'activation](../../docs/parser-v2.3-d-provider-captures.md).
+Le plan local livré couvre 150 releases et 970 recherches distinctes. Aucune
+capture n'est lancée sans configuration locale, activation par provider et
+`--execute`. Aucun secret n'est lu depuis SQLite. Sans captures et références
+indépendantes validées, les métriques restent indisponibles.
+
+## Premier pilote de 20 releases
+
+Un [guide de lancement et de revue](../../docs/parser-v2.3-pilot20.md) décrit le plan
+privé préparé et ses budgets. L'[exemple de configuration sans secrets](provider-capture.example.json)
+est désactivé par défaut et ne contient que des références d'environnement.
+Aucune capture n'est lancée lors de la préparation ou de la livraison Git.

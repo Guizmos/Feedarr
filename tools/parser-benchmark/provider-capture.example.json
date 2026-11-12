@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "maxRequestsTotal": 288,
+  "maxPages": 2,
+  "providers": {
+    "igdb": {
+      "enabled": false,
+      "termsReviewed": false,
+      "maxRequestsPerDay": 16,
+      "minIntervalSeconds": 1.0,
+      "credentialEnv": {
+        "clientId": "FEEDARR_CAPTURE_IGDB_CLIENT_ID",
+        "bearer": "FEEDARR_CAPTURE_IGDB_BEARER"
+      }
+    },
+    "rawg": {
+      "enabled": false,
+      "termsReviewed": false,
+      "maxRequestsPerDay": 16,
+      "minIntervalSeconds": 1.0,
+      "credentialEnv": {
+        "apiKey": "FEEDARR_CAPTURE_RAWG_KEY"
+      }
+    },
+    "tmdb": {
+      "enabled": false,
+      "termsReviewed": false,
+      "maxRequestsPerDay": 248,
+      "minIntervalSeconds": 1.0,
+      "credentialEnv": {
+        "bearer": "FEEDARR_CAPTURE_TMDB_BEARER"
+      }
+    },
+    "tvmaze": {
+      "enabled": false,
+      "termsReviewed": false,
+      "maxRequestsPerDay": 8,
+      "minIntervalSeconds": 1.0,
+      "credentialEnv": {}
+    }
+  }
+}

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <!-- Existing friend assembly: access the internal V2.3 components without expanding the production API. -->
+    <AssemblyName>Feedarr.Api.Tests</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../src/Feedarr.Api/Feedarr.Api.csproj" />
+    <Compile Include="$(HistoricalPlanSource)" Link="HistoricalPlan.generated.cs" />
+  </ItemGroup>
+</Project>
