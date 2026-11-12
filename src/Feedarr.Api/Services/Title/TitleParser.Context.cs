@@ -25,10 +25,15 @@ public sealed partial class TitleParser
         return (before.EndsWith('(') && after.StartsWith(')')) || (before.EndsWith('[') && after.StartsWith(']'));
     }
 
-    private static Match? FindReleaseYear(string raw, UnifiedCategory category, TechnicalSuffix suffix)
-    {
-        var matches = RxYear.Matches(raw).Cast<Match>().Where(m =>
+    // Shared lexical year evidence. A category policy decides whether the number
+    // dates a work, an edition, a season, or a game distribution.
+    private static List<Match> FindYearCandidates(string raw)
+        => RxYear.Matches(raw).Cast<Match>().Where(m =>
             raw[..m.Index].Trim(' ', '.', '_', '-', '[', '(').Length > 0).ToList();
+
+    private static Match? FindVideoReleaseYear(string raw, UnifiedCategory category, TechnicalSuffix suffix)
+    {
+        var matches = FindYearCandidates(raw);
         if (matches.Count == 0) return null; // A leading number belongs to the title.
         var explicitYear = matches.LastOrDefault(m => IsExplicitYear(raw, m));
         if (explicitYear is not null) return explicitYear;
@@ -43,21 +48,11 @@ public sealed partial class TitleParser
             if (afterEpisode is not null && videoTechnical < raw.Length &&
                 IsMetadataWords(raw[(firstSeries.Index + firstSeries.Length)..afterEpisode.Index]) &&
                 IsMetadataWords(raw[(afterEpisode.Index + afterEpisode.Length)..videoTechnical]) &&
-                !TryExtractAirDate(raw[(firstSeries.Index + firstSeries.Length)..], out _, out _))
+                !EpisodeRecognition.TryExtractAirDate(raw[(firstSeries.Index + firstSeries.Length)..], out _, out _))
                 return afterEpisode;
             technical = Math.Min(technical, firstSeries.Index);
         }
         var candidate = matches.LastOrDefault(m => m.Index < technical);
-        // Bare game years/annual editions are not release dates without independent evidence.
-        if (category == UnifiedCategory.JeuWindows)
-        {
-            if (candidate is not null && RxYearRange.Matches(raw).Cast<Match>().Any(range => candidate.Index >= range.Index && candidate.Index < range.Index + range.Length)) return null;
-            if (candidate is not null && matches.Count >= 2 && candidate != matches[0]) return candidate;
-            // An explicitly delimited metadata region can contain a release date, but a version/build component cannot.
-            return matches.FirstOrDefault(m => m.Index >= technical &&
-                !new[] { RxGameVersion, RxGameBuild, RxGameVersionNaked, RxGameBuildNum }.Any(rx =>
-                    rx.Matches(raw).Cast<Match>().Any(number => m.Index >= number.Index && m.Index < number.Index + number.Length)));
-        }
         if (candidate is null) return null;
         if (category is UnifiedCategory.Book or UnifiedCategory.Comic or UnifiedCategory.Audio) return null;
         var tail = raw[(candidate.Index + candidate.Length)..technical].Trim(' ', '.', '_', '-', ')', ']');
@@ -79,18 +74,7 @@ public sealed partial class TitleParser
 
     private static string CleanContextualTitle(string raw, UnifiedCategory category, ParsedTitle parsed, TechnicalSuffix suffix, Match? year)
     {
-        var game = category == UnifiedCategory.JeuWindows;
-        var boundary = suffix.Start;
-        if (year is not null)
-        {
-            var start = year.Index;
-            if (IsExplicitYear(raw, year)) start = raw[..start].TrimEnd().Length - 1;
-            // Repeated release dates separated only by language tags describe one suffix.
-            foreach (Match previous in RxYear.Matches(raw[..year.Index]))
-                if (previous.Index > 0 && previous.Value == year.Value && IsMetadataWords(raw[(previous.Index + previous.Length)..year.Index]))
-                { start = previous.Index; break; }
-            boundary = Math.Min(boundary, start);
-        }
+        var boundary = FindTitleBoundaryForYear(raw, suffix, year);
         if (category is UnifiedCategory.Serie or UnifiedCategory.Anime or UnifiedCategory.Emission)
         {
             foreach (var rx in new[] { RxSeasonEpisode, RxAltSeasonEpisode, RxSeasonDisc, RxSeasonOnly, RxSeasonWord, RxEpisodeOnly, RxSYearEpisode })
@@ -117,11 +101,38 @@ public sealed partial class TitleParser
             if (years.Count > 0 && year is not null && IsMetadataWords(raw[(years[0].Index + years[0].Length)..year.Index]))
             { boundary = years[0].Index; parsed.Year = null; }
         }
+        var title = PrepareTitle(raw, boundary);
+        title = TrimVideoSuffix(title, category, boundary < raw.Length, hasPackRange,
+            suffix.Rich);
+        return FinishTitle(title);
+    }
+
+    private static int FindTitleBoundaryForYear(string raw, TechnicalSuffix suffix, Match? year)
+    {
+        var boundary = suffix.Start;
+        if (year is not null)
+        {
+            var start = year.Index;
+            if (IsExplicitYear(raw, year)) start = raw[..start].TrimEnd().Length - 1;
+            // Repeated release dates separated only by language tags describe one suffix.
+            foreach (Match previous in RxYear.Matches(raw[..year.Index]))
+                if (previous.Index > 0 && previous.Value == year.Value && IsMetadataWords(raw[(previous.Index + previous.Length)..year.Index]))
+                { start = previous.Index; break; }
+            boundary = Math.Min(boundary, start);
+        }
+        return boundary;
+    }
+
+    private static string PrepareTitle(string raw, int boundary)
+    {
         var title = raw[..Math.Clamp(boundary, 0, raw.Length)].Trim(' ', '.', '_', '+', '-');
         title = Regex.Replace(title, @"[\[(](?<tags>[^\]\)]+)[\])]\s*$", m => m.Index > 0 && title[..m.Index].Trim(' ', '.', '_', '-').Length > 0 && IsMetadataWords(m.Groups["tags"].Value) ? "" : m.Value);
         title = title.Replace('.', ' ').Replace('_', ' ').Replace('+', ' ');
-        if (!game) title = TrimVideoSuffix(title, category, boundary < raw.Length, hasPackRange,
-            suffix.Rich);
+        return title;
+    }
+
+    private static string FinishTitle(string title)
+    {
         title = Regex.Replace(title, @"(?<=\s)-(?=\p{L})", "- ");
         title = Regex.Replace(title, @"(?<=\p{L})-(?=\s)", " -");
         title = Regex.Replace(title, @"\s{2,}", " ").Trim();
