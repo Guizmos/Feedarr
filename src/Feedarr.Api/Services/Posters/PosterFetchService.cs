@@ -3400,64 +3400,12 @@ public sealed partial class PosterFetchService
             sb.Append(char.IsLetterOrDigit(ch) ? ch : ' ');
         }
 
-        var rawTokens = sb.ToString()
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-        var tokens = new List<string>();
-        foreach (var token in rawTokens)
-        {
-            var lower = token.ToLowerInvariant();
-            if (IsGameNoiseToken(lower)) continue;
-            if (IsGameOsToken(lower)) continue;
-            if (IsGameYearToken(lower)) continue;
-            tokens.Add(token);
-        }
-
-        while (tokens.Count > 0 && IsTrailingBuildToken(tokens[^1]))
-            tokens.RemoveAt(tokens.Count - 1);
-
-        var result = string.Join(" ", tokens);
-        return string.IsNullOrWhiteSpace(result) ? titleClean : result;
+        // titleClean already passed the contextual parser. Filtering words or numbers here
+        // would undo its protections (annual editions, sequels and legitimate title words).
+        return string.Join(" ", sb.ToString()
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
     }
 
-    private static bool IsGameNoiseToken(string token)
-    {
-        return token is "build" or "fix" or "patch" or "update" or "hotfix" ||
-               (token.StartsWith("build") && token.Length > 5 && token[5..].All(char.IsDigit)) ||
-               (token.StartsWith("patch") && token.Length > 5 && token[5..].All(char.IsDigit)) ||
-               (token.StartsWith("update") && token.Length > 6 && token[6..].All(char.IsDigit)) ||
-               (token.StartsWith("hotfix") && token.Length > 6 && token[6..].All(char.IsDigit));
-    }
-
-    private static bool IsGameOsToken(string token)
-    {
-        if (token is "win" or "windows" or "linux" or "mac" or "osx" or "macos")
-            return true;
-
-        if (token.StartsWith("win") && token.Length > 3 && token[3..].All(char.IsDigit))
-            return true;
-        if (token.StartsWith("windows") && token.Length > 7 && token[7..].All(char.IsDigit))
-            return true;
-        if (token.StartsWith("linux") && token.Length > 5 && token[5..].All(char.IsDigit))
-            return true;
-
-        return false;
-    }
-
-    private static bool IsGameYearToken(string token)
-    {
-        if (token.Length != 4) return false;
-        if (!token.All(char.IsDigit)) return false;
-        return token.StartsWith("19") || token.StartsWith("20");
-    }
-
-    private static bool IsTrailingBuildToken(string token)
-    {
-        if (string.IsNullOrWhiteSpace(token)) return false;
-        if (!token.Any(char.IsDigit)) return false;
-        if (IsGameYearToken(token)) return true;
-        return token.Length >= 3;
-    }
 }
 
 

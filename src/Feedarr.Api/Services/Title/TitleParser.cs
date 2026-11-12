@@ -66,7 +66,7 @@ public sealed partial class TitleParser
     {
         (new Regex(@"(?i)\bWEB[- .]?DL\b", RegexOptions.Compiled), "WEB-DL"),
         (new Regex(@"(?i)\bWEB[- .]?RIP\b", RegexOptions.Compiled), "WEBRip"),
-        (new Regex(@"(?i)\bBLURAY\b|\bBDRIP\b|\bBRRIP\b", RegexOptions.Compiled), "BluRay"),
+        (new Regex(@"(?i)\bBLU[- ]?RAY\b|\bBDRIP\b|\bBRRIP\b", RegexOptions.Compiled), "BluRay"),
         (new Regex(@"(?i)\bHDTV\b", RegexOptions.Compiled), "HDTV"),
         (new Regex(@"(?i)\bTVRIP\b", RegexOptions.Compiled), "TVRip"),
         (new Regex(@"(?i)\bDVDRIP\b", RegexOptions.Compiled), "DVDRip"),
@@ -76,8 +76,8 @@ public sealed partial class TitleParser
 
     private static readonly (Regex rx, string value)[] Codecs =
     {
-        (new Regex(@"(?i)\bx265\b|\bhevc\b|\bh\.?265\b", RegexOptions.Compiled), "x265"),
-        (new Regex(@"(?i)\bx264\b|\bavc\b", RegexOptions.Compiled), "x264"),
+        (new Regex(@"(?i)\bx265\b|\bhevc\b|\bh[ .]?265\b", RegexOptions.Compiled), "x265"),
+        (new Regex(@"(?i)\bx264\b|\bavc\b|\bh[ .]?264\b", RegexOptions.Compiled), "x264"),
         (new Regex(@"(?i)\bav1\b", RegexOptions.Compiled), "AV1"),
         (new Regex(@"(?i)\bmpeg-?2\b|\bmpeg2\b", RegexOptions.Compiled), "MPEG2"),
         (new Regex(@"(?i)\bac3\b", RegexOptions.Compiled), "AC3"),
@@ -90,9 +90,9 @@ public sealed partial class TitleParser
 
         var p = new ParsedTitle();
 
-        p.ReleaseGroup = ExtractGroup(raw);
+        p.ReleaseGroup = ExtractGroup(raw, category);
 
-        var tokenSource = category == UnifiedCategory.JeuWindows ? Regex.Replace(raw, @"\s+", ".").Replace(':', '.').Replace('_', '.') : PreClean(raw);
+        var tokenSource = category == UnifiedCategory.JeuWindows ? Regex.Replace(raw, @"\s+", ".").Replace(':', '.').Replace('_', '.') : PreClean(raw, category);
 
         switch (category)
         {
@@ -186,12 +186,15 @@ public sealed partial class TitleParser
     private static int? ExtractLikelyYear(string raw, UnifiedCategory category)
         => FindReleaseYear(raw, category) is { } year ? TryInt(year.Value) : null;
 
-    private static string PreClean(string raw)
+    private static string PreClean(string raw, UnifiedCategory category)
     {
         var s = raw.Replace('.', ' ').Replace('_', ' ').Replace('+', ' ');
         s = RxYearLangGlue.Replace(s, "${year} ${tag}");
         // Fansub labels describe the release, unlike arbitrary bracketed title words.
         s = Regex.Replace(s, @"^\[(?=[^\]]*(?i:subs|raws))[^\]]+\]\s*", "");
+        if (category == UnifiedCategory.Anime &&
+            (RxSeasonEpisode.IsMatch(s) || FindVideoTechnicalStart(s) < s.Length))
+            s = Regex.Replace(s, @"(?i)^\[fansub\]\s*(?=\S)", "");
         return Regex.Replace(s, @"\s{2,}", " ").Trim();
     }
 
@@ -251,17 +254,22 @@ public sealed partial class TitleParser
 
     private static int? TryInt(string s) => int.TryParse(s, out var n) ? n : null;
 
-    private static string ExtractGroup(string raw)
+    private static string ExtractGroup(string raw, UnifiedCategory category)
     {
         var idx = raw.LastIndexOf('-');
         if (idx <= 0 || idx >= raw.Length - 1) return null!;
         var prefix = raw[..idx];
         var suffix = raw[idx..];
-        if (!RxContextVideoTech.IsMatch(prefix) && !RxGameVersion.IsMatch(prefix) && !RxGameBuild.IsMatch(prefix) &&
-            !RxGameScene.IsMatch(suffix)) return null!;
+        var videoPrefix = Regex.Replace(prefix, @"[._+]", " ");
+        var gamePrefix = Regex.Replace(prefix, @"\s+", ".").Replace('_', '.');
+        var hasContext = category == UnifiedCategory.JeuWindows
+            ? FindGameMetadataStart(gamePrefix) < gamePrefix.Length || RxGameVersion.IsMatch(prefix) ||
+              RxGameBuild.IsMatch(prefix) || RxGameScene.IsMatch(suffix)
+            : FindVideoTechnicalStart(videoPrefix) < videoPrefix.Length;
+        if (!hasContext) return null!;
         var g = raw[(idx + 1)..].Trim();
         if (g.Length < 2 || g.Length > 30) return null!;
-        if (g.Any(char.IsWhiteSpace)) return null!;
+        if (!Regex.IsMatch(g, @"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+){0,2}$")) return null!;
         return g;
     }
 

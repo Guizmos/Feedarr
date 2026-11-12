@@ -73,6 +73,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
     private readonly TmdbHandler _tmdbHandler;
     private readonly IgdbHandler _igdbHandler;
     private readonly IgdbClient _igdbDetails;
+    private readonly RawgContractHandler _rawgHandler;
 
     public PosterMatchingContractTestRig(PosterContractScenario scenario)
     {
@@ -131,7 +132,8 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             new GenericMatchingStrategy());
 
         var openLibrary = new OpenLibraryClient(new HttpClient(new NullHttpHandler()), stats);
-        var rawg = new RawgClient(new HttpClient(scenario == PosterContractScenario.GameRawgHit ? new RawgContractHandler() : new NullHttpHandler()), stats, resolver);
+        _rawgHandler = new RawgContractHandler();
+        var rawg = new RawgClient(new HttpClient(scenario == PosterContractScenario.GameRawgHit ? _rawgHandler : new NullHttpHandler()), stats, resolver);
         var musicBrainz = new MusicBrainzClient(new HttpClient(new NullHttpHandler()), resolver, stats);
 
         _posters = new PosterFetchService(
@@ -261,6 +263,23 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         => _releases.GetForPoster(releaseId);
 
     public ReleaseRepository Repository => _releases;
+    public IReadOnlyList<Uri> TmdbSearchRequests => _tmdbHandler.SearchRequests;
+    public IReadOnlyList<string> IgdbSearchRequests => _igdbHandler.SearchRequests;
+    public IReadOnlyList<Uri> RawgSearchRequests => _rawgHandler.SearchRequests;
+
+    public long IngestRelease(string raw, UnifiedCategory category)
+    {
+        var guid = Guid.NewGuid().ToString("N");
+        _releases.UpsertMany(1, "TEST", new[]
+        {
+            new Feedarr.Api.Services.Torznab.TorznabItem
+            {
+                Guid = guid, Title = raw, CategoryId = 2000, CategoryIds = new() { 2000 }
+            }
+        }, categoryMap: new() { [2000] = (UnifiedCategoryMappings.ToKey(category), UnifiedCategoryMappings.ToLabel(category)) });
+        using var conn = _db.Open();
+        return conn.ExecuteScalar<long>("SELECT id FROM releases WHERE source_id = 1 AND guid = @guid", new { guid });
+    }
     public void BeforeIgdbDetails(Func<Task> action) => _igdbHandler.BeforeDetails = action;
     public Task<Microsoft.AspNetCore.Mvc.IActionResult> FetchIgdbDetailsAsync(long id)
         => new Feedarr.Api.Controllers.ReleasesController(_releases, _db, new TitleParser(), _igdbDetails, null!,
@@ -514,11 +533,15 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
 
     private sealed class RawgContractHandler : HttpMessageHandler
     {
+        public List<Uri> SearchRequests { get; } = new();
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri!.Host == "api.rawg.io")
+            {
+                SearchRequests.Add(request.RequestUri);
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(
                     """{"results":[{"id":123,"name":"Game Hit","released":"2022-01-01","background_image":"https://rawg.test/cover.jpg"}]}""", Encoding.UTF8, "application/json") });
+            }
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(PosterTestImage.Create()) });
         }
     }
@@ -527,6 +550,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
     {
         private readonly PosterContractScenario _scenario;
         public int DetailsCalls { get; private set; }
+        public List<Uri> SearchRequests { get; } = new();
 
         public TmdbHandler(PosterContractScenario scenario)
         {
@@ -537,6 +561,8 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         {
             var uri = request.RequestUri ?? new Uri("https://api.themoviedb.org/3/");
             var path = uri.AbsolutePath.ToLowerInvariant();
+
+            if (path.Contains("/search/")) SearchRequests.Add(uri);
 
             if (path.Contains("/search/movie"))
                 return Task.FromResult(JsonResponse(MovieSearchPayload()));
@@ -685,6 +711,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         }
 
         public Func<Task>? BeforeDetails { get; set; }
+        public List<string> SearchRequests { get; } = new();
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var uri = request.RequestUri ?? new Uri("https://api.igdb.com/v4/games");
@@ -705,10 +732,16 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
                 }
 
                 if (_scenario == PosterContractScenario.GameIgdbHit)
+                {
+                    SearchRequests.Add(body);
                     return JsonResponse("[{\"id\":901,\"name\":\"Game Hit\",\"first_release_date\":1640995200,\"cover\":{\"url\":\"//images.igdb.com/igdb/upload/t_thumb/game901.jpg\"}}]");
+                }
 
                 if (_scenario == PosterContractScenario.GameIgdbMiss)
+                {
+                    SearchRequests.Add(body);
                     return JsonResponse("[]");
+                }
             }
 
             if (uri.Host.Contains("images.igdb.com", StringComparison.OrdinalIgnoreCase))
