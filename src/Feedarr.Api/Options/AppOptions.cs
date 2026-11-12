@@ -2,6 +2,14 @@ namespace Feedarr.Api.Options;
 
 public sealed class AppOptions
 {
+    // Opt-in rollout watermark: only newly ingested, unassociated movies may use V2.
+    public bool MatchingV2MoviesEnabled { get; set; } = false;
+    public long MatchingV2MoviesMinReleaseId { get; set; } = long.MaxValue;
+    public int MatchingV2MoviesSearchBudget { get; set; } = 12;
+    public int MatchingV2MoviesMaxPagesPerQuery { get; set; } = 3;
+    internal bool ValidMatchingV2Rollout => !MatchingV2MoviesEnabled ||
+        (MatchingV2MoviesMinReleaseId is > 0 and < long.MaxValue &&
+         MatchingV2MoviesSearchBudget is >= 1 and <= 12 && MatchingV2MoviesMaxPagesPerQuery is >= 1 and <= 3);
     public string DataDir { get; set; } = "data";
     public string DbFileName { get; set; } = "feedarr.db";
     public int SyncIntervalMinutes { get; set; } = 60;

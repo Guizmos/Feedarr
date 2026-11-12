@@ -69,13 +69,16 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
     private readonly TestWorkspace _workspace;
     private readonly Db _db;
     private readonly ReleaseRepository _releases;
-    private readonly PosterFetchService _posters;
+    private PosterFetchService _posters;
+    private readonly Func<AppOptions, PosterFetchService> _createPosters;
     private readonly TmdbHandler _tmdbHandler;
     private readonly IgdbHandler _igdbHandler;
     private readonly IgdbClient _igdbDetails;
     private readonly RawgContractHandler _rawgHandler;
 
-    public PosterMatchingContractTestRig(PosterContractScenario scenario, bool matchingShadowEnabled = false, bool completeTmdbMetadata = false, int tmdbTotalPages = 1, string? localizedMovieTitle = null)
+    public PosterMatchingContractTestRig(PosterContractScenario scenario, bool matchingShadowEnabled = false, bool completeTmdbMetadata = false, int tmdbTotalPages = 1, string? localizedMovieTitle = null,
+        Action<AppOptions>? configure = null,
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? tmdbResponse = null)
     {
         _workspace = new TestWorkspace();
 
@@ -110,7 +113,9 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             NullLogger<ActiveExternalProviderConfigResolver>.Instance);
 
         _tmdbHandler = new TmdbHandler(scenario);
-        var tmdb = new TmdbClient(new HttpClient(completeTmdbMetadata ? new CompleteSearchMetadataHandler(_tmdbHandler, tmdbTotalPages, localizedMovieTitle) : _tmdbHandler), settings, stats, resolver);
+        HttpMessageHandler tmdbTransport = completeTmdbMetadata ? new CompleteSearchMetadataHandler(_tmdbHandler, tmdbTotalPages, localizedMovieTitle) : _tmdbHandler;
+        if (tmdbResponse is not null) tmdbTransport = new OverrideTmdbHandler(tmdbTransport, tmdbResponse);
+        var tmdb = new TmdbClient(new HttpClient(tmdbTransport), settings, stats, resolver);
         var fanart = new FanartClient(new HttpClient(new FanartHandler(scenario)), stats, resolver, settings);
         _igdbHandler = new IgdbHandler(scenario);
         var igdb = new IgdbClient(new HttpClient(_igdbHandler), stats, resolver);
@@ -136,7 +141,9 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         var rawg = new RawgClient(new HttpClient(scenario == PosterContractScenario.GameRawgHit ? _rawgHandler : new NullHttpHandler()), stats, resolver);
         var musicBrainz = new MusicBrainzClient(new HttpClient(new NullHttpHandler()), resolver, stats);
 
-        _posters = new PosterFetchService(
+        var posterOptions = new AppOptions { DataDir = _workspace.DataDir, DbFileName = "feedarr.db" };
+        configure?.Invoke(posterOptions);
+        _createPosters = options => new PosterFetchService(
             _releases,
             activity,
             tmdb,
@@ -151,18 +158,23 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             comicVine,
             musicBrainz,
             matchCache,
-            OptionsFactory.Create(new AppOptions
-            {
-                DataDir = _workspace.DataDir,
-                DbFileName = "feedarr.db"
-            }),
+            OptionsFactory.Create(options),
             new TestWebHostEnvironment(_workspace.RootDir),
             orchestrator,
             resolver,
             NullLogger<PosterFetchService>.Instance);
 
+        _posters = _createPosters(posterOptions);
         _posters.ShadowDiagnostics.SetEnabled(matchingShadowEnabled);
         SeedSource();
+    }
+
+    internal string PostersDirectory => Path.Combine(_workspace.DataDir, "posters");
+    internal void RestartPosters(Action<AppOptions> configure)
+    {
+        var options = new AppOptions { DataDir = _workspace.DataDir, DbFileName = "feedarr.db" };
+        configure(options);
+        _posters = _createPosters(options);
     }
 
     public long CreateRelease(
@@ -559,6 +571,13 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         }
     }
 
+    private sealed class OverrideTmdbHandler(HttpMessageHandler inner,
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>> response) : DelegatingHandler(inner)
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+            => await response(request, ct) ?? await base.SendAsync(request, ct);
+    }
+
     private sealed class CompleteSearchMetadataHandler(HttpMessageHandler inner, int totalPages, string? localizedMovieTitle) : DelegatingHandler(inner)
     {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -604,7 +623,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
                 return Task.FromResult(JsonResponse(TvSearchPayload()));
 
             if (path.Contains("/images"))
-                return Task.FromResult(JsonResponse(ImagesPayload(path)));
+                return Task.FromResult(JsonResponse(WithIdentity(ImagesPayload(path), path)));
 
             if (path.Contains("/external_ids"))
                 return Task.FromResult(JsonResponse(path.Contains("/tv/700/") ? "{\"tvdb_id\":8700}" : "{\"tvdb_id\":8600}"));
@@ -613,12 +632,12 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
                 return Task.FromResult(JsonResponse("{\"tv_results\":[{\"id\":501}]}"));
 
             if (path.Contains("/credits"))
-                return Task.FromResult(JsonResponse("{\"cast\":[],\"crew\":[]}"));
+                return Task.FromResult(JsonResponse(WithIdentity("{\"cast\":[],\"crew\":[]}", path)));
 
             if (path.Contains("/movie/") || path.Contains("/tv/"))
             {
                 DetailsCalls++;
-                return Task.FromResult(JsonResponse("{\"title\":\"Mock\",\"name\":\"Mock\",\"overview\":\"Mock\",\"genres\":[],\"vote_average\":0,\"vote_count\":0}"));
+                return Task.FromResult(JsonResponse(WithIdentity("{\"title\":\"Mock\",\"name\":\"Mock\",\"overview\":\"Mock\",\"genres\":[],\"vote_average\":0,\"vote_count\":0}", path)));
             }
 
             if (uri.Host.Contains("image.tmdb.org", StringComparison.OrdinalIgnoreCase))
@@ -631,6 +650,16 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             }
 
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }
+
+        private static string WithIdentity(string payload, string path)
+        {
+            var parts = path.Split('/');
+            var kind = Array.FindIndex(parts, part => part is "movie" or "tv");
+            var owner = parts[kind + 1];
+            var node = System.Text.Json.Nodes.JsonNode.Parse(payload)!;
+            node["id"] = int.Parse(owner!);
+            return node.ToJsonString();
         }
 
         private string MovieSearchPayload()

@@ -98,11 +98,14 @@ public sealed class MatchingReplayService(MatchingReplayReader reader, IHttpClie
             return SnapshotUnsafe();
         }
     }
-    public ReplaySnapshot Stop(bool reset = false)
+    public ReplaySnapshot Stop(bool reset = false, Guid? expectedSessionId = null, long? expectedGeneration = null)
     {
         CancellationTokenSource? cancellation;
         lock (_gate)
         {
+            if ((expectedSessionId.HasValue && _session?.Id != expectedSessionId) ||
+                (expectedGeneration.HasValue && _generation != expectedGeneration))
+                throw new InvalidOperationException("replay_session_changed");
             ++_generation; // Also invalidates a delayed start when already idle.
             cancellation = _session?.Cancellation;
             if (_session is not null) _session.Status = "stopped";

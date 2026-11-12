@@ -29,6 +29,8 @@ public sealed class PosterMatchingOrchestrator
         PosterFetchRoutingContext context,
         CancellationToken ct)
     {
+        if (context.UseMovieV2 && context.UnifiedCategory == UnifiedCategory.Film)
+            return core.FetchMovieV2Async(context, ct);
         return context.UnifiedCategory switch
         {
             UnifiedCategory.JeuWindows => _gameMatchingStrategy.FetchPosterAsync(core, context, ct),

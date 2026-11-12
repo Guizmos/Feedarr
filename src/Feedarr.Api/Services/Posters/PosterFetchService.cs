@@ -130,6 +130,7 @@ public sealed partial class PosterFetchService
         _thumbQueue = thumbQueue ?? NoOpPosterThumbQueue.Instance;
         _externalProviderLimiter = externalProviderLimiter ?? NoOpExternalProviderLimiter.Instance;
         _opt = opt.Value;
+        _movieV2CohortMinimum = _opt.MatchingV2MoviesEnabled ? _releases.InitializeMovieV2Cohort(_opt.MatchingV2MoviesMinReleaseId) : long.MaxValue;
         _env = env;
         _matchingOrchestrator = matchingOrchestrator;
         _activeConfigResolver = activeConfigResolver;
@@ -1132,6 +1133,11 @@ public sealed partial class PosterFetchService
             return await RefreshManualMatchAsync(r, ct).ConfigureAwait(false);
         }
 
+        UnifiedCategoryMappings.TryParse(r.UnifiedCategory, out var initialCategory);
+        var activeMovieV2 = UseMovieV2(r, initialCategory);
+        if (_opt.MatchingV2MoviesEnabled && initialCategory == UnifiedCategory.Film && MatchingShadowState.From(r).Protected)
+            return new(true, 200, new { ok = true, preserved = true, reason = "matching_v2_existing_identity_preserved" }, r.SourceId);
+
         string? existingFile = (string?)r.PosterFile;
         long? sourceId = (long?)r.SourceId;
         int? tmdbIdStored = (int?)r.TmdbId;
@@ -1139,7 +1145,7 @@ public sealed partial class PosterFetchService
         int? tvdbIdStored = (int?)r.TvdbId;
         if (tvdbIdStored <= 0) tvdbIdStored = null;
 
-        if (skipIfExists && !string.IsNullOrWhiteSpace(existingFile))
+        if (!activeMovieV2 && skipIfExists && !string.IsNullOrWhiteSpace(existingFile))
         {
             var path = Path.Combine(PostersDirAbs, existingFile);
             if (System.IO.File.Exists(path))
@@ -1226,6 +1232,15 @@ public sealed partial class PosterFetchService
         var fingerprint = PosterMatchCacheService.BuildFingerprint(titleKey);
         var knownIds = new PosterMatchIds(tmdbIdStored, tvdbIdStored, null, null, null, r.TmdbMediaType ?? mediaType);
         var tvmazeEnabled = IsTvmazeEnabled();
+
+        if (UseMovieV2(r, unifiedCategory))
+        {
+            var v2Context = new PosterFetchRoutingContext(id, title, year, categoryName, unifiedCategory,
+                mediaType, tmdbIdStored, tvdbIdStored, normalizedTitle, season, episode, ambiguity,
+                titleKey, fingerprint, knownIds, tvmazeEnabled, forceRefresh, logSingle, sourceId)
+                { UseMovieV2 = true };
+            return await _matchingOrchestrator.FetchPosterAsync(this, v2Context, ct).ConfigureAwait(false);
+        }
 
         var cacheResult = await TryReuseFromMatchCacheAsync(
             id,
@@ -1597,6 +1612,29 @@ public sealed partial class PosterFetchService
         ObserveMatchingShadow(id, HistoricalTmdbChoice(tmdbMatchForIds.Candidate, tmdbMatchForIds.Score),
             new(title, year, tmdbCandidates, matchingShadowCapture?.IsComplete == true) { ObservedResults = matchingShadowCapture?.Results }, matchingShadowGeneration, captured: true);
 
+        return await CompleteTmdbMatchAsync(context, tmdbMatch, tmdbMatchForIds, ct).ConfigureAwait(false);
+    }
+
+    // Shared publication path: V2 changes the decision, never the business writers.
+    private async Task<PosterFetchResult> CompleteTmdbMatchAsync(PosterFetchRoutingContext context,
+        (TmdbClient.SearchResult? Candidate, float Score) tmdbMatch,
+        (TmdbClient.SearchResult? Candidate, float Score) tmdbMatchForIds, CancellationToken ct)
+    {
+        var id = context.ReleaseId;
+        var title = context.Title;
+        var year = context.Year;
+        var unifiedCategory = context.UnifiedCategory;
+        var mediaType = context.MediaType;
+        var tmdbIdStored = context.TmdbIdStored;
+        var tvdbIdStored = context.TvdbIdStored;
+        var normalizedTitle = context.NormalizedTitle;
+        var season = context.Season;
+        var episode = context.Episode;
+        var ambiguity = context.Ambiguity;
+        var fingerprint = context.Fingerprint;
+        var forceRefresh = context.ForceRefresh;
+        var logSingle = context.LogSingle;
+        var sourceId = context.SourceId;
         int? tvdbIdResolved = tmdbMatchForIds.Candidate?.TmdbId == tmdbIdStored ? tvdbIdStored : null;
         if (mediaType == "series" && tmdbMatchForIds.Candidate is not null && !tvdbIdResolved.HasValue)
         {
@@ -1630,6 +1668,7 @@ public sealed partial class PosterFetchService
             string? posterFileFinal = null;
             if (bytesTmdb is not null && bytesTmdb.Length > 0)
             {
+                if (context.UseMovieV2) _releases.ValidateMatching(id);
                 var file = $"tmdb-{identity.MediaType}-{identity.Id}-w500.jpg";
                 var full = Path.Combine(PostersDirAbs, file);
                 await PosterImageWriter.WriteAsync(full, bytesTmdb, ct).ConfigureAwait(false);
@@ -1817,6 +1856,7 @@ public sealed partial class PosterFetchService
         var fanartFile = $"fanart-{fanartType}-{tmdbIdForFanart.Value}{ext}";
         var fanartFull = Path.Combine(PostersDirAbs, fanartFile);
 
+        if (context.UseMovieV2) _releases.ValidateMatching(id);
         await PosterImageWriter.WriteAsync(fanartFull, fanartBytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, tmdbIdForFanart.Value, fanartUrl, fanartFile, fanartType);
         if (tvdbIdForFanart.HasValue) _releases.SaveTvdbId(id, tvdbIdForFanart.Value);

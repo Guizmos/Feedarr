@@ -1880,61 +1880,54 @@ public sealed partial class ReleaseRepository
     {
         if (string.IsNullOrWhiteSpace(posterFile))
             throw new ArgumentException("posterFile cannot be null or empty", nameof(posterFile));
-
         using var conn = _db.Open();
-        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-
-        var entityId = conn.ExecuteScalar<long?>(
-            "SELECT entity_id FROM releases WHERE id = @id",
-            new { id }
-        );
-
         using var tx = conn.BeginTransaction();
+        SavePosterCore(conn, tx, id, tmdbId, posterPath, posterFile, tmdbMediaType, identityProvider, identityProviderId);
+        AdvanceMatchingSnapshot(conn, tx, id);
+        tx.Commit();
+    }
+
+    private void SavePosterCore(System.Data.IDbConnection conn, System.Data.IDbTransaction tx,
+        long id, int? tmdbId, string? posterPath, string posterFile, string? tmdbMediaType,
+        string? identityProvider = null, string? identityProviderId = null)
+    {
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var entityId = conn.ExecuteScalar<long?>("SELECT entity_id FROM releases WHERE id=@id", new { id }, tx);
         tmdbMediaType = Feedarr.Api.Services.Matching.TmdbIdentity.NormalizeType(tmdbMediaType);
         ValidateMatching(conn, tx, id, tmdbId, tmdbType: tmdbMediaType);
-        try
+        var provider = identityProvider ?? (tmdbId.HasValue ? "tmdb" : null);
+        var providerId = identityProviderId ?? tmdbId?.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (provider is not null && providerId is not null)
+            PrepareExternalIdentity(conn, tx, id, provider, providerId, tmdbMediaType, tmdbId, publishingPoster: true);
+        if (entityId.HasValue && entityId.Value > 0)
         {
-            var provider = identityProvider ?? (tmdbId.HasValue ? "tmdb" : null);
-            var providerId = identityProviderId ?? tmdbId?.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            if (provider is not null && providerId is not null)
-                PrepareExternalIdentity(conn, tx, id, provider, providerId, tmdbMediaType, tmdbId, publishingPoster: true);
-            if (entityId.HasValue && entityId.Value > 0)
-            {
-                conn.Execute(
-                    """
-                    UPDATE media_entities
-                    SET tmdb_media_type = COALESCE(@tmdbMediaType, tmdb_media_type), tmdb_id = COALESCE(@tmdbId, tmdb_id),
-                        poster_file = @posterFile,
-                        poster_updated_at_ts = @ts,
-                        updated_at_ts = @ts
-                    WHERE id = @entityId;
-                    """,
-                    new { entityId, tmdbId, tmdbMediaType, posterFile, ts = now },
-                    tx
-                );
-            }
-
             conn.Execute(
                 """
-                UPDATE releases
+                UPDATE media_entities
                 SET tmdb_media_type = COALESCE(@tmdbMediaType, tmdb_media_type), tmdb_id = COALESCE(@tmdbId, tmdb_id),
-                    poster_path = COALESCE(@posterPath, poster_path),
                     poster_file = @posterFile,
-                    poster_updated_at_ts = @ts
-                WHERE id = @id;
+                    poster_updated_at_ts = @ts,
+                    updated_at_ts = @ts
+                WHERE id = @entityId;
                 """,
-                new { id, tmdbId, tmdbMediaType, posterPath, posterFile, ts = now },
+                new { entityId, tmdbId, tmdbMediaType, posterFile, ts = now },
                 tx
             );
+        }
 
-            AdvanceMatchingSnapshot(conn, tx, id);
-            tx.Commit();
-        }
-        catch
-        {
-            tx.Rollback();
-            throw;
-        }
+        conn.Execute(
+            """
+            UPDATE releases
+            SET tmdb_media_type = COALESCE(@tmdbMediaType, tmdb_media_type), tmdb_id = COALESCE(@tmdbId, tmdb_id),
+                poster_path = COALESCE(@posterPath, poster_path),
+                poster_file = @posterFile,
+                poster_updated_at_ts = @ts
+            WHERE id = @id;
+            """,
+            new { id, tmdbId, tmdbMediaType, posterPath, posterFile, ts = now },
+            tx
+        );
+
     }
 
     public PosterMatch? GetPosterForTitleClean(long excludeId, string titleClean, string? normalizedTitle, string? mediaType, int? year)
@@ -2408,7 +2401,29 @@ LEFT JOIN media_entities me
     {
         using var conn = _db.Open();
         using var tx = conn.BeginTransaction(deferred: false);
-        ValidateMatching(conn, tx, id, provider: provider, providerId: providerId, tmdbType: Feedarr.Api.Services.Matching.TmdbIdentity.NormalizeType(tmdbMediaType));
+        UpdateExternalDetailsCore(conn, tx, id, provider, providerId, title, overview, tagline, genres, releaseDate, runtimeMinutes, rating, votes, directors, writers, cast, tmdbMediaType);
+        AdvanceMatchingSnapshot(conn, tx, id);
+        tx.Commit();
+    }
+
+    private void UpdateExternalDetailsCore(System.Data.IDbConnection conn, System.Data.IDbTransaction tx,
+        long id,
+        string provider,
+        string providerId,
+        string? title,
+        string? overview,
+        string? tagline,
+        string? genres,
+        string? releaseDate,
+        int? runtimeMinutes,
+        double? rating,
+        int? votes,
+        string? directors,
+        string? writers,
+        string? cast,
+        string? tmdbMediaType, bool validate = true)
+    {
+        if (validate) ValidateMatching(conn, tx, id, provider: provider, providerId: providerId, tmdbType: Feedarr.Api.Services.Matching.TmdbIdentity.NormalizeType(tmdbMediaType));
         PrepareExternalIdentity(conn, tx, id, provider, providerId, tmdbMediaType,
             provider == "tmdb" && int.TryParse(providerId, out var parsedId) ? parsedId : null, publishingPoster: false);
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -2526,8 +2541,6 @@ LEFT JOIN media_entities me
                 new { fp }, tx
             );
         }
-        AdvanceMatchingSnapshot(conn, tx, id);
-        tx.Commit();
     }
 
     public sealed record RetentionResult(

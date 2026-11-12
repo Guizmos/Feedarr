@@ -22,4 +22,7 @@ public sealed record PosterFetchRoutingContext(
     bool TvmazeEnabled,
     bool ForceRefresh,
     bool LogSingle,
-    long? SourceId);
+    long? SourceId)
+{
+    internal bool UseMovieV2 { get; init; }
+}

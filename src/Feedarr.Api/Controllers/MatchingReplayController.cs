@@ -35,8 +35,14 @@ public sealed class MatchingReplayController(MatchingReplayService replay) : Con
         catch (Microsoft.Data.Sqlite.SqliteException) { return StatusCode(503, new { error = "replay_selection_read_unavailable" }); }
         catch (InvalidOperationException) { return Conflict(new { error = "replay_selection_busy" }); }
     }
+    public sealed record StopRequest(Guid? SessionId = null, long? Generation = null);
     [HttpPost("stop")]
-    public IActionResult Stop() => Allowed() ? Ok(replay.Stop()) : Unauthorized();
+    public IActionResult Stop([Microsoft.AspNetCore.Mvc.FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] StopRequest? request = null)
+    {
+        if (!Allowed()) return Unauthorized();
+        try { return Ok(replay.Stop(expectedSessionId: request?.SessionId, expectedGeneration: request?.Generation)); }
+        catch (InvalidOperationException) { return Conflict(new { error = "replay_session_changed" }); }
+    }
     [HttpPost("reset")]
     public IActionResult Reset() => Allowed() ? Ok(replay.Stop(reset: true)) : Unauthorized();
     [HttpGet("export")]

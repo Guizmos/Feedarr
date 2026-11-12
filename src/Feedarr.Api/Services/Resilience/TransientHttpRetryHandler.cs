@@ -9,13 +9,15 @@ namespace Feedarr.Api.Services.Resilience;
 /// </summary>
 internal sealed class TransientHttpRetryHandler : DelegatingHandler
 {
+    internal static readonly HttpRequestOptionsKey<bool> DisableRetries = new("Feedarr.DisableTransientRetries");
     private const int MaxRetries = 2;
 
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken ct)
     {
         // Only retry idempotent methods — POST/PUT may not be safe to replay
-        if (request.Method != HttpMethod.Get && request.Method != HttpMethod.Head)
+        if ((request.Options.TryGetValue(DisableRetries, out var disable) && disable) ||
+            (request.Method != HttpMethod.Get && request.Method != HttpMethod.Head))
             return await base.SendAsync(request, ct).ConfigureAwait(false);
         var snapshot = await RequestSnapshot.CreateAsync(request, ct).ConfigureAwait(false);        HttpResponseMessage? lastResponse = null;
 

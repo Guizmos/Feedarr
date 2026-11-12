@@ -80,14 +80,19 @@ public sealed partial class TmdbClient
         return s.Length > 200 ? s[..200] : s;
     }
 
-    private async Task<T?> GetJsonAsync<T>(string relativeUrl, CancellationToken ct)
+    private async Task<T?> GetJsonAsync<T>(string relativeUrl, CancellationToken ct, bool disableRetries = false)
     {
         var recorded = false;
         var sw = Stopwatch.StartNew();
 
         try
         {
-            using var resp = await _http.GetAsync(relativeUrl, ct).ConfigureAwait(false);            var ok = resp.IsSuccessStatusCode;
+            using var request = disableRetries ? new HttpRequestMessage(HttpMethod.Get, relativeUrl) : null;
+            if (request is not null) request.Options.Set(Feedarr.Api.Services.Resilience.TransientHttpRetryHandler.DisableRetries, true);
+            using var resp = request is null
+                ? await _http.GetAsync(relativeUrl, ct).ConfigureAwait(false)
+                : await _http.SendAsync(request, ct).ConfigureAwait(false);
+            var ok = resp.IsSuccessStatusCode;
             _stats.RecordTmdb(ok, sw.ElapsedMilliseconds);
             recorded = true;
             if (!ok) resp.EnsureSuccessStatusCode();
@@ -230,7 +235,7 @@ public sealed partial class TmdbClient
     /// Picks a poster path with language priority based on UI media-info settings,
     /// then common fallbacks, then language-agnostic posters.
     /// </summary>
-    public async Task<string?> GetPreferredPosterPathAsync(int tmdbId, string mediaType, CancellationToken ct)
+    public async Task<string?> GetPreferredPosterPathAsync(int tmdbId, string mediaType, CancellationToken ct, bool verifyIdentity = false)
     {
         var key = TryGetApiKey();
         if (string.IsNullOrWhiteSpace(key)) return null;
@@ -240,7 +245,9 @@ public sealed partial class TmdbClient
         var posterLanguagePriority = UiLanguageCatalog.BuildPosterLanguagePriority(GetMediaInfoLanguage());
         var includeImageLanguage = string.Join(",", posterLanguagePriority);
         var url = $"{kind}/{tmdbId}/images?api_key={Uri.EscapeDataString(key)}&include_image_language={Uri.EscapeDataString(includeImageLanguage)}";
-        var data = await GetJsonAsync<ImagesResponse>(url, ct).ConfigureAwait(false);        var posters = data?.Posters?
+        var data = await GetJsonAsync<ImagesResponse>(url, ct).ConfigureAwait(false);
+        if (verifyIdentity && (data is null || !MatchesResponseIdentity(data.Id, tmdbId))) throw new InvalidDataException("tmdb_images_identity_mismatch");
+        var posters = data?.Posters?
             .Where(x => !string.IsNullOrWhiteSpace(x.FilePath))
             .OrderByDescending(x => x.VoteCount)
             .ThenByDescending(x => x.VoteAverage)
@@ -346,7 +353,13 @@ public sealed partial class TmdbClient
     }
 
     // --------- Details (Overview/Genres/etc) ----------
-    public async Task<DetailsResult?> GetMovieDetailsAsync(int tmdbId, CancellationToken ct)
+    public Task<DetailsResult?> GetMovieDetailsAsync(int tmdbId, CancellationToken ct)
+        => GetMovieDetailsCoreAsync(tmdbId, ct, false);
+
+    internal Task<DetailsResult?> GetMoviePublicationDetailsAsync(int tmdbId, CancellationToken ct)
+        => GetMovieDetailsCoreAsync(tmdbId, ct, true);
+
+    private async Task<DetailsResult?> GetMovieDetailsCoreAsync(int tmdbId, CancellationToken ct, bool verifyIdentity)
     {
         var key = TryGetApiKey();
         if (string.IsNullOrWhiteSpace(key)) return null;
@@ -364,7 +377,11 @@ public sealed partial class TmdbClient
             return null;
         }
         if (r is null) return null;
-        var credits = await GetMovieCreditsAsync(tmdbId, mediaInfoLanguage, ct).ConfigureAwait(false);
+        if (verifyIdentity && (!MatchesResponseIdentity(r.Id, tmdbId) ||
+            (r.MediaType is { } media && (media.ValueKind != JsonValueKind.String || media.GetString() != "movie"))))
+            throw new InvalidDataException("tmdb_details_identity_mismatch");
+        var credits = await GetMovieCreditsAsync(tmdbId, mediaInfoLanguage, ct, verifyIdentity).ConfigureAwait(false);
+        if (verifyIdentity && credits is null) throw new InvalidDataException("tmdb_credits_unavailable");
         return new DetailsResult(
             r.Title?.Trim(),
             r.Overview?.Trim(),
@@ -429,6 +446,8 @@ public sealed partial class TmdbClient
 
     private sealed class SearchItem
     {
+        [JsonPropertyName("media_type")]
+        public JsonElement? MediaType { get; set; }
         [JsonPropertyName("id")]
         public int Id { get; set; }
 
@@ -477,6 +496,7 @@ public sealed partial class TmdbClient
 
     private sealed class ImagesResponse
     {
+        [JsonPropertyName("id")] public JsonElement? Id { get; set; }
         [JsonPropertyName("backdrops")]
         public List<ImageItem>? Backdrops { get; set; }
 
@@ -507,6 +527,8 @@ public sealed partial class TmdbClient
 
     private sealed class MovieDetailsResponse
     {
+        [JsonPropertyName("id")] public JsonElement? Id { get; set; }
+        [JsonPropertyName("media_type")] public JsonElement? MediaType { get; set; }
         [JsonPropertyName("title")]
         public string? Title { get; set; }
 
@@ -569,6 +591,7 @@ public sealed partial class TmdbClient
 
     private sealed class CreditsResponse
     {
+        [JsonPropertyName("id")] public JsonElement? Id { get; set; }
         [JsonPropertyName("cast")]
         public List<CastItem>? Cast { get; set; }
 
@@ -594,6 +617,9 @@ public sealed partial class TmdbClient
         public string? Job { get; set; }
     }
 
+    private static bool MatchesResponseIdentity(JsonElement? element, int expected)
+        => element is { ValueKind: JsonValueKind.Number } value && value.TryGetInt32(out var id) && id == expected;
+
     private static int? ExtractYear(string? date)
     {
         if (string.IsNullOrWhiteSpace(date)) return null;
@@ -611,7 +637,7 @@ public sealed partial class TmdbClient
         return names.Count == 0 ? null : string.Join(", ", names);
     }
 
-    private async Task<CreditsResult?> GetMovieCreditsAsync(int tmdbId, string mediaInfoLanguage, CancellationToken ct)
+    private async Task<CreditsResult?> GetMovieCreditsAsync(int tmdbId, string mediaInfoLanguage, CancellationToken ct, bool verifyIdentity = false)
     {
         var key = TryGetApiKey();
         if (string.IsNullOrWhiteSpace(key)) return null;
@@ -628,6 +654,7 @@ public sealed partial class TmdbClient
             return null;
         }
         if (r is null) return null;
+        if (verifyIdentity && !MatchesResponseIdentity(r.Id, tmdbId)) throw new InvalidDataException("tmdb_credits_identity_mismatch");
 
         var directors = r.Crew?
             .Where(x => string.Equals(x.Job, "Director", StringComparison.OrdinalIgnoreCase))
