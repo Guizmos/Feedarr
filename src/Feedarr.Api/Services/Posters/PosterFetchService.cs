@@ -107,10 +107,12 @@ public sealed partial class PosterFetchService
         PosterThumbService? thumbService = null,
         IPosterThumbQueue? thumbQueue = null,
         IExternalProviderLimiter? externalProviderLimiter = null,
-        IPosterFileStore? fileStore = null)
+        IPosterFileStore? fileStore = null,
+        MatchingShadowDiagnostics? shadowDiagnostics = null)
     {
         _releases = releases;
         _fileStore = fileStore ?? new PosterFileStore();
+        ShadowDiagnostics = shadowDiagnostics ?? new();
         _activity = activity;
         _tmdb = tmdb;
         _fanart = fanart;

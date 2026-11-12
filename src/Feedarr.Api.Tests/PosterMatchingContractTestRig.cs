@@ -269,6 +269,8 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         conn.Execute("UPDATE releases SET title_manual_override=1 WHERE id=@id", new { id });
     }
 
+    internal Feedarr.Api.Data.Db Database => _db;
+    internal Feedarr.Api.Services.Matching.Replay.MatchingReplayReader ReplayReader => new(_db, new DeterministicProtectionService());
     internal PosterFetchService Posters => _posters;
     internal Feedarr.Api.Services.Matching.MatchingShadowDiagnostics ShadowDiagnostics => _posters.ShadowDiagnostics;
     internal string DatabasePath => _db.DbPath;

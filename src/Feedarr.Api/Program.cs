@@ -1,3 +1,5 @@
+using Feedarr.Api.Services.Matching;
+using Feedarr.Api.Services.Matching.Replay;
 using Dapper;
 using Feedarr.Api.Data;
 using Feedarr.Api.Data.Repositories;
@@ -220,6 +222,9 @@ builder.Services.AddSingleton<AudioMatchingStrategy>();
 builder.Services.AddSingleton<GenericMatchingStrategy>();
 builder.Services.AddSingleton<PosterMatchingOrchestrator>();
 builder.Services.AddSingleton<PosterThumbService>();
+builder.Services.AddSingleton<MatchingShadowDiagnostics>();
+builder.Services.AddSingleton<MatchingReplayReader>();
+builder.Services.AddSingleton<MatchingReplayService>();
 builder.Services.AddSingleton<PosterFetchService>();
 builder.Services.AddSingleton<IPosterFileStore, PosterFileStore>();
 builder.Services.AddSingleton<PosterMatchCacheService>();
@@ -329,6 +334,14 @@ builder.Services.AddHttpClient<TmdbClient>(c =>
 }).UsePublicProviderTransport()
   .AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
+
+// Diagnostic replay only: same SSRF/validated connector policy, no statistics, retries or URL logging.
+builder.Services.AddTransient<ReplayBudgetHandler>();
+builder.Services.AddHttpClient("tmdb-matching-replay", c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(20);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
+}).RemoveAllLoggers().UsePublicProviderTransport().AddHttpMessageHandler<ReplayBudgetHandler>();
 
 // Fanart
 builder.Services.AddHttpClient<FanartClient>(c =>

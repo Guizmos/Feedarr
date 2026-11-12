@@ -47,6 +47,18 @@ public sealed class MatchingShadowDiagnostics
         MatchingShadowBatch? batch, double durationMs)
     {
         if (!IsCurrent(generation)) return;
+        var entry = Project(observation, rawTitle, batch, durationMs);
+        lock (_gate)
+        {
+            if (!_enabled || generation != _generation) return; // Stop/reset never waits for text projection.
+            while (_entries.Count >= Capacity) _entries.Dequeue();
+            _entries.Enqueue((observation, entry));
+        }
+    }
+
+    internal static ShadowEntry Project(MatchingShadowObservation observation, string? rawTitle,
+        MatchingShadowBatch? batch, double durationMs)
+    {
         var result = observation.V2;
         var decision = result?.Decision.ToString().ToLowerInvariant() ?? "not_evaluable";
         var historical = observation.Historical;
@@ -58,23 +70,17 @@ public sealed class MatchingShadowDiagnostics
         {
             var row = batch?.Results?.FirstOrDefault(r => r.TmdbId.ToString(System.Globalization.CultureInfo.InvariantCulture) == c.Identity.Id &&
                 TmdbIdentity.NormalizeType(r.MediaType) == (c.Identity.MediaType == SearchMediaType.Movie ? "movie" : "tv"));
-            return new ShadowCandidate(Identity(c.Identity)!, SafeText(row?.Title), row?.Year, c.Confidence,
+            return new ShadowCandidate(Identity(c.Identity)!, SafeText(row?.Title ?? observation.ProviderCandidates.FirstOrDefault(p => p.Identity == c.Identity)?.Title), row?.Year ?? observation.ProviderCandidates.FirstOrDefault(p => p.Identity == c.Identity)?.Year, c.Confidence,
                 c.Decision.ToString().ToLowerInvariant(), c.PositiveReasons.ToArray(), c.Contradictions.Select(x => x.Code).ToArray(),
                 observation.ProviderCandidates.Where(p => p.Identity == c.Identity).SelectMany(p => p.OfficialTitles ?? Array.Empty<OfficialProviderTitle>())
                     .Distinct().Select(t => new ShadowOfficialTitle(SafeText(t.Title), t.Kind.ToString(), t.Source.ToString(),
                         t.Language is null ? null : SafeText(t.Language)[..Math.Min(16, SafeText(t.Language).Length)])).ToArray());
         }).ToArray() ?? Array.Empty<ShadowCandidate>();
         var queries = observation.Queries.Select(q => new ShadowQuery(SafeText(q.Title), q.Year, q.YearEvidence.ToString())).ToArray();
-        var entry = new ShadowEntry(observation.ReleaseId, SafeText(rawTitle), historical.Decision,
+        return new ShadowEntry(observation.ReleaseId, SafeText(rawTitle), historical.Decision,
             Identity(historical.Identity), historical.Confidence, decision, Identity(result?.SelectedIdentity), divergence,
             double.IsFinite(durationMs) ? Math.Max(0, durationMs) : 0, observation.PreserveExisting,
             observation.MissingInformation.Concat(result?.Reasons ?? Array.Empty<string>()).ToArray(), queries, candidates);
-        lock (_gate)
-        {
-            if (!_enabled || generation != _generation) return; // Stop/reset never waits for text projection.
-            while (_entries.Count >= Capacity) _entries.Dequeue();
-            _entries.Enqueue((observation, entry));
-        }
     }
 
     private ShadowSnapshot SnapshotUnsafe()

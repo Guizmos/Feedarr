@@ -5,7 +5,7 @@ namespace Feedarr.Api.Services.Posters;
 
 public sealed partial class PosterFetchService
 {
-    public MatchingShadowDiagnostics ShadowDiagnostics { get; } = new();
+    public MatchingShadowDiagnostics ShadowDiagnostics { get; }
     internal IReadOnlyList<MatchingShadowObservation> MatchingShadowObservations => ShadowDiagnostics.Observations;
 
     private void ObserveMatchingShadow(long releaseId, HistoricalShadowDecision historical, MatchingShadowBatch? batch = null,

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiPost, apiPut } from "../../api/client.js";
+import MatchingReplayPanel from "./MatchingReplayPanel.jsx";
 import MatchingShadowEntry from "./MatchingShadowEntry.jsx";
 import { shadowCounts } from "./matchingShadowModel.js";
 
@@ -44,7 +45,7 @@ export default function MatchingShadowPanel() {
   const entries = (report?.entries || []).filter(entry => !divergencesOnly || entry.divergence);
   return <section className="settings-card settings-card--full" aria-label="Matching V2 Shadow Beta">
     <div className="settings-card__title">Matching V2 Shadow — Beta</div>
-    <p>Observation uniquement. Le moteur historique conserve les associations. Aucune recherche provider supplémentaire.</p>
+    <p>Observation uniquement. Le moteur historique conserve les associations. Le Shadow passif ne lance aucune recherche provider supplémentaire.</p>
     <p>État : <strong>{report ? (report.enabled ? "ON" : "OFF") : "Chargement…"}</strong>. Retour à OFF après redémarrage.</p>
     <div className="indexer-actions">
       <button type="button" className="btn" disabled={!report || busy || report.enabled} onClick={() => change("enable")}>Activer Matching V2 Shadow</button>
@@ -52,6 +53,7 @@ export default function MatchingShadowPanel() {
       <button type="button" className="btn" disabled={!report || busy} onClick={() => change("reset")}>Remettre les statistiques à zéro</button>
       <button type="button" className="btn" disabled={busy} onClick={load}>Actualiser</button>
     </div>
+    <MatchingReplayPanel />
     {error && <p role="alert">{error}</p>}
     {report && <>
       <p>Fenêtre des {report.observations} dernières observations (maximum {report.capacity}), {report.releases} releases distinctes,
