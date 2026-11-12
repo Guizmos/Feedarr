@@ -4,8 +4,9 @@ namespace Feedarr.Api.Services.Matching;
 
 public sealed record ShadowIdentity(string Provider, string Type, string Id);
 public sealed record ShadowQuery(string Title, int? Year, string YearEvidence);
+public sealed record ShadowOfficialTitle(string Title, string Kind, string Source, string? Language);
 public sealed record ShadowCandidate(ShadowIdentity Identity, string Title, int? Year, double Confidence,
-    string Decision, IReadOnlyList<string> Reasons, IReadOnlyList<string> Contradictions);
+    string Decision, IReadOnlyList<string> Reasons, IReadOnlyList<string> Contradictions, IReadOnlyList<ShadowOfficialTitle>? OfficialTitles = null);
 public sealed record ShadowEntry(long ReleaseId, string RawTitle, string HistoricalDecision, ShadowIdentity? HistoricalIdentity,
     double? HistoricalScore, string Decision, ShadowIdentity? SelectedIdentity, bool Divergence,
     double DurationMs, bool PreserveExisting, IReadOnlyList<string> Reasons,
@@ -58,7 +59,10 @@ public sealed class MatchingShadowDiagnostics
             var row = batch?.Results?.FirstOrDefault(r => r.TmdbId.ToString(System.Globalization.CultureInfo.InvariantCulture) == c.Identity.Id &&
                 TmdbIdentity.NormalizeType(r.MediaType) == (c.Identity.MediaType == SearchMediaType.Movie ? "movie" : "tv"));
             return new ShadowCandidate(Identity(c.Identity)!, SafeText(row?.Title), row?.Year, c.Confidence,
-                c.Decision.ToString().ToLowerInvariant(), c.PositiveReasons.ToArray(), c.Contradictions.Select(x => x.Code).ToArray());
+                c.Decision.ToString().ToLowerInvariant(), c.PositiveReasons.ToArray(), c.Contradictions.Select(x => x.Code).ToArray(),
+                observation.ProviderCandidates.Where(p => p.Identity == c.Identity).SelectMany(p => p.OfficialTitles ?? Array.Empty<OfficialProviderTitle>())
+                    .Distinct().Select(t => new ShadowOfficialTitle(SafeText(t.Title), t.Kind.ToString(), t.Source.ToString(),
+                        t.Language is null ? null : SafeText(t.Language)[..Math.Min(16, SafeText(t.Language).Length)])).ToArray());
         }).ToArray() ?? Array.Empty<ShadowCandidate>();
         var queries = observation.Queries.Select(q => new ShadowQuery(SafeText(q.Title), q.Year, q.YearEvidence.ToString())).ToArray();
         var entry = new ShadowEntry(observation.ReleaseId, SafeText(rawTitle), historical.Decision,

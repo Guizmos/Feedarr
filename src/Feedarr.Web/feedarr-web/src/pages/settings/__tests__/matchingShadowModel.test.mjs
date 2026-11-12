@@ -27,7 +27,7 @@ test("entry renders untrusted titles as escaped text and preserves hypothesis ev
     selectedIdentity: null, decision: "ambiguous", divergence: true, durationMs: 1, preserveExisting: false,
     reasons: ["close-competing-identities"], queries: [{ title: "Blade Runner", year: 2049, yearEvidence: "Hypothesis" }],
     candidates: [{ title: "<script>alert(1)</script>", year: 1982, identity: { provider: "tmdb", type: "tv", id: "123" },
-      decision: "reject", confidence: 0.1, reasons: [], contradictions: ["media-type-mismatch"] }],
+      decision: "reject", confidence: 0.1, reasons: [], contradictions: ["media-type-mismatch"], officialTitles: [{ title: "<iframe>official</iframe>", kind: "Localized", language: "fr-FR", source: "SearchTitle" }] }],
   } }));
   assert.ok(!html.includes("<img"));
   assert.ok(!html.includes("<script>"));
@@ -36,4 +36,8 @@ test("entry renders untrusted titles as escaped text and preserves hypothesis ev
   assert.ok(html.includes("tmdb:tv:123"));
   assert.ok(html.includes("Hypothesis"));
   assert.ok(html.includes("media-type-mismatch"));
+  assert.ok(!html.includes("<iframe>"));
+  assert.ok(html.includes("&lt;iframe&gt;official"));
+  assert.ok(html.includes("fr-FR"));
+  assert.ok(html.includes("SearchTitle"));
 });

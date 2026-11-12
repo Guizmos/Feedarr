@@ -75,7 +75,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
     private readonly IgdbClient _igdbDetails;
     private readonly RawgContractHandler _rawgHandler;
 
-    public PosterMatchingContractTestRig(PosterContractScenario scenario, bool matchingShadowEnabled = false, bool completeTmdbMetadata = false, int tmdbTotalPages = 1)
+    public PosterMatchingContractTestRig(PosterContractScenario scenario, bool matchingShadowEnabled = false, bool completeTmdbMetadata = false, int tmdbTotalPages = 1, string? localizedMovieTitle = null)
     {
         _workspace = new TestWorkspace();
 
@@ -110,7 +110,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             NullLogger<ActiveExternalProviderConfigResolver>.Instance);
 
         _tmdbHandler = new TmdbHandler(scenario);
-        var tmdb = new TmdbClient(new HttpClient(completeTmdbMetadata ? new CompleteSearchMetadataHandler(_tmdbHandler, tmdbTotalPages) : _tmdbHandler), settings, stats, resolver);
+        var tmdb = new TmdbClient(new HttpClient(completeTmdbMetadata ? new CompleteSearchMetadataHandler(_tmdbHandler, tmdbTotalPages, localizedMovieTitle) : _tmdbHandler), settings, stats, resolver);
         var fanart = new FanartClient(new HttpClient(new FanartHandler(scenario)), stats, resolver, settings);
         _igdbHandler = new IgdbHandler(scenario);
         var igdb = new IgdbClient(new HttpClient(_igdbHandler), stats, resolver);
@@ -557,7 +557,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         }
     }
 
-    private sealed class CompleteSearchMetadataHandler(HttpMessageHandler inner, int totalPages) : DelegatingHandler(inner)
+    private sealed class CompleteSearchMetadataHandler(HttpMessageHandler inner, int totalPages, string? localizedMovieTitle) : DelegatingHandler(inner)
     {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -565,6 +565,9 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             if (request.RequestUri!.AbsolutePath.Contains("/search/"))
             {
                 var json = System.Text.Json.Nodes.JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))!;
+                if (localizedMovieTitle is not null && request.RequestUri.AbsolutePath.Contains("/search/movie") &&
+                    Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query).ContainsKey("language"))
+                    foreach (var row in json["results"]!.AsArray()) row!["title"] = localizedMovieTitle;
                 json["page"] = 1;
                 json["total_pages"] = totalPages;
                 json["total_results"] = json["results"]!.AsArray().Count;

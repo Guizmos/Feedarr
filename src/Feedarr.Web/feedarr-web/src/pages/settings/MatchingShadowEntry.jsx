@@ -11,6 +11,9 @@ export default function MatchingShadowEntry({ entry }) {
         <ul>{entry.candidates.map((candidate, i) => <li key={i}>
           {candidate.title} ({candidate.year ?? "année inconnue"}) · {shadowIdentity(candidate.identity)} · {candidate.decision} · confiance {candidate.confidence.toFixed(3)}
           <div>Raisons : {candidate.reasons.join(", ") || "—"}</div>
+          <ul>{(candidate.officialTitles || []).map((title, j) => <li key={j}>
+            Titre provider : {title.title} · {title.kind} · {title.language || "langue de réponse non spécifiée"} · {title.source}
+          </li>)}</ul>
           <div>Contradictions : {candidate.contradictions.join(", ") || "—"}</div>
         </li>)}</ul>
       </details>;

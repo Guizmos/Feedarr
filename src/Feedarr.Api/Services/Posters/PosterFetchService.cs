@@ -1593,7 +1593,7 @@ public sealed partial class PosterFetchService
         var idsCandidate = posterCandidate.Candidate is not null ? posterCandidate : accepted.FirstOrDefault();
         var tmdbMatchForIds = (Candidate: idsCandidate.Candidate, Score: idsCandidate.Score);
         ObserveMatchingShadow(id, HistoricalTmdbChoice(tmdbMatchForIds.Candidate, tmdbMatchForIds.Score),
-            new(title, year, tmdbCandidates, matchingShadowCapture?.IsComplete == true), matchingShadowGeneration, captured: true);
+            new(title, year, tmdbCandidates, matchingShadowCapture?.IsComplete == true) { ObservedResults = matchingShadowCapture?.Results }, matchingShadowGeneration, captured: true);
 
         int? tvdbIdResolved = tmdbMatchForIds.Candidate?.TmdbId == tmdbIdStored ? tvdbIdStored : null;
         if (mediaType == "series" && tmdbMatchForIds.Candidate is not null && !tvdbIdResolved.HasValue)

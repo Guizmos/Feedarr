@@ -38,11 +38,15 @@ internal sealed record MatchingShadowState
 
 internal sealed record HistoricalShadowDecision(string Decision, SearchIdentity? Identity, double? Confidence);
 internal sealed record MatchingShadowBatch(string QueryTitle, int? QueryYear,
-    IReadOnlyList<TmdbClient.SearchResult>? Results, bool CoverageComplete);
+    IReadOnlyList<TmdbClient.SearchResult>? Results, bool CoverageComplete)
+{
+    internal IReadOnlyList<TmdbClient.ObservedSearchResult>? ObservedResults { get; init; }
+}
 internal sealed record MatchingShadowObservation(long ReleaseId, string Status,
     HistoricalShadowDecision Historical, CandidateRankingResult? V2, IReadOnlyList<string> MissingInformation,
     bool PreserveExisting)
 {
+    internal IReadOnlyList<ProviderSearchCandidate> ProviderCandidates { get; init; } = Array.Empty<ProviderSearchCandidate>();
     internal IReadOnlyList<SearchCandidate> Queries { get; init; } = Array.Empty<SearchCandidate>();
 }
 
@@ -77,15 +81,34 @@ internal static class MatchingShadowEvaluator
             if (batch.Results.Count > new CandidateRankingPolicy().MaximumResults) return Missing("provider_result_limit_exceeded");
             if (batch.Results.Any(r => r.TmdbId <= 0 || TmdbIdentity.NormalizeType(r.MediaType) is null))
                 return Missing("provider_identity_type_or_id_missing");
-            var results = batch.Results.Select(r => new ProviderSearchCandidate(
-                new("tmdb", TmdbIdentity.NormalizeType(r.MediaType) == "movie" ? SearchMediaType.Movie : SearchMediaType.Series, r.TmdbId.ToString(System.Globalization.CultureInfo.InvariantCulture)),
-                r.Title, r.Year, string.IsNullOrWhiteSpace(r.OriginalTitle) ? null : new[] { r.OriginalTitle })).ToArray();
+            var observed = batch.ObservedResults ?? batch.Results.Select(r => new TmdbClient.ObservedSearchResult(r, null)).ToArray();
+            if (observed.Count > new CandidateRankingPolicy().MaximumResults) return Missing("provider_result_limit_exceeded");
+            if (observed.Any(r => r.Result.TmdbId <= 0 || TmdbIdentity.NormalizeType(r.Result.MediaType) is null))
+                return Missing("provider_identity_type_or_id_missing");
+            static SearchIdentity Identity(TmdbClient.SearchResult r) => new("tmdb",
+                TmdbIdentity.NormalizeType(r.MediaType) == "movie" ? SearchMediaType.Movie : SearchMediaType.Series,
+                r.TmdbId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            var results = observed.GroupBy(r => Identity(r.Result)).SelectMany(group =>
+            {
+                var identity = group.Key;
+                var titles = group.SelectMany(r => new[]
+                {
+                    new OfficialProviderTitle(r.Result.Title, identity,
+                        r.ResponseLanguage is null ? ProviderTitleKind.ResponseTitle : ProviderTitleKind.Localized,
+                        ProviderTitleSource.SearchTitle, r.ResponseLanguage),
+                    new OfficialProviderTitle(r.Result.OriginalTitle ?? "", identity, ProviderTitleKind.Original,
+                        ProviderTitleSource.SearchOriginalTitle, r.Result.OriginalLanguage)
+                }).Where(t => !string.IsNullOrWhiteSpace(t.Title)).Distinct().ToArray();
+                // Preserve conflicting years as separate records: the ranker must not hide them.
+                return group.GroupBy(r => r.Result.Year).Select(rows => new ProviderSearchCandidate(identity,
+                    rows.First().Result.Title, rows.Key, OfficialTitles: titles));
+            }).ToArray();
             var ranked = SearchCandidateRanker.Rank(new(queries, category, type == "movie" ? SearchMediaType.Movie : SearchMediaType.Series,
                 Season: current.Season, Episode: current.Episode), results);
             // Re-read after evaluation as well: a worker result computed before a
             // concurrent manual correction is never published as a current shadow decision.
             if (readCurrent() is not { } latest || latest != current) return Missing("persisted_state_changed_during_evaluation", true);
-            return new(expected.Id, "evaluated", historical, ranked, Array.Empty<string>(), false) { Queries = queries };
+            return new(expected.Id, "evaluated", historical, ranked, Array.Empty<string>(), false) { Queries = queries, ProviderCandidates = results };
         }
         catch (Exception)
         {

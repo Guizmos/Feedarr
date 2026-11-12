@@ -7,8 +7,17 @@ public sealed partial class TmdbClient
 {
     private readonly AsyncLocal<MatchingShadowCapture?> _shadowCapture = new();
 
+    internal sealed record ObservedSearchResult(SearchResult Result, string? ResponseLanguage);
+
     internal sealed class MatchingShadowCapture(Action dispose) : IDisposable
     {
+        private readonly List<ObservedSearchResult> _results = new();
+        internal IReadOnlyList<ObservedSearchResult> Results => _results;
+        internal void Add(ObservedSearchResult result)
+        {
+            if (_results.Count >= 100) { Complete = false; return; }
+            _results.Add(result);
+        }
         internal int ExpectedResponses { get; private set; }
         internal int ReceivedResponses { get; private set; }
         internal bool Complete { get; private set; } = true;
@@ -27,7 +36,7 @@ public sealed partial class TmdbClient
     }
 
     // Metadata is observational only: never change return values, requests or error behavior.
-    private void ObserveShadowResponse(SearchResponse? response, int limit)
+    private void ObserveShadowResponse(SearchResponse? response, int limit, string type, string? responseLanguage)
     {
         var capture = _shadowCapture.Value;
         if (capture is null) return;
@@ -37,5 +46,16 @@ public sealed partial class TmdbClient
             rows.Count <= Math.Clamp(limit <= 0 ? 10 : limit, 1, 50) &&
             rows.All(r => r.Id > 0 && !string.IsNullOrWhiteSpace(r.Title ?? r.Name));
         capture.Observe(complete);
+        if (response?.Results is not { } items) return;
+        // Observe before historical de-duplication: the later localized row may otherwise disappear.
+        foreach (var row in items.Take(Math.Clamp(limit <= 0 ? 10 : limit, 1, 50)))
+        {
+            if (row.Id <= 0) continue;
+            var title = type == "movie" ? row.Title ?? row.Name : row.Name ?? row.Title;
+            var original = type == "movie" ? row.OriginalTitle ?? row.OriginalName : row.OriginalName ?? row.OriginalTitle;
+            if (string.IsNullOrWhiteSpace(title)) continue;
+            capture.Add(new(new(row.Id, title.Trim(), original?.Trim(), null, type,
+                ExtractYear(type == "movie" ? row.ReleaseDate : row.FirstAirDate), row.OriginalLanguage), responseLanguage));
+        }
     }
 }

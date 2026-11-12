@@ -729,7 +729,7 @@ public sealed partial class TmdbClient
         if (year is >= 1800 and <= 2100) url += $"&year={year.Value}";
 
         var r = await GetJsonAsync<SearchResponse>(url, ct).ConfigureAwait(false);
-        ObserveShadowResponse(r, limit);
+        ObserveShadowResponse(r, limit, "movie", language);
         if (r?.Results is null) return new List<SearchResult>();
 
         return r.Results
@@ -766,7 +766,7 @@ public sealed partial class TmdbClient
         if (year is >= 1800 and <= 2100) url += $"&first_air_date_year={year.Value}";
 
         var r = await GetJsonAsync<SearchResponse>(url, ct).ConfigureAwait(false);
-        ObserveShadowResponse(r, limit);
+        ObserveShadowResponse(r, limit, "tv", language);
         if (r?.Results is null) return new List<SearchResult>();
 
         return r.Results

@@ -7,11 +7,17 @@ internal enum CandidateDecision { Accept, Ambiguous, Reject }
 
 // Identity is always scoped by provider AND media type; numeric IDs alone are never compared.
 internal sealed record SearchIdentity(string Provider, SearchMediaType MediaType, string Id);
+internal enum ProviderTitleKind { ResponseTitle, Localized, Original, Alternative }
+internal enum ProviderTitleSource { SearchTitle, SearchOriginalTitle, AlternativeTitlesEndpoint }
+// Constructed only from provider-owned fields, never from the release or a guessed translation.
+internal sealed record OfficialProviderTitle(string Title, SearchIdentity Identity, ProviderTitleKind Kind,
+    ProviderTitleSource Source, string? Language = null);
 internal sealed record ProviderSearchCandidate(
     SearchIdentity Identity, string Title, int? Year = null,
     IReadOnlyList<string>? AlternativeTitles = null, UnifiedCategory? Category = null,
     int? Season = null, int? Episode = null,
-    IReadOnlyList<SearchIdentity>? KnownExternalIdentities = null);
+    IReadOnlyList<SearchIdentity>? KnownExternalIdentities = null,
+    IReadOnlyList<OfficialProviderTitle>? OfficialTitles = null);
 
 internal sealed record CandidateRankingContext(
     IReadOnlyList<SearchCandidate> Queries, UnifiedCategory Category, SearchMediaType ExpectedMediaType,
@@ -143,14 +149,28 @@ internal static class SearchCandidateRanker
         }
 
         var normalizedQuery = TitleNormalizer.NormalizeTitleStrict(query.Title);
-        var titles = new[] { candidate.Title }.Concat(candidate.AlternativeTitles ?? Array.Empty<string>())
-            .Select((t, i) => (Title: TitleNormalizer.NormalizeTitleStrict(t), Alternate: i > 0));
-        var best = titles.Select(t => (t.Title, t.Alternate, Score: Similarity(normalizedQuery, t.Title)))
-            .OrderByDescending(t => t.Score).ThenBy(t => t.Alternate).ThenBy(t => t.Title, StringComparer.Ordinal).First();
+        var titles = new[] { (Title: candidate.Title, Alternate: false, Official: (OfficialProviderTitle?)null) }
+            .Concat((candidate.AlternativeTitles ?? Array.Empty<string>()).Select(t => (Title: t, Alternate: true, Official: (OfficialProviderTitle?)null)))
+            .Concat((candidate.OfficialTitles ?? Array.Empty<OfficialProviderTitle>())
+                .Where(t => Key(t.Identity) == Key(identity) && ValidTitleSource(t))
+                .Select(t => (Title: t.Title, Alternate: true, Official: (OfficialProviderTitle?)t)))
+            .Where(t => !string.IsNullOrWhiteSpace(t.Title))
+            .Select(t => (Title: TitleNormalizer.NormalizeTitleStrict(t.Title), t.Alternate, t.Official));
+        var best = titles.Select(t => (t.Title, t.Alternate, t.Official, Score: Similarity(normalizedQuery, t.Title)))
+            .OrderByDescending(t => t.Score).ThenBy(t => t.Official is null).ThenBy(t => t.Alternate).ThenBy(t => t.Title, StringComparer.Ordinal)
+            .DefaultIfEmpty(("", false, null, 0d)).First();
         if (best.Score < policy.MinimumTitleSimilarity) Contradict("title-similarity-insufficient");
-        else positive.Add(best.Alternate ? "known-alternate-title-agrees" : best.Score == 1 ? "exact-title" : "similar-title");
+        else positive.Add(best.Score == 1 ? best.Alternate ? "known-alternate-title-agrees" : "exact-title" : "similar-title");
         if (policy.RequireExactTitleForAcceptance && best.Score < 1 && !trusted)
         { Contradict("non-exact-title-needs-independent-evidence", false); sufficient = false; }
+        if (best.Score == 1 && best.Official is { } official)
+            positive.Add(official.Kind switch
+            {
+                ProviderTitleKind.Localized => "official-localized-title-exact",
+                ProviderTitleKind.Original => "official-original-title-exact",
+                ProviderTitleKind.Alternative => "official-alternative-title-exact",
+                _ => "official-response-title-exact"
+            });
         var queryNumbers = Numbers(normalizedQuery);
         if (!queryNumbers.SequenceEqual(Numbers(best.Title))) Contradict("title-number-mismatch");
         if (normalizedQuery.Length == 0) Contradict("empty-query-title");
@@ -198,6 +218,14 @@ internal static class SearchCandidateRanker
         var canonical = Key(identity);
         return new(new SearchIdentity(canonical.Provider, canonical.Type, canonical.Id), queryIndex, confidence, Array.AsReadOnly(positive.ToArray()), Array.AsReadOnly(contradictions.ToArray()), decision);
     }
+
+    private static bool ValidTitleSource(OfficialProviderTitle title) => title.Kind switch
+    {
+        ProviderTitleKind.ResponseTitle or ProviderTitleKind.Localized => title.Source == ProviderTitleSource.SearchTitle,
+        ProviderTitleKind.Original => title.Source == ProviderTitleSource.SearchOriginalTitle,
+        ProviderTitleKind.Alternative => title.Source == ProviderTitleSource.AlternativeTitlesEndpoint,
+        _ => false
+    };
 
     private static (string Provider, SearchMediaType Type, string Id) Key(SearchIdentity identity)
         => (identity.Provider?.Trim().ToLowerInvariant() ?? "", identity.MediaType, identity.Id?.Trim() ?? "");
