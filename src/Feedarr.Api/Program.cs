@@ -183,6 +183,7 @@ builder.Services.AddSingleton<UnifiedCategoryService>();
 builder.Services.AddSingleton<UnifiedCategoryResolver>();
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<BootstrapTokenService>();
+builder.Services.AddSingleton<WebSessionService>();
 builder.Services.AddSingleton<AuthThrottleService>();
 builder.Services.AddSingleton<CategoryRecommendationService>();
 builder.Services.AddSingleton<ExternalProviderRegistry>();
@@ -516,7 +517,7 @@ builder.Services.AddCors(o =>
     o.AddPolicy("dev", p =>
         p.WithOrigins("http://localhost:5173")
          .WithMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
-         .WithHeaders("Content-Type", "Authorization", "X-Requested-With", RequestForgeryProtection.RequestHeaderName)
+         .WithHeaders("Content-Type", "Authorization", "X-Requested-With", RequestForgeryProtection.RequestHeaderName, WebSessionSecurity.CsrfHeader)
          .AllowCredentials()
     );
 });
@@ -570,6 +571,8 @@ builder.Services.AddRateLimiter(options =>
                 AutoReplenishment = true
             });
     });
+
+    WebSessionSecurity.AddLoginRateLimit(options);
 
     options.AddPolicy("stats-heavy", httpContext =>
     {
@@ -745,6 +748,14 @@ app.UseExceptionHandler(errApp =>
         var problem = new { type = "https://tools.ietf.org/html/rfc9110#section-15.6.1", title = "internal server error", status = 500 };
         await context.Response.WriteAsJsonAsync(problem);
     });
+});
+
+// Include errors rejected before controller execution (rate limit/model binding/auth).
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/api/auth"))
+        WebSessionSecurity.DisableCaching(context);
+    await next();
 });
 
 app.UseRateLimiter();
