@@ -21,8 +21,17 @@ public sealed class MatchingReplayReader(Db db, IApiKeyProtectionService protect
         using var connection = MatchingReadOnly.Open(db);
         return MatchingReadOnly.ReadState(connection, id);
     }
-    internal IReadOnlyList<ReplayRelease> Select(int count)
+    internal IReadOnlyList<ReplayRelease> Select(int count) => Select(ReplaySelectionRules.Normalize(new(count)), Array.Empty<long>());
+    internal IReadOnlyList<ReplayRelease> Select(ReplayRequest request, IReadOnlyList<long> shadowIds)
     {
+        var selection = request.Selection!;
+        var targetIds = selection.Method == "ids" ? selection.ReleaseIds! : shadowIds;
+        if (selection.Method == "shadow_divergences" && targetIds.Count == 0) return Array.Empty<ReplayRelease>();
+        var categoryAliases = selection.Categories!.SelectMany(c => c switch
+        {
+            "films" => new[] { "film", "films" }, "series" => new[] { "serie", "series" },
+            "emissions" => new[] { "emission", "emissions" }, _ => new[] { c }
+        }).ToArray();
         using var connection = MatchingReadOnly.Open(db);
         var pool = connection.Query<Seed>("""
             WITH candidates AS (
@@ -31,17 +40,29 @@ public sealed class MatchingReplayReader(Db db, IApiKeyProtectionService protect
                 CASE WHEN COALESCE(me.tmdb_id,r.tmdb_id,0)>0 OR COALESCE(me.tvdb_id,r.tvdb_id,0)>0 OR
                   COALESCE(me.ext_provider_id,r.ext_provider_id,'')<>'' THEN 1 ELSE 0 END HasIdentity
               FROM releases r LEFT JOIN media_entities me ON me.id=r.entity_id
-              WHERE lower(r.unified_category) IN ('film','films','serie','series','emission','emissions','spectacle','animation')
+              WHERE lower(r.unified_category) IN @categoryAliases
+                AND (@byId=0 OR r.id IN @targetIds)
                 AND length(r.title) BETWEEN 1 AND 4096 AND (r.title_clean IS NULL OR length(r.title_clean)<=4096)
             ), ranked AS (
               SELECT *,ROW_NUMBER() OVER(PARTITION BY Category,SourceId,HasPoster,HasIdentity
                 ORDER BY ((Id*1103515245+12345)&2147483647),Id) Position FROM candidates
+              WHERE @filter='all' OR (@filter='without_poster' AND HasPoster=0) OR
+                (@filter='without_identity' AND HasIdentity=0) OR (@filter='with_identity' AND HasIdentity=1)
             ) SELECT Id,SourceId,RawTitle,TitleClean,Year,Category,HasPoster,HasIdentity FROM ranked
               ORDER BY Position,((Id*1103515245+12345)&2147483647),Id LIMIT 5000
-            """).ToArray();
-        var selected = Sample(pool, count);
-        return selected.Select(seed => (seed, state: MatchingReadOnly.ReadState(connection, seed.Id)))
+            """, new { categoryAliases, byId = selection.Method == "sample" ? 0 : 1, targetIds, filter = selection.Filter }).ToArray();
+        IReadOnlyList<Seed> selected;
+        if (selection.Method == "ids")
+        {
+            var byId = pool.ToDictionary(s => s.Id);
+            if (targetIds.Any(id => !byId.ContainsKey(id))) throw new ArgumentException("replay_ids_unavailable_or_filtered");
+            selected = targetIds.Select(id => byId[id]).ToArray();
+        }
+        else selected = Sample(pool, request.Count);
+        var releases = selected.Select(seed => (seed, state: MatchingReadOnly.ReadState(connection, seed.Id)))
             .Where(x => x.state is not null).Select(x => new ReplayRelease(x.state!, x.seed.HasPoster, x.seed.SourceId)).ToArray();
+        if (selection.Method == "ids" && releases.Length != targetIds.Count) throw new ArgumentException("replay_ids_unavailable_or_filtered");
+        return releases;
     }
     internal static IReadOnlyList<Seed> Sample(IEnumerable<Seed> seeds, int count)
     {

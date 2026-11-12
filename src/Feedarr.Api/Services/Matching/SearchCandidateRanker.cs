@@ -45,7 +45,7 @@ internal sealed record CandidateContradiction(string Code, bool IsStrong);
 internal sealed record RankedSearchCandidate(
     SearchIdentity Identity, int QueryIndex, double Confidence,
     IReadOnlyList<string> PositiveReasons, IReadOnlyList<CandidateContradiction> Contradictions,
-    CandidateDecision Decision);
+    CandidateDecision Decision, CompoundTitleEvidence? CompoundTitle = null, int? TrailingYearHypothesis = null);
 internal sealed record CandidateRankingResult(
     CandidateDecision Decision, SearchIdentity? SelectedIdentity, bool PreserveExisting,
     IReadOnlyList<string> Reasons, IReadOnlyList<RankedSearchCandidate> Candidates);
@@ -155,10 +155,38 @@ internal static class SearchCandidateRanker
                 .Where(t => Key(t.Identity) == Key(identity) && ValidTitleSource(t))
                 .Select(t => (Title: t.Title, Alternate: true, Official: (OfficialProviderTitle?)t)))
             .Where(t => !string.IsNullOrWhiteSpace(t.Title))
-            .Select(t => (Title: TitleNormalizer.NormalizeTitleStrict(t.Title), t.Alternate, t.Official));
-        var best = titles.Select(t => (t.Title, t.Alternate, t.Official, Score: Similarity(normalizedQuery, t.Title)))
+            .Select(t => (Title: TitleNormalizer.NormalizeTitleStrict(t.Title), RawTitle: t.Title, t.Alternate, t.Official));
+        var best = titles.Select(t => (t.Title, t.RawTitle, t.Alternate, t.Official, Score: Similarity(normalizedQuery, t.Title)))
             .OrderByDescending(t => t.Score).ThenBy(t => t.Official is null).ThenBy(t => t.Alternate).ThenBy(t => t.Title, StringComparer.Ordinal)
-            .DefaultIfEmpty(("", false, null, 0d)).First();
+            .DefaultIfEmpty(("", "", false, null, 0d)).First();
+        var compound = best.Score == 1 ? null : OfficialCompoundTitle.Match(normalizedQuery, candidate);
+        int? trailingYearHypothesis = null;
+        if (compound is not null)
+            best = (normalizedQuery, compound.First.Title + " " + compound.Second.Title, true, null, 1d);
+        // A bare trailing number remains hypothetical, even if it equals this candidate's date.
+        // Provider-owned exact title coverage can lift a false rejection to ambiguity, never acceptance.
+        if (best.Score < 1 && query.Year is null && query.YearEvidence == CandidateYearEvidence.None && context.ConfirmedYear is null &&
+            string.Equals(identity.Provider, "tmdb", StringComparison.OrdinalIgnoreCase))
+        {
+            var split = normalizedQuery.LastIndexOf(' ');
+            if (split > 0 && normalizedQuery[(split + 1)..] is { Length: 4 } number &&
+                number.All(c => c is >= '0' and <= '9') && int.TryParse(number, out var possibleYear) && possibleYear is >= 1900 and <= 2099 && candidate.Year == possibleYear)
+            {
+                var prefix = normalizedQuery[..split];
+                var single = OfficialCompoundTitle.Verified(candidate).FirstOrDefault(t => TitleNormalizer.NormalizeTitleStrict(t.Title) == prefix);
+                var pair = single is null ? OfficialCompoundTitle.Match(prefix, candidate) : null;
+                if (single is not null || pair is not null)
+                {
+                    compound = pair;
+                    best = (prefix, single?.Title ?? pair!.First.Title + " " + pair.Second.Title, true, single, 1d);
+                    trailingYearHypothesis = possibleYear;
+                    sufficient = false;
+                    Contradict("trailing-year-needs-independent-evidence", false);
+                    positive.Add("official-title-with-trailing-year-hypothesis");
+                }
+            }
+        }
+        if (compound is not null) positive.Add("official-composed-title-exact");
         if (best.Score < policy.MinimumTitleSimilarity) Contradict("title-similarity-insufficient");
         else positive.Add(best.Score == 1 ? best.Alternate ? "known-alternate-title-agrees" : "exact-title" : "similar-title");
         if (policy.RequireExactTitleForAcceptance && best.Score < 1 && !trusted)
@@ -171,7 +199,9 @@ internal static class SearchCandidateRanker
                 ProviderTitleKind.Alternative => "official-alternative-title-exact",
                 _ => "official-response-title-exact"
             });
-        var queryNumbers = Numbers(normalizedQuery);
+        var queryNumbers = Numbers(trailingYearHypothesis.HasValue ? best.Title : normalizedQuery);
+        if (string.Equals(identity.Provider, "tmdb", StringComparison.OrdinalIgnoreCase) &&
+            !OfficialCompoundTitle.NumericPunctuationAgrees(query.Title, best.RawTitle)) Contradict("title-numeric-punctuation-mismatch");
         if (!queryNumbers.SequenceEqual(Numbers(best.Title))) Contradict("title-number-mismatch");
         if (normalizedQuery.Length == 0) Contradict("empty-query-title");
         if (policy.NumericTitlesRequireTrustedIdentity && normalizedQuery.Length > 0 &&
@@ -216,10 +246,10 @@ internal static class SearchCandidateRanker
         var decision = contradictions.Any(c => c.IsStrong) ? CandidateDecision.Reject :
             sufficient && confidence >= policy.AcceptConfidence ? CandidateDecision.Accept : CandidateDecision.Ambiguous;
         var canonical = Key(identity);
-        return new(new SearchIdentity(canonical.Provider, canonical.Type, canonical.Id), queryIndex, confidence, Array.AsReadOnly(positive.ToArray()), Array.AsReadOnly(contradictions.ToArray()), decision);
+        return new(new SearchIdentity(canonical.Provider, canonical.Type, canonical.Id), queryIndex, confidence, Array.AsReadOnly(positive.ToArray()), Array.AsReadOnly(contradictions.ToArray()), decision, compound, trailingYearHypothesis);
     }
 
-    private static bool ValidTitleSource(OfficialProviderTitle title) => title.Kind switch
+    internal static bool ValidTitleSource(OfficialProviderTitle title) => title.Kind switch
     {
         ProviderTitleKind.ResponseTitle or ProviderTitleKind.Localized => title.Source == ProviderTitleSource.SearchTitle,
         ProviderTitleKind.Original => title.Source == ProviderTitleSource.SearchOriginalTitle,

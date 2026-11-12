@@ -22,12 +22,14 @@ test("entry renders untrusted titles as escaped text and preserves hypothesis ev
   const module = { exports: {} };
   new Function("require", "module", "exports", compiled.outputFiles[0].text)(require, module, module.exports);
   const html = renderToStaticMarkup(React.createElement(module.exports.default, { entry: {
-    releaseId: 1, rawTitle: '<img src=x onerror="alert(1)">', historicalDecision: "Accept",
+    releaseId: 1, rawTitleMaskReason: "url", rawTitle: '<img src=x onerror="alert(1)">', historicalDecision: "Accept",
     historicalIdentity: { provider: "tmdb", type: "movie", id: "123" }, historicalScore: 1,
     selectedIdentity: null, decision: "ambiguous", divergence: true, durationMs: 1, preserveExisting: false,
     reasons: ["close-competing-identities"], queries: [{ title: "Blade Runner", year: 2049, yearEvidence: "Hypothesis" }],
     candidates: [{ title: "<script>alert(1)</script>", year: 1982, identity: { provider: "tmdb", type: "tv", id: "123" },
-      decision: "reject", confidence: 0.1, reasons: [], contradictions: ["media-type-mismatch"], officialTitles: [{ title: "<iframe>official</iframe>", kind: "Localized", language: "fr-FR", source: "SearchTitle" }] }],
+      decision: "reject", confidence: 0.1, reasons: [], contradictions: ["media-type-mismatch"], officialTitles: [{ title: "<iframe>official</iframe>", kind: "Localized", language: "fr-FR", source: "SearchTitle", maskReason: "credential_keyword" }],
+      compoundTitles: [{ title: "<b>first</b>", kind: "Localized", language: "fr-FR", source: "SearchTitle" },
+        { title: "Second", kind: "Original", language: "en", source: "SearchOriginalTitle" }], trailingYearHypothesis: 2049 }],
   } }));
   assert.ok(!html.includes("<img"));
   assert.ok(!html.includes("<script>"));
@@ -40,4 +42,10 @@ test("entry renders untrusted titles as escaped text and preserves hypothesis ev
   assert.ok(html.includes("&lt;iframe&gt;official"));
   assert.ok(html.includes("fr-FR"));
   assert.ok(html.includes("SearchTitle"));
+  assert.ok(html.includes("Titre composé prouvé"));
+  assert.ok(html.includes("Année finale hypothétique"));
+  assert.ok(html.includes("credential_keyword"));
+  assert.ok(html.includes("Motif du masquage"));
+  assert.ok(!html.includes("<b>first</b>"));
+  assert.ok(html.includes("&lt;b&gt;first"));
 });

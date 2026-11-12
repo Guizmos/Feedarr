@@ -18,7 +18,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Feedarr.Api.Tests;
 
-public sealed class MatchingReplayTests
+public sealed partial class MatchingReplayTests
 {
     private static HttpResponseMessage Json(string text, HttpStatusCode status = HttpStatusCode.OK)
         => new(status) { Content = new StringContent(text, Encoding.UTF8, "application/json") };

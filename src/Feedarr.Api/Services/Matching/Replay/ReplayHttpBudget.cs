@@ -1,21 +1,32 @@
 namespace Feedarr.Api.Services.Matching.Replay;
 
-internal sealed class ReplayBudgetExceededException : Exception;
-internal sealed class ReplayHttpBudget(int maximum, TimeSpan? spacing = null)
+internal class ReplayBudgetExceededException : Exception;
+internal sealed class ReplayCategoryBudgetExceededException : ReplayBudgetExceededException;
+internal sealed class ReplayHttpBudget(int maximum, TimeSpan? spacing = null, ReplayHttpBudget? parent = null)
 {
     internal static readonly HttpRequestOptionsKey<ReplayHttpBudget> Option = new("feedarr.matching.replay.budget");
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly TimeSpan _spacing = spacing ?? TimeSpan.FromMilliseconds(250);
     private long _lastSent;
     private int _used;
-    internal int Maximum { get; } = maximum is >= 1 and <= 30 ? maximum : throw new ArgumentOutOfRangeException(nameof(maximum));
+    internal int Maximum { get; } = maximum >= (parent is null ? 1 : 0) && maximum <= (parent?.Maximum ?? 30) ? maximum : throw new ArgumentOutOfRangeException(nameof(maximum));
     internal int Used => Volatile.Read(ref _used);
     internal async Task BeforeSendAsync(CancellationToken ct)
     {
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (_used >= Maximum) throw new ReplayBudgetExceededException();
+            if (_used >= Maximum)
+            {
+                if (parent is not null) throw new ReplayCategoryBudgetExceededException();
+                throw new ReplayBudgetExceededException();
+            }
+            if (parent is not null)
+            {
+                await parent.BeforeSendAsync(ct).ConfigureAwait(false);
+                Interlocked.Increment(ref _used);
+                return;
+            }
             if (_lastSent != 0)
             {
                 var remaining = _spacing - System.Diagnostics.Stopwatch.GetElapsedTime(_lastSent);
