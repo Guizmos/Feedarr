@@ -44,7 +44,7 @@ public sealed partial class TitleParser
     private static readonly Regex RxGameUpdate = new(@"(?i)[._+-]?(update|hotfix|patch|aio)(?:[._-]?\d+(?:[._-]\d+)*)?", RegexOptions.Compiled);
     private static readonly Regex RxGameLang = new(@"(?i)(?:^|[._+\-])(multi\d*|multilingual|eng|english|french|fr|german|ger|de|spanish|spa|es|italian|ita|it|russian|rus|ru|japanese|jap|jp|chinese|chn|cn|korean|kor|kr|polish|pol|pl|portuguese|por|pt|brazilian|dutch|dut|nl|swedish|swe|czech|cze|hungarian|hun|turkish|tur|arabic|ara|thai|vietnamese|viet|norwegian|nor|danish|dan|finnish|fin|vf|vff|vfq|vfi|vostfr|vo|truefrench|subfrench|multi-?\d*)(?=[._+\-]|$)", RegexOptions.Compiled);
     private static readonly Regex RxGamePlatform = new(@"(?i)(?:^|[._+\-:])(pc|winmac|macwin|linux|lin|macos|mac|osx|win|windows|x64|x86|win64|win32|amd64|portable|gog|steam|epic|origin|uplay|egs|iso|drm[._-]?free|switch|ps[45]|xbox|nsw)(?=[._+\-:]|$)", RegexOptions.Compiled);
-    private static readonly Regex RxGameRepack = new(@"(?i)(?:^|[._+\-:])(repack|rip|proper|internal|read[._-]?nfo|nfo[._-]?fix|incl[._-]?dlc|crack[._-]?fix|crack|preactive)(?=[._+\-:]|$)", RegexOptions.Compiled);
+    private static readonly Regex RxGameRepack = new(@"(?i)(?:^|[._+\-:])(repack|rip|proper|internal|read[._-]?nfo|nfo[._-]?fix|incl[._-]?dlc|crack[._-]?fix|crack|preactive[d]?)(?=[._+\-:]|$)", RegexOptions.Compiled);
     private static readonly Regex RxGameScene = new(@"(?i)(?:^|[._+\-:])(fitgirl|elamigos|dodi|rune|skidrow|codex|plaza|flt|tenoke|prophet|cpy|steampunks|darksiders|reloaded|razor1911|hoodlum|fairlight|empress|goldberg|i[_-]?know|notag|noteam|mephisto|k49n|kron4ek|lain|anadius|max\d+|razordox|ali213|3dm|tinyiso|kaos|chronos)(?=[._+\-:]|$)", RegexOptions.Compiled);
     private static readonly Regex RxGameAnniversaryEdition = new(@"(?i)[._+-]?\d+[._-]?(year|th|nd|rd|st)?[._-]?anniversary[._-]?edition", RegexOptions.Compiled);
     private static readonly Regex RxGameDigitalDeluxeEdition = new(@"(?i)[._+-]?digital[._+-]?deluxe[._+-]?edition(?=[._+-]|$)", RegexOptions.Compiled);
@@ -66,7 +66,7 @@ public sealed partial class TitleParser
     {
         (new Regex(@"(?i)\bWEB[- .]?DL\b", RegexOptions.Compiled), "WEB-DL"),
         (new Regex(@"(?i)\bWEB[- .]?RIP\b", RegexOptions.Compiled), "WEBRip"),
-        (new Regex(@"(?i)\bBLU[- ]?RAY\b|\bBDRIP\b|\bBRRIP\b", RegexOptions.Compiled), "BluRay"),
+        (new Regex(@"(?i)\bBLU[- ]?RAY(?:[- ]?RIP)?\b|\bBDRIP\b|\bBRRIP\b", RegexOptions.Compiled), "BluRay"),
         (new Regex(@"(?i)\bHDTV\b", RegexOptions.Compiled), "HDTV"),
         (new Regex(@"(?i)\bTVRIP\b", RegexOptions.Compiled), "TVRip"),
         (new Regex(@"(?i)\bDVDRIP\b", RegexOptions.Compiled), "DVDRip"),
@@ -90,9 +90,10 @@ public sealed partial class TitleParser
 
         var p = new ParsedTitle();
 
-        p.ReleaseGroup = ExtractGroup(raw, category);
-
         var tokenSource = category == UnifiedCategory.JeuWindows ? Regex.Replace(raw, @"\s+", ".").Replace(':', '.').Replace('_', '.') : PreClean(raw, category);
+
+        var suffix = AnalyzeTechnicalSuffix(tokenSource, raw, category);
+        p.ReleaseGroup = suffix.Group;
 
         switch (category)
         {
@@ -105,18 +106,16 @@ public sealed partial class TitleParser
                 break;
         }
 
+        var releaseYear = FindReleaseYear(tokenSource, category, suffix);
         if (!p.Year.HasValue)
-            p.Year = ExtractLikelyYear(tokenSource, category);
+            p.Year = releaseYear is { } year ? TryInt(year.Value) : null;
 
-        var mr = RxRes.Match(tokenSource);
-        if (mr.Success)
-            p.Resolution = NormalizeResolution(mr.Value);
-
-        p.Source = Sources.FirstOrDefault(x => x.rx.IsMatch(tokenSource)).value;
-        p.Codec = DetectCodec(tokenSource);
+        p.Resolution = suffix.Resolution;
+        p.Source = suffix.Source;
+        p.Codec = suffix.Codec;
         p.MediaType = UnifiedCategoryMappings.ToMediaType(category);
 
-        p.TitleClean = CleanTitle(tokenSource, category, p);
+        p.TitleClean = CleanContextualTitle(tokenSource, category, p, suffix, releaseYear);
         if (string.IsNullOrWhiteSpace(p.TitleClean))
             p.TitleClean = FallbackTitle(raw);
 
@@ -180,12 +179,6 @@ public sealed partial class TitleParser
         ParseSeriesTokens(raw, p);
     }
 
-    private static string CleanTitle(string raw, UnifiedCategory category, ParsedTitle parsed)
-        => CleanContextualTitle(raw, category, parsed);
-
-    private static int? ExtractLikelyYear(string raw, UnifiedCategory category)
-        => FindReleaseYear(raw, category) is { } year ? TryInt(year.Value) : null;
-
     private static string PreClean(string raw, UnifiedCategory category)
     {
         var s = raw.Replace('.', ' ').Replace('_', ' ').Replace('+', ' ');
@@ -193,7 +186,7 @@ public sealed partial class TitleParser
         // Fansub labels describe the release, unlike arbitrary bracketed title words.
         s = Regex.Replace(s, @"^\[(?=[^\]]*(?i:subs|raws))[^\]]+\]\s*", "");
         if (category == UnifiedCategory.Anime &&
-            (RxSeasonEpisode.IsMatch(s) || FindVideoTechnicalStart(s) < s.Length))
+            (RxSeasonEpisode.IsMatch(s) || Regex.IsMatch(s, @"(?i)\b\d{3,4}[pi]\b")))
             s = Regex.Replace(s, @"(?i)^\[fansub\]\s*(?=\S)", "");
         return Regex.Replace(s, @"\s{2,}", " ").Trim();
     }
@@ -203,22 +196,6 @@ public sealed partial class TitleParser
         var v = value.Trim().ToLowerInvariant();
         if (v == "4k") return "2160p";
         return v;
-    }
-
-    private static string? DetectCodec(string raw)
-    {
-        var hits = new List<string>();
-        foreach (var (rx, value) in Codecs)
-        {
-            if (!rx.IsMatch(raw)) continue;
-            if (!hits.Contains(value))
-                hits.Add(value);
-        }
-
-        if (hits.Count == 0) return null;
-        if (hits.Contains("MPEG2") && hits.Contains("AC3"))
-            return "MPEG2/AC3";
-        return hits[0];
     }
 
     private static bool TryExtractAirDate(string raw, out string? iso, out int? year)
@@ -253,25 +230,6 @@ public sealed partial class TitleParser
     }
 
     private static int? TryInt(string s) => int.TryParse(s, out var n) ? n : null;
-
-    private static string ExtractGroup(string raw, UnifiedCategory category)
-    {
-        var idx = raw.LastIndexOf('-');
-        if (idx <= 0 || idx >= raw.Length - 1) return null!;
-        var prefix = raw[..idx];
-        var suffix = raw[idx..];
-        var videoPrefix = Regex.Replace(prefix, @"[._+]", " ");
-        var gamePrefix = Regex.Replace(prefix, @"\s+", ".").Replace('_', '.');
-        var hasContext = category == UnifiedCategory.JeuWindows
-            ? FindGameMetadataStart(gamePrefix) < gamePrefix.Length || RxGameVersion.IsMatch(prefix) ||
-              RxGameBuild.IsMatch(prefix) || RxGameScene.IsMatch(suffix)
-            : FindVideoTechnicalStart(videoPrefix) < videoPrefix.Length;
-        if (!hasContext) return null!;
-        var g = raw[(idx + 1)..].Trim();
-        if (g.Length < 2 || g.Length > 30) return null!;
-        if (!Regex.IsMatch(g, @"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+){0,2}$")) return null!;
-        return g;
-    }
 
     private static string FallbackTitle(string raw)
     {

@@ -60,13 +60,23 @@ def token(seed, kind, value):
     return kind + "-" + hashlib.sha256(f"{seed}:{kind}:{value}".encode()).hexdigest()[:16]
 
 
-def readonly_connection(path):
+def readonly_connection(path, local_snapshot=False):
     path = Path(path).resolve(strict=True)
+    uri = path.as_uri() + "?mode=ro"
+    if local_snapshot:
+        root = (Path(__file__).resolve().parent / "local").resolve()
+        if root not in path.parents or re.match(r"^/volume\d+(?:/|$)", str(path)) or str(path).startswith('\\\\'):
+            raise ValueError("snapshot must be an independent local backup under local/")
+        if any(Path(str(path) + suffix).exists() for suffix in ("-wal", "-shm", "-journal")):
+            raise ValueError("standalone snapshot must have no sidecars")
+        # Only for an explicitly declared, independent consistent backup, never a live DB.
+        # immutable disables journals/SHM/locks without changing filesystem permissions.
+        uri += "&immutable=1"
     # mode=ro alone can create/write SHM on a writable filesystem. Fail closed.
-    for item in [path.parent, path, Path(str(path) + "-wal"), Path(str(path) + "-shm")]:
+    for item in ([] if local_snapshot else [path.parent, path, Path(str(path) + "-wal"), Path(str(path) + "-shm")]):
         if item.exists() and os.access(item, os.W_OK):
             raise ValueError("OS read-only directory/database/sidecars required")
-    connection = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=5)
+    connection = sqlite3.connect(uri, uri=True, timeout=5)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA temp_store=MEMORY")
     connection.execute("PRAGMA query_only=ON")
@@ -232,9 +242,11 @@ def main():
     parser.add_argument("--db", required=True)
     parser.add_argument("--size", type=int, default=1500)
     parser.add_argument("--seed", default="feedarr-parser-v2.1")
+    parser.add_argument("--local-snapshot", action="store_true",
+                        help="Independent consistent backup under local/, no sidecars; never use on a live database")
     args = parser.parse_args()
     try:
-        with readonly_connection(args.db) as connection:
+        with readonly_connection(args.db, local_snapshot=args.local_snapshot) as connection:
             output = export(connection, args.size, args.seed)
         print(json.dumps(output, sort_keys=True, ensure_ascii=False))
     except (OSError, ValueError, sqlite3.Error):

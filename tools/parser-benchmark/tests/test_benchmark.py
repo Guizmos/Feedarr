@@ -167,6 +167,32 @@ class CorpusTests(unittest.TestCase):
 
 
 class ExportTests(unittest.TestCase):
+    def test_local_snapshot_is_readonly_without_permission_changes(self):
+        root = HERE / "local"
+        root.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=root) as directory:
+            db = Path(directory) / "snapshot.db"
+            with sqlite3.connect(db) as writer:
+                writer.execute("CREATE TABLE releases(id INTEGER PRIMARY KEY,title TEXT)")
+                writer.execute("INSERT INTO releases VALUES(1,'Public fixture')")
+            before = db.read_bytes()
+            mode = db.stat().st_mode
+            with exporter.readonly_connection(db, local_snapshot=True) as reader:
+                self.assertEqual('Public fixture', reader.execute("SELECT title FROM releases").fetchone()[0])
+                with self.assertRaises(sqlite3.Error): reader.execute("DELETE FROM releases")
+                reader.set_authorizer(None)
+                reader.execute("PRAGMA query_only=OFF")
+                with self.assertRaises(sqlite3.OperationalError): reader.execute("DELETE FROM releases")
+            self.assertEqual(before, db.read_bytes())
+            self.assertEqual(mode, db.stat().st_mode)
+            self.assertEqual([db.name], [p.name for p in Path(directory).iterdir()])
+            sidecar = Path(str(db) + "-wal")
+            sidecar.touch()
+            with self.assertRaises(ValueError): exporter.readonly_connection(db, local_snapshot=True)
+
+    def test_local_snapshot_rejects_paths_outside_ignored_local(self):
+        with self.assertRaises(ValueError): exporter.readonly_connection(self.db, local_snapshot=True)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)

@@ -32,6 +32,13 @@ même après filtrage heuristique.
 
 ## Export limité depuis une instance réelle
 
+Pour une **sauvegarde cohérente autonome copiée localement**, un mode distinct permet
+de ne changer aucune permission : `--local-snapshot --db tools/parser-benchmark/local/backup.db`.
+Il est limité au dossier local ignoré, refuse tout WAL/SHM/journal présent et ouvre
+`mode=ro&immutable=1`. Ce mode suppose une copie indépendante sans écrivain ; il ne
+doit jamais être utilisé pour une base active ou un chemin NAS. Le mode NAS par
+défaut et ses refus de permissions restent inchangés.
+
 L’exporteur est autonome et n’écrit que sur stdout. Il utilise SQLite via son API,
 `mode=ro`, `query_only=ON`, tris temporaires en mémoire et un authorizer refusant
 écritures, lecture des colonnes de credentials, ATTACH, tables temporaires et PRAGMA
