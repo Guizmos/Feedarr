@@ -1,12 +1,18 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useSyncExternalStore } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
 import { apiGet } from "../api/client.js";
 import { applyTheme } from "../app/theme.js";
 import { applyUiLanguage } from "../app/locale.js";
 import Topbar from "./Topbar.jsx";
+import { getSessionSnapshot, subscribeSession } from "../auth/session.js";
+import Login from "../pages/Login.jsx";
 
 export default function SetupShell() {
   const navigate = useNavigate();
+  const { state } = useSyncExternalStore(
+    subscribeSession, getSessionSnapshot, getSessionSnapshot
+  );
+  const needsLogin = state?.authRequired && state?.authConfigured && !state?.authenticated;
 
   useEffect(() => {
     let active = true;
@@ -45,6 +51,7 @@ export default function SetupShell() {
     <div className="app setup-shell">
       <Topbar onToggleNav={() => {}} />
       <main className="setup-main">
+        {needsLogin && <div className="auth-setup-login"><Login embedded /></div>}
         <Outlet />
       </main>
     </div>

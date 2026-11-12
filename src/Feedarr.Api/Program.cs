@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Options;
 using Dapper;
 using Feedarr.Api.Data;
 using Feedarr.Api.Data.Repositories;
@@ -621,6 +622,12 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 
+var forwardedOptions = app.Services.GetRequiredService<IOptions<ForwardedHeadersOptions>>().Value;
+app.Use((context, next) =>
+{
+    SmartAuthPolicy.CaptureConnection(context, forwardedOptions);
+    return next(context);
+});
 app.UseForwardedHeaders();
 
 // Correlation ID: must run early so downstream middleware and controllers
