@@ -8,7 +8,7 @@ using Feedarr.Api.Services;
 
 namespace Feedarr.Api.Services.Tmdb;
 
-public sealed class TmdbClient
+public sealed partial class TmdbClient
 {
     public sealed record SearchResult(int TmdbId, string Title, string? OriginalTitle, string? PosterPath, string MediaType, int? Year, string? OriginalLanguage);
     public sealed record DetailsResult(
@@ -156,6 +156,7 @@ public sealed class TmdbClient
 
     public async Task<List<SearchResult>> SearchMovieListAsync(string title, int? year, CancellationToken ct, int limit = 10)
     {
+        _shadowCapture.Value?.Expect();
         var results = new List<SearchResult>();
         var mediaInfoLanguage = GetMediaInfoLanguage();
         results.AddRange(await SearchMovieListWithLanguageAsync(title, year, null, ct, limit).ConfigureAwait(false));        results.AddRange(await SearchMovieListWithLanguageAsync(title, year, mediaInfoLanguage, ct, limit).ConfigureAwait(false));        return results;
@@ -193,6 +194,7 @@ public sealed class TmdbClient
 
     public async Task<List<SearchResult>> SearchTvListAsync(string title, int? year, CancellationToken ct, int limit = 10)
     {
+        _shadowCapture.Value?.Expect();
         var results = new List<SearchResult>();
         var mediaInfoLanguage = GetMediaInfoLanguage();
         results.AddRange(await SearchTvListWithLanguageAsync(title, year, null, ct, limit).ConfigureAwait(false));        results.AddRange(await SearchTvListWithLanguageAsync(title, year, mediaInfoLanguage, ct, limit).ConfigureAwait(false));        return results;
@@ -416,6 +418,11 @@ public sealed class TmdbClient
     // DTOs TMDB (snake_case)
     private sealed class SearchResponse
     {
+        // JsonElement avoids changing historical deserialization/error behavior for malformed metadata.
+        [JsonPropertyName("page")] public JsonElement? Page { get; set; }
+        [JsonPropertyName("total_pages")] public JsonElement? TotalPages { get; set; }
+        [JsonPropertyName("total_results")] public JsonElement? TotalResults { get; set; }
+
         [JsonPropertyName("results")]
         public List<SearchItem>? Results { get; set; }
     }
@@ -721,7 +728,9 @@ public sealed class TmdbClient
             url += $"&language={Uri.EscapeDataString(language)}";
         if (year is >= 1800 and <= 2100) url += $"&year={year.Value}";
 
-        var r = await GetJsonAsync<SearchResponse>(url, ct).ConfigureAwait(false);        if (r?.Results is null) return new List<SearchResult>();
+        var r = await GetJsonAsync<SearchResponse>(url, ct).ConfigureAwait(false);
+        ObserveShadowResponse(r, limit);
+        if (r?.Results is null) return new List<SearchResult>();
 
         return r.Results
             .Where(x => x.Id > 0)
@@ -756,7 +765,9 @@ public sealed class TmdbClient
             url += $"&language={Uri.EscapeDataString(language)}";
         if (year is >= 1800 and <= 2100) url += $"&first_air_date_year={year.Value}";
 
-        var r = await GetJsonAsync<SearchResponse>(url, ct).ConfigureAwait(false);        if (r?.Results is null) return new List<SearchResult>();
+        var r = await GetJsonAsync<SearchResponse>(url, ct).ConfigureAwait(false);
+        ObserveShadowResponse(r, limit);
+        if (r?.Results is null) return new List<SearchResult>();
 
         return r.Results
             .Where(x => x.Id > 0)

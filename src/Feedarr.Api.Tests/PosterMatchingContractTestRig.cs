@@ -75,7 +75,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
     private readonly IgdbClient _igdbDetails;
     private readonly RawgContractHandler _rawgHandler;
 
-    public PosterMatchingContractTestRig(PosterContractScenario scenario)
+    public PosterMatchingContractTestRig(PosterContractScenario scenario, bool matchingShadowEnabled = false, bool completeTmdbMetadata = false, int tmdbTotalPages = 1)
     {
         _workspace = new TestWorkspace();
 
@@ -110,7 +110,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             NullLogger<ActiveExternalProviderConfigResolver>.Instance);
 
         _tmdbHandler = new TmdbHandler(scenario);
-        var tmdb = new TmdbClient(new HttpClient(_tmdbHandler), settings, stats, resolver);
+        var tmdb = new TmdbClient(new HttpClient(completeTmdbMetadata ? new CompleteSearchMetadataHandler(_tmdbHandler, tmdbTotalPages) : _tmdbHandler), settings, stats, resolver);
         var fanart = new FanartClient(new HttpClient(new FanartHandler(scenario)), stats, resolver, settings);
         _igdbHandler = new IgdbHandler(scenario);
         var igdb = new IgdbClient(new HttpClient(_igdbHandler), stats, resolver);
@@ -161,6 +161,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             resolver,
             NullLogger<PosterFetchService>.Instance);
 
+        _posters.ShadowDiagnostics.SetEnabled(matchingShadowEnabled);
         SeedSource();
     }
 
@@ -262,7 +263,17 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
     public ReleaseForPoster? GetReleaseForPoster(long releaseId)
         => _releases.GetForPoster(releaseId);
 
+    internal void SetManualTitleForTest(long id)
+    {
+        using var conn = _db.Open();
+        conn.Execute("UPDATE releases SET title_manual_override=1 WHERE id=@id", new { id });
+    }
+
+    internal PosterFetchService Posters => _posters;
+    internal Feedarr.Api.Services.Matching.MatchingShadowDiagnostics ShadowDiagnostics => _posters.ShadowDiagnostics;
+    internal string DatabasePath => _db.DbPath;
     public ReleaseRepository Repository => _releases;
+    internal IReadOnlyList<Feedarr.Api.Services.Matching.MatchingShadowObservation> ShadowObservations => _posters.MatchingShadowObservations;
     public IReadOnlyList<Uri> TmdbSearchRequests => _tmdbHandler.SearchRequests;
     public IReadOnlyList<string> IgdbSearchRequests => _igdbHandler.SearchRequests;
     public IReadOnlyList<Uri> RawgSearchRequests => _rawgHandler.SearchRequests;
@@ -543,6 +554,23 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
                     """{"results":[{"id":123,"name":"Game Hit","released":"2022-01-01","background_image":"https://rawg.test/cover.jpg"}]}""", Encoding.UTF8, "application/json") });
             }
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(PosterTestImage.Create()) });
+        }
+    }
+
+    private sealed class CompleteSearchMetadataHandler(HttpMessageHandler inner, int totalPages) : DelegatingHandler(inner)
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = await base.SendAsync(request, cancellationToken);
+            if (request.RequestUri!.AbsolutePath.Contains("/search/"))
+            {
+                var json = System.Text.Json.Nodes.JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))!;
+                json["page"] = 1;
+                json["total_pages"] = totalPages;
+                json["total_results"] = json["results"]!.AsArray().Count;
+                response.Content = new StringContent(json.ToJsonString(), Encoding.UTF8, "application/json");
+            }
+            return response;
         }
     }
 

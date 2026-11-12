@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import MatchingShadowPanel from "./MatchingShadowPanel.jsx";
 import HistoryRetentionMaintenance from "./HistoryRetentionMaintenance.jsx";
 import Modal from "../../ui/Modal.jsx";
 import AppIcon from "../../ui/AppIcon.jsx";
@@ -181,6 +182,7 @@ export default function SettingsMaintenance({
 
   return (
     <>
+      <MatchingShadowPanel />
       <HistoryRetentionMaintenance disabled={otherLoading} onBusyChange={setHistoryBusy} />
       {advancedEnabled && (
         <div className="settings-card settings-card--full" id="maintenance-advanced">

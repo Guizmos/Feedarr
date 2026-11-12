@@ -1125,7 +1125,10 @@ public sealed partial class PosterFetchService
 
         if (r.ManualMatchProvider is not null ||
             (r.MatchRevision is null && r.PosterFile?.Contains("-manual", StringComparison.OrdinalIgnoreCase) == true))
+        {
+            ObserveMatchingShadow(id, new("manual_refresh", null, null));
             return await RefreshManualMatchAsync(r, ct).ConfigureAwait(false);
+        }
 
         string? existingFile = (string?)r.PosterFile;
         long? sourceId = (long?)r.SourceId;
@@ -1165,6 +1168,7 @@ public sealed partial class PosterFetchService
                     (string?)r.MediaType,
                     r,
                     ct).ConfigureAwait(false);
+                ObserveMatchingShadow(id, new("poster_file_cache", null, null));
                 return new PosterFetchResult(true, 200, new
                 {
                     ok = true,
@@ -1237,7 +1241,10 @@ public sealed partial class PosterFetchService
             logSingle,
             sourceId);
         if (cacheResult is not null)
+        {
+            ObserveMatchingShadow(id, new("cache_reuse", null, null));
             return cacheResult;
+        }
 
         var reuseKey = string.IsNullOrWhiteSpace(titleCleanRaw) ? title : titleCleanRaw;
         var normalizedReuseKey = TitleNormalizer.NormalizeTitle(reuseKey);
@@ -1565,6 +1572,8 @@ public sealed partial class PosterFetchService
 
         var tmdbTvOnly = unifiedCategory == UnifiedCategory.Emission;
         LogProviderAttempted(sourceId, logSingle, "tmdb", new { releaseId = id, query = title, year, mediaType, tvOnly = tmdbTvOnly });
+        var matchingShadowGeneration = ShadowDiagnostics.TryBegin();
+        using var matchingShadowCapture = matchingShadowGeneration.HasValue ? _tmdb.BeginMatchingShadowCapture() : null;
         var tmdbCandidates = await GetTmdbCandidatesAsync(title, year, mediaType, ct, tmdbTvOnly).ConfigureAwait(false);
         var tmdbStrongThreshold = PosterProviderSelector.GetTmdbStrongThreshold(ambiguity);
         if (ambiguity.IsCommonTitle) tmdbStrongThreshold = Math.Max(tmdbStrongThreshold, TmdbCommonTitleThreshold);
@@ -1583,6 +1592,8 @@ public sealed partial class PosterFetchService
         // IDs, images and details must all refer to the actually selected work.
         var idsCandidate = posterCandidate.Candidate is not null ? posterCandidate : accepted.FirstOrDefault();
         var tmdbMatchForIds = (Candidate: idsCandidate.Candidate, Score: idsCandidate.Score);
+        ObserveMatchingShadow(id, HistoricalTmdbChoice(tmdbMatchForIds.Candidate, tmdbMatchForIds.Score),
+            new(title, year, tmdbCandidates, matchingShadowCapture?.IsComplete == true), matchingShadowGeneration, captured: true);
 
         int? tvdbIdResolved = tmdbMatchForIds.Candidate?.TmdbId == tmdbIdStored ? tvdbIdStored : null;
         if (mediaType == "series" && tmdbMatchForIds.Candidate is not null && !tvdbIdResolved.HasValue)
