@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <FeedarrSourceRoot Condition="'$(FeedarrSourceRoot)' == ''">$(MSBuildThisFileDirectory)../../../src/Feedarr.Api</FeedarrSourceRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <!-- Compile the actual parser; never start or reference the API host/database. -->
+    <Compile Include="$(FeedarrSourceRoot)/Services/Title/*.cs" Link="Parser/%(Filename)%(Extension)" />
+    <Compile Include="$(FeedarrSourceRoot)/Models/UnifiedCategory.cs" Link="Parser/UnifiedCategory.cs" />
+    <Compile Include="$(FeedarrSourceRoot)/Services/Categories/UnifiedCategoryMappings.cs" Link="Parser/UnifiedCategoryMappings.cs" />
+    <Compile Include="$(FeedarrSourceRoot)/Services/Categories/CategoryGroupCatalog.cs" Link="Parser/CategoryGroupCatalog.cs" />
+  </ItemGroup>
+</Project>
