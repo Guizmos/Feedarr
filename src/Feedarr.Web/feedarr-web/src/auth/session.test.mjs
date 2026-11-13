@@ -271,3 +271,21 @@ test("an expired session during setup refreshes in place and never selects login
     assert.ok(phases.every((phase) => phase === "ready"));
   } finally { unsubscribe?.(); globalThis.fetch = original; lockSession(); }
 });
+
+
+test("security save refreshes incomplete setup in place before opening a web session", async () => {
+  const original = globalThis.fetch; const phases = [];
+  const { subscribeSession } = await import("./session.js"); let unsubscribe;
+  try {
+    lockSession();
+    globalThis.fetch = async () => json({ ...strict, setupCompleted: false, authConfigured: false });
+    await refreshSession();
+    unsubscribe = subscribeSession(() => phases.push(getSessionSnapshot().phase));
+    globalThis.fetch = async () => json({ ...strict, setupCompleted: false, authConfigured: true });
+    const transport = createSessionFetch(async () => json({ authConfigured: true }), "https://feedarr.test", "");
+    await transport("/api/settings/security", { method: "PUT" });
+    assert.equal(getSessionSnapshot().state.authConfigured, true);
+    assert.equal(sessionRoute(getSessionSnapshot().state), "setup");
+    assert.ok(phases.length); assert.ok(phases.every(phase => phase === "ready"));
+  } finally { unsubscribe?.(); globalThis.fetch = original; lockSession(); }
+});

@@ -28,13 +28,7 @@ export default function Step0Language({ onStatusChange }) {
       setSelectedLanguage(normalized);
       applyUiLanguage(normalized, true);
     } catch (e) {
-      setUiSnapshot(
-        buildUiPayload({
-          uiLanguage: DEFAULT_UI_LANGUAGE,
-          mediaInfoLanguage: DEFAULT_UI_LANGUAGE,
-        })
-      );
-      setSelectedLanguage(DEFAULT_UI_LANGUAGE);
+      setUiSnapshot(null);
       setError(e?.message || tr("Erreur chargement langue", "Language loading error"));
     } finally {
       setLoading(false);
@@ -46,7 +40,8 @@ export default function Step0Language({ onStatusChange }) {
   }, [loadSettings]);
 
   const saveLanguage = useCallback(async (nextLanguage) => {
-    const snapshot = uiSnapshot || buildUiPayload({});
+    if (!uiSnapshot) return;
+    const snapshot = uiSnapshot;
     const normalized = normalizeUiLanguage(nextLanguage || DEFAULT_UI_LANGUAGE);
     const token = saveTokenRef.current + 1;
     saveTokenRef.current = token;
@@ -102,7 +97,7 @@ export default function Step0Language({ onStatusChange }) {
           className="settings-field"
           value={selectedLanguage}
           onChange={handleLanguageChange}
-          disabled={loading || saving}
+          disabled={loading || saving || !uiSnapshot}
         >
           {LANGUAGE_OPTIONS.map((language) => (
             <option key={language.value} value={language.value}>

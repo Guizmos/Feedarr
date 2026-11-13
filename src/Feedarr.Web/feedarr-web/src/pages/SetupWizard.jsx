@@ -4,6 +4,7 @@ import { apiGet, apiPost } from "../api/client.js";
 import Modal from "../ui/Modal.jsx";
 import InlineNotice from "./settings/InlineNotice.jsx";
 import { tr } from "../app/uiText.js";
+import SetupAccess from "../components/setup/SetupAccess.jsx";
 import Step0Language from "../components/setup/Step0Language.jsx";
 import Step1Intro from "../components/setup/Step1Intro.jsx";
 import Step2Security from "../components/setup/Step2Security.jsx";
@@ -172,6 +173,7 @@ export default function SetupWizard() {
     apiGet("/api/setup/state")
       .then((state) => {
         if (!active || typeof window === "undefined") return;
+        setRestoreError("");
         const remaining = resumeSetupSteps(state?.restoreSteps);
         restoredStepsRef.current = remaining?.length ? remaining : null;
         if (remaining?.length) {
@@ -208,7 +210,7 @@ export default function SetupWizard() {
         }
       })
       .catch((error) => {
-        console.error("Failed to load setup state in setup wizard", error);
+        setRestoreError(error?.message || "Impossible de vérifier la configuration. Autorisez l’accès puis réessayez.");
       });
     return () => {
       active = false;
@@ -326,13 +328,17 @@ export default function SetupWizard() {
     </div></div></div>
   </div>;
 
+  if (!restoreMode && authState?.authRequired && authState?.authConfigured && !authenticated) {
+    return <SetupAccess state={authState} onBack={!restoreSteps ? showWelcome : undefined} />;
+  }
+
   return (
     <div className="setup-container">
       <div className="setup-stepper">
         {(restoreMode ? restoreStages : visibleSteps).map((s) => {
           const isActive = s.id === (restoreMode ? restore.stage : step);
           const isDone = restoreMode ? s.id < restore.stage : s.id <= maxStep;
-          const canClick = restoreMode ? restore.canVisit(s.id) : s.id <= maxStep;
+          const canClick = restoreMode ? restore.canVisit(s.id) : s.id <= maxStep && !finishing && !languageStepStatus.saving && !securityStepStatus.saving;
           return (
             <button
               key={s.id}
@@ -386,6 +392,7 @@ export default function SetupWizard() {
               <button
                 className="btn"
                 type="button"
+                disabled={finishing || languageStepStatus.saving || securityStepStatus.saving}
                 onClick={() => goStep(step - 1)}
               >
                 {tr("Precedent", "Previous")}

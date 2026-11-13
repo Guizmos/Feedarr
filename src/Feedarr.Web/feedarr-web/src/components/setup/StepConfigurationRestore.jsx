@@ -18,8 +18,8 @@ export default function StepConfigurationRestore({ restore }) {
       <div className="indexer-list">
         <ConfigurationArchiveInput file={restore.file} onChange={restore.setFile} disabled={busy}
           status={restore.analysisStatus} error={restore.error} id="restore-archive" />
-        {secretRow("phrase", "Phrase secrète", restore.phrase, restore.setPhrase, "Laissez vide pour une ancienne archive non chiffrée.")}
-        {secretRow("bootstrap", "Secret bootstrap", restore.bootstrap, restore.setBootstrap, "Uniquement si votre accès distant le demande.")}
+        {secretRow("phrase", "Phrase secrète de la sauvegarde", restore.phrase, restore.setPhrase, "Laissez vide pour une ancienne archive non chiffrée.")}
+        {secretRow("bootstrap", "Secret bootstrap de l’instance cible", restore.bootstrap, restore.setBootstrap, "Autorise l’accès à cette instance à distance. Ce secret est distinct de la phrase secrète de la sauvegarde.")}
       </div>
       {state?.legacyRestorePending && <InlineNotice variant="warning" message="Une restauration V1 est en attente. Appliquez-la ou annulez-la avant tout import V2." />}
     </>}
@@ -38,7 +38,7 @@ export default function StepConfigurationRestore({ restore }) {
       {state?.applied?.syncState === "held" && <InlineNotice variant="info" message="La première synchronisation attend une confirmation dans les paramètres de sauvegarde." />}
     </>}
     {restore.checking && <InlineNotice variant="info" message="Vérification de l’état de restauration…" />}
-    {restore.error && <InlineNotice variant="error" message={restore.error} />}
+    {restore.error && <><InlineNotice variant="error" message={restore.error} /><button className="btn" type="button" disabled={busy || restore.checking} onClick={restore.reloadState}>Revérifier l’état de restauration</button></>}
     {restore.notice && <InlineNotice variant={restore.analysisStatus === "valid" ? "success" : "info"} message={restore.notice} />}
     {busy && <InlineNotice variant="info" message={stage === 1 ? "Analyse de l’archive en cours…" : "Opération en cours…"} />}
   </div>;

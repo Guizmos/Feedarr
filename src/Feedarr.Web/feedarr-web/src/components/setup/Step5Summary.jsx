@@ -126,7 +126,8 @@ export default function Step5Summary({ onFinish, finishing }) {
           try {
             const cats = await apiGet(`/api/categories/${s.id}`);
             categoriesMap[s.id] = Array.isArray(cats) ? cats : [];
-          } catch {
+          } catch (error) {
+            if (error?.status === 401 || error?.status === 403) throw error;
             categoriesMap[s.id] = [];
           }
         })
@@ -217,7 +218,7 @@ export default function Step5Summary({ onFinish, finishing }) {
         </div>
       </div>
 
-      {error && <div className="onboarding__error">{error}</div>}
+      {error && <div className="onboarding__error">{error}<button className="btn" type="button" disabled={loading || finishing} onClick={loadAll}>Réessayer le chargement</button></div>}
       {launchError && <div className="onboarding__error">{launchError}</div>}
 
       {loading ? (
@@ -301,7 +302,7 @@ export default function Step5Summary({ onFinish, finishing }) {
           className={`btn-launch${finishing ? " is-launching" : ""}`}
           type="button"
           onClick={handleFinish}
-          disabled={finishing}
+          disabled={finishing || loading || !!error}
         >
           {finishing ? tr("Lancement...", "Launching...") : tr("Lancer Feedarr", "Launch Feedarr")}
           <ArrowRight className="launch-icon" />

@@ -205,6 +205,16 @@ public sealed class BasicAuthMiddleware
                 await RejectBootstrapTokenOutOfScope(context).ConfigureAwait(false);                return;
             }
 
+            // Remote creation of credentials requires the issued single-use token.
+            // Read-only setup discovery remains available without disclosing secrets.
+            if (HttpMethods.IsPut(context.Request.Method) &&
+                PathEqualsOrUnder(context.Request.Path.Value ?? "", "/api/settings/security") &&
+                !SmartAuthPolicy.IsLoopbackRequest(context))
+            {
+                await RejectBootstrapTokenDenied(context).ConfigureAwait(false);
+                return;
+            }
+
             if (IsAllowedDuringSecuritySetup(context.Request))
             {
                 context.Items[AuthPassedKey] = true;

@@ -65,7 +65,6 @@ export default function Step4ArrApps() {
       return loaded;
     } catch (e) {
       setErr(e?.message || tr("Erreur chargement applications", "Applications loading error"));
-      setApps([]);
     } finally {
       setLoading(false);
     }
@@ -164,7 +163,7 @@ export default function Step4ArrApps() {
       setConfig(cfg);
     } catch (e) {
       setConfig(null);
-      if (isSsrfBlocked(e)) setModalError(e.message);
+      setModalError(e?.message || "Impossible de charger la configuration de l’application.");
     } finally {
       setConfigLoading(false);
     }

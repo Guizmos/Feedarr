@@ -25,6 +25,7 @@ export async function configurationRequest(path, { method = "GET", body, bootstr
         configuration_restore_ambiguous_identity: "Identités ambiguës : aucune restauration n’a été préparée.",
         configuration_restore_changed_or_invalid_state: "L’état a changé ou une confirmation reste nécessaire. Actualisez avant de réessayer.",
         configuration_restore_conflict_or_unreadable_state: "Une restauration existe déjà ou son état nécessite une vérification.",
+        configuration_restore_restart_required: "La restauration est confirmée. Redémarrez Feedarr puis vérifiez son application avant de modifier la configuration.",
         setup_closed: "Le setup est terminé. Reconnectez-vous et utilisez les paramètres.",
       };
       const error = new Error(known[payload?.code] || (response.status === 413 ? "Fichier trop volumineux (64 Mio maximum)." : response.status === 429 ? "Trop de demandes. Patientez avant de réessayer." : response.status === 403 || response.status === 401 ? "Autorisation requise. Vérifiez la connexion ou le secret bootstrap." : "L’opération a échoué. Actualisez puis réessayez."));

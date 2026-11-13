@@ -112,7 +112,7 @@ function withTimeout(externalSignal, timeoutMs) {
   };
 }
 
-async function apiSend(method, path, body, { signal, timeoutMs } = {}) {
+async function apiSend(method, path, body, { signal, timeoutMs, headers = {} } = {}) {
   const { signal: merged, clear } = withTimeout(signal, timeoutMs);
   try {
     if (merged.aborted) throw merged.reason;
@@ -122,6 +122,7 @@ async function apiSend(method, path, body, { signal, timeoutMs } = {}) {
         Accept: "application/json",
         "Content-Type": "application/json",
         [TRUSTED_REQUEST_HEADER]: "1",
+        ...headers,
       },
       credentials: "include",
       body: body ? JSON.stringify(body) : null,

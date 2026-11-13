@@ -192,6 +192,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
         })
       );
     } catch (e) {
+      if (e?.status === 401 || e?.status === 403) { setLoadErr("Accès aux fournisseurs refusé. Reconnectez-vous puis réessayez."); return; }
       console.error("[Step3 Indexers] Impossible de charger les fournisseurs depuis l'API.", e);
       setLoadErr("Impossible de charger les fournisseurs. La configuration locale est utilisée.");
     }
@@ -206,8 +207,7 @@ export default function Step31JackettIndexers({ onHasSourcesChange, onBack, jack
       setSources(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error("[Step3 Indexers] Impossible de charger les sources.", e);
-      setSources([]);
-      setLoadErr("Erreur lors du chargement des sources.");
+      setLoadErr(e?.message || "Impossible de vérifier les sources. Vérifiez votre accès puis réessayez.");
     }
   }, []);
 

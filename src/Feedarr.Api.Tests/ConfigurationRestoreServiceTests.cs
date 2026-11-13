@@ -106,6 +106,47 @@ public sealed class ConfigurationRestoreServiceTests
         using var c = destination.Data.Db.Open(); Assert.Equal(1, c.ExecuteScalar<int>("SELECT COUNT(*) FROM configuration_restore_operations"));
     }
 
+    [Theory]
+    [InlineData("POST", "/api/system/onboarding/complete", false)]
+    [InlineData("PUT", "/api/settings/security", false)]
+    [InlineData("POST", "/api/setup/indexer-providers/jackett", false)]
+    [InlineData("DELETE", "/api/setup/configuration-restore/operation", false)]
+    [InlineData("GET", "/api/setup/state", true)]
+    [InlineData("GET", "/api/setup/configuration-restore/state", true)]
+    [InlineData("POST", "/api/auth/login", true)]
+    [InlineData("POST", "/api/auth/logout", true)]
+    public async Task ConfirmedRestoreLocksMutationsButKeepsRecoveryAvailable(string method, string path, bool allowed)
+    {
+        using var origin = new ArchiveFixture(); using var target = new Target();
+        var preview = await target.Prepare(origin);
+        var called = false;
+        var middleware = new ConfigurationRestoreLockMiddleware(_ => { called = true; return Task.CompletedTask; });
+        target.Caller.Request.Method = method; target.Caller.Request.Path = path;
+        await middleware.InvokeAsync(target.Caller, target.Store);
+        Assert.True(called); // Preparation can still be abandoned safely.
+        called = false;
+        await target.Restore.ConfirmAsync(preview.OperationId, target.Caller, true);
+        await middleware.InvokeAsync(target.Caller, target.Store);
+        Assert.Equal(allowed, called);
+        if (!allowed) Assert.Equal(409, target.Caller.Response.StatusCode);
+        Assert.True(target.Store.Read()!.Confirmed);
+    }
+
+    [Fact]
+    public async Task ConfirmedPlanCannotBeCancelledAndStillAppliesAfterRestart()
+    {
+        using var origin = new ArchiveFixture(); using var target = new Target();
+        var preview = await target.Prepare(origin);
+        var before = target.ActiveConfiguration();
+        await target.Restore.ConfirmAsync(preview.OperationId, target.Caller, true);
+        var error = await Assert.ThrowsAsync<BackupOperationException>(() => target.Restore.CancelAsync(preview.OperationId, target.Caller));
+        Assert.Equal(409, error.StatusCode);
+        Assert.True(target.Store.Read()!.Confirmed);
+        Assert.Equal(before, target.ActiveConfiguration());
+        target.RestartService(); target.Restore.ApplyAtStartup();
+        Assert.True(target.Setup.IsSetupCompleted());
+    }
+
     [Fact]
     public async Task UnconfirmedOrStalePlanCannotChangeConfiguration()
     {

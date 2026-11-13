@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiGet, apiPut } from "../../api/client.js";
+import { apiGet, apiPost, apiPut } from "../../api/client.js";
 import { tr } from "../../app/uiText.js";
+import { getSessionSnapshot, login, refreshSession } from "../../auth/session.js";
 import InlineNotice from "../../pages/settings/InlineNotice.jsx";
 
 export default function Step2Security({ required = false, onStatusChange, saveRef }) {
+  const [bootstrap, setBootstrap] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -37,6 +39,7 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
     setApiError("");
     try {
       const sec = await apiGet("/api/settings/security");
+      setSaved(!!sec?.authConfigured || sec?.authMode === "open");
       setForm((prev) => ({
         ...prev,
         authMode: sec?.authMode || "smart",
@@ -119,6 +122,7 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
 
   // --- Save ---
   const save = useCallback(async () => {
+    if (loading || saving) return;
     setSaveAttempted(true);
 
     // Client-side validation — order matters for focus
@@ -147,7 +151,19 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
         payload.password = form.password;
         payload.passwordConfirmation = form.passwordConfirmation;
       }
-      const next = await apiPut("/api/settings/security", payload);
+      const session = getSessionSnapshot().state;
+      let headers = {};
+      if (session?.authRequired && !session.authConfigured) {
+        const issued = await apiPost("/api/setup/bootstrap-token", {}, {
+          headers: bootstrap ? { "X-Bootstrap-Secret": bootstrap } : {},
+        });
+        headers = { "X-Feedarr-Bootstrap-Token": issued.token };
+      }
+      const next = await apiPut("/api/settings/security", payload, { headers });
+      setBootstrap("");
+      if (form.authMode !== "open" && form.password && window.location.protocol === "https:") {
+        await login(form.username, form.password, false);
+      } else await refreshSession();
       setForm((prev) => ({
         ...prev,
         authMode: next?.authMode || prev.authMode,
@@ -165,7 +181,7 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
     } finally {
       setSaving(false);
     }
-  }, [form]);
+  }, [form, bootstrap, loading, saving]);
 
   useEffect(() => {
     if (saveRef) { saveRef.current = save; }
@@ -173,14 +189,14 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
 
   // --- Status for parent ---
   const status = useMemo(() => ({
-    ready: !saving,
-    saving,
+    ready: !loading && !saving,
+    saving: loading || saving,
     saved,
     error: apiError,
     authRequired: !!form.authRequired || !!required,
     authConfigured: !!form.authConfigured,
     authMode: form.authMode,
-  }), [form.authConfigured, form.authMode, form.authRequired, required, saving, saved, apiError]);
+  }), [form.authConfigured, form.authMode, form.authRequired, required, loading, saving, saved, apiError]);
 
   useEffect(() => { onStatusChange?.(status); }, [onStatusChange, status]);
 
@@ -248,6 +264,11 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
 
       {!loading && (
         <>
+          {getSessionSnapshot().state?.authRequired && !getSessionSnapshot().state?.authConfigured && <label>
+            Secret bootstrap de cette instance (cible)
+            <input type="password" autoComplete="off" value={bootstrap} onChange={e => setBootstrap(e.target.value)} disabled={saving} />
+            <span className="settings-help">Requis à distance pour autoriser la création des identifiants. Utilisez HTTPS pour ouvrir une session web.</span>
+          </label>}
           <div className="indexer-list">
             <div className="indexer-card">
               <div className="indexer-row indexer-row--settings">
@@ -256,7 +277,7 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
                   <div className="fieldWrap">
                     <select
                       value={form.authMode}
-                      onChange={(e) => setForm((s) => ({ ...s, authMode: e.target.value }))}
+                      onChange={(e) => { setSaved(false); setForm((s) => ({ ...s, authMode: e.target.value })); }}
                       disabled={saving}
                     >
                       <option value="smart">Smart (default)</option>
@@ -282,7 +303,7 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
                     <input
                       type="text"
                       value={form.publicBaseUrl}
-                      onChange={(e) => setForm((s) => ({ ...s, publicBaseUrl: e.target.value }))}
+                      onChange={(e) => { setSaved(false); setForm((s) => ({ ...s, publicBaseUrl: e.target.value })); }}
                       placeholder="https://example.com/feedarr"
                       disabled={saving}
                     />
@@ -302,7 +323,7 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
                           ref={usernameInputRef}
                           type="text"
                           value={form.username}
-                          onChange={(e) => setForm((s) => ({ ...s, username: e.target.value }))}
+                          onChange={(e) => { setSaved(false); setForm((s) => ({ ...s, username: e.target.value })); }}
                           placeholder={tr("Entrez username", "Enter username")}
                           disabled={saving}
                         />
@@ -320,7 +341,7 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
                           ref={passwordInputRef}
                           type="password"
                           value={form.password}
-                          onChange={(e) => setForm((s) => ({ ...s, password: e.target.value }))}
+                          onChange={(e) => { setSaved(false); setForm((s) => ({ ...s, password: e.target.value })); }}
                           placeholder={
                             form.hasPassword
                               ? tr("Laisser vide pour conserver", "Leave blank to keep current")
@@ -341,7 +362,7 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
                         <input
                           type="password"
                           value={form.passwordConfirmation}
-                          onChange={(e) => setForm((s) => ({ ...s, passwordConfirmation: e.target.value }))}
+                          onChange={(e) => { setSaved(false); setForm((s) => ({ ...s, passwordConfirmation: e.target.value })); }}
                           placeholder={tr("Confirmez password", "Confirm password")}
                           disabled={saving}
                         />

@@ -344,6 +344,31 @@ public sealed class SmartAuthMiddlewareTests
         Assert.Equal(StatusCodes.Status200OK, bootstrap.Response.StatusCode);
     }
 
+    [Theory]
+    [InlineData("/api/settings/security")]
+    [InlineData("/api/settings/security/")]
+    [InlineData("/API/SETTINGS/SECURITY")]
+    public async Task RemoteInitialSecurityWriteRequiresIssuedToken(string path)
+    {
+        using var fixture = new MiddlewareFixture();
+        foreach (var token in new string?[] { null, "invalid" })
+        {
+            var headers = new Dictionary<string, string>();
+            if (token is not null) headers[SmartAuthPolicy.BootstrapTokenHeader] = token;
+            var (called, response) = await fixture.InvokeAsync(
+                path: path, method: "PUT", host: "feedarr.example.com",
+                remoteIp: IPAddress.Parse("203.0.113.44"), headers: headers);
+            Assert.False(called);
+            Assert.Contains(response.Response.StatusCode, new[] { 401, 403 });
+        }
+        var (allowed, context) = await fixture.InvokeAsync(
+            path: path, method: "PUT", host: "feedarr.example.com",
+            remoteIp: IPAddress.Parse("203.0.113.44"), headers: new Dictionary<string, string>
+            { [SmartAuthPolicy.BootstrapTokenHeader] = fixture.BootstrapTokens.IssueToken() });
+        Assert.True(allowed);
+        Assert.Equal(200, context.Response.StatusCode);
+    }
+
     [Fact]
     public async Task BootstrapToken_IsSingleUse_OnSecuritySetupRoutes()
     {

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiGet } from "../../api/client.js";
 import { backupRoot, configurationRequest, configurationUpload, configurationFileError } from "../backup/configurationBackupApi.js";
 
 const root = backupRoot(true);
@@ -30,6 +29,7 @@ export default function useSetupRestore(enabled, onApplied) {
     setState(next);
     if (next?.pending) { setStage(next.confirmed ? 3 : 2); setAnalysisStatus("valid"); }
     else if (next?.applied) setStage(4);
+    else setStage(1);
   }, []);
   useEffect(() => {
     if (!enabled || !resumeOnEntry) return;
@@ -69,15 +69,18 @@ export default function useSetupRestore(enabled, onApplied) {
     if (!consent || (state.pending.securityChangeRequiresConfirmation && !securityConsent)) throw new Error("Confirmez le remplacement de la configuration et les changements de sécurité demandés.");
     acceptState(await request(`/${state.pending.operationId}/confirm`, { method: "POST", body: { confirm: consent, securityChange: securityConsent }, signal }));
   });
+  const reloadState = () => run(async signal => {
+    acceptState(await request("/state", { signal }));
+  });
   const checkRestart = () => run(async signal => {
-    const setup = await apiGet("/api/setup/state", { signal });
+    const setup = await configurationRequest("/api/setup/state", { bootstrap, signal });
     if (setup.onboardingDone) { setState({ applied: {} }); setStage(4); setNotice("Configuration appliquée. Feedarr est prêt."); return; }
     const next = await request("/state", { signal }); acceptState(next);
     if (next?.applied && !next.pending) setNotice("Configuration appliquée. La bibliothèque a été conservée.");
     else setNotice("Le redémarrage n’est pas encore terminé. Redémarrez le conteneur Feedarr puis réessayez.");
   });
   const finish = () => run(async signal => {
-    const setup = await apiGet("/api/setup/state", { signal });
+    const setup = await configurationRequest("/api/setup/state", { bootstrap, signal });
     if (!setup.onboardingDone && !Array.isArray(setup.restoreSteps)) throw new Error("La restauration n’est pas encore appliquée. Vérifiez le redémarrage.");
     onApplied(setup, bootstrap); setBootstrap("");
   });
@@ -135,7 +138,7 @@ export default function useSetupRestore(enabled, onApplied) {
   }, "leave");
   const validFile = !configurationFileError(file);
   return { stage, state, file, setFile: selectFile, phrase, setPhrase, bootstrap, setBootstrap, consent, setConsent, securityConsent, setSecurityConsent,
-    busy, checking, analysisStatus, error, leaveError, notice, prepare, cancel, confirm, checkRestart, finish, go, canVisit, reset, startFresh, leave,
+    busy, checking, analysisStatus, error, leaveError, notice, prepare, cancel, confirm, reloadState, checkRestart, finish, go, canVisit, reset, startFresh, leave,
     canPrepare: validFile && !busy && !checking && !state?.pending && !state?.confirmed && !state?.applied && !state?.legacyRestorePending,
     locked: busy || checking || !!state?.pending || !!state?.applied,
     canContinue: stage !== 2 || consent && (!state?.pending?.securityChangeRequiresConfirmation || securityConsent) };

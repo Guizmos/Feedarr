@@ -16,7 +16,7 @@ async function load(file) {
       b.onResolve({ filter: /^react-router-dom$/ }, () => ({ path: "router", namespace: "test" }));
       b.onResolve({ filter: /api\/client\.js$/ }, () => ({ path: "api", namespace: "test" }));
       b.onResolve({ filter: /configurationBackupApi\.js$/ }, () => ({ path: "backup", namespace: "test" }));
-      b.onResolve({ filter: /(?:InlineNotice|AppIcon|Modal|Step\w+|ConfigurationBackupPanel)\.jsx$/ }, args => args.importer ? ({ path: args.path, namespace: "child" }) : undefined);
+      b.onResolve({ filter: /(?:InlineNotice|AppIcon|Modal|Step\w+|SetupAccess|ConfigurationBackupPanel)\.jsx$/ }, args => args.importer ? ({ path: args.path, namespace: "child" }) : undefined);
       b.onLoad({ filter: /.*/, namespace: "child" }, () => ({ contents: 'export default function Child() {} export function ConfigurationPreview() {}' }));
       b.onLoad({ filter: /.*/, namespace: "test" }, args => ({ contents: {
         hooks: `const element=(type,props,...children)=>type?.name==="ConfigurationArchiveInput"?type(props):({type,props:{...props,children:children.flat(Infinity)}}); export default {createElement:element,lazy:()=>function Lazy(){}}; export const Suspense="Suspense";
@@ -25,19 +25,21 @@ async function load(file) {
           export function useState(initial){const h=globalThis.__configUI,i=h.cursor++; if(!(i in h.values))h.values[i]=typeof initial==='function'?initial():initial; return [h.values[i],v=>{h.values[i]=typeof v==='function'?v(h.values[i]):v;}];}
           export function useRef(initial){const h=globalThis.__configUI,i=h.cursor++; if(!(i in h.values))h.values[i]={current:initial};return h.values[i];}
           export function useEffect(fn,deps){const h=globalThis.__configUI,i=h.cursor++,old=h.deps[i];if(!old||deps.some((d,j)=>d!==old[j])){h.deps[i]=deps;h.effects.push(fn);}}`,
-        auth: 'export const subscribeSession=()=>()=>{}; export const getSessionSnapshot=()=>({state:globalThis.__configUI.authState}); export const refreshSession=async()=>({setupCompleted:false});',
+        auth: 'export const subscribeSession=()=>()=>{}; export const getSessionSnapshot=()=>({state:globalThis.__configUI.authState}); export const refreshSession=async()=>({setupCompleted:false}); export const login=(...a)=>globalThis.__configUI.login(...a);',
         router: 'export const useNavigate=()=>globalThis.__configUI.navigate; export const useLocation=()=>({pathname:globalThis.__configUI.path||"/settings/backup"});',
         subbar: 'export const useSubbarSetter=()=>globalThis.__configUI.setContent;',
         'settings-controller': 'export default section=>({...globalThis.__configUI.controller,showBackup:section==="backup",showGeneral:section==="general"});',
-        api: 'export const apiGet=(...a)=>globalThis.__configUI.get(...a); export const apiPost=(...a)=>globalThis.__configUI.post(...a);',
+        api: 'export const apiGet=(...a)=>globalThis.__configUI.get(...a); export const apiPost=(...a)=>globalThis.__configUI.post(...a); export const apiPut=(...a)=>globalThis.__configUI.put(...a);',
         backup: `export const configurationFileError=${configurationFileError.toString()}; export const MAX_CONFIGURATION_UPLOAD=64*1024*1024; export const backupRoot=initial=>initial?'/api/setup/configuration-restore':'/api/configuration-backups';
-          export const configurationRequest=(...a)=>globalThis.__configUI.request(...a);
+          export const configurationRequest=(path,...a)=>path==="/api/setup/state"?globalThis.__configUI.get(path,...a):globalThis.__configUI.request(path,...a);
           export const configurationUpload=(file,phrase)=>{if(!file?.size||file.size>MAX_CONFIGURATION_UPLOAD)throw new Error("Sélectionnez une archive");return {file,phrase};}; export const downloadConfiguration=(blob)=>globalThis.__configUI.download?.(blob);
           export const resumeSetupSteps=steps=>Array.isArray(steps)?steps:null;`,
       }[args.path] }));
     } }], });
   return (await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString("base64")}`)).default;
 }
+const Language = await load("../setup/Step0Language.jsx");
+const Security = await load("../setup/Step2Security.jsx");
 const Panel = await load("./ConfigurationBackupPanel.jsx");
 const Restore = await load("../setup/useSetupRestore.js");
 const Settings = await load("../../pages/Settings.jsx");
@@ -419,4 +421,113 @@ test("in-flight preparation blocks return and failed preparation requires author
     assert.equal(left,false);assert.equal(requests,2);
     assert.match(f.render(Restore,true).leaveError,/Autorisation requise/);
   } finally {f.close();}
+});
+
+
+test("fresh remote setup exchanges target bootstrap for a single-use token and logs in after saving", async () => {
+  const f = fixture(); const saveRef = { current: null }; const calls = [];
+  try {
+    window.location = { protocol: "https:" };
+    f.h.authState = { setupCompleted: false, authRequired: true, authConfigured: false };
+    f.h.get = async () => ({ authMode: "smart", authRequired: true });
+    f.h.post = async (path, body, options) => { calls.push([path, options]); return { token: "single-use" }; };
+    f.h.put = async (path, body, options) => { calls.push([path, options]); return { authConfigured: true, hasPassword: true }; };
+    f.h.login = async (...args) => { calls.push(["login", args]); };
+    const render = () => f.render(Security, { saveRef });
+    render(); await f.effects(); let tree = render();
+    const inputs = nodes(tree).filter(n => n.type === "input");
+    inputs.find(n => n.props.type === "password" && !n.props.placeholder).props.onChange({ target: { value: "target-bootstrap" } });
+    inputs.find(n => /username/i.test(n.props.placeholder || "")).props.onChange({ target: { value: "admin" } });
+    for (const input of inputs.filter(n => n.props.placeholder && n.props.type === "password")) input.props.onChange({ target: { value: "correct-password" } });
+    render(); await f.effects(); await saveRef.current();
+    assert.deepEqual(calls, [
+      ["/api/setup/bootstrap-token", { headers: { "X-Bootstrap-Secret": "target-bootstrap" } }],
+      ["/api/settings/security", { headers: { "X-Feedarr-Bootstrap-Token": "single-use" } }],
+      ["login", ["admin", "correct-password", false]],
+    ]);
+    assert.equal(nodes(render()).find(n => n.type === "input" && n.props.type === "password" && !n.props.placeholder).props.value, "");
+    assert.equal(f.data.size, 0);
+  } finally { f.close(); }
+});
+
+test("configured but anonymous setup offers login and return without losing the selected path", async () => {
+  const f = fixture();
+  try {
+    f.h.authState = { setupCompleted: false, authRequired: true, authConfigured: true, authenticated: false };
+    let tree = f.render(Wizard); button(tree, "Nouvelle installation").props.onClick(); tree = f.render(Wizard);
+    assert.ok(nodes(tree).some(n => n.props?.state === f.h.authState && n.props.onBack));
+    nodes(tree).find(n => n.props?.state === f.h.authState).props.onBack();
+    assert.ok(button(f.render(Wizard), "Restaurer une configuration"));
+  } finally { f.close(); }
+});
+
+test("restore restart verification sends target bootstrap and never treats a denial as empty", async () => {
+  const f = fixture(); const render = () => f.render(Restore, true);
+  try {
+    render().setBootstrap("target-secret");
+    f.h.get = async (path, options) => { assert.equal(path, "/api/setup/state"); assert.equal(options.bootstrap, "target-secret"); throw Object.assign(new Error("Autorisation requise"), { status: 401 }); };
+    await render().checkRestart();
+    assert.equal(render().stage, 1); assert.match(render().error, /Autorisation/);
+    f.h.get = async (_path, options) => { assert.equal(options.bootstrap, "target-secret"); return { onboardingDone: true }; };
+    await render().checkRestart(); assert.equal(render().stage, 4);
+  } finally { f.close(); }
+});
+
+
+test("authenticated new installation finalizes once and clears wizard navigation for the auth gate", async () => {
+  const f = fixture(); let completed = 0;
+  try {
+    f.h.authState = { setupCompleted: false, authRequired: true, authConfigured: true, authenticated: true };
+    f.data.set("feedarr:setupPath", "install"); f.data.set("feedarr:setupStep", "8");
+    f.h.post = async path => { assert.equal(path, "/api/system/onboarding/complete"); completed++; };
+    const tree = f.render(Wizard);
+    await nodes(tree).find(n => n.props?.onFinish).props.onFinish();
+    assert.equal(completed, 1); assert.equal(f.data.get("feedarr:onboardingDone"), "true");
+    assert.equal(f.data.has("feedarr:setupPath"), false); assert.equal(f.data.has("feedarr:setupStep"), false);
+  } finally { f.close(); }
+});
+
+
+test("language authorization failure keeps settings unknown and prevents default writes", async () => {
+  const f = fixture(); let writes = 0;
+  try {
+    f.h.get = async () => { throw Object.assign(new Error("Accès refusé"), { status: 403 }); };
+    f.h.put = async () => { writes++; };
+    f.render(Language); await f.effects(); const tree = f.render(Language);
+    assert.equal(nodes(tree).find(n => n.type === "select").props.disabled, true);
+    assert.match(text(tree), /Accès refusé/); assert.equal(writes, 0);
+  } finally { f.close(); }
+});
+
+test("security already configured resumes with Next rather than invalidating the session again", async () => {
+  const f = fixture(); let status;
+  try {
+    f.h.authState = { setupCompleted: false, authRequired: true, authConfigured: true, authenticated: true };
+    f.h.get = async () => ({ authMode: "smart", authConfigured: true, hasPassword: true, username: "admin" });
+    f.render(Security, { onStatusChange: value => { status = value; } }); await f.effects();
+    f.render(Security, { onStatusChange: value => { status = value; } }); await f.effects();
+    assert.equal(status.saved, true); assert.equal(status.ready, true);
+  } finally { f.close(); }
+});
+
+test("lost prepare response can recover the persisted confirmed plan without repeating the upload", async () => {
+  const f = fixture(); const render = () => f.render(Restore, true);
+  try {
+    render().setFile(new File(["zip"], "configuration.zip"));
+    f.h.request = async () => { throw new Error("Connexion perdue"); };
+    await render().prepare(); assert.match(render().error, /Connexion perdue/);
+    f.h.request = async path => { assert.ok(path.endsWith("/state")); return { pending: { operationId: "persisted" }, confirmed: true }; };
+    await render().reloadState(); assert.equal(render().stage, 3); assert.equal(render().canVisit(1), false); assert.equal(render().error, "");
+  } finally { f.close(); }
+});
+
+
+test("authoritative empty restore recovery returns to file selection", async () => {
+  const f = fixture(); const render = () => f.render(Restore, true);
+  try {
+    render().setFile(new File(["zip"], "configuration.zip"));
+    f.h.request = async () => ({ operationId: "prepared" }); await render().prepare(); assert.equal(render().stage, 2);
+    f.h.request = async () => ({}); await render().reloadState();
+    assert.equal(render().stage, 1); assert.equal(render().state.pending, undefined); assert.ok(render().file);
+  } finally { f.close(); }
 });

@@ -820,6 +820,7 @@ app.UseMiddleware<BasicAuthMiddleware>();
 // Browser-origin guard for unsafe requests. Allows same-origin or allowlisted
 // origins/referers, and requires an explicit trusted header for non-browser clients.
 app.UseMiddleware<AntiCsrfOriginMiddleware>();
+app.UseMiddleware<Feedarr.Api.Services.Backup.Configuration.ConfigurationRestoreLockMiddleware>();
 
 // Diagnostics may only observe requests already authorized by Basic/Smart Auth.
 app.UseMiddleware<Feedarr.Api.Middleware.DownloadDiagnosticsMiddleware>();

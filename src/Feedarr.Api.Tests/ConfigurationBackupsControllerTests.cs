@@ -22,7 +22,7 @@ public sealed class ConfigurationBackupsControllerTests
     private const string Phrase="A complete API configuration backup!";
     private static readonly JsonSerializerOptions Json=new(JsonSerializerDefaults.Web);
     [Fact]
-    public async Task AdminExportPrepareConfirmAndCancelExposeOnlySafeState()
+    public async Task AdminExportPrepareConfirmExposesSafeStateAndPreventsCancellation()
     {
         using var target=new Target(seed:true);var controller=Admin(target);
         var exported=Assert.IsType<FileContentResult>(await controller.Export(new(){Passphrase=Phrase},default));
@@ -39,8 +39,8 @@ public sealed class ConfigurationBackupsControllerTests
         var state=Assert.IsType<OkObjectResult>(await controller.State());
         Assert.True(Assert.IsType<ConfigurationRestoreState>(state.Value).Confirmed);
         Assert.Equal(before,target.Library());
-        Assert.IsType<NoContentResult>(await controller.Cancel(preview.OperationId,default));
-        Assert.Null(target.Store.Read());Assert.Equal(before,target.Library());
+        Assert.Equal(409,Status(await controller.Cancel(preview.OperationId,default)));
+        Assert.True(target.Store.Read()!.Confirmed);Assert.Equal(before,target.Library());
     }
     [Fact]
     public async Task SetupImportClosesAfterRestartAndPreservesInitialSyncSingleFlight()

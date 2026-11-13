@@ -71,7 +71,7 @@ public sealed class ConfigurationRestoreService(
     {
         Authorize(caller);
         return coordinator.RunExclusiveAsync("cancel-configuration", null, _ =>
-        { GetPlan(operationId); store.Clear(); return Task.FromResult(true); }, ct);
+        { var plan = GetPlan(operationId); if (plan.Confirmed) throw Changed(); store.Clear(); return Task.FromResult(true); }, ct);
     }
 
     internal void ApplyAtStartup()

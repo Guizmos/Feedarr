@@ -144,8 +144,9 @@ export function createSessionFetch(nativeFetch, origin, root = base) {
       const denial = await response.clone().json().catch(() => ({}));
       void recheckAfterDenial(authDenialKind(response.status, denial));
     } else if (!isAuth && response.ok && method !== "GET" && action === "settings/security") {
-      lockSession();
-      void refreshSession().catch(() => {});
+      // Keep the incomplete wizard mounted while its security form opens a session.
+      if (snapshot.state?.setupCompleted !== false) lockSession();
+      await refreshSession().catch(() => {});
     }
     return response;
   };
