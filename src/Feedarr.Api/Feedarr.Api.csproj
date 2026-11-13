@@ -4,10 +4,10 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2.5.18-beta</Version>
-    <AssemblyVersion>2.5.18.0</AssemblyVersion>
-    <FileVersion>2.5.18.0</FileVersion>
-    <InformationalVersion>2.5.18-beta</InformationalVersion>
+    <Version>2.5.21-beta</Version>
+    <AssemblyVersion>2.5.21.0</AssemblyVersion>
+    <FileVersion>2.5.21.0</FileVersion>
+    <InformationalVersion>2.5.21-beta</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
 
