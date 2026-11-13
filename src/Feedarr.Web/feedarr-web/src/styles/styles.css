@@ -5839,31 +5839,18 @@ body.modal-open .content{
 }
 
 .library-welcome{
-  display: flex;
-  align-items: flex-start;
-  gap: 18px;
   width: 100%;
-  max-width: 660px;
+  max-width: 720px;
   box-sizing: border-box;
   margin: 24px auto;
-  padding: 28px;
+  padding: 32px;
+  background: radial-gradient(ellipse at top right, color-mix(in srgb, var(--accent) 8%, transparent), transparent 48%), var(--panel);
   box-shadow: var(--row-shadow);
 }
-.library-welcome__icon{
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 42px;
-  height: 42px;
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
-  color: var(--accent);
-}
-.library-welcome__content{ min-width: 0; }
 .library-welcome h2{
-  margin: 0 0 8px;
+  margin: 0 0 12px;
   color: var(--text);
-  font-size: 20px;
+  font-size: 22px;
   line-height: 1.3;
 }
 .library-welcome p{
@@ -5871,23 +5858,52 @@ body.modal-open .content{
   font-size: 14px;
   line-height: 1.65;
 }
-.library-welcome__actions{ margin-top: 20px; }
-.library-welcome__actions .btn{
-  display: inline-flex;
+.library-welcome__actions{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 26px;
+}
+.library-welcome__tile{
+  display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: auto;
-  min-height: 38px;
+  gap: 16px;
+  min-width: 0;
+  min-height: 132px;
   box-sizing: border-box;
-  padding: 8px 14px;
+  padding: 20px 16px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 45%, transparent);
+  border-radius: calc(var(--radius) + 6px);
+  background: color-mix(in srgb, var(--text) 5%, var(--panel));
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
   text-align: center;
   text-decoration: none;
 }
+.library-welcome__tile svg{
+  width: 32px;
+  height: 32px;
+  color: var(--muted);
+}
+.library-welcome__tile--source svg{ color: var(--accent); }
+.library-welcome__tile:hover{
+  background: color-mix(in srgb, var(--text) 8%, var(--panel));
+  border-color: var(--panel-border);
+  text-decoration: none;
+}
+.library-welcome__tile:focus-visible{
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
 @media (max-width: 540px){
-  .library-welcome{ flex-direction: column; gap: 16px; margin: 16px auto; padding: 20px; }
-  .library-welcome__icon{ flex-basis: auto; width: 42px; }
-  .library-welcome__content{ width: 100%; }
-  .library-welcome__actions{ flex-direction: column; align-items: stretch; }
+  .library-welcome{ margin: 16px auto; padding: 22px; }
+  .library-welcome h2{ font-size: 20px; }
+  .library-welcome__actions{ grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 22px; }
+  .library-welcome__tile{ min-height: 116px; }
 }
 
 /* Keep Settings/System card elevation consistent with System overview cards */
