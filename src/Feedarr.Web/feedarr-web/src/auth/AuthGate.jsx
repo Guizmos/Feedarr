@@ -4,7 +4,7 @@ import { getSessionSnapshot, subscribeSession, refreshSession, sessionRoute, ses
 import { tr } from "../app/uiText.js";
 
 export default function AuthGate() {
-  const { phase, state } = useSyncExternalStore(subscribeSession, getSessionSnapshot, getSessionSnapshot);
+  const { phase, state, error } = useSyncExternalStore(subscribeSession, getSessionSnapshot, getSessionSnapshot);
   const location = useLocation();
   useEffect(() => { void refreshSession().catch(() => {}); }, []);
   useEffect(() => {
@@ -17,6 +17,7 @@ export default function AuthGate() {
   if (phase !== "ready" || sessionRoute(state) === "checking") return <main className="auth-page"><section className="auth-card" role="status">
     <h1>{tr("Feedarr", "Feedarr")}</h1>
     <p>{phase === "error" ? tr("Connexion au serveur impossible. Vos données restent masquées. Vérifiez le réseau puis réessayez.", "Cannot reach the server. Your data remains hidden. Check your connection and retry.") : tr("Vérification de la session…", "Checking your session…")}</p>
+    {phase === "error" && <p className="auth-error" role="alert">{error?.status ? `HTTP ${error.status} — ` : ""}{error?.message}</p>}
     {phase === "error" && <button className="btn btn-accent" onClick={() => { lockSession(); void refreshSession().catch(() => {}); }}>{tr("Réessayer", "Retry")}</button>}
   </section></main>;
 

@@ -98,7 +98,12 @@ export function lockSession() {
   publish({ phase: "checking", state: null, error: null });
 }
 
-export function refreshSession({ deniedKind } = {}) {
+export function refreshSession({ deniedKind, force = false } = {}) {
+  if (force && pending) {
+    const previous = pending;
+    pending = null;
+    previous.controller.abort(new DOMException("Session verification superseded", "AbortError"));
+  }
   if (pending) return pending.promise;
   const started = revision;
   const request = { controller: new AbortController(), promise: null };
@@ -107,7 +112,10 @@ export function refreshSession({ deniedKind } = {}) {
     try {
       const state = await authDeadline(async signal => {
         const response = await fetch(authUrl("session"), { credentials: "include", cache: "no-store", signal, headers: { Accept: "application/json", Authorization: "", "X-Feedarr-Web": "1" } });
-        if (!response.ok) throw Object.assign(new Error("session_unavailable"), { status: response.status });
+        if (!response.ok) {
+          const problem = await response.json().catch(() => ({}));
+          throw Object.assign(new Error(problem.detail || problem.message || problem.title || problem.error || "session_unavailable"), { status: response.status });
+        }
         return await response.json();
       }, 15000, request.controller);
       if (["authRequired", "authConfigured", "authenticated", "setupCompleted"].some((key) => typeof state?.[key] !== "boolean")) throw new Error("invalid_session_response");
@@ -115,10 +123,10 @@ export function refreshSession({ deniedKind } = {}) {
         (deniedKind === "configuration" && state.authConfigured) ||
         (deniedKind === "unauthenticated" && sessionRoute(state) === "app");
       if (contradictsDenial) throw new Error("inconsistent_authorization_state");
-      if (started === revision) publish({ phase: "ready", state, error: null });
+      if (started === revision && pending === request) publish({ phase: "ready", state, error: null });
       return state;
     } catch (error) {
-      if (started === revision) publish({ phase: "error", state: null, error });
+      if (started === revision && pending === request) publish({ phase: "error", state: null, error });
       throw error;
     } finally { if (pending === request) pending = null; }
   })();

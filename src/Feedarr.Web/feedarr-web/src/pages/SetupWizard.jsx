@@ -443,7 +443,7 @@ export default function SetupWizard() {
                     disabled={securityStepStatus.saving || securityStepStatus.canSave === false}
                   >
                     {securityStepStatus.saving
-                      ? tr("Enregistrement...", "Saving...")
+                      ? securityStepStatus.progress || tr("Enregistrement...", "Saving...")
                       : securityStepStatus.recheckRequired ? tr("Vérifier l’accès", "Check access") : tr("Enregistrer", "Save")}
                   </button>
                 )

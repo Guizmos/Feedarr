@@ -431,7 +431,7 @@ test("fresh remote setup exchanges target bootstrap for a single-use token and l
     f.h.authState = { setupCompleted: false, authRequired: true, authConfigured: false };
     f.h.get = async () => ({ authMode: "smart", authRequired: true });
     f.h.post = async (path, body, options) => { calls.push([path, options]); return { token: "single-use" }; };
-    f.h.put = async (path, body, options) => { calls.push([path, options]); return { authConfigured: true, hasPassword: true }; };
+    f.h.put = async (path, body, options) => { calls.push([path, options]); const saved = { authMode: body.authMode, authConfigured: true, hasPassword: true, username: body.username }; f.h.get = async () => saved; return saved; };
     f.h.login = async (...args) => { calls.push(["login", args]); };
     const render = () => f.render(Security, { saveRef });
     render(); await f.effects(); let tree = render();

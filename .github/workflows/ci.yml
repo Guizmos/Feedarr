@@ -77,6 +77,10 @@ jobs:
         working-directory: src/Feedarr.Web/feedarr-web
         run: npm run test
 
+      - name: Run wizard HTTP integration tests
+        working-directory: src/Feedarr.Web/feedarr-web
+        run: npm run test:wizard-http
+
       - name: Run categories domain guard
         working-directory: src/Feedarr.Web/feedarr-web
         run: npm run check:categories-domain

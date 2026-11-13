@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import React, { act, Suspense } from "react";
 import { JSDOM } from "jsdom";
+import { createDomEnvironment } from "../../test/domEnvironment.mjs";
 import { build } from "esbuild";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
@@ -23,14 +24,15 @@ const css = readFileSync(new URL("../../styles/styles.css", import.meta.url), "u
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 
 async function fixture() {
-  const previous = Object.fromEntries(["window", "document", "IS_REACT_ACT_ENVIRONMENT"].map(key => [key, globalThis[key]]));
-  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: "https://feedarr.test/library" });
-  Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+  const environment = createDomEnvironment({ url: "https://feedarr.test/library" });
+  const { dom } = environment;
+  try {
   const { createRoot } = await import("react-dom/client");
   const root = createRoot(document.getElementById("root"));
   const originalError = console.error; console.error = () => {}; // React reports the deliberately injected failures.
   return { dom, render: async element => { await act(async () => { root.render(element); await flush(); }); },
-    close: async () => { await act(async () => root.unmount()); console.error = originalError; dom.window.close(); Object.assign(globalThis, previous); } };
+    close: async () => { try { await act(async () => root.unmount()); } finally { console.error = originalError; environment.restore(); } } };
+  } catch (error) { environment.restore(); throw error; }
 }
 const element = React.createElement;
 const shell = child => element("div", null, element("nav", null, "Navigation"), element("aside", null, "Menu latéral"), element("main", { className: "content" }, child));

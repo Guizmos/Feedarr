@@ -9,6 +9,7 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
   const [loadFailed, setLoadFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingPhase, setSavingPhase] = useState("");
   const [recheckRequired, setRecheckRequired] = useState(false);
   const [saved, setSaved] = useState(false);
   // saveAttempted becomes true on first click of "Enregistrer", then stays true.
@@ -71,7 +72,7 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
   const hasPasswordPresent = form.hasPassword || !!String(form.password || "").trim();
   const passwordUpdateStarted = !!form.password || !!form.passwordConfirmation;
   const passwordUpdateInvalid =
-    passwordUpdateStarted &&
+    requiresCreds && passwordUpdateStarted &&
     (!String(form.password || "").trim() ||
       !String(form.passwordConfirmation || "").trim() ||
       form.password !== form.passwordConfirmation);
@@ -135,7 +136,7 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
     const uEmpty = !String(form.username || "").trim();
     const noPass = !(form.hasPassword || !!String(form.password || "").trim());
     const pwdInvalid =
-      (!!form.password || !!form.passwordConfirmation) &&
+      reqCreds && (!!form.password || !!form.passwordConfirmation) &&
       (!String(form.password || "").trim() ||
         !String(form.passwordConfirmation || "").trim() ||
         form.password !== form.passwordConfirmation);
@@ -149,35 +150,46 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
     setRecheckRequired(false);
     setApiError("");
     let configurationSaved = false;
+    let writeAttempted = false;
     try {
       const payload = {
         authMode: form.authMode,
         publicBaseUrl: form.publicBaseUrl,
-        username: form.username,
+        ...(reqCreds ? { username: form.username } : {}),
       };
-      if (form.password || form.passwordConfirmation) {
+      if (reqCreds && (form.password || form.passwordConfirmation)) {
         payload.password = form.password;
         payload.passwordConfirmation = form.passwordConfirmation;
       }
       const session = getSessionSnapshot().state;
       let headers = {};
       if (session?.authRequired && !session.authConfigured) {
+        setSavingPhase(tr("Autorisation bootstrap…", "Authorizing bootstrap…"));
         const issued = await apiPost("/api/setup/bootstrap-token", {}, {
           headers: bootstrap ? { "X-Bootstrap-Secret": bootstrap } : {},
         });
         headers = { "X-Feedarr-Bootstrap-Token": issued.token };
       }
-      const next = await apiPut("/api/settings/security", payload, { headers });
+      setSavingPhase(tr("Enregistrement…", "Saving…"));
+      writeAttempted = true;
+      await apiPut("/api/settings/security", payload, { headers });
       configurationSaved = true;
       setBootstrap("");
+      setSavingPhase(tr("Vérification de l’accès…", "Verifying access…"));
       if (form.authMode !== "open" && form.password && window.location.protocol === "https:") {
         await login(form.username, form.password, false);
-      } else await refreshSession();
+      } else await refreshSession({ force: true });
+      // Verify the persisted settings, not merely the PUT echo or a pre-write GET.
+      setSavingPhase(tr("Relecture des paramètres…", "Reading saved settings…"));
+      const next = await apiGet("/api/settings/security");
+      if (next?.authMode !== payload.authMode || (payload.authMode === "open" && (next.authRequired || next.authConfigured || next.hasPassword || next.username)) || (reqCreds && (!next?.authConfigured || !next?.hasPassword))) {
+        throw new Error(tr("L’état relu ne correspond pas aux paramètres demandés. Vérifiez l’accès puis réessayez.", "Persisted settings do not match the requested state. Check access and retry."));
+      }
       setForm((prev) => ({
         ...prev,
-        authMode: next?.authMode || prev.authMode,
-        publicBaseUrl: next?.publicBaseUrl || prev.publicBaseUrl,
-        username: next?.username || prev.username,
+        authMode: next.authMode,
+        publicBaseUrl: next.publicBaseUrl ?? "",
+        username: next.username ?? "",
         password: "",
         passwordConfirmation: "",
         hasPassword: !!next?.hasPassword,
@@ -186,32 +198,27 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
       }));
       setSaved(true);
     } catch (e) {
-      setRecheckRequired(configurationSaved);
-      const reason = e?.code === "https_required"
-        ? tr("Une session web nécessite HTTPS.", "Web sessions require HTTPS.")
-        : e?.code === "invalid_credentials" || e?.status === 401 || e?.status === 403
-          ? tr("Connexion refusée : vérifiez les identifiants.", "Sign-in denied: check your credentials.")
-          : e?.name === "TimeoutError"
-            ? tr("Le délai de connexion est dépassé.", "The connection timed out.")
-            : tr("Le serveur ou la vérification de session est indisponible.", "The server or session verification is unavailable.");
-      setApiError(configurationSaved
-        ? `${tr("Paramètres enregistrés.", "Settings saved.")} ${reason} ${tr("Vérifiez l’accès pour reprendre sans réenregistrer les identifiants.", "Check access to continue without saving credentials again.")}`
-        : e?.message || tr("Erreur sauvegarde securite", "Security save error"));
+      const uncertainWrite = writeAttempted && (!e?.status || e.status >= 500);
+      setRecheckRequired(configurationSaved || uncertainWrite);
+      const status = e?.status ? `HTTP ${e.status} — ` : e?.name === "TimeoutError" ? `${tr("Délai dépassé", "Timed out")} — ` : "";
+      const cause = e?.detail || e?.message || tr("Erreur de connexion", "Connection error");
+      setApiError(`${configurationSaved ? `${tr("Paramètres enregistrés.", "Settings saved.")} ` : uncertainWrite ? `${tr("Enregistrement non confirmé.", "Save not confirmed.")} ` : ""}${status}${cause}${configurationSaved || uncertainWrite ? ` ${tr("Vérifiez l’accès pour reprendre sans réenregistrer les identifiants.", "Check access to continue without saving credentials again.")}` : ""}`);
     } finally {
+      setSavingPhase("");
       setSaving(false);
     }
   }, [form, bootstrap, loading, saving]);
 
   const verifyAccess = useCallback(async () => {
     if (saving) return;
-    setSaving(true); setApiError("");
+    setSaving(true); setSavingPhase(tr("Vérification de l’accès…", "Verifying access…")); setApiError("");
     try {
-      const state = await refreshSession();
+      const state = await refreshSession({ force: true });
       if (!state.authRequired || state.authenticated) await load();
       setRecheckRequired(false);
     }
     catch (e) { setApiError(e?.message || "Vérification impossible. Réessayez."); }
-    finally { setSaving(false); }
+    finally { setSavingPhase(""); setSaving(false); }
   }, [saving, load]);
 
   useEffect(() => {
@@ -223,13 +230,14 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
     ready: !loading && !saving && !loadFailed && !apiError,
     canSave: !loading && !saving && !loadFailed,
     saving: loading || saving,
+    progress: savingPhase,
     saved,
     recheckRequired,
     error: apiError,
-    authRequired: !!form.authRequired || !!required,
+    authRequired: !!form.authRequired,
     authConfigured: !!form.authConfigured,
     authMode: form.authMode,
-  }), [form.authConfigured, form.authMode, form.authRequired, required, loading, saving, saved, apiError, loadFailed, recheckRequired]);
+  }), [form.authConfigured, form.authMode, form.authRequired, loading, saving, saved, apiError, loadFailed, recheckRequired, savingPhase]);
 
   useEffect(() => { onStatusChange?.(status); }, [onStatusChange, status]);
 
@@ -240,7 +248,7 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
     const uEmpty = !String(form.username || "").trim();
     const noPass = !(form.hasPassword || !!String(form.password || "").trim());
     const pwdInvalid =
-      (!!form.password || !!form.passwordConfirmation) &&
+      reqCreds && (!!form.password || !!form.passwordConfirmation) &&
       (!String(form.password || "").trim() ||
         !String(form.passwordConfirmation || "").trim() ||
         form.password !== form.passwordConfirmation);
