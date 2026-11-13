@@ -154,6 +154,7 @@ public sealed class SetupLockMiddlewareTests
         }, BuildConfiguration());
 
         var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
         context.Request.Path = "/";
         context.Response.Body = new MemoryStream();
 
