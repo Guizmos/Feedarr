@@ -585,7 +585,7 @@ public sealed class WebSessionTests
             var config = new ConfigurationBuilder().Build();
             var csrf = new AntiCsrfOriginMiddleware(_ => { called = true; return Task.CompletedTask; });
             var middleware = new BasicAuthMiddleware(ctx => csrf.InvokeAsync(ctx, config, NullLogger<AntiCsrfOriginMiddleware>.Instance), config);
-            await middleware.InvokeAsync(context, Settings, cache, Setup, new BootstrapTokenService(), Throttle,
+            await middleware.InvokeAsync(context, Settings, cache, Throttle,
                 NullLogger<BasicAuthMiddleware>.Instance, Sessions);
             return called;
         }

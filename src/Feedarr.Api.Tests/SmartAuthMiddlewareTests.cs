@@ -49,12 +49,11 @@ public sealed class AuthenticationMiddlewareTests
         private readonly string directory=Path.Combine(Path.GetTempPath(),"feedarr-transport-auth-"+Guid.NewGuid().ToString("N"));
         public MemoryCache Cache {get;}=new(new MemoryCacheOptions());
         public SettingsRepository Settings {get;}
-        private readonly SetupStateService setup;
         public Fixture(bool requireHttps=false)
         {
             var db=new Db(OptionsFactory.Create(new AppOptions {DataDir=directory}));
             new MigrationsRunner(db,NullLogger<MigrationsRunner>.Instance).Run();
-            Settings=new(db); setup=new(Settings,Cache);
+            Settings=new(db);
             var (hash,salt)=CredentialValidator.HashPassword("Fixture-Password42!");
             Settings.SaveSecurity(new SecuritySettings {Username="admin",PasswordHash=hash,PasswordSalt=salt,RequireHttps=requireHttps});
         }
@@ -67,7 +66,7 @@ public sealed class AuthenticationMiddlewareTests
             if(basic)context.Request.Headers.Authorization="Basic "+Convert.ToBase64String(Encoding.UTF8.GetBytes("admin:Fixture-Password42!"));
             if(secret is not null)context.Request.Headers[AuthenticationPolicy.BootstrapSecretHeader]=secret;
             var middleware=new BasicAuthMiddleware(c=>{c.Response.StatusCode=200;return Task.CompletedTask;},config);
-            await middleware.InvokeAsync(context,Settings,Cache,setup,new BootstrapTokenService(),new AuthThrottleService(new BasicAuthThrottleOptions(),TimeProvider.System),NullLogger<BasicAuthMiddleware>.Instance);
+            await middleware.InvokeAsync(context,Settings,Cache,new AuthThrottleService(new BasicAuthThrottleOptions(),TimeProvider.System),NullLogger<BasicAuthMiddleware>.Instance);
             return context.Response.StatusCode;
         }
         public void Dispose(){Cache.Dispose();Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();Directory.Delete(directory,true);}

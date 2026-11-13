@@ -1,6 +1,9 @@
-using System.IO;
+using System.Net;
+using System.Text;
+using System.Text.Json;
 using Feedarr.Api.Data;
 using Feedarr.Api.Data.Repositories;
+using Feedarr.Api.Models.Settings;
 using Feedarr.Api.Options;
 using Feedarr.Api.Services.Security;
 using Microsoft.AspNetCore.Http;
@@ -11,208 +14,112 @@ using OptionsFactory = Microsoft.Extensions.Options.Options;
 
 namespace Feedarr.Api.Tests;
 
+// Regression coverage for removal of the setup lock; endpoint authorization stays independent.
 public sealed class SetupLockMiddlewareTests
 {
     [Theory]
-    [InlineData("/")]
-    [InlineData("/library")]
-    public async Task WithoutSetup_BrowserRoutes_RedirectToSetup(string path)
+    [InlineData("GET", "/")]
+    [InlineData("GET", "/library")]
+    [InlineData("GET", "/create-admin")]
+    [InlineData("GET", "/health")]
+    [InlineData("HEAD", "/assets/main.js")]
+    [InlineData("POST", "/api/auth/create-admin")]
+    [InlineData("GET", "/api/auth/session")]
+    public async Task FreshHttpInstance_PublicRoutesReachTheirHandlersWithoutBootstrap(string method, string path)
     {
-        using var workspace = new TestWorkspace();
-        var db = CreateDb(workspace);
-        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
-
-        var settings = new SettingsRepository(db);
-        using var cache = new MemoryCache(new MemoryCacheOptions());
-        var setupState = new SetupStateService(settings, cache);
-
-        var nextCalled = false;
-        var middleware = new BasicAuthMiddleware(_ =>
-        {
-            nextCalled = true;
-            return Task.CompletedTask;
-        }, BuildConfiguration());
-
-        var context = new DefaultHttpContext();
-        context.Request.Path = path;
-        context.Response.Body = new MemoryStream();
-
-        await middleware.InvokeAsync(
-            context,
-            settings,
-            cache,
-            setupState,
-            new BootstrapTokenService(),
-            new AuthThrottleService(new BasicAuthThrottleOptions(), TimeProvider.System),
-            NullLogger<BasicAuthMiddleware>.Instance);
-
-        Assert.False(nextCalled);
-        Assert.Equal(StatusCodes.Status302Found, context.Response.StatusCode);
-        Assert.Equal("/setup", context.Response.Headers.Location.ToString());
-    }
-
-    [Fact]
-    public async Task WithoutSetup_ApiRoute_Returns403WithSetupRequiredJson()
-    {
-        using var workspace = new TestWorkspace();
-        var db = CreateDb(workspace);
-        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
-
-        var settings = new SettingsRepository(db);
-        using var cache = new MemoryCache(new MemoryCacheOptions());
-        var setupState = new SetupStateService(settings, cache);
-
-        var nextCalled = false;
-        var middleware = new BasicAuthMiddleware(_ =>
-        {
-            nextCalled = true;
-            return Task.CompletedTask;
-        }, BuildConfiguration());
-
-        var context = new DefaultHttpContext();
-        context.Request.Path = "/api/something";
-        context.Response.Body = new MemoryStream();
-
-        await middleware.InvokeAsync(
-            context,
-            settings,
-            cache,
-            setupState,
-            new BootstrapTokenService(),
-            new AuthThrottleService(new BasicAuthThrottleOptions(), TimeProvider.System),
-            NullLogger<BasicAuthMiddleware>.Instance);
-
-        Assert.False(nextCalled);
-        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
-        Assert.StartsWith("application/json", context.Response.ContentType ?? string.Empty, StringComparison.OrdinalIgnoreCase);
-
-        context.Response.Body.Position = 0;
-        using var reader = new StreamReader(context.Response.Body);
-        var body = await reader.ReadToEndAsync();
-        Assert.Contains("setup_required", body, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Setup required", body, StringComparison.Ordinal);
+        using var f = new Fixture();
+        var (context, reached) = await f.Request(method, path);
+        Assert.True(reached); // Auth controllers still enforce same-origin, rate limits and atomic creation.
+        Assert.Equal(200, context.Response.StatusCode);
+        Assert.False(context.Response.Headers.ContainsKey("Location"));
     }
 
     [Theory]
-    [InlineData("/setup")]
-    [InlineData("/health")]
-    [InlineData("/api/health")]
-    [InlineData("/assets/main.js")]
-    public async Task WithoutSetup_SetupAndHealthAndAssets_AreAccessible(string path)
-    {
-        using var workspace = new TestWorkspace();
-        var db = CreateDb(workspace);
-        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
-
-        var settings = new SettingsRepository(db);
-        using var cache = new MemoryCache(new MemoryCacheOptions());
-        var setupState = new SetupStateService(settings, cache);
-
-        var nextCalled = false;
-        var middleware = new BasicAuthMiddleware(context =>
-        {
-            nextCalled = true;
-            context.Response.StatusCode = StatusCodes.Status200OK;
-            return Task.CompletedTask;
-        }, BuildConfiguration());
-
-        var context = new DefaultHttpContext();
-        context.Request.Path = path;
-        context.Response.Body = new MemoryStream();
-
-        await middleware.InvokeAsync(
-            context,
-            settings,
-            cache,
-            setupState,
-            new BootstrapTokenService(),
-            new AuthThrottleService(new BasicAuthThrottleOptions(), TimeProvider.System),
-            NullLogger<BasicAuthMiddleware>.Instance);
-
-        Assert.True(nextCalled);
-        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-    }
-
-    [Theory]
-    [InlineData(true)]
     [InlineData(false)]
-    public async Task AfterSetup_GetRoot_RequiresKnownLocalConnection(bool directLoopback)
+    [InlineData(true)]
+    public async Task MissingAdministrator_PrivateApiIsProtectedRegardlessOfOnboarding(bool onboardingDone)
     {
-        using var workspace = new TestWorkspace();
-        var db = CreateDb(workspace);
-        new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
-
-        var settings = new SettingsRepository(db);
-        using var cache = new MemoryCache(new MemoryCacheOptions());
-        var setupState = new SetupStateService(settings, cache);
-        setupState.MarkSetupCompleted();
-
-        var nextCalled = false;
-        var middleware = new BasicAuthMiddleware(context =>
-        {
-            nextCalled = true;
-            context.Response.StatusCode = StatusCodes.Status200OK;
-            return Task.CompletedTask;
-        }, BuildConfiguration());
-
-        var context = new DefaultHttpContext();
-        context.Request.Path = "/";
-        if (directLoopback) context.Connection.RemoteIpAddress = System.Net.IPAddress.Loopback;
-        context.Response.Body = new MemoryStream();
-
-        await middleware.InvokeAsync(
-            context,
-            settings,
-            cache,
-            setupState,
-            new BootstrapTokenService(),
-            new AuthThrottleService(new BasicAuthThrottleOptions(), TimeProvider.System),
-            NullLogger<BasicAuthMiddleware>.Instance);
-
-        Assert.Equal(directLoopback, nextCalled);
-        Assert.Equal(directLoopback ? StatusCodes.Status200OK : StatusCodes.Status403Forbidden, context.Response.StatusCode);
+        using var f = new Fixture(onboardingDone);
+        var (context, reached) = await f.Request("GET", "/api/sources");
+        Assert.False(reached);
+        Assert.Equal(403, context.Response.StatusCode);
+        context.Response.Body.Position = 0;
+        using var body = await JsonDocument.ParseAsync(context.Response.Body);
+        Assert.Equal("security_setup_required", body.RootElement.GetProperty("error").GetString());
+        Assert.False(body.RootElement.GetProperty("authConfigured").GetBoolean());
+        // This is an account prerequisite, not a wizard lock: creation remains reachable.
+        Assert.True((await f.Request("POST", "/api/auth/create-admin")).Reached);
     }
 
-    private static Db CreateDb(TestWorkspace workspace)
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Administrator_PrivateHttpApiRequiresAuthenticationEvenOnLoopbackRegardlessOfOnboarding(bool onboardingDone)
     {
-        var options = OptionsFactory.Create(new AppOptions
+        using var f = new Fixture(onboardingDone);
+        var (hash, salt) = CredentialValidator.HashPassword("Fixture-Password42!");
+        Assert.True(f.Settings.TryCreateInitialAdministrator(new SecuritySettings
         {
-            DataDir = workspace.DataDir,
-            DbFileName = "feedarr.db"
-        });
-
-        return new Db(options);
+            Username = "admin", PasswordHash = hash, PasswordSalt = salt
+        }));
+        var (anonymous, reached) = await f.Request("GET", "/api/sources");
+        Assert.False(reached);
+        Assert.Equal(401, anonymous.Response.StatusCode);
+        var (authenticated, passed) = await f.Request("GET", "/api/sources", authenticated: true);
+        Assert.True(passed);
+        Assert.Equal(200, authenticated.Response.StatusCode);
+        Assert.False(f.Settings.TryCreateInitialAdministrator(new SecuritySettings()));
     }
 
-    private static IConfiguration BuildConfiguration()
+    [Theory]
+    [InlineData("POST", "/health")]
+    [InlineData("GET", "/health/deep")]
+    [InlineData("GET", "/api/health")]
+    [InlineData("POST", "/assets/main.js")]
+    public async Task PublicExceptionsDoNotOpenPrivatePathsOrOtherMethods(string method, string path)
     {
-        return new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>())
-            .Build();
+        using var f = new Fixture();
+        var (context, reached) = await f.Request(method, path);
+        Assert.False(reached);
+        Assert.Equal(403, context.Response.StatusCode);
     }
 
-    private sealed class TestWorkspace : IDisposable
+    private sealed class Fixture : IDisposable
     {
-        public TestWorkspace()
+        private readonly string directory = Path.Combine(Path.GetTempPath(), "feedarr-setup-contract-" + Guid.NewGuid().ToString("N"));
+        private readonly MemoryCache cache = new(new MemoryCacheOptions());
+        public SettingsRepository Settings { get; }
+
+        public Fixture(bool onboardingDone = false)
         {
-            RootDir = Path.Combine(Path.GetTempPath(), "feedarr-tests", Guid.NewGuid().ToString("N"));
-            DataDir = Path.Combine(RootDir, "data");
-            Directory.CreateDirectory(DataDir);
+            var db = new Db(OptionsFactory.Create(new AppOptions { DataDir = directory }));
+            new MigrationsRunner(db, NullLogger<MigrationsRunner>.Instance).Run();
+            Settings = new SettingsRepository(db);
+            Settings.SaveUi(new UiSettings { OnboardingDone = onboardingDone });
         }
 
-        public string RootDir { get; }
-        public string DataDir { get; }
+        public async Task<(HttpContext Context, bool Reached)> Request(string method, string path, bool authenticated = false)
+        {
+            var context = new DefaultHttpContext();
+            context.Request.Method = method;
+            context.Request.Scheme = "http";
+            context.Request.Path = path;
+            context.Connection.RemoteIpAddress = IPAddress.Loopback;
+            context.Response.Body = new MemoryStream();
+            if (authenticated)
+                context.Request.Headers.Authorization = "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("admin:Fixture-Password42!"));
+            var reached = false;
+            var middleware = new BasicAuthMiddleware(_ => { reached = true; return Task.CompletedTask; }, new ConfigurationBuilder().Build());
+            await middleware.InvokeAsync(context, Settings, cache,
+                new AuthThrottleService(new BasicAuthThrottleOptions(), TimeProvider.System), NullLogger<BasicAuthMiddleware>.Instance);
+            return (context, reached);
+        }
 
         public void Dispose()
         {
-            try
-            {
-                if (Directory.Exists(RootDir))
-                    Directory.Delete(RootDir, true);
-            }
-            catch
-            {
-            }
+            cache.Dispose();
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            Directory.Delete(directory, true);
         }
     }
 }

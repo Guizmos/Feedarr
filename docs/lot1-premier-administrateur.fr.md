@@ -54,3 +54,13 @@ Bilan de la précédente finalisation des politiques de transport, par rapport �
 Suppression du contrôle de secret du endpoint de création, du drapeau `initialAuthorizationRequired`, du champ et des messages correspondants, et de l’argument/header bootstrap du transport frontend. Les utilitaires bootstrap encore référencés par les anciennes restaurations sont conservés ; aucun autre moteur de Feedarr n’est modifié.
 
 Le backend de recette démarre sans variable de secret bootstrap. Le scénario HTTP couvre le formulaire sans secret, la connexion automatique, l’accès à la bibliothèque et à la restauration, logout/login, redémarrage avec session conservée et refus d’un deuxième compte. Le scénario TLS crée aussi directement le premier compte en HTTPS. La concurrence reste limitée à un succès et un conflit. Les mots de passe hashés, CSRF, sessions et limites de tentatives sont conservés.
+
+## Correctif CI — anciens tests de setup lock
+
+Les quatre anciennes méthodes de `SetupLockMiddlewareTests` (neuf cas paramétrés) ont été remplacées : suppression des attentes de redirection `/setup`, d’exemption loopback, de whitelist wizard et de message générique « Setup required ». Les requêtes des tests indiquent désormais leur méthode HTTP, indispensable pour vérifier les exceptions GET/HEAD réelles.
+
+Le contrat vérifié conserve le shell public sans données privées, les assets GET/HEAD, le readiness GET `/health`, et les endpoints initiaux sans bootstrap. `/api/health` n’est pas une route publique déclarée ; `/health/deep`, POST `/health` et POST sur un asset ne bénéficient pas des exceptions. Une API privée sans compte reçoit `403 security_setup_required` : ce code signifie uniquement que l’administrateur manque, sans contrôle de `onboardingDone`. La création reste accessible ; après création, l’API exige les identifiants même en loopback et accepte HTTP par défaut, que `onboardingDone` soit vrai ou faux.
+
+Aucune régression fonctionnelle backend constatée. Seuls les paramètres inutilisés `SetupStateService` et `BootstrapTokenService` ont été retirés du middleware et de ses appels de test. Le service d’état conserve des usages dans les endpoints de restauration historiques, leur reprise et les données de compatibilité ; il n’est pas supprimé. Le parcours de restauration courant dans les Paramètres n’utilise pas leur verrou historique.
+
+Validation de ce correctif : `SetupLockMiddlewareTests` **15/15 réussis** ; intégralité de `Feedarr.Api.Tests` **1 914/1 914 réussis**, zéro échec ou test ignoré ; `git diff --check` réussi. Aucun commit, push ou déploiement.

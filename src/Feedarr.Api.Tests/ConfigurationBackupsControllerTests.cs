@@ -108,7 +108,7 @@ public sealed class ConfigurationBackupsControllerTests
         context.Request.Method=method;context.Request.Path=path;context.Response.Body=new MemoryStream();
         context.Request.Headers[AuthenticationPolicy.BootstrapTokenHeader]=target.Tokens.IssueToken();
         var passed=false;var middleware=new BasicAuthMiddleware(_=>{passed=true;return Task.CompletedTask;},new ConfigurationBuilder().Build());
-        await middleware.InvokeAsync(context,target.Settings,target.Cache,target.Setup,target.Tokens,
+        await middleware.InvokeAsync(context,target.Settings,target.Cache,
             new AuthThrottleService(new Feedarr.Api.Options.BasicAuthThrottleOptions(),TimeProvider.System),NullLogger<BasicAuthMiddleware>.Instance);
         Assert.Equal(allowed,passed);
         if(allowed)Assert.True(context.Items[BasicAuthMiddleware.BootstrapTokenActiveKey] is true);

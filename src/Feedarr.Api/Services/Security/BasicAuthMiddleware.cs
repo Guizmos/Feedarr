@@ -32,8 +32,6 @@ public sealed class BasicAuthMiddleware
         HttpContext context,
         SettingsRepository settingsRepo,
         IMemoryCache cache,
-        SetupStateService setupState,
-        BootstrapTokenService bootstrapTokens,
         AuthThrottleService authThrottle,
         ILogger<BasicAuthMiddleware> log,
         WebSessionService? webSessions = null)
