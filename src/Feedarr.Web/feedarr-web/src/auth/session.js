@@ -8,7 +8,15 @@ const base = (import.meta.env?.BASE_URL || "/").replace(/\/$/, "");
 const authUrl = (action) => `${base}/api/auth/${action}`;
 export const getSessionSnapshot = () => snapshot;
 export const subscribeSession = (listener) => { listeners.add(listener); return () => listeners.delete(listener); };
-function publish(next) { snapshot = next; for (const listener of listeners) listener(); }
+function publish(next) {
+  snapshot = next;
+  for (const listener of listeners) listener();
+  // A verified visible session also releases a mask left by an earlier lifecycle.
+  // Error/retry screens are outside the private boundary and stay visible regardless.
+  if (next.phase === "ready" && typeof document !== "undefined" && document.visibilityState === "visible") {
+    document.documentElement.classList.remove("auth-locked");
+  }
+}
 
 export function sessionRoute(state) {
   if (typeof state?.setupCompleted !== "boolean") return "checking";
@@ -65,20 +73,43 @@ export function safeDestination(value) {
 
 export function appUrl(path) { return `${base}${path}`; }
 
-export function lockSession() {
+function invalidatePendingSession() {
   revision += 1;
+  const previous = pending;
   pending = null;
+  previous?.controller.abort(new DOMException("Session changed", "AbortError"));
+}
+
+// Bound both fetch and response-body consumption, even if an adapter ignores abort.
+async function authDeadline(action, timeoutMs, controller = new AbortController()) {
+  let aborted;
+  const abort = new Promise((_, reject) => {
+    aborted = () => reject(controller.signal.reason);
+    controller.signal.addEventListener("abort", aborted, { once: true });
+    if (controller.signal.aborted) aborted();
+  });
+  const timer = setTimeout(() => controller.abort(new DOMException("La vérification de connexion a dépassé le délai. Réessayez.", "TimeoutError")), timeoutMs);
+  try { return await Promise.race([Promise.resolve().then(() => action(controller.signal)), abort]); }
+  finally { clearTimeout(timer); controller.signal.removeEventListener("abort", aborted); }
+}
+
+export function lockSession() {
+  invalidatePendingSession();
   publish({ phase: "checking", state: null, error: null });
 }
 
-export async function refreshSession({ deniedKind } = {}) {
-  if (pending) return pending;
+export function refreshSession({ deniedKind } = {}) {
+  if (pending) return pending.promise;
   const started = revision;
-  pending = (async () => {
+  const request = { controller: new AbortController(), promise: null };
+  pending = request;
+  request.promise = (async () => {
     try {
-      const response = await fetch(authUrl("session"), { credentials: "include", cache: "no-store", signal: AbortSignal.timeout(15000), headers: { Accept: "application/json", Authorization: "", "X-Feedarr-Web": "1" } });
-      if (!response.ok) throw Object.assign(new Error("session_unavailable"), { status: response.status });
-      const state = await response.json();
+      const state = await authDeadline(async signal => {
+        const response = await fetch(authUrl("session"), { credentials: "include", cache: "no-store", signal, headers: { Accept: "application/json", Authorization: "", "X-Feedarr-Web": "1" } });
+        if (!response.ok) throw Object.assign(new Error("session_unavailable"), { status: response.status });
+        return await response.json();
+      }, 15000, request.controller);
       if (["authRequired", "authConfigured", "authenticated", "setupCompleted"].some((key) => typeof state?.[key] !== "boolean")) throw new Error("invalid_session_response");
       const contradictsDenial = (deniedKind === "setup" && state.setupCompleted) ||
         (deniedKind === "configuration" && state.authConfigured) ||
@@ -89,25 +120,30 @@ export async function refreshSession({ deniedKind } = {}) {
     } catch (error) {
       if (started === revision) publish({ phase: "error", state: null, error });
       throw error;
-    } finally { if (started === revision) pending = null; }
+    } finally { if (pending === request) pending = null; }
   })();
-  return pending;
+  return request.promise;
 }
 
 async function authPost(action, body) {
-  const response = await fetch(authUrl(action), {
-    method: "POST", credentials: "include", cache: "no-store", signal: AbortSignal.timeout(30000),
-    headers: { Accept: "application/json", Authorization: "", "Content-Type": "application/json", "X-Feedarr-Web": "1", ...(snapshot.state?.csrfToken ? { "X-Feedarr-CSRF": snapshot.state.csrfToken } : {}) },
-    body: JSON.stringify(body),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw Object.assign(new Error(payload.code || payload.title || payload.error || "auth_failed"), { status: response.status, code: payload.code || payload.error, retryAfter: response.headers.get("Retry-After") || payload.retryAfterSeconds });
-  return payload;
+  return authDeadline(async signal => {
+    const response = await fetch(authUrl(action), {
+      method: "POST", credentials: "include", cache: "no-store", signal,
+      headers: { Accept: "application/json", Authorization: "", "Content-Type": "application/json", "X-Feedarr-Web": "1", ...(snapshot.state?.csrfToken ? { "X-Feedarr-CSRF": snapshot.state.csrfToken } : {}) },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw Object.assign(new Error(payload.code || payload.title || payload.error || "auth_failed"), { status: response.status, code: payload.code || payload.error, retryAfter: response.headers.get("Retry-After") || payload.retryAfterSeconds });
+    return payload;
+  }, 30000);
 }
 
 export async function login(username, password, rememberMe) {
+  const started = revision;
   const state = await authPost("login", { username, password, rememberMe });
-  revision += 1;
+  if (started !== revision) throw new DOMException("Session changed", "AbortError");
+  if (["authRequired", "authConfigured", "authenticated", "setupCompleted"].some(key => typeof state?.[key] !== "boolean")) throw new Error("invalid_session_response");
+  invalidatePendingSession();
   publish({ phase: "ready", state, error: null });
   return state;
 }
@@ -144,9 +180,12 @@ export function createSessionFetch(nativeFetch, origin, root = base) {
       const denial = await response.clone().json().catch(() => ({}));
       void recheckAfterDenial(authDenialKind(response.status, denial));
     } else if (!isAuth && response.ok && method !== "GET" && action === "settings/security") {
-      // Keep the incomplete wizard mounted while its security form opens a session.
-      if (snapshot.state?.setupCompleted !== false) lockSession();
-      await refreshSession().catch(() => {});
+      // Setup owns the next operation: login for new credentials, one check for Open.
+      // Never nest a session request inside its PUT or swallow verification failures.
+      if (snapshot.state?.setupCompleted !== false) {
+        lockSession();
+        await refreshSession();
+      }
     }
     return response;
   };
@@ -154,21 +193,25 @@ export function createSessionFetch(nativeFetch, origin, root = base) {
 
 export function installSessionTransport() {
   window.fetch = createSessionFetch(window.fetch.bind(window), window.location.origin);
-  if ("BroadcastChannel" in window) {
-    channel = new BroadcastChannel("feedarr-auth");
-    channel.onmessage = () => { lockSession(); void refreshSession().catch(() => {}); };
-  }
-  window.addEventListener("pagehide", () => {
+  const hasPrivateState = () => snapshot.state?.authenticated || snapshot.state?.setupCompleted !== false;
+  const conceal = () => {
+    if (!hasPrivateState()) return; // Anonymous setup contains no authenticated private state.
     document.documentElement.classList.add("auth-locked");
     lockSession();
-  });
-  const revalidate = () => {
-    lockSession();
-    void refreshSession().finally(() => document.documentElement.classList.remove("auth-locked")).catch(() => {});
   };
+  const revalidate = () => {
+    // pageshow and visibilitychange often arrive together. Share one verification.
+    if (snapshot.phase !== "checking" && hasPrivateState()) lockSession();
+    void refreshSession().catch(() => {});
+  };
+  if ("BroadcastChannel" in window) {
+    channel = new BroadcastChannel("feedarr-auth");
+    channel.onmessage = () => { conceal(); revalidate(); };
+  }
+  window.addEventListener("pagehide", conceal);
   window.addEventListener("pageshow", (event) => { if (event.persisted) revalidate(); });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") revalidate();
-    else { document.documentElement.classList.add("auth-locked"); lockSession(); }
+    else conceal();
   });
 }

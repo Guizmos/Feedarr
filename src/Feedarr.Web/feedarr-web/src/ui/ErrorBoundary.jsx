@@ -32,19 +32,21 @@ export default class ErrorBoundary extends React.Component {
       const label = this.props.label || "Ce composant";
 
       return (
-        <div className="errorbox" style={{ margin: "12px 0" }}>
-          <div className="errorbox__title">{label} n'a pas pu etre affiche</div>
-          <div className="muted" style={{ marginTop: 4 }}>
-            {this.state.error?.message || "Erreur inattendue"}
+        <div className="error-boundary">
+          <div className="errorbox">
+            <div className="errorbox__title">{label} n'a pas pu etre affiche</div>
+            <div className="muted" style={{ marginTop: 4 }}>
+              {this.state.error?.message || "Erreur inattendue"}
+            </div>
+            <button
+              className="btn btn--sm"
+              type="button"
+              style={{ marginTop: 8 }}
+              onClick={this.handleRetry}
+            >
+              Reessayer
+            </button>
           </div>
-          <button
-            className="btn btn--sm"
-            type="button"
-            style={{ marginTop: 8 }}
-            onClick={this.handleRetry}
-          >
-            Reessayer
-          </button>
         </div>
       );
     }

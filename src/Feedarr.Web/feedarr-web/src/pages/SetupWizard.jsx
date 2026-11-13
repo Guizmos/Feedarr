@@ -360,11 +360,11 @@ export default function SetupWizard() {
           <div className="setup-card__content setup-step-group">
             {restoreMode ? <StepConfigurationRestore restore={restore} /> : current?.content}
             {!!restoreSteps && <InlineNotice variant="info" message="La configuration restaurée est déjà appliquée. Terminez uniquement les étapes manquantes ; le retour au choix est indisponible." />}
-            {restoreError && <div className="onboarding__error" role="alert">{restoreError}</div>}
-            {!!restoreSteps && step === MAX_STEP && <div className="indexer-card"><div className="indexer-row indexer-row--settings">
+            {restoreError && <InlineNotice variant="error" message={restoreError} />}
+            {!!restoreSteps && step === MAX_STEP && <div className="setup-security"><div className="indexer-list"><div className="indexer-card"><div className="indexer-row indexer-row--settings">
               <label className="indexer-title" htmlFor="completion-bootstrap">Secret bootstrap</label>
-              <div className="indexer-actions"><div className="fieldWrap"><input id="completion-bootstrap" type="password" autoComplete="off" value={completionBootstrap} onChange={e => setCompletionBootstrap(e.target.value)} disabled={finishing} /></div></div>
-            </div><div className="settings-help">Uniquement si votre accès distant le demande pour terminer la restauration.</div></div>}
+              <div className="indexer-actions"><div className="fieldWrap"><input id="completion-bootstrap" type="password" autoComplete="off" aria-describedby="completion-bootstrap-help" value={completionBootstrap} onChange={e => setCompletionBootstrap(e.target.value)} disabled={finishing} /></div></div>
+            </div><div className="settings-help" id="completion-bootstrap-help">Bootstrap de l’instance cible, uniquement si votre accès distant le demande pour terminer la restauration.</div></div></div></div>}
           </div>
         </div>
 
@@ -376,7 +376,7 @@ export default function SetupWizard() {
             {restore.stage === 2 && <button className="btn" type="button" disabled={restore.busy} onClick={restore.cancel}>Précédent</button>}
             {restore.stage === 3 && !restore.state?.confirmed && <button className="btn" type="button" disabled={restore.busy} onClick={() => restore.go(2)}>Précédent</button>}
             </div>
-            <div className="setup-actions-right" style={{ marginLeft: "auto" }}>
+            <div className="setup-actions-right">
               {restore.stage === 1 && <button className="btn btn-accent" type="button" disabled={!restore.canPrepare} onClick={restore.prepare}>{restore.busy ? "Analyse en cours…" : "Analyser la sauvegarde"}</button>}
               {restore.stage === 2 && <button className="btn btn-accent" type="button" disabled={restore.busy || !restore.canContinue} onClick={() => restore.go(3)}>Suivant</button>}
               {restore.stage === 3 && <button className="btn btn-accent" type="button" disabled={restore.busy} onClick={restore.state?.confirmed ? restore.checkRestart : restore.confirm}>{restore.busy ? "Opération en cours…" : restore.state?.confirmed ? "Vérifier après redémarrage" : "Confirmer la restauration"}</button>}
@@ -400,7 +400,7 @@ export default function SetupWizard() {
             )}
 
             </div>
-            <div className="setup-actions-right" style={{ marginLeft: "auto" }}>
+            <div className="setup-actions-right">
               {showSkip && (
                 <button
                   className="btn"
@@ -440,11 +440,11 @@ export default function SetupWizard() {
                     className="btn btn-accent"
                     type="button"
                     onClick={() => securitySaveRef.current?.()}
-                    disabled={securityStepStatus.saving}
+                    disabled={securityStepStatus.saving || securityStepStatus.canSave === false}
                   >
                     {securityStepStatus.saving
                       ? tr("Enregistrement...", "Saving...")
-                      : tr("Enregistrer", "Save")}
+                      : securityStepStatus.recheckRequired ? tr("Vérifier l’accès", "Check access") : tr("Enregistrer", "Save")}
                   </button>
                 )
               )}

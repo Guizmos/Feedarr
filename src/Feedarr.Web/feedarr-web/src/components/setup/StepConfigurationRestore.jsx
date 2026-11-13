@@ -11,7 +11,7 @@ export default function StepConfigurationRestore({ restore }) {
       <div className="indexer-actions"><div className="fieldWrap"><input id={`restore-${key}`} type="password" autoComplete="off" disabled={busy} value={value} onChange={e => update(e.target.value)} aria-describedby={`restore-${key}-hint`} /></div></div>
     </div><div className="settings-help" id={`restore-${key}-hint`}>{hint}</div>
   </div>;
-  return <div className="setup-step">
+  return <div className="setup-step setup-security setup-step-group" aria-busy={busy || restore.checking}>
     <h2>{["Importer une configuration", "Vérifier la configuration", "Restaurer la configuration", "Finaliser la restauration"][stage - 1]}</h2>
     {stage === 1 && <>
       <p className="muted">Sélectionnez une archive V2 ou une ancienne sauvegarde compatible. Seule la configuration sera importée.</p>

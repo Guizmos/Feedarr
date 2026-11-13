@@ -6,8 +6,10 @@ import InlineNotice from "../../pages/settings/InlineNotice.jsx";
 
 export default function Step2Security({ required = false, onStatusChange, saveRef }) {
   const [bootstrap, setBootstrap] = useState("");
+  const [loadFailed, setLoadFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [recheckRequired, setRecheckRequired] = useState(false);
   const [saved, setSaved] = useState(false);
   // saveAttempted becomes true on first click of "Enregistrer", then stays true.
   // This is what enables error coloring on empty fields.
@@ -36,6 +38,8 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadFailed(false);
+    setSaved(false);
     setApiError("");
     try {
       const sec = await apiGet("/api/settings/security");
@@ -52,6 +56,7 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
         authRequired: !!sec?.authRequired,
       }));
     } catch (e) {
+      setLoadFailed(true);
       setApiError(e?.message || tr("Erreur chargement securite", "Security loading error"));
     } finally {
       setLoading(false);
@@ -140,7 +145,10 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
     if (pwdInvalid) { passwordInputRef.current?.focus(); return; }
 
     setSaving(true);
+    setSaved(false);
+    setRecheckRequired(false);
     setApiError("");
+    let configurationSaved = false;
     try {
       const payload = {
         authMode: form.authMode,
@@ -160,6 +168,7 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
         headers = { "X-Feedarr-Bootstrap-Token": issued.token };
       }
       const next = await apiPut("/api/settings/security", payload, { headers });
+      configurationSaved = true;
       setBootstrap("");
       if (form.authMode !== "open" && form.password && window.location.protocol === "https:") {
         await login(form.username, form.password, false);
@@ -177,26 +186,50 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
       }));
       setSaved(true);
     } catch (e) {
-      setApiError(e?.message || tr("Erreur sauvegarde securite", "Security save error"));
+      setRecheckRequired(configurationSaved);
+      const reason = e?.code === "https_required"
+        ? tr("Une session web nécessite HTTPS.", "Web sessions require HTTPS.")
+        : e?.code === "invalid_credentials" || e?.status === 401 || e?.status === 403
+          ? tr("Connexion refusée : vérifiez les identifiants.", "Sign-in denied: check your credentials.")
+          : e?.name === "TimeoutError"
+            ? tr("Le délai de connexion est dépassé.", "The connection timed out.")
+            : tr("Le serveur ou la vérification de session est indisponible.", "The server or session verification is unavailable.");
+      setApiError(configurationSaved
+        ? `${tr("Paramètres enregistrés.", "Settings saved.")} ${reason} ${tr("Vérifiez l’accès pour reprendre sans réenregistrer les identifiants.", "Check access to continue without saving credentials again.")}`
+        : e?.message || tr("Erreur sauvegarde securite", "Security save error"));
     } finally {
       setSaving(false);
     }
   }, [form, bootstrap, loading, saving]);
 
+  const verifyAccess = useCallback(async () => {
+    if (saving) return;
+    setSaving(true); setApiError("");
+    try {
+      const state = await refreshSession();
+      if (!state.authRequired || state.authenticated) await load();
+      setRecheckRequired(false);
+    }
+    catch (e) { setApiError(e?.message || "Vérification impossible. Réessayez."); }
+    finally { setSaving(false); }
+  }, [saving, load]);
+
   useEffect(() => {
-    if (saveRef) { saveRef.current = save; }
-  }, [save, saveRef]);
+    if (saveRef) { saveRef.current = recheckRequired ? verifyAccess : save; }
+  }, [save, verifyAccess, recheckRequired, saveRef]);
 
   // --- Status for parent ---
   const status = useMemo(() => ({
-    ready: !loading && !saving,
+    ready: !loading && !saving && !loadFailed && !apiError,
+    canSave: !loading && !saving && !loadFailed,
     saving: loading || saving,
     saved,
+    recheckRequired,
     error: apiError,
     authRequired: !!form.authRequired || !!required,
     authConfigured: !!form.authConfigured,
     authMode: form.authMode,
-  }), [form.authConfigured, form.authMode, form.authRequired, required, loading, saving, saved, apiError]);
+  }), [form.authConfigured, form.authMode, form.authRequired, required, loading, saving, saved, apiError, loadFailed, recheckRequired]);
 
   useEffect(() => { onStatusChange?.(status); }, [onStatusChange, status]);
 
@@ -256,20 +289,25 @@ export default function Step2Security({ required = false, onStatusChange, saveRe
   }, [saveAttempted, form.authMode, form.username, form.hasPassword, form.password, form.passwordConfirmation, apiError, saved]);
 
   return (
-    <div className="setup-step setup-security">
+    <div className="setup-step setup-security" aria-busy={loading || saving}>
       <h2>{tr("Securite", "Security")}</h2>
       <p>{tr("Configure le mode d'acces de Feedarr.", "Configure Feedarr access mode.")}</p>
 
-      {loading && <div className="muted">{tr("Chargement...", "Loading...")}</div>}
+      {loadFailed && <div className="security-notices"><InlineNotice variant="error" message={apiError} /><div className="settings-card__actions"><button className="btn" type="button" onClick={load}>Réessayer le chargement</button></div></div>}
+      {loading && <div className="muted" role="status">{tr("Chargement...", "Loading...")}</div>}
 
-      {!loading && (
+      {!loading && !loadFailed && (
         <>
-          {getSessionSnapshot().state?.authRequired && !getSessionSnapshot().state?.authConfigured && <label>
-            Secret bootstrap de cette instance (cible)
-            <input type="password" autoComplete="off" value={bootstrap} onChange={e => setBootstrap(e.target.value)} disabled={saving} />
-            <span className="settings-help">Requis à distance pour autoriser la création des identifiants. Utilisez HTTPS pour ouvrir une session web.</span>
-          </label>}
           <div className="indexer-list">
+            {getSessionSnapshot().state?.authRequired && !getSessionSnapshot().state?.authConfigured && <div className="indexer-card">
+              <div className="indexer-row indexer-row--settings">
+                <label className="indexer-title" htmlFor="setup-bootstrap">Secret bootstrap de l’instance cible</label>
+                <div className="indexer-actions"><div className="fieldWrap">
+                  <input id="setup-bootstrap" type="password" autoComplete="off" aria-describedby="setup-bootstrap-help" value={bootstrap} onChange={e => setBootstrap(e.target.value)} disabled={saving} />
+                </div></div>
+              </div>
+              <div className="settings-help" id="setup-bootstrap-help">Autorise la création des identifiants à distance. Ce secret appartient à cette instance, pas à une sauvegarde. Une session web nécessite HTTPS.</div>
+            </div>}
             <div className="indexer-card">
               <div className="indexer-row indexer-row--settings">
                 <span className="indexer-title">Auth Mode</span>

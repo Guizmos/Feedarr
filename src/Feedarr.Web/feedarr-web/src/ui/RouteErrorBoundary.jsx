@@ -15,7 +15,7 @@ export default function RouteErrorBoundary() {
   const message = resolveErrorMessage(error);
 
   return (
-    <div className="page">
+    <div className="page page--error">
       <div className="pagehead">
         <div>
           <h1>Erreur d'affichage</h1>

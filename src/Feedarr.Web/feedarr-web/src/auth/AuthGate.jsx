@@ -28,5 +28,5 @@ export default function AuthGate() {
   </section></main>;
   const redirect = sessionRedirect(state, location.pathname, location.search, location.hash);
   if (redirect) return <Navigate replace to={redirect} />;
-  return <Outlet />;
+  return <div className="auth-content" data-auth-private={state.authenticated || state.setupCompleted ? "true" : "false"}><Outlet /></div>;
 }

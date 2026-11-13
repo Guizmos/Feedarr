@@ -273,7 +273,7 @@ test("an expired session during setup refreshes in place and never selects login
 });
 
 
-test("security save refreshes incomplete setup in place before opening a web session", async () => {
+test("security save leaves incomplete setup verification to the caller without nesting a session GET", async () => {
   const original = globalThis.fetch; const phases = [];
   const { subscribeSession } = await import("./session.js"); let unsubscribe;
   try {
@@ -284,8 +284,55 @@ test("security save refreshes incomplete setup in place before opening a web ses
     globalThis.fetch = async () => json({ ...strict, setupCompleted: false, authConfigured: true });
     const transport = createSessionFetch(async () => json({ authConfigured: true }), "https://feedarr.test", "");
     await transport("/api/settings/security", { method: "PUT" });
+    assert.equal(getSessionSnapshot().state.authConfigured, false);
+    await refreshSession();
     assert.equal(getSessionSnapshot().state.authConfigured, true);
     assert.equal(sessionRoute(getSessionSnapshot().state), "setup");
     assert.ok(phases.length); assert.ok(phases.every(phase => phase === "ready"));
   } finally { unsubscribe?.(); globalThis.fetch = original; lockSession(); }
+});
+
+
+test("session deadline bounds an uncooperative fetch AND response body and allows retry", async () => {
+  const originals = { fetch: globalThis.fetch, setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout };
+  const timers = new Map(); let id = 0;
+  try {
+    globalThis.setTimeout = fn => { timers.set(++id, fn); return id; };
+    globalThis.clearTimeout = key => timers.delete(key);
+    for (const phase of ["fetch", "body"]) {
+      lockSession();
+      globalThis.fetch = () => phase === "fetch" ? new Promise(() => {}) : Promise.resolve({ ok: true, json: () => new Promise(() => {}) });
+      const pending = refreshSession();
+      assert.equal(refreshSession(), pending); // same request, not just equivalent results
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      for (const expire of [...timers.values()]) expire();
+      await assert.rejects(pending, { name: "TimeoutError" });
+      assert.equal(getSessionSnapshot().phase, "error"); assert.equal(timers.size, 0);
+      globalThis.fetch = async () => json({ ...strict, setupCompleted: false });
+      await refreshSession(); assert.equal(getSessionSnapshot().phase, "ready");
+    }
+  } finally { lockSession(); Object.assign(globalThis, originals); }
+});
+
+test("login invalidates an overlapping session check; late data cannot occupy pending forever", async () => {
+  const original = globalThis.fetch; let finish;
+  try {
+    lockSession();
+    globalThis.fetch = url => url.endsWith("session") ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(json({ ...strict, authenticated: true, setupCompleted: false }));
+    const old = refreshSession(); const rejected = assert.rejects(old, { name: "AbortError" });
+    await Promise.resolve(); await login("admin", "fixture", false); await rejected;
+    finish(json(strict));
+    globalThis.fetch = async () => json({ ...strict, authenticated: true, setupCompleted: false });
+    await refreshSession(); assert.equal(getSessionSnapshot().state.authenticated, true);
+  } finally { globalThis.fetch = original; lockSession(); }
+});
+
+test("login finishing after private state was locked cannot reopen it", async () => {
+  const original = globalThis.fetch; let finish;
+  try {
+    lockSession(); globalThis.fetch = () => new Promise(resolve => { finish = resolve; });
+    const pending = login("admin", "fixture", false); await Promise.resolve();
+    lockSession(); finish(json({ ...strict, authenticated: true }));
+    await assert.rejects(pending, { name: "AbortError" }); assert.equal(getSessionSnapshot().state, null);
+  } finally { globalThis.fetch = original; lockSession(); }
 });

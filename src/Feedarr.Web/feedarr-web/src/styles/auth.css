@@ -1,4 +1,6 @@
-html.auth-locked #root { visibility: hidden; }
+html.auth-locked [data-auth-private="true"],
+html.auth-locked body > :not(#root) { visibility: hidden; }
+.auth-content { display: contents; }
 .auth-page { min-height: 100dvh; display: grid; place-items: center; padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); }
 .auth-card { width: min(100%, 420px); padding: 36px; background: var(--panel); border: 1px solid var(--panel-border); border-radius: var(--radius); box-shadow: var(--panel-shadow); }
 .auth-logo { display: block; margin: 0 auto 24px; object-fit: contain; }

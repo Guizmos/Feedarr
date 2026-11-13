@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import InlineNotice from "../../pages/settings/InlineNotice.jsx";
 import { apiGet, apiPut } from "../../api/client.js";
 import {
   applyUiLanguage,
@@ -87,13 +88,14 @@ export default function Step0Language({ onStatusChange }) {
   }, [onStatusChange, status]);
 
   return (
-    <div className="setup-step setup-language">
+    <div className="setup-step setup-language" aria-busy={loading || saving}>
       <h2>{tr("Langue", "Language")}</h2>
       <p>{tr("Choisis la langue par defaut de Feedarr.", "Choose Feedarr default language.")}</p>
 
       <div className="setup-providers__add settings-row settings-row--ui-select">
-        <label>{tr("Langue par defaut", "Default language")}</label>
+        <label htmlFor="setup-language">{tr("Langue par defaut", "Default language")}</label>
         <select
+          id="setup-language"
           className="settings-field"
           value={selectedLanguage}
           onChange={handleLanguageChange}
@@ -118,13 +120,11 @@ export default function Step0Language({ onStatusChange }) {
       {saving && <div className="muted">{tr("Enregistrement...", "Saving...")}</div>}
 
       {error && (
-        <div className="onboarding__error" style={{ marginTop: 12 }}>
-          {error}
-        </div>
+        <InlineNotice variant="error" message={error} />
       )}
 
       {error && (
-        <div className="setup-jackett__actions" style={{ marginTop: 12 }}>
+        <div className="settings-card__actions">
           <button className="btn" type="button" onClick={() => loadSettings()} disabled={loading || saving}>
             {tr("Reessayer", "Retry")}
           </button>
