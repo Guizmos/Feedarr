@@ -15,274 +15,31 @@ namespace Feedarr.Api.Tests;
 public sealed class SecuritySettingsValidationTests
 {
     [Fact]
-    public void GetSecurity_UsesDefaultsWhenNoPersistedValueExists()
+    public void DefaultPolicyRequiresAnAccountAndAllowsBothTransports()
     {
-        using var fixture = new ControllerFixture();
-        var controller = fixture.CreateController();
-
-        var ok = Assert.IsType<OkObjectResult>(controller.GetSecurity());
-        var payload = SerializeToElement(ok.Value);
-
-        Assert.Equal("smart", payload.GetProperty("authMode").GetString());
-        Assert.Equal("basic", payload.GetProperty("authentication").GetString());
-        Assert.Equal("local", payload.GetProperty("authenticationRequired").GetString());
-        Assert.Equal("", payload.GetProperty("publicBaseUrl").GetString());
-        Assert.Equal("", payload.GetProperty("username").GetString());
-        Assert.False(payload.GetProperty("hasPassword").GetBoolean());
-        Assert.False(payload.GetProperty("authConfigured").GetBoolean());
+        using var fixture=new ControllerFixture();
+        var payload=SerializeToElement(Assert.IsType<OkObjectResult>(fixture.CreateController().GetSecurity()).Value);
+        Assert.True(payload.GetProperty("authRequired").GetBoolean()); Assert.False(payload.GetProperty("requireHttps").GetBoolean());
+        Assert.False(payload.TryGetProperty("authMode",out _));
     }
 
     [Fact]
-    public void SavingSmartExposedWithoutCreds_Returns400()
+    public void AnonymousModeCannotBeEnabledEvenWithOldConfirmation()
     {
-        using var fixture = new ControllerFixture();
-        var controller = fixture.CreateController();
-
-        var result = controller.PutSecurity(new SettingsController.SecuritySettingsDto
-        {
-            AuthMode = "smart",
-            PublicBaseUrl = "https://example.com",
-            Username = "",
-            Password = "",
-            PasswordConfirmation = ""
-        });
-
-        var bad = Assert.IsType<BadRequestObjectResult>(result);
-        var payload = SerializeToElement(bad.Value);
-        Assert.Equal("credentials_required", payload.GetProperty("error").GetString());
+        using var fixture=new ControllerFixture();
+        var result=Assert.IsType<ObjectResult>(fixture.CreateController().PutSecurity(new(){AuthMode="open",AllowDowngradeToOpen=true}));
+        Assert.Equal(400,result.StatusCode);
     }
 
     [Fact]
-    public void SavingOpenWithoutCreds_OK()
+    public void HttpsCannotBeRequiredFromAnHttpRequest()
     {
-        using var fixture = new ControllerFixture();
-        var controller = fixture.CreateController();
-
-        var result = controller.PutSecurity(new SettingsController.SecuritySettingsDto
-        {
-            AuthMode = "open",
-            PublicBaseUrl = "https://example.com",
-            Username = "",
-            Password = "",
-            PasswordConfirmation = ""
-        });
-
-        var ok = Assert.IsType<OkObjectResult>(result);
-        Assert.NotNull(ok.Value);
-    }
-
-    [Fact]
-    public void SavingSmartWithForwardedHeadersAndNoCreds_Returns400()
-    {
-        using var fixture = new ControllerFixture();
-        var controller = fixture.CreateController(headers: new Dictionary<string, string>
-        {
-            ["X-Forwarded-Host"] = "feedarr.example.com"
-        });
-
-        var result = controller.PutSecurity(new SettingsController.SecuritySettingsDto
-        {
-            AuthMode = "smart",
-            PublicBaseUrl = "",
-            Username = "",
-            Password = "",
-            PasswordConfirmation = ""
-        });
-
-        var bad = Assert.IsType<BadRequestObjectResult>(result);
-        var payload = SerializeToElement(bad.Value);
-        Assert.Equal("credentials_required", payload.GetProperty("error").GetString());
-    }
-
-    [Fact]
-    public void SavingSmartWithoutForwardedHeadersAndEmptyPublicBaseUrl_OK()
-    {
-        using var fixture = new ControllerFixture();
-        var controller = fixture.CreateController();
-
-        var result = controller.PutSecurity(new SettingsController.SecuritySettingsDto
-        {
-            AuthMode = "smart",
-            PublicBaseUrl = "",
-            Username = "",
-            Password = "",
-            PasswordConfirmation = ""
-        });
-
-        var ok = Assert.IsType<OkObjectResult>(result);
-        Assert.NotNull(ok.Value);
-    }
-
-    [Fact]
-    public void SavingSmartLocalWithoutCreds_OK()
-    {
-        using var fixture = new ControllerFixture();
-        var controller = fixture.CreateController();
-
-        var result = controller.PutSecurity(new SettingsController.SecuritySettingsDto
-        {
-            AuthMode = "smart",
-            PublicBaseUrl = "http://localhost:6767",
-            Username = "",
-            Password = "",
-            PasswordConfirmation = ""
-        });
-
-        var ok = Assert.IsType<OkObjectResult>(result);
-        Assert.NotNull(ok.Value);
-    }
-
-    [Fact]
-    public void SavingStrictWithoutCreds_Returns400()
-    {
-        using var fixture = new ControllerFixture();
-        var controller = fixture.CreateController();
-
-        var result = controller.PutSecurity(new SettingsController.SecuritySettingsDto
-        {
-            AuthMode = "strict",
-            PublicBaseUrl = "",
-            Username = "",
-            Password = "",
-            PasswordConfirmation = ""
-        });
-
-        var bad = Assert.IsType<BadRequestObjectResult>(result);
-        var payload = SerializeToElement(bad.Value);
-        Assert.Equal("credentials_required", payload.GetProperty("error").GetString());
-    }
-
-    [Fact]
-    public void SavingStrictWithCreds_OK()
-    {
-        using var fixture = new ControllerFixture();
-        var controller = fixture.CreateController();
-
-        var result = controller.PutSecurity(new SettingsController.SecuritySettingsDto
-        {
-            AuthMode = "strict",
-            PublicBaseUrl = "",
-            Username = "admin",
-            Password = "StrongP@ssw0rd!",
-            PasswordConfirmation = "StrongP@ssw0rd!"
-        });
-
-        var ok = Assert.IsType<OkObjectResult>(result);
-        Assert.NotNull(ok.Value);
-    }
-
-    [Fact]
-    public void SavingSmartExposedWithCreds_OK()
-    {
-        using var fixture = new ControllerFixture();
-        var controller = fixture.CreateController();
-
-        var result = controller.PutSecurity(new SettingsController.SecuritySettingsDto
-        {
-            AuthMode = "smart",
-            PublicBaseUrl = "https://example.com",
-            Username = "admin",
-            Password = "StrongP@ssw0rd!",
-            PasswordConfirmation = "StrongP@ssw0rd!"
-        });
-
-        var ok = Assert.IsType<OkObjectResult>(result);
-        Assert.NotNull(ok.Value);
-    }
-
-    // -----------------------------------------------------------------------
-    // Open mode downgrade guard (Scope 5)
-    // -----------------------------------------------------------------------
-
-    [Fact]
-    public void DowngradeToOpen_WithoutConfirmation_WhenCredsExist_Returns400()
-    {
-        using var fixture = new ControllerFixture();
-        var controller = fixture.CreateController();
-
-        // First: configure smart mode with credentials
-        controller.PutSecurity(new SettingsController.SecuritySettingsDto
-        {
-            AuthMode = "smart",
-            Username = "admin",
-            Password = "StrongP@ssw0rd!",
-            PasswordConfirmation = "StrongP@ssw0rd!"
-        });
-
-        // Attempt to downgrade to open without confirmation
-        var result = controller.PutSecurity(new SettingsController.SecuritySettingsDto
-        {
-            AuthMode = "open",
-            AllowDowngradeToOpen = null
-        });
-
-        var bad = Assert.IsType<BadRequestObjectResult>(result);
-        var payload = SerializeToElement(bad.Value);
-        Assert.Equal("downgrade_confirmation_required", payload.GetProperty("error").GetString());
-    }
-
-    [Fact]
-    public void DowngradeToOpen_WithConfirmation_WhenCredsExist_OK()
-    {
-        using var fixture = new ControllerFixture();
-        var controller = fixture.CreateController();
-
-        // First: configure smart mode with credentials
-        controller.PutSecurity(new SettingsController.SecuritySettingsDto
-        {
-            AuthMode = "smart",
-            Username = "admin",
-            Password = "StrongP@ssw0rd!",
-            PasswordConfirmation = "StrongP@ssw0rd!"
-        });
-
-        // Downgrade with explicit confirmation
-        var result = controller.PutSecurity(new SettingsController.SecuritySettingsDto
-        {
-            AuthMode = "open",
-            AllowDowngradeToOpen = true
-        });
-
-        var ok = Assert.IsType<OkObjectResult>(result);
-        var payload = SerializeToElement(ok.Value);
-        Assert.Equal("", payload.GetProperty("username").GetString());
-        Assert.False(payload.GetProperty("hasPassword").GetBoolean());
-        Assert.False(payload.GetProperty("authConfigured").GetBoolean());
-
-        var reload = Assert.IsType<OkObjectResult>(controller.GetSecurity());
-        var reloaded = SerializeToElement(reload.Value);
-        Assert.Equal("", reloaded.GetProperty("username").GetString());
-        Assert.False(reloaded.GetProperty("hasPassword").GetBoolean());
-        Assert.False(reloaded.GetProperty("authConfigured").GetBoolean());
-    }
-
-    [Fact]
-    public void DowngradeToOpen_WithoutCreds_NoConfirmationNeeded()
-    {
-        // Fresh install: no credentials set yet — no confirmation required
-        using var fixture = new ControllerFixture();
-        var controller = fixture.CreateController();
-
-        var result = controller.PutSecurity(new SettingsController.SecuritySettingsDto
-        {
-            AuthMode = "open"
-        });
-
-        // Should succeed: no existing credentials to protect
-        Assert.IsType<OkObjectResult>(result);
-    }
-
-    [Fact]
-    public void SaveOpenToOpen_NoConfirmationNeeded()
-    {
-        // Already open, saving open again: no confirmation required
-        using var fixture = new ControllerFixture();
-        var controller = fixture.CreateController();
-
-        controller.PutSecurity(new SettingsController.SecuritySettingsDto { AuthMode = "open" });
-
-        var result = controller.PutSecurity(new SettingsController.SecuritySettingsDto { AuthMode = "open" });
-        Assert.IsType<OkObjectResult>(result);
+        using var fixture=new ControllerFixture();
+        var (hash,salt)=Feedarr.Api.Services.Security.CredentialValidator.HashPassword("Fixture-Password42!");
+        fixture.Settings.SaveSecurity(new(){Username="admin",PasswordHash=hash,PasswordSalt=salt});
+        var result=Assert.IsType<ObjectResult>(fixture.CreateController().PutSecurity(new(){RequireHttps=true}));
+        Assert.Equal(400,result.StatusCode);
+        Assert.False(fixture.Settings.GetSecurity(new()).RequireHttps);
     }
 
     private static JsonElement SerializeToElement(object? value)

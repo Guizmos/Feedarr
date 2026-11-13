@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ScrollContainerProvider } from "../context/ScrollContainerContext.js";
-import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Outlet } from "react-router-dom";
 import RestorePendingBanner from "./RestorePendingBanner.jsx";
+import HttpTransportNotice from "./HttpTransportNotice.jsx";
 import Topbar from "./Topbar.jsx";
 import Sidebar from "./Sidebar.jsx";
 import Subbar from "./Subbar.jsx";
@@ -20,10 +21,6 @@ const IS_DEV =
   && !!import.meta.env.DEV;
 
 export default function Shell() {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const isSetupRoute = location.pathname.startsWith("/setup");
-  const [onboardingStatus, setOnboardingStatus] = useState(null);
   const [isNavOpen, setIsNavOpen] = useState(false);
   const swipeRef = useRef({
     active: false,
@@ -68,28 +65,6 @@ export default function Shell() {
     };
   }, []);
 
-  const refreshOnboarding = useCallback(async () => {
-    try {
-      const status = await apiGet("/api/system/onboarding");
-      setOnboardingStatus(status);
-
-      if (!status?.onboardingDone && !isSetupRoute) {
-        navigate("/setup", { replace: true });
-        return;
-      }
-    } catch (error) {
-      console.error("Failed to refresh onboarding status", error);
-    }
-  }, [navigate, isSetupRoute]);
-
-  useEffect(() => {
-    refreshOnboarding();
-    const handler = () => refreshOnboarding();
-    window.addEventListener("onboarding:refresh", handler);
-    return () => window.removeEventListener("onboarding:refresh", handler);
-  }, [refreshOnboarding]);
-
-  const showOnboardingBar = !isSetupRoute && !!onboardingStatus && !onboardingStatus.onboardingDone;
   const openNav = useCallback(() => setIsNavOpen(true), []);
   const closeNav = useCallback(() => setIsNavOpen(false), []);
   const toggleNav = useCallback(() => setIsNavOpen((v) => !v), []);
@@ -202,8 +177,9 @@ export default function Shell() {
     <BadgeStoreProvider pollMs={25000} activityLimit={200}>
       <BadgesRouteListener />
       <SubbarProvider>
-        <div className={`app app-shell ${showOnboardingBar ? "onboarding-bar-visible" : ""} ${isNavOpen ? "is-open" : ""}`}>
+        <div className={`app app-shell ${isNavOpen ? "is-open" : ""}`}>
           <Topbar onToggleNav={toggleNav} />
+          <HttpTransportNotice />
           <RestorePendingBanner />
           <div className="body">
             <button
@@ -225,25 +201,6 @@ export default function Shell() {
             </ScrollContainerProvider>
           </div>
 
-          {showOnboardingBar && (
-            <div className="onboarding-bar">
-              <div className="onboarding-bar__content">
-                <div className="onboarding-bar__title">Configuration rapide</div>
-                <div className="onboarding-bar__text">
-                  Ajoute un indexeur et/ou des providers pour activer toutes les fonctionnalités.
-                </div>
-              </div>
-              <button
-                className="btn btn-accent"
-                type="button"
-                onClick={() => {
-                  navigate("/setup");
-                }}
-              >
-                Démarrer le wizard
-              </button>
-            </div>
-          )}
         </div>
       </SubbarProvider>
     </BadgeStoreProvider>

@@ -10,7 +10,7 @@
     "check:categories-domain": "node ./tools/check-categories-domain.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test:wizard-http": "node --test scripts/test-wizard-http.mjs"
+    "test:initial-admin-http": "node --test scripts/test-initial-admin-http.mjs"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.23",

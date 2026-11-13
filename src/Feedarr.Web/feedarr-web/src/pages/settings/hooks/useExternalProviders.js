@@ -3,11 +3,6 @@ import { apiGet, apiPost, apiPut } from "../../../api/client.js";
 import { triggerPosterPolling } from "../../../hooks/usePosterPollingService.js";
 import { useRetroFetchProgress } from "../../../hooks/useRetroFetchProgress.js";
 
-const notifyOnboardingRefresh = () => {
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(new Event("onboarding:refresh"));
-  }
-};
 
 export default function useExternalProviders() {
   const [externalFlags, setExternalFlags] = useState({
@@ -117,7 +112,6 @@ export default function useExternalProviders() {
       igdbClientSecret: externalInput.igdbClientSecret || null,
     });
     if (ex) setExternalFlags(ex);
-    notifyOnboardingRefresh();
     setExternalInput({
       tmdbApiKey: "",
       tvmazeApiKey: "",
@@ -194,7 +188,6 @@ export default function useExternalProviders() {
       }
       const ex = await apiPut("/api/settings/external", payload);
       if (ex) setExternalFlags(ex);
-      notifyOnboardingRefresh();
       setExternalInput((prev) => {
         const next = { ...prev, [externalModalRow.inputKey]: "" };
         if (externalModalRow.inputKey2) {
@@ -230,7 +223,6 @@ export default function useExternalProviders() {
       await apiPut("/api/settings/external", payload);
       const ex = await apiGet("/api/settings/external");
       if (ex) setExternalFlags(ex);
-      notifyOnboardingRefresh();
       setExternalInput((prev) => {
         const next = { ...prev };
         externalDisableRow.disableKeys.forEach((k) => {
@@ -268,7 +260,7 @@ export default function useExternalProviders() {
       })();
       if (!keyPresent) {
         openExternalModal(externalToggleRow);
-        closeExternalToggle();
+      closeExternalToggle();
         return;
       }
     }
@@ -277,7 +269,6 @@ export default function useExternalProviders() {
       await apiPut("/api/settings/external", payload);
       const ex = await apiGet("/api/settings/external");
       if (ex) setExternalFlags(ex);
-      notifyOnboardingRefresh();
       closeExternalToggle();
     } catch (e) {
       throw new Error(e?.message || "Erreur toggle externe");

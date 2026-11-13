@@ -46,9 +46,7 @@ using System.Threading.RateLimiting;
 using Feedarr.Api.Services.Resilience;
 
 var builder = WebApplication.CreateBuilder(args);
-// Default false: in a reverse-proxy setup the proxy owns TLS.
-// Set App:Security:EnforceHttps=true only if ASP.NET Core terminates TLS directly.
-var enforceHttps = builder.Configuration.GetValue("App:Security:EnforceHttps", false);
+// The persisted transport policy controls private access, independently of TLS termination.
 var emitSecurityHeaders = builder.Configuration.GetValue("App:Security:EmitSecurityHeaders", true);
 // Allows self-signed / invalid TLS certs for internal services (Sonarr, Radarr, Jackett, etc.).
 // SECURITY: leave false in production. Only enable on home-lab setups with self-signed certs.
@@ -212,7 +210,6 @@ builder.Services.AddSingleton<ExternalProviderRegistry>();
 builder.Services.AddSingleton<ActiveExternalProviderConfigResolver>();
 builder.Services.AddSingleton<IExternalProviderLimiter, ExternalProviderLimiter>();
 builder.Services.AddSingleton<ExternalProviderTestService>();
-builder.Services.AddHostedService<BasicAuthTransportSecurityStartupService>();
 builder.Services.AddHostedService<ExternalProvidersBootstrapService>();
 builder.Services.AddHostedService<RssSyncHostedService>();
 builder.Services.AddHostedService<ProviderStatsFlushHostedService>();
@@ -672,7 +669,7 @@ var app = builder.Build();
 var forwardedOptions = app.Services.GetRequiredService<IOptions<ForwardedHeadersOptions>>().Value;
 app.Use((context, next) =>
 {
-    SmartAuthPolicy.CaptureConnection(context, forwardedOptions);
+    AuthenticationPolicy.CaptureConnection(context, forwardedOptions);
     return next(context);
 });
 app.UseForwardedHeaders();
@@ -680,16 +677,6 @@ app.UseForwardedHeaders();
 // Correlation ID: must run early so downstream middleware and controllers
 // can read HttpContext.Items[CorrelationIdKey] and find it in log scopes.
 app.UseMiddleware<Feedarr.Api.Middleware.CorrelationIdMiddleware>();
-
-if (!app.Environment.IsDevelopment())
-{
-    app.UseHsts();
-}
-
-if (enforceHttps)
-{
-    app.UseHttpsRedirection();
-}
 
 if (emitSecurityHeaders)
 {
@@ -822,7 +809,7 @@ app.UseMiddleware<BasicAuthMiddleware>();
 app.UseMiddleware<AntiCsrfOriginMiddleware>();
 app.UseMiddleware<Feedarr.Api.Services.Backup.Configuration.ConfigurationRestoreLockMiddleware>();
 
-// Diagnostics may only observe requests already authorized by Basic/Smart Auth.
+// Diagnostics may only observe requests already authorized by administrator authentication.
 app.UseMiddleware<Feedarr.Api.Middleware.DownloadDiagnosticsMiddleware>();
 
 // Response compression (Brotli preferred, Gzip fallback).

@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { backupRoot, configurationRequest, configurationUpload, downloadConfiguration, resumeSetupSteps, MAX_CONFIGURATION_UPLOAD, configurationFileError } from "./configurationBackupApi.js";
+import { backupRoot, configurationRequest, configurationUpload, downloadConfiguration, MAX_CONFIGURATION_UPLOAD, configurationFileError } from "./configurationBackupApi.js";
 const require = createRequire(import.meta.url);
 const compiled = await build({ entryPoints: [fileURLToPath(new URL("./ConfigurationBackupPanel.jsx", import.meta.url))], banner: { js: `import { createRequire } from "node:module"; const require = createRequire(${JSON.stringify(new URL("../../../package.json", import.meta.url).href)});` }, bundle: true, platform: "node", format: "esm", write: false,
   plugins: [{ name: "react", setup(b) { b.onResolve({ filter: /^react$/ }, () => ({ path: require.resolve("react"), external: true })); } }], });
@@ -17,8 +17,7 @@ let Panel, Preview;
 try { const path = join(directory, "view.mjs"); writeFileSync(path, compiled.outputFiles[0].text); ({ default: Panel, ConfigurationPreview: Preview } = await import(pathToFileURL(path).href)); }
 finally { rmSync(directory, { recursive: true, force: true }); }
 const render = (component, props) => renderToStaticMarkup(React.createElement(component, props));
-test("setup offers import only; settings offer encrypted export and legacy import", () => {
-  const initial = render(Panel, { initialSetup: true }); assert.match(initial, /Restaurer une configuration/); assert.match(initial, /bootstrap/); assert.doesNotMatch(initial, /Sauvegarder la configuration/);
+test("settings offer encrypted export and legacy import without setup", () => {
   const settings = render(Panel, {}); assert.match(settings, /Sauvegarder la configuration/); assert.match(settings, /Confirmer la phrase secrète/); assert.match(settings, /ancienne sauvegarde compatible/);
   assert.match(settings, /Aucune archive sélectionnée — 64 Mio maximum/);
   assert.match(settings, /inline-notice--warning/);
@@ -31,11 +30,8 @@ test("setup offers import only; settings offer encrypted export and legacy impor
 });
 test("preview warns about history, missing secrets and purge without rendering private fields", () => {
   const html = render(Preview, { preview: { configuration: { parameters: 8, sources: 2, missingSecrets: 1, apiKey: "PRIVATE" }, disabledHistoricalSources: 3, stricterRetention: true, hasLibrary: true, canCompleteSetup: false, url: "PRIVATE" } });
-  for (const pattern of [/3 source/, /1 secret/, /rétention/, /purge/, /confirmation explicite/, /étapes nécessaires/, /bibliothèque/]) assert.match(html, pattern);
+  for (const pattern of [/3 source/, /1 secret/, /rétention/, /purge/, /confirmation explicite/, /paramètres après redémarrage/, /bibliothèque/]) assert.match(html, pattern);
   assert.doesNotMatch(html, /PRIVATE/); assert.equal(render(Preview, { preview: null }), "");
-});
-test("wizard resumes only valid missing steps in order", () => {
-  assert.deepEqual(resumeSetupSteps([8, 3, 3, 0, "4", 6, 99]), [3, 6, 8]); assert.deepEqual(resumeSetupSteps([8]), [8]); assert.equal(resumeSetupSteps(null), null);
 });
 test("upload is bounded and preserves archive and phrase in multipart only", () => {
   for (const file of [null, { size: 0 }, { size: MAX_CONFIGURATION_UPLOAD + 1 }]) assert.throws(() => configurationUpload(file, "secret"));

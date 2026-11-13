@@ -11,12 +11,6 @@ import {
   toggleProviderInstance,
 } from "../../../domain/providers/index.js";
 
-const notifyOnboardingRefresh = () => {
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(new Event("onboarding:refresh"));
-  }
-};
-
 const EMPTY_STATS = {};
 
 function toHasFlagName(fieldKey) {
@@ -348,7 +342,6 @@ export default function useExternalProviderInstances() {
         return;
       }
 
-      notifyOnboardingRefresh();
       closeExternalModal();
       await loadExternalProviders();
     } catch (e) {
@@ -389,7 +382,6 @@ export default function useExternalProviderInstances() {
     try {
       const result = await deleteProviderInstance(externalDeleteInstance.instanceId);
       if (!result.ok) throw new Error(result.errorMessage);
-      notifyOnboardingRefresh();
       closeExternalDelete();
       await loadExternalProviders();
     } catch (e) {
@@ -417,7 +409,6 @@ export default function useExternalProviderInstances() {
         !externalToggleInstance.enabled
       );
       if (!result.ok) throw new Error(result.errorMessage);
-      notifyOnboardingRefresh();
       closeExternalToggle();
       await loadExternalProviders();
     } catch (e) {

@@ -52,7 +52,6 @@ export default function CategoryMappingBoard({
   categories,
   mappings,
   onChangeMapping,
-  variant = "default",
   sourceId,
   previewCredentials,
   infoNote = null,
@@ -201,11 +200,10 @@ export default function CategoryMappingBoard({
 
   const standardCategories = filtered.filter((category) => category.isStandard);
   const specificCategories = filtered.filter((category) => !category.isStandard);
-  const boardClassName = `category-mapping-board${variant === "wizard" ? " category-mapping-board--wizard" : ""}`;
   const currentAssignedKey = openMenuId ? normalizeCategoryGroupKey(map.get(openMenuId)) : null;
 
   return (
-    <div className={boardClassName} ref={rootRef}>
+    <div className="category-mapping-board" ref={rootRef}>
       <div className="category-mapping-board__top">
         <input
           className="category-mapping-board__search"

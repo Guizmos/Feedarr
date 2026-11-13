@@ -62,6 +62,10 @@ public sealed class ConfigurationRestoreService(
             ConfigurationRestorePlanStore.EnsureNoLegacyConflict(Path.GetDirectoryName(Path.GetFullPath(db.DbPath))!);
             using var c = db.Open(); using var tx = c.BeginTransaction(deferred: true);
             if (ConfigurationRestorePlanner.Fingerprint(c, tx) != plan.Baseline) throw Changed();
+            AuthenticationPolicy.NormalizeSecurityDocument(plan.Configuration.Settings["security"]);
+            if (plan.Configuration.Settings["security"].Deserialize<SecuritySettings>(ConfigurationSchema.Json)!.RequireHttps &&
+                !ConfigurationRestorePlanner.Setting(c, tx, "security", new SecuritySettings()).RequireHttps && !caller.Request.IsHttps)
+                throw new BackupOperationException("https_configuration_required", 400);
             token.ThrowIfCancellationRequested(); plan.Confirmed = true; store.Write(plan);
             return Task.FromResult(true);
         }, ct);
@@ -99,6 +103,7 @@ public sealed class ConfigurationRestoreService(
 
     private void Apply(SqliteConnection c, SqliteTransaction tx, ConfigurationRestorePlan plan)
     {
+        AuthenticationPolicy.NormalizeSecurityDocument(plan.Configuration.Settings["security"]);
         var model = plan.Configuration; var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var wasComplete = ConfigurationRestorePlanner.Setting(c, tx, "ui", new UiSettings()).OnboardingDone;
         // Keep every historical row, even when it currently has no releases.
@@ -148,7 +153,17 @@ public sealed class ConfigurationRestoreService(
                 if (table == "source_category_mappings") { values["created_at_ts"] = now; values["updated_at_ts"] = now; }
                 Insert(table, values);
             }
-        foreach (var setting in model.Settings) SaveSetting(setting.Key, setting.Value.DeepClone());
+        foreach (var setting in model.Settings)
+        {
+            if (setting.Key == "security")
+            {
+                var incoming = setting.Value.Deserialize<SecuritySettings>(ConfigurationSchema.Json)!;
+                var current = ConfigurationRestorePlanner.Setting(c, tx, "security", new SecuritySettings());
+                if (!AuthenticationPolicy.IsAuthConfigured(incoming, null) &&
+                    AuthenticationPolicy.IsAuthConfigured(current, null)) continue;
+            }
+            SaveSetting(setting.Key, setting.Value.DeepClone());
+        }
         var ui = Clone(model.Settings["ui"]);
         var sourceFilter = Text(ui, "defaultFilterSourceId"); var appFilter = Text(ui, "defaultFilterApplication");
         ui["defaultFilterSourceId"] = sourceIds.TryGetValue(sourceFilter, out var sourceId) ? sourceId.ToString() : "";
@@ -226,7 +241,7 @@ public sealed class ConfigurationRestoreService(
         return coordinator.RunExclusiveAsync("confirm-configuration-sync", null, _ =>
         {
             using var c = db.Open(); var current = new ConfigurationSnapshotReader(protection, registry).Read(c, false, out var unreadable);
-            if (!ConfigurationSchema.Validate(current, registry).IsComplete || !setup.IsSetupCompleted()) throw Changed();
+            if (!ConfigurationSchema.Validate(current, registry).IsComplete) throw Changed();
             if (c.Execute("UPDATE configuration_restore_operations SET initial_sync_state='pending',next_attempt_ts=0 WHERE id=@operationId AND initial_sync_state='held' AND retention_per_category IS NULL", new { operationId }) != 1) throw Changed();
             return Task.FromResult(true);
         }, ct);
@@ -319,7 +334,7 @@ public sealed class ConfigurationRestoreService(
             var missing=ConfigurationSchema.MissingRequiredSecrets(model,registry);
             var steps=new List<int>();
             var security=model.Settings["security"].Deserialize<SecuritySettings>(ConfigurationSchema.Json)!;
-            if(security.AuthMode!="open" && !SmartAuthPolicy.IsAuthConfigured(security,null)) steps.Add(3);
+            if(!AuthenticationPolicy.IsAuthConfigured(security,null)) steps.Add(3);
             if(model.ExternalProviders.Any(p=>missing.Any(m=>m.ItemKey==Text(p,"key"))))steps.Add(4);
             if(model.Sources.Count==0 && model.Providers.Count==0 || model.Providers.Any(p=>missing.Any(m=>m.ItemKey==Text(p,"key"))))steps.Add(5);
             if(model.Sources.Count==0 || model.Sources.Any(p=>missing.Any(m=>m.ItemKey==Text(p,"key"))))steps.Add(6);
@@ -340,7 +355,7 @@ public sealed class ConfigurationRestoreService(
             using(var read=c.BeginTransaction()) { baseline=ConfigurationRestorePlanner.Fingerprint(c,read); read.Commit(); }
             var model=new ConfigurationSnapshotReader(protection,registry).Read(c,false,out _);
             var security=model.Settings["security"].Deserialize<SecuritySettings>(ConfigurationSchema.Json)!;
-            if(!ConfigurationSchema.Validate(model,registry).IsComplete || security.AuthMode!="open" && !SmartAuthPolicy.IsAuthConfigured(security,null))throw Changed();
+            if(!ConfigurationSchema.Validate(model,registry).IsComplete || !AuthenticationPolicy.IsAuthConfigured(security,null))throw Changed();
             using var tx=c.BeginTransaction(deferred:false);
             if(ConfigurationRestorePlanner.Fingerprint(c,tx)!=baseline || c.ExecuteScalar<int>("SELECT COUNT(*) FROM configuration_restore_operations",transaction:tx)==0)throw Changed();
             var ui=ConfigurationRestorePlanner.Setting(c,tx,"ui",new UiSettings());ui.OnboardingDone=true;
@@ -357,8 +372,10 @@ public sealed class ConfigurationRestoreService(
             !RequestForgeryProtection.HasTrustedNonBrowserHeader(caller.Request.Headers) &&
             !(caller.Request.Headers.TryGetValue("Origin", out var origin) && RequestForgeryProtection.IsAllowedOrigin(caller.Request, configuration, origin.ToString())))
             throw new BackupOperationException("configuration_restore_unauthorized", 403);
-        if (!setup.IsSetupCompleted() && !SmartAuthPolicy.IsLoopbackRequest(caller) &&
-            !SmartAuthPolicy.HasValidBootstrapSecretHeader(caller, SmartAuthPolicy.GetBootstrapSecret(configuration)) && caller.Items[BasicAuthMiddleware.BootstrapTokenActiveKey] is not true)
+        using var authorizationDb = db.Open();
+        if (authorizationDb.ExecuteScalar<int>("SELECT initialized FROM instance_initialization WHERE id=1") == 0 &&
+            !AuthenticationPolicy.IsLoopbackRequest(caller) &&
+            !AuthenticationPolicy.HasValidBootstrapSecretHeader(caller, AuthenticationPolicy.GetBootstrapSecret(configuration)) && caller.Items[BasicAuthMiddleware.BootstrapTokenActiveKey] is not true)
             throw new BackupOperationException("configuration_restore_bootstrap_required", 403);
     }
     private void ProtectSecrets(ConfigurationDocument model)

@@ -5,14 +5,12 @@ import { createSessionFetch, getSessionSnapshot, lockSession, refreshSession, lo
 const strict = { authRequired: true, authConfigured: true, authenticated: false, setupCompleted: true, webSessionAvailable: true };
 const json = (body, status = 200, headers = {}) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...headers } });
 
-test("routing follows backend decisions, including setup with configured credentials", () => {
+test("routing depends on initial account and authentication, never onboarding", () => {
+  assert.equal(sessionRoute(null), "checking");
   assert.equal(sessionRoute(strict), "login");
-  assert.equal(sessionRoute({ ...strict, authenticated: true }), "app");
-  assert.equal(sessionRoute({ ...strict, authRequired: false }), "app");
-  assert.equal(sessionRoute({ ...strict, setupCompleted: false, authConfigured: false }), "setup");
-  assert.equal(sessionRoute({ ...strict, setupCompleted: false }), "setup");
-  assert.equal(sessionRoute({ ...strict, setupCompleted: false, authenticated: true }), "setup");
-  assert.equal(sessionRoute({ ...strict, authConfigured: false }), "configuration");
+  assert.equal(sessionRoute({ ...strict, initialAdminRequired: true }), "create-admin");
+  assert.equal(sessionRoute({ ...strict, authenticated: true, setupCompleted: false }), "app");
+  assert.equal(sessionRoute({ ...strict, authRequired: false, setupCompleted: false }), "app");
 });
 
 test("return destination rejects external URLs and redirect loops", () => {
@@ -153,7 +151,7 @@ test("setup-related 403 rechecks policy without treating ordinary forbidden erro
   } finally { globalThis.fetch = original; lockSession(); }
 });
 
-test("page hiding clears private state and BFCache restoration requires a server recheck", async () => {
+test("page hiding masks and preserves private state and BFCache restoration requires a server recheck", async () => {
   const originalFetch = globalThis.fetch, originalWindow = globalThis.window, originalDocument = globalThis.document;
   const events = new Map(), classes = new Set();
   const doc = { visibilityState: "visible", documentElement: { classList: { add: (name) => classes.add(name), remove: (name) => classes.delete(name) } }, addEventListener: (name, fn) => events.set(name, fn) };
@@ -166,7 +164,7 @@ test("page hiding clears private state and BFCache restoration requires a server
     lockSession(); await refreshSession();
     assert.equal(getSessionSnapshot().state.authenticated, true);
     events.get("pagehide")();
-    assert.equal(getSessionSnapshot().state, null);
+    assert.equal(getSessionSnapshot().state.authenticated, true);
     assert.equal(classes.has("auth-locked"), true);
     events.get("pageshow")({ persisted: true });
     await refreshSession();
@@ -175,61 +173,8 @@ test("page hiding clears private state and BFCache restoration requires a server
     assert.equal(classes.has("auth-locked"), false);
     doc.visibilityState = "hidden";
     events.get("visibilitychange")();
-    assert.equal(getSessionSnapshot().state, null);
+    assert.equal(getSessionSnapshot().state.authenticated, true);
   } finally { globalThis.fetch = originalFetch; globalThis.window = originalWindow; globalThis.document = originalDocument; lockSession(); }
-});
-
-test("incomplete Strict/Smart setup always wins, with or without credentials/session/restore state", async () => {
-  const { sessionRedirect } = await import("./session.js");
-  for (const authMode of ["strict", "smart"]) for (const authConfigured of [false, true]) for (const authenticated of [false, true]) {
-    const state = { ...strict, authMode, authConfigured, authenticated, setupCompleted: false };
-    for (const extra of [{}, { restoreSteps: [] }, { restoreSteps: [1, 3], restorePending: true }]) {
-      const current = { ...state, ...extra };
-      assert.equal(sessionRoute(current), "setup");
-      assert.equal(sessionRedirect(current, "/setup"), null);
-      assert.equal(sessionRedirect(current, "/login"), "/setup");
-      assert.equal(sessionRedirect(current, "/"), "/setup");
-      assert.equal(sessionRedirect(current, sessionRedirect(current, "/login")), null);
-    }
-  }
-});
-
-test("unknown and loading state do not speculate; completed setup uses server auth decisions", async () => {
-  const { sessionRedirect } = await import("./session.js");
-  for (const unknown of [null, {}, { setupCompleted: true }, { setupCompleted: undefined, ...{ authRequired: true } }]) {
-    assert.equal(sessionRoute(unknown), "checking");
-    for (const path of ["/", "/login", "/setup"]) assert.equal(sessionRedirect(unknown, path), null);
-  }
-  assert.match(sessionRedirect(strict, "/setup"), /^\/login\?/);
-  for (const authMode of ["open", "smart", "strict"]) {
-    const authorized = { ...strict, authMode, authenticated: true };
-    assert.equal(sessionRedirect(authorized, "/setup"), "/library");
-  }
-  assert.equal(sessionRedirect({ ...strict, authRequired: false }, "/setup"), "/library");
-});
-
-test("setup 401/403 do not remount the wizard or automatically retry protected calls", async () => {
-  const original = globalThis.fetch;
-  const { authDenialKind } = await import("./session.js");
-  try {
-    for (const authMode of ["strict", "smart"]) for (const authConfigured of [false, true]) {
-      lockSession();
-      let checks = 0;
-      globalThis.fetch = async () => { checks++; return json({ ...strict, authMode, authConfigured, setupCompleted: false }); };
-      await refreshSession();
-      for (const [status, error, kind] of [[401, "authentication_required", "unauthenticated"], [403, "setup_required", "setup"], [403, "security_setup_required", "configuration"], [403, "forbidden", "forbidden"]]) {
-        const transport = createSessionFetch(async () => json({ error }, status), "https://feedarr.test", "");
-        for (let repeat = 0; repeat < 3; repeat++) {
-          assert.equal((await transport("/api/system/onboarding")).status, status);
-          await Promise.resolve();
-          assert.equal(getSessionSnapshot().phase, "ready");
-          assert.equal(sessionRoute(getSessionSnapshot().state), "setup");
-        }
-        assert.equal(authDenialKind(status, { error }), kind);
-      }
-      assert.equal(checks, authConfigured ? 4 : 1);
-    }
-  } finally { globalThis.fetch = original; lockSession(); }
 });
 
 test("server errors and inconsistent authorization stay in error/retry instead of remount loops", async () => {
@@ -249,49 +194,6 @@ test("server errors and inconsistent authorization stay in error/retry instead o
     assert.equal(getSessionSnapshot().error.message, "inconsistent_authorization_state");
   } finally { globalThis.fetch = original; lockSession(); }
 });
-
-test("an expired session during setup refreshes in place and never selects login", async () => {
-  const original = globalThis.fetch;
-  const phases = [];
-  const { subscribeSession, sessionRedirect } = await import("./session.js");
-  let unsubscribe;
-  try {
-    lockSession();
-    globalThis.fetch = async () => json({ ...strict, authenticated: true, setupCompleted: false });
-    await refreshSession();
-    unsubscribe = subscribeSession(() => phases.push(getSessionSnapshot().phase));
-    globalThis.fetch = async () => json({ ...strict, authenticated: false, setupCompleted: false });
-    const transport = createSessionFetch(async () => json({ error: "authentication_required" }, 401), "https://feedarr.test", "");
-    await transport("/api/setup/state");
-    await refreshSession();
-    assert.equal(getSessionSnapshot().state.authenticated, false);
-    assert.equal(sessionRoute(getSessionSnapshot().state), "setup");
-    assert.equal(sessionRedirect(getSessionSnapshot().state, "/setup"), null);
-    assert.ok(phases.length > 0);
-    assert.ok(phases.every((phase) => phase === "ready"));
-  } finally { unsubscribe?.(); globalThis.fetch = original; lockSession(); }
-});
-
-
-test("security save leaves incomplete setup verification to the caller without nesting a session GET", async () => {
-  const original = globalThis.fetch; const phases = [];
-  const { subscribeSession } = await import("./session.js"); let unsubscribe;
-  try {
-    lockSession();
-    globalThis.fetch = async () => json({ ...strict, setupCompleted: false, authConfigured: false });
-    await refreshSession();
-    unsubscribe = subscribeSession(() => phases.push(getSessionSnapshot().phase));
-    globalThis.fetch = async () => json({ ...strict, setupCompleted: false, authConfigured: true });
-    const transport = createSessionFetch(async () => json({ authConfigured: true }), "https://feedarr.test", "");
-    await transport("/api/settings/security", { method: "PUT" });
-    assert.equal(getSessionSnapshot().state.authConfigured, false);
-    await refreshSession();
-    assert.equal(getSessionSnapshot().state.authConfigured, true);
-    assert.equal(sessionRoute(getSessionSnapshot().state), "setup");
-    assert.ok(phases.length); assert.ok(phases.every(phase => phase === "ready"));
-  } finally { unsubscribe?.(); globalThis.fetch = original; lockSession(); }
-});
-
 
 test("session deadline bounds an uncooperative fetch AND response body and allows retry", async () => {
   const originals = { fetch: globalThis.fetch, setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout };

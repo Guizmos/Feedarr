@@ -3,7 +3,6 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 import AuthGate from "../auth/AuthGate.jsx";
 import Login from "../pages/Login.jsx";
 import Shell from "../layout/Shell.jsx";
-import SetupShell from "../layout/SetupShell.jsx";
 import RouteErrorBoundary from "../ui/RouteErrorBoundary.jsx";
 import ErrorBoundary from "../ui/ErrorBoundary.jsx";
 
@@ -17,7 +16,6 @@ const SystemStatisticsPage = React.lazy(() => import("../pages/system/SystemStat
 const SystemIndexers = React.lazy(() => import("../pages/system/SystemIndexers.jsx"));
 const Settings = React.lazy(() => import("../pages/Settings.jsx"));
 const Providers = React.lazy(() => import("../pages/Providers.jsx"));
-const SetupWizard = React.lazy(() => import("../pages/SetupWizard.jsx"));
 
 function withSuspense(element, label) {
   return (
@@ -45,14 +43,8 @@ export const router = createBrowserRouter([{
   element: <AuthGate />,
   children: [
   { path: "/login", element: <Login /> },
-  {
-    path: "/setup",
-    element: <SetupShell />,
-    errorElement: <RouteErrorBoundary />,
-    children: [
-      { index: true, element: withSuspense(<SetupWizard />, "Assistant de configuration") },
-    ],
-  },
+  { path: "/create-admin", element: <Login createAdmin /> },
+  { path: "/setup", element: <Navigate to="/settings/backup" replace /> },
   {
     path: "/",
     element: <Shell />,

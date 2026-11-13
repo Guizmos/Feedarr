@@ -49,48 +49,34 @@ test("logout renders a touch-sized icon action with translated tooltip and acces
   } finally { globalThis.fetch = originalFetch; globalThis.document = originalDocument; await server.close(); }
 });
 
-test("rendered auth gate leaves incomplete setup mounted and unknown/error states stable", async () => {
-  const server = await createServer({ server: { middlewareMode: true, hmr: false, watch: null }, logLevel: "silent" });
-  const originalFetch = globalThis.fetch;
-  try {
-    const session = await server.ssrLoadModule("/src/auth/session.js");
-    const { default: AuthGate } = await server.ssrLoadModule("/src/auth/AuthGate.jsx");
-    const { Routes, Route } = await import("react-router-dom");
-    const render = () => renderToStaticMarkup(React.createElement(MemoryRouter, { initialEntries: ["/setup"] },
-      React.createElement(Routes, null, React.createElement(Route, { element: React.createElement(AuthGate) },
-        React.createElement(Route, { path: "/setup", element: React.createElement("div", null, "wizard-content") })))));
-    session.lockSession();
-    assert.match(render(), /Vérification de la session/);
-    assert.doesNotMatch(render(), /wizard-content/);
-    for (const authMode of ["strict", "smart"]) for (const authConfigured of [false, true]) {
-      globalThis.fetch = async () => new Response(JSON.stringify({ authRequired: true, authConfigured, authenticated: false, setupCompleted: false, authMode }));
-      await session.refreshSession();
-      assert.match(render(), /wizard-content/);
-    }
-    session.lockSession();
-    globalThis.fetch = async () => new Response("unavailable", { status: 500 });
-    await assert.rejects(session.refreshSession());
-    assert.match(render(), /Réessayer/);
-    assert.doesNotMatch(render(), /wizard-content/);
-  } finally { globalThis.fetch = originalFetch; await server.close(); }
-});
-
-test("configured incomplete setup shows wizard and reused login form together without leaving setup", async () => {
+test("auth gate keeps unknown and network failure states explicit", async () => {
   const server = await createServer({ server: { middlewareMode: true, hmr: false, watch: null }, logLevel: "silent" });
   const original = globalThis.fetch;
   try {
     const session = await server.ssrLoadModule("/src/auth/session.js");
-    globalThis.fetch = async () => new Response(JSON.stringify({ authRequired: true, authConfigured: true, authenticated: false, setupCompleted: false, webSessionAvailable: true }));
+    const { default: Gate } = await server.ssrLoadModule("/src/auth/AuthGate.jsx");
+    session.lockSession();
+    const render = () => renderToStaticMarkup(React.createElement(MemoryRouter, null, React.createElement(Gate)));
+    assert.match(render(), /Vérification de la session/);
+    globalThis.fetch = async () => new Response("offline", { status: 503 });
+    await assert.rejects(session.refreshSession());
+    assert.match(render(), /Réessayer/);
+  } finally { globalThis.fetch = original; await server.close(); }
+});
+
+test("initial administrator reuses login design and requires no bootstrap secret", async () => {
+  const server = await createServer({ server: { middlewareMode: true, hmr: false, watch: null }, logLevel: "silent" });
+  const original = globalThis.fetch;
+  try {
+    const session = await server.ssrLoadModule("/src/auth/session.js");
+    globalThis.fetch = async () => new Response(JSON.stringify({ authRequired: true, authConfigured: false, authenticated: false, initialAdminRequired: true, secureTransport: true }));
     await session.refreshSession();
-    const { default: AuthGate } = await server.ssrLoadModule("/src/auth/AuthGate.jsx");
-    const { default: SetupShell } = await server.ssrLoadModule("/src/layout/SetupShell.jsx");
-    const { Routes, Route } = await import("react-router-dom");
-    const html = renderToStaticMarkup(React.createElement(MemoryRouter, { initialEntries: ["/setup"] }, React.createElement(Routes, null,
-      React.createElement(Route, { element: React.createElement(AuthGate) }, React.createElement(Route, { path: "/setup", element: React.createElement(SetupShell) },
-        React.createElement(Route, { index: true, element: React.createElement("div", null, "wizard-content") }))))));
-    assert.match(html, /wizard-content/);
-    assert.match(html, /auth-setup-login/);
-    assert.match(html, /action="\/api\/auth\/login"/);
-    assert.match(html, /autoComplete="current-password"/);
+    const { default: Login } = await server.ssrLoadModule("/src/pages/Login.jsx");
+    const html = renderToStaticMarkup(React.createElement(Login, { createAdmin: true }));
+    assert.match(html, /Créer votre compte administrateur/);
+    assert.match(html, /action="\/api\/auth\/create-admin"/);
+    assert.match(html, /name="confirmation"/);
+    assert.doesNotMatch(html, /bootstrap|secret initial/i);
+    assert.doesNotMatch(html, /name="rememberMe"/);
   } finally { globalThis.fetch = original; await server.close(); }
 });

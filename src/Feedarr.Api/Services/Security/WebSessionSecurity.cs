@@ -17,7 +17,7 @@ internal static class WebSessionSecurity
 
     private static readonly HashSet<string> PublicShellPaths = new(StringComparer.OrdinalIgnoreCase)
     {
-        "/", "/index.html", "/login", "/setup", "/library", "/library/top", "/activity", "/history",
+        "/", "/index.html", "/login", "/create-admin", "/setup", "/library", "/library/top", "/activity", "/history",
         "/indexers", "/system", "/system/statistics", "/system/indexers", "/system/storage", "/system/providers",
         "/system/updates", "/settings", "/settings/ui", "/settings/providers", "/settings/indexers",
         "/settings/externals", "/settings/applications", "/settings/users", "/settings/maintenance",
@@ -58,7 +58,8 @@ internal static class WebSessionSecurity
 
     internal static bool IsAuthEndpoint(HttpRequest request)
         => (HttpMethods.IsPost(request.Method) &&
-            (request.Path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
+            (request.Path.Equals("/api/auth/create-admin", StringComparison.OrdinalIgnoreCase) ||
+             request.Path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
              request.Path.Equals("/api/auth/logout", StringComparison.OrdinalIgnoreCase))) ||
            (HttpMethods.IsGet(request.Method) && request.Path.Equals("/api/auth/session", StringComparison.OrdinalIgnoreCase));
 

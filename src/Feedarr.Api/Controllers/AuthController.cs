@@ -3,6 +3,9 @@ using Feedarr.Api.Models.Settings;
 using Feedarr.Api.Services.Security;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Caching.Memory;
+using Feedarr.Api.Services.Backup;
+using Feedarr.Api.Services.Backup.Configuration;
 
 namespace Feedarr.Api.Controllers;
 
@@ -12,11 +15,39 @@ namespace Feedarr.Api.Controllers;
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 public sealed class AuthController(
     SettingsRepository settings,
-    SetupStateService setup,
     WebSessionService sessions,
     AuthThrottleService throttle) : ControllerBase
 {
     public sealed record LoginRequest(string? Username, string? Password, bool RememberMe = false);
+
+    public sealed record CreateAdminRequest(string? Username, string? Password, string? PasswordConfirmation);
+
+    [HttpPost("create-admin")]
+    [EnableRateLimiting("web-login")]
+    [RequestSizeLimit(8192)]
+    public IActionResult CreateAdmin([FromBody] CreateAdminRequest request,
+        [FromServices] IConfiguration configuration,
+        [FromServices] IMemoryCache cache, [FromServices] ConfigurationRestorePlanStore plans,
+        [FromServices] PendingRestoreStore pending)
+    {
+        if (!WebSessionSecurity.HasSameOrigin(Request)) return ForbiddenCsrf();
+        if (!settings.RequiresInitialAdministrator()) return Failure(409, "administrator_already_created");
+        if (plans.BlocksSync || pending.GetStatus().Pending) return Failure(409, "restore_restart_required");
+        var username = (request.Username ?? "").Trim();
+        if (username.Length == 0 || System.Text.Encoding.UTF8.GetByteCount(username) > 512 ||
+            request.Password is null || request.Password.Length > 4096 || request.Password != request.PasswordConfirmation)
+            return Failure(400, "invalid_administrator_credentials");
+        if (!CredentialValidator.TryValidatePasswordStrength(request.Password, out _, out _))
+            return Failure(400, "password_complexity_required");
+        var (hash, salt) = CredentialValidator.HashPassword(request.Password);
+        var security = new SecuritySettings { RequireHttps = settings.GetSecurity(new()).RequireHttps,
+            Username = username, PasswordHash = hash, PasswordSalt = salt };
+        if (!AuthenticationPolicy.CanUseTransport(Request, security, configuration)) return Failure(403, "https_required");
+        if (!settings.TryCreateInitialAdministrator(security)) return Failure(409, "administrator_already_created");
+        cache.Remove(SecuritySettingsCache.CacheKey);
+        var session = sessions.Create(HttpContext, sessions.Generation(), false);
+        return Ok(State(security, session));
+    }
 
     [HttpPost("login")]
     [EnableRateLimiting("web-login")]
@@ -24,13 +55,14 @@ public sealed class AuthController(
     public IActionResult Login([FromBody] LoginRequest request)
     {
         if (!WebSessionSecurity.HasSameOrigin(Request)) return ForbiddenCsrf();
-        if (!Request.IsHttps) return Failure(400, "https_required");
+
+        if (!AuthenticationPolicy.CanUseTransport(Request, settings.GetSecurity(new()), HttpContext.RequestServices?.GetService<IConfiguration>())) return Failure(403, "https_required");
 
         // Read the generation first: changes during validation make Create fail closed.
         var generation = sessions.Generation();
         var security = settings.GetSecurity(new SecuritySettings());
-        if (!SmartAuthPolicy.IsAuthConfigured(security, null))
-            return !setup.IsSetupCompleted() ? Failure(403, "setup_required") : Failure(409, "credentials_not_configured");
+        if (!AuthenticationPolicy.IsAuthConfigured(security, null))
+            return Failure(409, "credentials_not_configured");
 
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var username = request.Username ?? "";
@@ -56,7 +88,7 @@ public sealed class AuthController(
     public IActionResult Session()
     {
         var security = settings.GetSecurity(new SecuritySettings());
-        var session = SmartAuthPolicy.IsAuthConfigured(security, null)
+        var session = AuthenticationPolicy.IsAuthConfigured(security, null)
             ? sessions.Authenticate(HttpContext) : null;
         return Ok(State(security, session));
     }
@@ -65,7 +97,7 @@ public sealed class AuthController(
     public IActionResult Logout()
     {
         if (!WebSessionSecurity.HasSameOrigin(Request)) return ForbiddenCsrf();
-        if (!Request.IsHttps) return Failure(400, "https_required");
+        if (!AuthenticationPolicy.CanUseTransport(Request, settings.GetSecurity(new()), HttpContext.RequestServices?.GetService<IConfiguration>())) return Failure(403, "https_required");
         var session = sessions.Authenticate(HttpContext);
         if (session is not null && !WebSessionSecurity.HasValidCsrf(Request, session)) return ForbiddenCsrf();
         sessions.Revoke(HttpContext);
@@ -75,11 +107,14 @@ public sealed class AuthController(
     private object State(SecuritySettings security, WebSession? session) => new
     {
         authenticated = session is not null,
-        authRequired = SmartAuthPolicy.IsAuthRequired(HttpContext, security),
-        authConfigured = SmartAuthPolicy.IsAuthConfigured(security, null),
-        authMode = SmartAuthPolicy.NormalizeAuthMode(security),
-        setupCompleted = setup.IsSetupCompleted(),
-        webSessionAvailable = Request.IsHttps && SmartAuthPolicy.IsAuthConfigured(security, null),
+        authRequired = AuthenticationPolicy.IsAuthRequired(HttpContext, security),
+        authConfigured = AuthenticationPolicy.IsAuthConfigured(security, null),
+        requireHttps = security.RequireHttps,
+        initialAdminRequired = settings.RequiresInitialAdministrator(),
+        secureTransport = Request.IsHttps,
+        setupCompleted = true, // Compatibility only: configuration is no longer a prerequisite for access.
+        webSessionAvailable = AuthenticationPolicy.CanUseTransport(Request, security, HttpContext.RequestServices?.GetService<IConfiguration>()) && AuthenticationPolicy.IsAuthConfigured(security, null),
+        httpRecovery = HttpContext.RequestServices?.GetService<IConfiguration>()?.GetValue<bool>("Security:AllowHttpRecovery") ?? false,
         csrfToken = session?.CsrfToken,
         expiresAt = session?.ExpiresAt,
         absoluteExpiresAt = session?.AbsoluteExpiresAt,

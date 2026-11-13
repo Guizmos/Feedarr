@@ -19,20 +19,18 @@ function publish(next) {
 }
 
 export function sessionRoute(state) {
-  if (typeof state?.setupCompleted !== "boolean") return "checking";
-  if (!state.setupCompleted) return "setup";
-  if (["authRequired", "authConfigured", "authenticated"].some((key) => typeof state[key] !== "boolean")) return "checking";
-  if (state.authRequired && state.authConfigured && !state.authenticated) return "login";
-  if (state.authRequired && !state.authConfigured) return "configuration";
-  return "app";
+  if (!state || ["authRequired", "authConfigured", "authenticated"].some(key => typeof state[key] !== "boolean")) return "checking";
+  if (state.initialAdminRequired) return "create-admin";
+  return state.authRequired && !state.authenticated ? "login" : "app";
 }
 
-// Only the auth gate owns route transitions. Unknown state must never imply a route.
-export function sessionRedirect(state, pathname, search = "", hash = "") {
+// The gate alone chooses navigation; configuration completeness has no role here.
+export function sessionRedirect(state, pathname, search = "") {
   const route = sessionRoute(state);
-  if (route === "setup" && pathname !== "/setup") return "/setup";
-  if (route === "login" && pathname !== "/login") return `/login?returnTo=${encodeURIComponent(pathname + search + hash)}`;
-  if (route === "app" && pathname === "/setup") return "/library";
+  if (route === "create-admin" && pathname !== "/create-admin") return "/create-admin";
+  if (route === "login" && pathname !== "/login") return `/login?returnTo=${encodeURIComponent(pathname + search)}`;
+  if (route === "app" && ["/setup", "/create-admin"].includes(pathname)) return "/library";
+  if (route === "app" && pathname === "/login") return safeDestination(new URLSearchParams(search).get("returnTo"));
   return null;
 }
 
@@ -45,20 +43,9 @@ export function authDenialKind(status, payload = {}) {
 }
 
 async function recheckAfterDenial(kind) {
-  // Setup APIs may legitimately reject requests pending bootstrap/credentials.
-  // Do not lock/remount known incomplete setup for expected API denials.
-  if (snapshot.state?.setupCompleted === false) {
-    // Revoke stale session/configuration state in place, without unmounting setup.
-    if ((kind === "unauthenticated" && snapshot.state.authenticated) ||
-        (kind === "configuration" && snapshot.state.authConfigured)) {
-      try { await refreshSession(); } catch { /* Stable error/retry state. */ }
-    }
-    return;
-  }
-  if (snapshot.state?.setupCompleted !== true || kind === "forbidden") return;
-  lockSession();
-  try { await refreshSession({ deniedKind: kind }); }
-  catch { /* refreshSession exposes the stable retry/error state. */ }
+  if (kind === "forbidden") return;
+  invalidatePendingSession();
+  try { await refreshSession({ deniedKind: kind }); } catch { /* The gate exposes retry. */ }
 }
 
 export function safeDestination(value) {
@@ -66,7 +53,7 @@ export function safeDestination(value) {
   try {
     const url = new URL(value, "https://feedarr.invalid");
     const decoded = decodeURIComponent(url.pathname);
-    if (url.origin !== "https://feedarr.invalid" || decoded.startsWith("//") || decoded.includes("\\") || /^\/(login|setup)(\/|$)/i.test(decoded)) return "/library";
+    if (url.origin !== "https://feedarr.invalid" || decoded.startsWith("//") || decoded.includes("\\") || /^\/(login|setup|create-admin)(\/|$)/i.test(decoded)) return "/library";
     return url.pathname + url.search + url.hash;
   } catch { return "/library"; }
 }
@@ -105,6 +92,8 @@ export function refreshSession({ deniedKind, force = false } = {}) {
     previous.controller.abort(new DOMException("Session verification superseded", "AbortError"));
   }
   if (pending) return pending.promise;
+  if (snapshot.state?.authenticated && typeof document !== "undefined") document.documentElement.classList.add("auth-locked");
+  if (snapshot.state) publish({ ...snapshot, phase: "checking", error: null });
   const started = revision;
   const request = { controller: new AbortController(), promise: null };
   pending = request;
@@ -118,15 +107,14 @@ export function refreshSession({ deniedKind, force = false } = {}) {
         }
         return await response.json();
       }, 15000, request.controller);
-      if (["authRequired", "authConfigured", "authenticated", "setupCompleted"].some((key) => typeof state?.[key] !== "boolean")) throw new Error("invalid_session_response");
-      const contradictsDenial = (deniedKind === "setup" && state.setupCompleted) ||
-        (deniedKind === "configuration" && state.authConfigured) ||
+      if (["authRequired", "authConfigured", "authenticated"].some((key) => typeof state?.[key] !== "boolean")) throw new Error("invalid_session_response");
+      const contradictsDenial = (deniedKind === "configuration" && state.initialAdminRequired === false && !state.authConfigured) ||
         (deniedKind === "unauthenticated" && sessionRoute(state) === "app");
       if (contradictsDenial) throw new Error("inconsistent_authorization_state");
       if (started === revision && pending === request) publish({ phase: "ready", state, error: null });
       return state;
     } catch (error) {
-      if (started === revision && pending === request) publish({ phase: "error", state: null, error });
+      if (started === revision && pending === request) publish({ phase: "error", state: snapshot.state, error });
       throw error;
     } finally { if (pending === request) pending = null; }
   })();
@@ -150,10 +138,29 @@ export async function login(username, password, rememberMe) {
   const started = revision;
   const state = await authPost("login", { username, password, rememberMe });
   if (started !== revision) throw new DOMException("Session changed", "AbortError");
-  if (["authRequired", "authConfigured", "authenticated", "setupCompleted"].some(key => typeof state?.[key] !== "boolean")) throw new Error("invalid_session_response");
+  if (["authRequired", "authConfigured", "authenticated"].some(key => typeof state?.[key] !== "boolean")) throw new Error("invalid_session_response");
   invalidatePendingSession();
   publish({ phase: "ready", state, error: null });
   return state;
+}
+
+export async function createInitialAdmin(username, password, passwordConfirmation) {
+  const started = revision;
+  const state = await authPost("create-admin", { username, password, passwordConfirmation });
+  if (started !== revision) throw new DOMException("Session changed", "AbortError");
+  if (["authRequired", "authConfigured", "authenticated", "initialAdminRequired"].some(key => typeof state?.[key] !== "boolean")) throw new Error("invalid_session_response");
+  invalidatePendingSession();
+  publish({ phase: "ready", state: { ...state, justCreated: true }, error: null });
+  return state;
+}
+
+// A confirmed PUT is authoritative. Reauthentication belongs to the caller, not fetch.
+export function securitySaved(security) {
+  invalidatePendingSession();
+  publish({ phase: "ready", state: { ...snapshot.state, ...security,
+    authenticated: false, csrfToken: undefined, expiresAt: undefined, securitySaved: true,
+    webSessionAvailable: security.authConfigured && (!security.requireHttps || snapshot.state?.httpRecovery || (typeof window !== "undefined" && window.location.protocol === "https:")),
+  }, error: null });
 }
 
 export async function logout() {
@@ -183,17 +190,10 @@ export function createSessionFetch(nativeFetch, origin, root = base) {
     if (!["GET", "HEAD", "OPTIONS"].includes(method) && snapshot.state?.csrfToken) headers.set("X-Feedarr-CSRF", snapshot.state.csrfToken);
     const started = revision;
     const response = await nativeFetch(input, { ...init, headers });
-    if (!isAuth && started !== revision) throw new DOMException("Session changed", "AbortError");
+    if (!isAuth && ["GET", "HEAD"].includes(method) && started !== revision) throw new DOMException("Session changed", "AbortError");
     if (!isAuth && (response.status === 401 || response.status === 403)) {
       const denial = await response.clone().json().catch(() => ({}));
       void recheckAfterDenial(authDenialKind(response.status, denial));
-    } else if (!isAuth && response.ok && method !== "GET" && action === "settings/security") {
-      // Setup owns the next operation: login for new credentials, one check for Open.
-      // Never nest a session request inside its PUT or swallow verification failures.
-      if (snapshot.state?.setupCompleted !== false) {
-        lockSession();
-        await refreshSession();
-      }
     }
     return response;
   };
@@ -201,15 +201,15 @@ export function createSessionFetch(nativeFetch, origin, root = base) {
 
 export function installSessionTransport() {
   window.fetch = createSessionFetch(window.fetch.bind(window), window.location.origin);
-  const hasPrivateState = () => snapshot.state?.authenticated || snapshot.state?.setupCompleted !== false;
+  const hasPrivateState = () => snapshot.state?.authenticated === true;
   const conceal = () => {
     if (!hasPrivateState()) return; // Anonymous setup contains no authenticated private state.
     document.documentElement.classList.add("auth-locked");
-    lockSession();
+    invalidatePendingSession();
+    publish({ ...snapshot, phase: "checking", error: null });
   };
   const revalidate = () => {
     // pageshow and visibilitychange often arrive together. Share one verification.
-    if (snapshot.phase !== "checking" && hasPrivateState()) lockSession();
     void refreshSession().catch(() => {});
   };
   if ("BroadcastChannel" in window) {

@@ -19,28 +19,6 @@ public sealed class BasicAuthMiddleware
     /// </summary>
     internal const string BootstrapTokenActiveKey = "feedarr.auth.bootstrap_token_active";
 
-    private static readonly string[] SetupAllowedApiPrefixes =
-    {
-        "/api/setup",
-        "/api/system/onboarding",
-        "/api/settings/ui",
-        "/api/settings/security",
-        "/api/providers",
-        "/api/sources",
-        "/api/apps",
-        "/api/categories",
-        "/api/jackett/indexers",
-        "/api/prowlarr/indexers"
-    };
-
-    private static readonly string[] SecuritySetupAllowedApiPrefixes =
-    {
-        "/api/setup/state",
-        "/api/system/onboarding",
-        "/api/settings/ui",
-        "/api/settings/security"
-    };
-
     private readonly RequestDelegate _next;
     private readonly IConfiguration _config;
 
@@ -92,57 +70,27 @@ public sealed class BasicAuthMiddleware
             return;
         }
 
-        if (!setupState.IsSetupCompleted() && !IsAllowedDuringSetup(context.Request))
-        {
-            log.LogWarning(
-                "Request rejected by setup lock for {Method} {Path}",
-                context.Request.Method,
-                context.Request.Path.Value ?? "/");
-            await HandleSetupLockRejection(context).ConfigureAwait(false);            return;
-        }
-
         var security = cache.GetOrCreate(SecuritySettingsCache.CacheKey, entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = SecuritySettingsCache.Duration;
             return settingsRepo.GetSecurity(new SecuritySettings());
         }) ?? new SecuritySettings();
 
-        var bootstrapSecret = SmartAuthPolicy.GetBootstrapSecret(_config);
-        if (SmartAuthPolicy.IsBootstrapTokenRequest(context.Request))
+        var authConfigured = AuthenticationPolicy.IsAuthConfigured(security, null);
+        if (!AuthenticationPolicy.CanUseTransport(context.Request, security, _config))
         {
-            if (SmartAuthPolicy.IsLoopbackRequest(context) ||
-                SmartAuthPolicy.HasValidBootstrapSecretHeader(context, bootstrapSecret))
-            {
-                context.Items[AuthPassedKey] = true;
-                await _next(context).ConfigureAwait(false);                return;
-            }
-
-            var hasBootstrapHeader =
-                context.Request.Headers.ContainsKey(SmartAuthPolicy.BootstrapSecretHeader) ||
-                context.Request.Headers.ContainsKey(SmartAuthPolicy.LegacyBootstrapSecretHeader);
-            log.LogWarning(
-                "Bootstrap token request rejected for {Method} {Path} (remoteIp={RemoteIp}, hasBootstrapHeader={HasBootstrapHeader})",
-                context.Request.Method,
-                context.Request.Path.Value ?? "/",
-                context.Connection.RemoteIpAddress?.ToString() ?? "",
-                hasBootstrapHeader);
-            await RejectBootstrapTokenDenied(context).ConfigureAwait(false);            return;
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await context.Response.WriteAsJsonAsync(new { error = "https_required", message = "HTTPS est obligatoire. Récupération administrateur : Security__AllowHttpRecovery=true sur le serveur, puis connexion avec vos identifiants." });
+            return;
+        }
+        if (!authConfigured)
+        {
+            await RejectSecuritySetupRequired(context).ConfigureAwait(false);
+            return;
         }
 
-        if (!setupState.IsSetupCompleted() && ConfigurationSetupRoutes.Allows(context.Request) &&
-            (SmartAuthPolicy.IsLoopbackRequest(context) || SmartAuthPolicy.HasValidBootstrapSecretHeader(context, bootstrapSecret)))
-        {
-            context.Items[AuthPassedKey] = true;
-            await _next(context).ConfigureAwait(false); return;
-        }
-
-        var authRequired = SmartAuthPolicy.IsAuthRequired(context, security);
-        var authConfigured = SmartAuthPolicy.IsAuthConfigured(security, bootstrapSecret);
-        var authMode = SmartAuthPolicy.NormalizeAuthMode(security);
-
-        if (webSessions is not null && authConfigured &&
-            !WebSessionSecurity.HasExplicitBasic(context.Request) &&
-            !SmartAuthPolicy.HasValidBootstrapSecretHeader(context, bootstrapSecret))
+        if (webSessions is not null &&
+            !WebSessionSecurity.HasExplicitBasic(context.Request))
         {
             var session = webSessions.Authenticate(context);
             if (session is not null)
@@ -153,86 +101,6 @@ public sealed class BasicAuthMiddleware
                 await _next(context).ConfigureAwait(false);
                 return;
             }
-        }
-
-        if (!authRequired)
-        {
-            context.Items[AuthPassedKey] = true;
-            await _next(context).ConfigureAwait(false);            return;
-        }
-
-        if (!authConfigured)
-        {
-            // A valid issued bootstrap token grants access to security-setup paths only
-            // (principle of least privilege). It does NOT open the full API.
-            var issuedToken = TryGetBootstrapTokenHeader(context.Request);
-            if (issuedToken is not null)
-            {
-                if (IsAllowedWithBootstrapToken(context.Request, !setupState.IsSetupCompleted()))
-                {
-                    if (bootstrapTokens.TryConsume(issuedToken))
-                    {
-                        context.Items[AuthPassedKey] = true;
-                        context.Items[BootstrapTokenActiveKey] = true;
-                        await _next(context).ConfigureAwait(false);                        return;
-                    }
-
-                    if (bootstrapTokens.GetStatus(issuedToken) == BootstrapTokenService.TokenStatus.Used)
-                    {
-                        log.LogWarning(
-                            "Bootstrap token already used for {Method} {Path}",
-                            context.Request.Method,
-                            context.Request.Path.Value ?? "/");
-                    }
-
-                    await ChallengeAsync(context).ConfigureAwait(false);
-                    return;
-                }
-
-                var tokenStatus = bootstrapTokens.GetStatus(issuedToken);
-                if (tokenStatus is BootstrapTokenService.TokenStatus.Unknown or BootstrapTokenService.TokenStatus.Expired or BootstrapTokenService.TokenStatus.Missing)
-                {
-                    await ChallengeAsync(context).ConfigureAwait(false);
-                    return;
-                }
-
-                // Token is valid but the path is outside the bootstrap scope — reject rather
-                // than silently falling through to the security-setup lock check below.
-                log.LogWarning(
-                    "Bootstrap token presented for out-of-scope path {Method} {Path} — rejected",
-                    context.Request.Method,
-                    context.Request.Path.Value ?? "/");
-                await RejectBootstrapTokenOutOfScope(context).ConfigureAwait(false);                return;
-            }
-
-            // Remote creation of credentials requires the issued single-use token.
-            // Read-only setup discovery remains available without disclosing secrets.
-            if (HttpMethods.IsPut(context.Request.Method) &&
-                PathEqualsOrUnder(context.Request.Path.Value ?? "", "/api/settings/security") &&
-                !SmartAuthPolicy.IsLoopbackRequest(context))
-            {
-                await RejectBootstrapTokenDenied(context).ConfigureAwait(false);
-                return;
-            }
-
-            if (IsAllowedDuringSecuritySetup(context.Request))
-            {
-                context.Items[AuthPassedKey] = true;
-                await _next(context).ConfigureAwait(false);                return;
-            }
-
-            log.LogWarning(
-                "Request rejected by security setup lock for {Method} {Path} (mode={AuthMode})",
-                context.Request.Method,
-                context.Request.Path.Value ?? "/",
-                authMode);
-            await RejectSecuritySetupRequired(context).ConfigureAwait(false);            return;
-        }
-
-        if (SmartAuthPolicy.HasValidBootstrapSecretHeader(context, bootstrapSecret))
-        {
-            context.Items[AuthPassedKey] = true;
-            await _next(context).ConfigureAwait(false);            return;
         }
 
         if (!TryGetBasicCredentials(context, out var user, out var pass))
@@ -301,30 +169,6 @@ public sealed class BasicAuthMiddleware
         });
     }
 
-    private static Task HandleSetupLockRejection(HttpContext context)
-    {
-        var path = context.Request.Path.Value ?? "";
-        if (!string.IsNullOrWhiteSpace(path) &&
-            path.StartsWith("/api", StringComparison.OrdinalIgnoreCase))
-        {
-            return RejectSetupRequiredApi(context);
-        }
-
-        context.Response.Redirect("/setup", permanent: false);
-        return Task.CompletedTask;
-    }
-
-    private static Task RejectSetupRequiredApi(HttpContext context)
-    {
-        context.Response.StatusCode = StatusCodes.Status403Forbidden;
-        context.Response.ContentType = "application/json";
-        return context.Response.WriteAsJsonAsync(new
-        {
-            error = "setup_required",
-            message = "Setup required"
-        });
-    }
-
     private static Task RejectSecuritySetupRequired(HttpContext context)
     {
         context.Response.StatusCode = StatusCodes.Status403Forbidden;
@@ -335,17 +179,6 @@ public sealed class BasicAuthMiddleware
             message = "Security setup is required before accessing this endpoint",
             authRequired = true,
             authConfigured = false
-        });
-    }
-
-    private static Task RejectBootstrapTokenDenied(HttpContext context)
-    {
-        context.Response.StatusCode = StatusCodes.Status403Forbidden;
-        context.Response.ContentType = "application/json";
-        return context.Response.WriteAsJsonAsync(new
-        {
-            error = "bootstrap_secret_required",
-            message = "Bootstrap token requires loopback access or a valid X-Bootstrap-Secret header"
         });
     }
 
@@ -361,7 +194,7 @@ public sealed class BasicAuthMiddleware
         try
         {
             var saltBytes = Convert.FromBase64String(settings.PasswordSalt);
-            var input = Encoding.UTF8.GetBytes(user + ":" + pass);
+            var input = Encoding.UTF8.GetBytes(settings.Username + "\0" + settings.PasswordHash + "\0" + user + ":" + pass);
             using var hmac = new HMACSHA256(saltBytes);
             return "auth:ok:" + Convert.ToBase64String(hmac.ComputeHash(input));
         }
@@ -410,35 +243,6 @@ public sealed class BasicAuthMiddleware
         }
     }
 
-    private static bool IsAllowedDuringSetup(HttpRequest request)
-    {
-        if (HttpMethods.IsOptions(request.Method))
-            return true;
-
-        var path = request.Path.Value ?? "";
-        if (string.IsNullOrWhiteSpace(path))
-            return false;
-
-        if (path.Equals("/health", StringComparison.OrdinalIgnoreCase) ||
-            path.Equals("/api/health", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        if (PathEqualsOrUnder(path, "/setup") ||
-            PathEqualsOrUnder(path, "/assets") ||
-            path.StartsWith("/favicon", StringComparison.OrdinalIgnoreCase) ||
-            path.StartsWith("/manifest", StringComparison.OrdinalIgnoreCase) ||
-            path.StartsWith("/service-worker", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        foreach (var prefix in SetupAllowedApiPrefixes)
-        {
-            if (PathEqualsOrUnder(path, prefix))
-                return true;
-        }
-
-        return false;
-    }
-
     private static bool IsPublicStaticAssetRequest(HttpRequest request)
     {
         if (!(HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method)))
@@ -448,7 +252,7 @@ public sealed class BasicAuthMiddleware
         if (string.IsNullOrWhiteSpace(path))
             return false;
 
-        if (PathEqualsOrUnder(path, "/assets"))
+        if ((path.Equals("/assets", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/assets/", StringComparison.OrdinalIgnoreCase)))
             return true;
 
         if (path.Equals("/pwa-assets.json", StringComparison.OrdinalIgnoreCase) ||
@@ -467,109 +271,4 @@ public sealed class BasicAuthMiddleware
                path.StartsWith("/favicon.", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsAllowedDuringSecuritySetup(HttpRequest request)
-    {
-        if (HttpMethods.IsOptions(request.Method))
-            return true;
-
-        var path = request.Path.Value ?? "";
-        if (string.IsNullOrWhiteSpace(path))
-            return false;
-
-        if (SmartAuthPolicy.IsBootstrapTokenRequest(request))
-            return true;
-
-        if (HttpMethods.IsGet(request.Method) &&
-            (PathEqualsOrUnder(path, "/api/settings/security") ||
-             PathEqualsOrUnder(path, "/api/setup/state")))
-            return true;
-
-        if (path.Equals("/health", StringComparison.OrdinalIgnoreCase) ||
-            path.Equals("/api/health", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        if (PathEqualsOrUnder(path, "/setup") ||
-            PathEqualsOrUnder(path, "/assets") ||
-            path.StartsWith("/favicon", StringComparison.OrdinalIgnoreCase) ||
-            path.StartsWith("/manifest", StringComparison.OrdinalIgnoreCase) ||
-            path.StartsWith("/service-worker", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        foreach (var prefix in SecuritySetupAllowedApiPrefixes)
-        {
-            if (PathEqualsOrUnder(path, prefix))
-                return true;
-        }
-
-        return false;
-    }
-
-    private static bool PathEqualsOrUnder(string path, string prefix)
-    {
-        if (path.Equals(prefix, StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        return path.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>
-    /// Paths that a bootstrap token may access — limited to what is strictly needed
-    /// to configure authentication during the security setup phase.
-    /// The full API is NOT accessible via a bootstrap token (principle of least privilege).
-    /// </summary>
-    private static bool IsAllowedWithBootstrapToken(HttpRequest request, bool initialSetup)
-    {
-        if (HttpMethods.IsOptions(request.Method))
-            return true;
-
-        var path = request.Path.Value ?? "";
-
-        // Health / static assets — always allowed
-        if (path.Equals("/health", StringComparison.OrdinalIgnoreCase) ||
-            path.Equals("/api/health", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        if (PathEqualsOrUnder(path, "/setup") ||
-            PathEqualsOrUnder(path, "/assets") ||
-            path.StartsWith("/favicon", StringComparison.OrdinalIgnoreCase) ||
-            path.StartsWith("/manifest", StringComparison.OrdinalIgnoreCase) ||
-            path.StartsWith("/service-worker", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        // The bootstrap token endpoint itself (POST to re-issue a token)
-        if (SmartAuthPolicy.IsBootstrapTokenRequest(request))
-            return true;
-
-        if (initialSetup && ConfigurationSetupRoutes.Allows(request)) return true;
-
-        // The only API paths this token needs: security + setup state
-        foreach (var prefix in SecuritySetupAllowedApiPrefixes)
-        {
-            if (PathEqualsOrUnder(path, prefix))
-                return true;
-        }
-
-        return false;
-    }
-
-    private static Task RejectBootstrapTokenOutOfScope(HttpContext context)
-    {
-        context.Response.StatusCode = StatusCodes.Status403Forbidden;
-        context.Response.ContentType = "application/json";
-        return context.Response.WriteAsJsonAsync(new
-        {
-            error = "bootstrap_token_scope_exceeded",
-            message = "The bootstrap token only grants access to security setup endpoints. " +
-                      "Complete security configuration first, then use regular credentials."
-        });
-    }
-
-    private static string? TryGetBootstrapTokenHeader(HttpRequest request)
-    {
-        if (!request.Headers.TryGetValue(SmartAuthPolicy.BootstrapTokenHeader, out var values))
-            return null;
-
-        var value = values.ToString().Trim();
-        return string.IsNullOrWhiteSpace(value) ? null : value;
-    }
 }

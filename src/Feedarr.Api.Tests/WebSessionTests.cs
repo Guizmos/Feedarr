@@ -205,8 +205,7 @@ public sealed class WebSessionTests
     }
 
     [Theory]
-    [InlineData("open", false)]
-    [InlineData("smart", false)]
+    [InlineData("open", true)]
     [InlineData("smart", true)]
     [InlineData("strict", true)]
     public async Task Modes_CookieMutationsAlwaysRequireCsrf(string mode, bool required)
@@ -287,37 +286,37 @@ public sealed class WebSessionTests
     }
 
     [Fact]
-    public async Task SetupLock_IsNotBypassedByCookie_AndAuthEndpointsRemainJson()
+    public async Task OnboardingFlag_DoesNotRestrictAuthenticatedAccess()
     {
         using var f = new Fixture();
         var (cookie, _) = f.Login();
         f.Setup.ResetSetupCompleted();
         var protectedRequest = f.Context("/api/feed/releases", cookie: cookie);
-        Assert.False(await f.Invoke(protectedRequest));
-        Assert.Equal(403, protectedRequest.Response.StatusCode);
+        Assert.True(await f.Invoke(protectedRequest));
         var login = f.Context("/api/auth/login", "POST", cookie);
         Assert.True(await f.Invoke(login));
         Assert.IsType<OkObjectResult>(f.Controller(login).Login(new("admin", Fixture.Password)));
         var state = JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(f.Controller(f.Context()).Session()).Value);
-        Assert.False(state.GetProperty("setupCompleted").GetBoolean());
+        Assert.True(state.GetProperty("setupCompleted").GetBoolean());
         var unknown = f.Context("/api/auth/login/child");
         Assert.False(await f.Invoke(unknown));
     }
 
     [Fact]
-    public async Task HttpLan_RefusesCookieLogin_ButBasicStillWorks_AndRawForwardingCannotGrantHttps()
+    public async Task HttpsOnlyPolicy_RefusesBothCookieAndBasicOverHttp()
     {
         using var f = new Fixture();
         var c = f.Context("/api/auth/login", "POST");
         c.Request.Scheme = "http";
         c.Request.Headers.Origin = "http://feedarr.example";
         c.Request.Headers["X-Forwarded-Proto"] = "https";
-        Assert.Equal(400, Assert.IsType<ObjectResult>(f.Controller(c).Login(new("admin", Fixture.Password))).StatusCode);
+        Assert.Equal(403, Assert.IsType<ObjectResult>(f.Controller(c).Login(new("admin", Fixture.Password))).StatusCode);
         Assert.False(c.Response.Headers.ContainsKey("Set-Cookie"));
         var basic = f.Context("/api/feed/releases");
         basic.Request.Scheme = "http";
         basic.Request.Headers.Authorization = Basic("admin", Fixture.Password);
-        Assert.True(await f.Invoke(basic));
+        Assert.False(await f.Invoke(basic));
+        Assert.Equal(403, basic.Response.StatusCode);
     }
 
     [Theory]
@@ -335,7 +334,7 @@ public sealed class WebSessionTests
         var options = new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost };
         options.KnownNetworks.Clear(); options.KnownProxies.Clear();
         options.KnownProxies.Add(IPAddress.Parse(trusted ? "10.0.0.2" : "10.0.0.3"));
-        SmartAuthPolicy.CaptureConnection(c, options);
+        AuthenticationPolicy.CaptureConnection(c, options);
         IActionResult? result = null;
         await new ForwardedHeadersMiddleware(ctx => { result = f.Controller(ctx).Login(new("admin", Fixture.Password)); return Task.CompletedTask; },
             NullLoggerFactory.Instance, OptionsFactory.Create(options)).Invoke(c);
@@ -438,15 +437,16 @@ public sealed class WebSessionTests
     }
 
     [Fact]
-    public async Task CookieCannotAuthorizeRemoteBootstrapIssuance()
+    public async Task LegacyBootstrapEndpointAlsoRequiresAuthenticatedSessionCsrf()
     {
         using var f = new Fixture();
         var (cookie, session) = f.Login();
         var context = f.Context("/api/setup/bootstrap-token", "POST", cookie);
         context.Request.Headers[WebSessionSecurity.CsrfHeader] = session.CsrfToken;
+        Assert.True(await f.Invoke(context));
+        context.Request.Headers.Remove(WebSessionSecurity.CsrfHeader);
         Assert.False(await f.Invoke(context));
         Assert.Equal(403, context.Response.StatusCode);
-        Assert.Equal("bootstrap_secret_required", ReadJson(context).GetProperty("error").GetString());
     }
 
     [Fact]
@@ -508,7 +508,7 @@ public sealed class WebSessionTests
     }
 
     [Fact]
-    public async Task ConfiguredSetupSession_CanContinueWizard_ButCannotReadPrivateFeed()
+    public async Task AuthenticatedSession_DoesNotDependOnOnboardingCompletion()
     {
         using var f = new Fixture();
         f.Setup.ResetSetupCompleted();
@@ -518,9 +518,7 @@ public sealed class WebSessionTests
         Assert.True(await f.Invoke(setup));
         Assert.True(setup.Items.ContainsKey(WebSessionSecurity.SessionKey));
         var feed = f.Context("/api/feed/releases", cookie: cookie);
-        Assert.False(await f.Invoke(feed));
-        Assert.Equal(403, feed.Response.StatusCode);
-        Assert.Equal("setup_required", ReadJson(feed).GetProperty("error").GetString());
+        Assert.True(await f.Invoke(feed));
     }
 
     private static JsonElement ReadJson(DefaultHttpContext context)
@@ -551,11 +549,7 @@ public sealed class WebSessionTests
         internal Fixture()
         {
             Db = new(OptionsFactory.Create(new AppOptions { DataDir = root, DbFileName = "test.db" }));
-            using (var connection = Db.Open())
-            {
-                foreach (var file in new[] { "0006_app_settings.sql", "0059_web_sessions.sql" })
-                    connection.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Data", "Migrations", file)));
-            }
+            new MigrationsRunner(Db, NullLogger<MigrationsRunner>.Instance).Run();
             Settings = new(Db);
             Setup = new(Settings, cache);
             Sessions = new(Db, Clock, Settings);
@@ -576,7 +570,7 @@ public sealed class WebSessionTests
             context.Response.Body = new MemoryStream();
             return context;
         }
-        internal AuthController Controller(HttpContext context) => new(Settings, Setup, Sessions, Throttle)
+        internal AuthController Controller(HttpContext context) => new(Settings, Sessions, Throttle)
             { ControllerContext = new() { HttpContext = context } };
         internal (string Cookie, WebSession Session) Login(bool remember = false)
         {

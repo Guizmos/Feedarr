@@ -6,6 +6,7 @@ export function createDomEnvironment({ url = "https://feedarr.test/", html = '<!
   const dom = new JSDOM(html, { url, pretendToBeVisual: true });
   const values = {
     window: dom.window, document: dom.window.document, navigator: dom.window.navigator,
+    FormData: dom.window.FormData,
     HTMLElement: dom.window.HTMLElement, HTMLInputElement: dom.window.HTMLInputElement,
     CustomEvent: dom.window.CustomEvent, MutationObserver: dom.window.MutationObserver,
     localStorage: dom.window.localStorage, IS_REACT_ACT_ENVIRONMENT: true,

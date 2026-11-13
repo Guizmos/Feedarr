@@ -23,6 +23,22 @@ public sealed class ConfigurationRestoreServiceTests
     private const string Password = "A transactionally restored configuration!";
 
     [Fact]
+    public async Task IncompleteProtectedArchivePreservesTheExistingAdministrator()
+    {
+        using var origin = new ArchiveFixture(); using var destination = new Target();
+        using (var connection = origin.Db.Open()) origin.Set(connection, "security", new SecuritySettings { AuthMode = "strict" });
+        var (hash, salt) = CredentialValidator.HashPassword("Existing-Administrator42!");
+        destination.Settings.SaveSecurity(new SecuritySettings { AuthMode = "strict", Username = "existing-admin", PasswordHash = hash, PasswordSalt = salt });
+        var preview = await destination.Prepare(origin);
+        await destination.Restore.ConfirmAsync(preview.OperationId, destination.Caller, true);
+        destination.Restore.ApplyAtStartup();
+        var security = destination.Settings.GetSecurity(new SecuritySettings());
+        Assert.Equal("existing-admin", security.Username);
+        Assert.True(CredentialValidator.Validate("existing-admin", "Existing-Administrator42!", security));
+        Assert.False(destination.Settings.RequiresInitialAdministrator());
+    }
+
+    [Fact]
     public async Task FreshRestoreIsProtectedAtomicPortableAndRemapsIdentifiers()
     {
         using var origin = new ArchiveFixture(); using var destination = new Target();
@@ -265,7 +281,8 @@ public sealed class ConfigurationRestoreServiceTests
     public async Task SecurityChangeAndConfirmationRequireExplicitConsent()
     {
         using var origin = new ArchiveFixture(); using var destination = new Target();
-        using (var c = origin.Db.Open()) origin.Set(c, "security", new SecuritySettings { AuthMode = "open" });
+        destination.Settings.SaveSecurity(new SecuritySettings { RequireHttps = true, Username = "existing-admin", PasswordHash = Convert.ToBase64String(new byte[32]), PasswordSalt = Convert.ToBase64String(new byte[16]) });
+        using (var c = origin.Db.Open()) origin.Set(c, "security", new SecuritySettings { RequireHttps = false });
         var p = await destination.Prepare(origin); Assert.True(p.SecurityChangeRequiresConfirmation);
         await Assert.ThrowsAsync<BackupOperationException>(() => destination.Restore.ConfirmAsync(p.OperationId, destination.Caller));
         Assert.False(destination.Store.Read()!.Confirmed);
@@ -376,6 +393,27 @@ public sealed class ConfigurationRestoreServiceTests
         Assert.False(second.IsCompleted); input.Release.SetResult();
         var p = await first; await Assert.ThrowsAsync<BackupOperationException>(() => second);
         Assert.Equal(p.OperationId, target.Restore.GetPendingPreview(target.Caller)!.OperationId);
+    }
+
+    [Fact]
+    public async Task TransportMigrationPreservesConfirmedRestoreBaseline()
+    {
+        using var origin = new ArchiveFixture(); using var target = new Target();
+        // Simulate a database immediately before 0061, with an already confirmed plan.
+        using (var c = target.Data.Db.Open())
+        {
+            c.Execute("ALTER TABLE web_sessions DROP COLUMN secure_only; DROP TABLE security_transport_migration; DELETE FROM schema_migrations WHERE id='0061_transport_policy.sql'");
+            c.Execute("INSERT OR REPLACE INTO app_settings(key,value_json,updated_at_ts) VALUES('security',@json,1)",
+                new { json = "{\"authMode\":\"strict\",\"username\":\"owner\",\"passwordHash\":\"retained\",\"passwordSalt\":\"retained\"}" });
+        }
+        var preview = await target.Prepare(origin);
+        await target.Restore.ConfirmAsync(preview.OperationId, target.Caller, true);
+        var before = target.ActiveConfiguration();
+        new Feedarr.Api.Data.MigrationsRunner(target.Data.Db, NullLogger<Feedarr.Api.Data.MigrationsRunner>.Instance).Run();
+        Assert.Equal(before, target.ActiveConfiguration());
+        target.RestartService();
+        target.Restore.ApplyAtStartup();
+        Assert.Null(target.Store.Read());
     }
 
     [Fact]

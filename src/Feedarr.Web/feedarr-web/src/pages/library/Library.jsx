@@ -1,3 +1,4 @@
+import LibraryWelcome from "./components/LibraryWelcome.jsx";
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { apiGet, apiPost } from "@api/client.js";
 import Loader from "@ui/Loader.jsx";
@@ -1215,6 +1216,10 @@ export default function Library() {
       </div>
 
       {(loading || sourcesLoading) && <Loader label="Chargement du feed…" />}
+
+      {!loading && !sourcesLoading && !sourcesError && !err && sources.length === 0 && (
+        <LibraryWelcome />
+      )}
 
       {!loading && !sourcesLoading && sourceWarning && !sourcesError && !err && (
         <div className="onboarding__warn" role="status">

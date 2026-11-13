@@ -26,3 +26,12 @@ html.auth-locked body > :not(#root) { visibility: hidden; }
 @media (max-width: 480px) { .auth-card { padding: 28px 22px; } .auth-card h1 { font-size: 22px; } }
 
 .auth-setup-login { display: grid; place-items: center; margin: 24px 0; }
+
+.auth-verification { position: fixed; inset: 0; z-index: 10000; background: var(--bg, var(--panel)); overflow: auto; }
+
+.auth-enter .app-shell { animation: auth-enter 280ms ease-out both; }
+@keyframes auth-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .auth-enter .app-shell { animation: none; } }
+.library-welcome { margin: 20px 0; padding: 24px; }
+
+.http-transport-notice { flex-shrink: 0; padding: 7px 16px; background: #741e24; color: #fff; font-size: 12px; line-height: 1.4; text-align: center; }

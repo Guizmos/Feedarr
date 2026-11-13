@@ -381,236 +381,57 @@ public sealed class SettingsController : ControllerBase
     [HttpGet("security")]
     public IActionResult GetSecurity()
     {
-        var sec = _repo.GetSecuritySettings(BuildSecurityDefaults());
-        var authMode = SmartAuthPolicy.NormalizeAuthMode(sec);
-        var bootstrapSecret = SmartAuthPolicy.GetBootstrapSecret(_config);
-        var authConfigured = SmartAuthPolicy.IsAuthConfigured(sec, bootstrapSecret);
-        var authRequired = authMode == "strict" || SmartAuthPolicy.IsAuthRequired(HttpContext, sec);
-        var (authentication, authenticationRequired) = LegacyAuthProjection(authMode);
-
-        return Ok(new
-        {
-            authMode,
-            authentication,
-            authenticationRequired,
-            publicBaseUrl = sec.PublicBaseUrl ?? "",
-            username = sec.Username ?? "",
-            hasPassword = !string.IsNullOrWhiteSpace(sec.PasswordHash),
-            authConfigured,
-            authRequired
-        });
+        var security = _repo.GetSecuritySettings();
+        return Ok(new { requireHttps = security.RequireHttps, publicBaseUrl = security.PublicBaseUrl,
+            username = security.Username, hasPassword = security.PasswordHash.Length > 0,
+            authConfigured = AuthenticationPolicy.IsAuthConfigured(security, null), authRequired = true,
+            transportMigration = security.TransportMigration });
     }
 
     public sealed class SecuritySettingsDto
     {
-        public string? AuthMode { get; set; }
-        public string? Authentication { get; set; }
-        public string? AuthenticationRequired { get; set; }
+        public bool? RequireHttps { get; set; }
         public string? PublicBaseUrl { get; set; }
         public string? Username { get; set; }
         public string? Password { get; set; }
         public string? PasswordConfirmation { get; set; }
-
-        /// <summary>
-        /// Required (must be true) when switching from smart/strict to open on an instance
-        /// that already has credentials configured, to prevent accidental auth removal.
-        /// </summary>
+        // Recognized only to reject obsolete clients explicitly, never to disable authentication.
+        public string? AuthMode { get; set; }
+        public string? Authentication { get; set; }
+        public string? AuthenticationRequired { get; set; }
         public bool? AllowDowngradeToOpen { get; set; }
     }
 
     [HttpPut("security")]
     public IActionResult PutSecurity([FromBody] SecuritySettingsDto dto)
     {
-        if (dto is null) return Problem(title: "body missing", statusCode: StatusCodes.Status400BadRequest);
-
-        var current = _repo.GetSecuritySettings(BuildSecurityDefaults());
-
-        var legacyAuth = Normalize(dto.Authentication, current.Authentication, new[] { "none", "basic" });
-        var legacyRequired = Normalize(dto.AuthenticationRequired, current.AuthenticationRequired, new[] { "local", "all" });
-        var fallbackMode = SmartAuthPolicy.NormalizeAuthMode(current);
-        var authMode = SmartAuthPolicy.NormalizeAuthMode(dto.AuthMode ?? LegacyModeProjection(legacyAuth, legacyRequired) ?? fallbackMode);
-
-        // Scope 5 — guard against accidental downgrade from a secured config to open mode.
-        // Only fires when credentials are already set (i.e., this is a downgrade, not an initial setup).
-        if (authMode == "open")
+        if (dto.AuthMode is not null || dto.Authentication is not null || dto.AuthenticationRequired is not null || dto.AllowDowngradeToOpen is not null)
+            return Problem(title: "legacy_auth_modes_removed", detail: "L’authentification est obligatoire. Utilisez requireHttps pour choisir la politique de transport.", statusCode: 400);
+        var current = _repo.GetSecuritySettings();
+        var next = new SecuritySettings { RequireHttps = dto.RequireHttps ?? current.RequireHttps,
+            PublicBaseUrl = dto.PublicBaseUrl?.Trim() ?? current.PublicBaseUrl,
+            Username = dto.Username?.Trim() ?? current.Username, PasswordHash = current.PasswordHash, PasswordSalt = current.PasswordSalt };
+        if (dto.Password is not null || dto.PasswordConfirmation is not null)
         {
-            var currentHasCreds = !string.IsNullOrWhiteSpace(current.Username) &&
-                                  !string.IsNullOrWhiteSpace(current.PasswordHash);
-            var currentMode = SmartAuthPolicy.NormalizeAuthMode(current);
-            if (currentMode != "open" && currentHasCreds && dto.AllowDowngradeToOpen != true)
+            if (string.IsNullOrEmpty(dto.Password) || dto.Password != dto.PasswordConfirmation)
+                return Problem(title: "password confirmation mismatch", statusCode: 400);
+            if (!CredentialValidator.TryValidatePasswordStrength(dto.Password, out var error, out var requirements))
             {
-                return BadRequest(new
-                {
-                    error = "downgrade_confirmation_required",
-                    message = "Switching to 'open' mode removes authentication from an existing secured config. " +
-                              "Set allowDowngradeToOpen=true in the request body to confirm."
-                });
+                var problem = new ProblemDetails { Title = "password_complexity_required", Detail = error, Status = 400 };
+                problem.Extensions["requirements"] = requirements; return BadRequest(problem);
             }
+            (next.PasswordHash, next.PasswordSalt) = CredentialValidator.HashPassword(dto.Password);
         }
-
-        var username = dto.Username is not null ? dto.Username.Trim() : current.Username;
-        var publicBaseUrl = dto.PublicBaseUrl is not null ? dto.PublicBaseUrl.Trim() : current.PublicBaseUrl;
-        var (auth, authRequired) = LegacyAuthProjection(authMode);
-
-        var next = new SecuritySettings
+        if (!AuthenticationPolicy.IsAuthConfigured(next, null) || System.Text.Encoding.UTF8.GetByteCount(next.Username) > 512)
+            return Problem(title: "credentials_required", statusCode: 400);
+        if (next.RequireHttps && !current.RequireHttps)
         {
-            AuthMode = authMode,
-            Authentication = auth,
-            AuthenticationRequired = authRequired,
-            PublicBaseUrl = publicBaseUrl ?? "",
-            Username = username ?? "",
-            PasswordHash = current.PasswordHash,
-            PasswordSalt = current.PasswordSalt
-        };
-
-        var hasPasswordUpdate =
-            authMode != "open" &&
-            (!string.IsNullOrWhiteSpace(dto.Password) || !string.IsNullOrWhiteSpace(dto.PasswordConfirmation));
-        if (hasPasswordUpdate)
-        {
-            if (string.IsNullOrWhiteSpace(dto.Password) || string.IsNullOrWhiteSpace(dto.PasswordConfirmation))
-                return Problem(title: "password and confirmation required", statusCode: StatusCodes.Status400BadRequest);
-
-            if (!string.Equals(dto.Password, dto.PasswordConfirmation, StringComparison.Ordinal))
-                return Problem(title: "password confirmation mismatch", statusCode: StatusCodes.Status400BadRequest);
-
-            if (!TryValidatePasswordStrength(dto.Password, out var passwordError, out var requirements))
-            {
-                var details = new ProblemDetails
-                {
-                    Title = "password_complexity_required",
-                    Detail = passwordError,
-                    Status = StatusCodes.Status400BadRequest
-                };
-                details.Extensions["requirements"] = requirements;
-                return BadRequest(details);
-            }
-
-            var (hash, salt) = HashPassword(dto.Password);
-            next.PasswordHash = hash;
-            next.PasswordSalt = salt;
+            // IsHttps comes from direct TLS or the existing trusted-forwarding middleware.
+            if (!Request.IsHttps)
+                return Problem(title: "https_configuration_required", detail: "Ouvrez Feedarr en HTTPS avec une configuration TLS valide avant d’activer cette option.", statusCode: 400);
         }
-
-        if (authMode == "open")
-        {
-            // Open mode must drop all credentials from persisted settings.
-            next.Username = "";
-            next.PasswordHash = "";
-            next.PasswordSalt = "";
-        }
-
-        var bootstrapSecret = SmartAuthPolicy.GetBootstrapSecret(_config);
-        var authConfiguredCandidate = SmartAuthPolicy.IsAuthConfigured(next, bootstrapSecret);
-        if (authMode == "strict" && !authConfiguredCandidate)
-        {
-            return BadRequest(new
-            {
-                error = "credentials_required",
-                message = "Credentials are required when AuthMode is strict. Set username/password or switch to open."
-            });
-        }
-
-        if (authMode == "smart")
-        {
-            var exposed = SmartAuthPolicy.IsExposedRequest(HttpContext, next);
-            if (exposed && !authConfiguredCandidate)
-            {
-                return BadRequest(new
-                {
-                    error = "credentials_required",
-                    message = "Credentials are required when AuthMode is smart and instance is exposed. Set username/password or switch to open."
-                });
-            }
-        }
-
-        _repo.PutSecuritySettings(next);
-        _cache.Remove(SecuritySettingsCache.CacheKey);
-
-        // Invalidate all outstanding bootstrap tokens — security is now configured,
-        // so temporary setup tokens must no longer grant access.
-        _bootstrapTokens.InvalidateAll();
-
-        var authConfigured = SmartAuthPolicy.IsAuthConfigured(next, bootstrapSecret);
-        var effectiveAuthRequired = authMode == "strict" || SmartAuthPolicy.IsAuthRequired(HttpContext, next);
-        return Ok(new
-        {
-            authMode = next.AuthMode,
-            authentication = next.Authentication,
-            authenticationRequired = next.AuthenticationRequired,
-            publicBaseUrl = next.PublicBaseUrl,
-            username = next.Username,
-            hasPassword = !string.IsNullOrWhiteSpace(next.PasswordHash),
-            authConfigured,
-            authRequired = effectiveAuthRequired
-        });
-    }
-
-    private static string Normalize(string? value, string fallback, IEnumerable<string> allowed)
-    {
-        var v = (value ?? fallback).Trim().ToLowerInvariant();
-        return allowed.Contains(v) ? v : fallback;
-    }
-
-    private static (string authentication, string authenticationRequired) LegacyAuthProjection(string authMode)
-    {
-        return authMode switch
-        {
-            "open" => ("none", "local"),
-            "strict" => ("basic", "all"),
-            _ => ("basic", "local")
-        };
-    }
-
-    private static string? LegacyModeProjection(string authentication, string authenticationRequired)
-    {
-        if (authentication == "none")
-            return "open";
-        if (authentication == "basic" && authenticationRequired == "all")
-            return "strict";
-        if (authentication == "basic")
-            return "smart";
-        return null;
-    }
-
-    private static (string hash, string salt) HashPassword(string password)
-    {
-        var salt = RandomNumberGenerator.GetBytes(16);
-        using var pbkdf2 = new Rfc2898DeriveBytes(password, salt, 100_000, HashAlgorithmName.SHA256);
-        var hash = pbkdf2.GetBytes(32);
-        return (Convert.ToBase64String(hash), Convert.ToBase64String(salt));
-    }
-
-    private static bool TryValidatePasswordStrength(string password, out string error, out object requirements)
-    {
-        const int minLength = 12;
-        error = "";
-        requirements = new
-        {
-            minLength,
-            requireUpper = true,
-            requireLower = true,
-            requireDigit = true,
-            requireSymbol = true
-        };
-
-        if (password.Length < minLength)
-        {
-            error = $"Password too simple: minimum {minLength} characters with uppercase, lowercase, digit and symbol.";
-            return false;
-        }
-
-        var hasLower = password.Any(char.IsLower);
-        var hasUpper = password.Any(char.IsUpper);
-        var hasDigit = password.Any(char.IsDigit);
-        var hasSymbol = password.Any(ch => !char.IsLetterOrDigit(ch));
-
-        if (!hasLower || !hasUpper || !hasDigit || !hasSymbol)
-        {
-            error = "Password too simple: minimum 12 characters with uppercase, lowercase, digit and symbol.";
-            return false;
-        }
-
-        return true;
+        _repo.PutSecuritySettings(next); _cache.Remove(SecuritySettingsCache.CacheKey); _bootstrapTokens.InvalidateAll();
+        return GetSecurity();
     }
 
     private static SecuritySettings BuildSecurityDefaults()

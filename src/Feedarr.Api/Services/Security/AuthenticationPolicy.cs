@@ -8,7 +8,7 @@ using Microsoft.Extensions.Configuration;
 
 namespace Feedarr.Api.Services.Security;
 
-public static class SmartAuthPolicy
+public static class AuthenticationPolicy
 {
     private static readonly object DirectLoopbackKey = new();
 
@@ -16,21 +16,23 @@ public static class SmartAuthPolicy
     public const string LegacyBootstrapSecretHeader = "X-Feedarr-Bootstrap-Secret";
     public const string BootstrapTokenHeader = "X-Feedarr-Bootstrap-Token";
 
-    public static string NormalizeAuthMode(SecuritySettings settings)
-    {
-        return NormalizeAuthMode(settings.AuthMode);
-    }
+    public static bool RequiresHttps(SecuritySettings settings, IConfiguration? configuration = null)
+        => settings.RequireHttps && !(configuration?.GetValue<bool>("Security:AllowHttpRecovery") ?? false);
 
-    public static string NormalizeAuthMode(string? value)
+    public static bool CanUseTransport(HttpRequest request, SecuritySettings settings, IConfiguration? configuration = null)
+        => request.IsHttps || !RequiresHttps(settings, configuration);
+
+    // Import old configuration archives without reintroducing an anonymous mode.
+    public static void NormalizeSecurityDocument(System.Text.Json.Nodes.JsonObject document)
     {
-        var normalized = (value ?? "").Trim().ToLowerInvariant();
-        return normalized switch
+        if (!document.ContainsKey("requireHttps"))
         {
-            "smart" => "smart",
-            "strict" => "strict",
-            "open" => "open",
-            _ => "smart"
-        };
+            var legacy = document["authMode"]?.GetValue<string>() ??
+                (document["authentication"]?.GetValue<string>() == "none" ? "open" : "protected");
+            document["requireHttps"] = legacy != "open";
+            document["transportMigration"] = legacy;
+        }
+        document.Remove("authMode"); document.Remove("authentication"); document.Remove("authenticationRequired");
     }
 
     public static bool IsAuthConfigured(SecuritySettings settings, string? bootstrapSecret)
@@ -44,32 +46,7 @@ public static class SmartAuthPolicy
 
     public static bool IsAuthRequired(HttpContext context, SecuritySettings settings)
     {
-        return NormalizeAuthMode(settings) switch
-        {
-            "open" => false,
-            "strict" => true,
-            _ => IsExposedRequest(context, settings)
-        };
-    }
-
-    public static bool IsExposedRequest(HttpContext context, SecuritySettings settings)
-    {
-        if (IsExposedConfig(settings.PublicBaseUrl))
-            return true;
-
-        if (!IsLoopbackRequest(context))
-            return true;
-
-        var host = context.Request.Host.Host;
-        if (!string.IsNullOrWhiteSpace(host) && !IsLocalHost(host))
-            return true;
-
-        return false;
-    }
-
-    public static bool IsExposedConfig(string? publicBaseUrl)
-    {
-        return IsNonLocalPublicBaseUrl(publicBaseUrl);
+        return true; // Every private request requires an administrator, on every network.
     }
 
     public static bool IsLoopbackRequest(HttpContext context)
@@ -118,24 +95,6 @@ public static class SmartAuthPolicy
         return false;
     }
 
-    public static bool IsLocalHost(string? host)
-    {
-        if (string.IsNullOrWhiteSpace(host))
-            return false;
-
-        var normalized = host.Trim();
-        if (normalized.StartsWith("[", StringComparison.Ordinal) &&
-            normalized.EndsWith("]", StringComparison.Ordinal))
-        {
-            normalized = normalized[1..^1];
-        }
-
-        if (string.Equals(normalized, "localhost", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        return IPAddress.TryParse(normalized, out var ip) && IsLoopbackAddress(ip);
-    }
-
     public static bool IsBootstrapTokenRequest(HttpRequest request)
     {
         if (!HttpMethods.IsPost(request.Method))
@@ -169,18 +128,6 @@ public static class SmartAuthPolicy
 
         var env = Environment.GetEnvironmentVariable("FEEDARR_BOOTSTRAP_SECRET");
         return (env ?? "").Trim();
-    }
-
-    private static bool IsNonLocalPublicBaseUrl(string? publicBaseUrl)
-    {
-        var raw = (publicBaseUrl ?? "").Trim();
-        if (string.IsNullOrWhiteSpace(raw))
-            return false;
-
-        if (!Uri.TryCreate(raw, UriKind.Absolute, out var uri))
-            return false;
-
-        return !IsLocalHost(uri.Host);
     }
 
     private static string? TryReadHeader(IHeaderDictionary headers, string key)

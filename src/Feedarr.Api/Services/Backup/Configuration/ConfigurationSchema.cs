@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Feedarr.Api.Models.Settings;
+using Feedarr.Api.Services.Security;
 using Feedarr.Api.Services.ExternalProviders;
 
 namespace Feedarr.Api.Services.Backup.Configuration;
@@ -41,6 +42,7 @@ internal static class ConfigurationSchema
         ValidateSettings<GeneralSettings>(model.Settings["general"]);
         ValidateSettings<ArrSettings>(model.Settings["arr"]);
         ValidateSettings<MaintenanceSettings>(model.Settings["maintenance"]);
+        AuthenticationPolicy.NormalizeSecurityDocument(model.Settings["security"]);
         ValidateSettings<SecuritySettings>(model.Settings["security"]);
         ValidateSettings<UiSettings>(model.Settings["ui"]);
         if (model.Settings["ui"].ContainsKey("onboardingDone")) Fail();
@@ -103,8 +105,6 @@ internal static class ConfigurationSchema
         foreach (var rows in new[] { model.Providers, model.Sources, model.ExternalProviders, model.Applications, model.Categories, model.Mappings, model.Selections })
             foreach (var row in rows) CheckStrings(row);
         var security = model.Settings["security"].Deserialize<SecuritySettings>(Json)!;
-        if (security.AuthMode is not ("smart" or "strict" or "open") || security.Authentication is not ("basic" or "none") ||
-            security.AuthenticationRequired is not ("local" or "all")) Fail();
         if (security.PasswordHash.Length > 0 || security.PasswordSalt.Length > 0)
         {
             try { if (Convert.FromBase64String(security.PasswordHash).Length != 32 || Convert.FromBase64String(security.PasswordSalt).Length != 16) Fail(); }
@@ -133,7 +133,7 @@ internal static class ConfigurationSchema
                 result.Add(new(Text(e, "key"), field.Key));
         }
         var security = model.Settings["security"].Deserialize<SecuritySettings>(Json)!;
-        if (security.Authentication == "basic" && (string.IsNullOrWhiteSpace(security.Username) || security.PasswordHash.Length == 0))
+        if (!AuthenticationPolicy.IsAuthConfigured(security, null))
             result.Add(new("security", "basicCredentials"));
         return result;
     }

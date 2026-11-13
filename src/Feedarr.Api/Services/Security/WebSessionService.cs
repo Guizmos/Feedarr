@@ -8,7 +8,7 @@ using Feedarr.Api.Models.Settings;
 namespace Feedarr.Api.Services.Security;
 
 // Only token hashes and timestamps are persisted; no credentials or raw bearer tokens.
-public sealed class WebSessionService(Db db, TimeProvider clock, SettingsRepository settings)
+public sealed class WebSessionService(Db db, TimeProvider clock, SettingsRepository settings, IConfiguration? configuration = null)
 {
     public const int IdleSeconds = 30 * 60;
     public const int AbsoluteSeconds = 12 * 60 * 60;
@@ -34,19 +34,19 @@ public sealed class WebSessionService(Db db, TimeProvider clock, SettingsReposit
     }
 
     internal string CookieName(HttpRequest request)
-        => CookiePath(request) == "/" ? "__Host-FeedarrSession" : "FeedarrSession";
+        => request.IsHttps && CookiePath(request) == "/" ? "__Host-FeedarrSession" : "FeedarrSession";
 
     private static string Hash(string token) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 
     private CookieOptions Cookie(HttpRequest request, DateTimeOffset? expires = null) => new()
     {
-        HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax,
+        HttpOnly = true, Secure = request.IsHttps, SameSite = SameSiteMode.Lax,
         Path = CookiePath(request), Expires = expires, IsEssential = true
     };
 
     public WebSession? Create(HttpContext context, long expectedGeneration, bool rememberMe)
     {
-        if (!context.Request.IsHttps) return null;
+        if (!AuthenticationPolicy.CanUseTransport(context.Request, settings.GetSecurity(new()), configuration)) return null;
         var now = clock.GetUtcNow().ToUnixTimeSeconds();
         var idle = rememberMe ? PersistentIdleSeconds : IdleSeconds;
         var absolute = now + (rememberMe ? PersistentAbsoluteSeconds : AbsoluteSeconds);
@@ -54,10 +54,10 @@ public sealed class WebSessionService(Db db, TimeProvider clock, SettingsReposit
         using var connection = db.Open();
         using var transaction = connection.BeginTransaction();
         var inserted = connection.Execute("""
-            INSERT INTO web_sessions(token_hash, generation, created_ts, last_seen_ts, expires_ts, idle_seconds, remember_me)
-            SELECT @hash, generation, @now, @now, @absolute, @idle, @remember
+            INSERT INTO web_sessions(token_hash, generation, created_ts, last_seen_ts, expires_ts, idle_seconds, remember_me, secure_only)
+            SELECT @hash, generation, @now, @now, @absolute, @idle, @remember, @secure
             FROM web_security_generation WHERE id = 1 AND generation = @expectedGeneration
-            """, new { hash = Hash(token), now, absolute, idle, remember = rememberMe ? 1 : 0, expectedGeneration }, transaction);
+            """, new { hash = Hash(token), now, absolute, idle, remember = rememberMe ? 1 : 0, secure = context.Request.IsHttps ? 1 : 0, expectedGeneration }, transaction);
         if (inserted != 1) return null;
         // Rotation is transactional: a failed login never destroys the previous session.
         var previous = ReadToken(context.Request);
@@ -73,7 +73,7 @@ public sealed class WebSessionService(Db db, TimeProvider clock, SettingsReposit
 
     public WebSession? Authenticate(HttpContext context)
     {
-        if (!context.Request.IsHttps) return null;
+        if (!AuthenticationPolicy.CanUseTransport(context.Request, settings.GetSecurity(new()), configuration)) return null;
         var token = ReadToken(context.Request);
         if (token is null) return null;
         var now = clock.GetUtcNow().ToUnixTimeSeconds();
@@ -82,9 +82,9 @@ public sealed class WebSessionService(Db db, TimeProvider clock, SettingsReposit
         var row = connection.QuerySingleOrDefault<SessionRow>("""
             UPDATE web_sessions SET last_seen_ts = @now
             WHERE token_hash = @hash AND generation = (SELECT generation FROM web_security_generation WHERE id = 1)
-              AND expires_ts > @now AND last_seen_ts + idle_seconds > @now
+              AND expires_ts > @now AND last_seen_ts + idle_seconds > @now AND (secure_only=0 OR @https=1)
             RETURNING expires_ts AS Absolute, idle_seconds AS Idle, remember_me AS Remember
-            """, new { hash = Hash(token), now });
+            """, new { hash = Hash(token), now, https = context.Request.IsHttps ? 1 : 0 });
         return row is null ? null : new(WebSessionSecurity.CsrfFor(token),
             DateTimeOffset.FromUnixTimeSeconds(Math.Min(row.Absolute, now + row.Idle)),
             DateTimeOffset.FromUnixTimeSeconds(row.Absolute), row.Remember != 0);
@@ -99,11 +99,13 @@ public sealed class WebSessionService(Db db, TimeProvider clock, SettingsReposit
             connection.Execute("DELETE FROM web_sessions WHERE token_hash = @hash", new { hash = Hash(token) });
         }
         context.Response.Cookies.Delete(CookieName(context.Request), Cookie(context.Request));
+        if (context.Request.IsHttps) context.Response.Cookies.Delete("FeedarrSession", Cookie(context.Request));
     }
 
     private string? ReadToken(HttpRequest request)
     {
         var token = request.Cookies[CookieName(request)];
+        if (token is null && request.IsHttps) token = request.Cookies["FeedarrSession"];
         return token is { Length: 64 } && token.All(Uri.IsHexDigit) ? token : null;
     }
 

@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { apiGet } from "../../api/client.js";
 import AppIcon from "../../ui/AppIcon.jsx";
 import ConfigurationArchiveInput from "./ConfigurationArchiveInput.jsx";
 import Modal from "../../ui/Modal.jsx";
@@ -22,12 +21,12 @@ export function ConfigurationPreview({ preview }) {
     {!!c.missingSecrets && <InlineNotice variant="warning" message={`${c.missingSecrets} secret(s) requis sont manquants ou à ressaisir. Les étapes incomplètes resteront à configurer.`} />}
     {preview.stricterRetention && <InlineNotice variant="warning" message="Les limites de rétention importées sont plus strictes. Elles resteront inactives jusqu’à une confirmation séparée ; leur activation pourra permettre une purge lors des synchronisations suivantes." />}
     {preview.hasLibrary && <InlineNotice variant="info" message="La première synchronisation attendra une confirmation explicite pour éviter une purge automatique surprise." />}
-    {!preview.canCompleteSetup && <InlineNotice variant="warning" message="La configuration est incomplète. Après redémarrage, seules les étapes nécessaires seront proposées." />}
+    {!preview.canCompleteSetup && <InlineNotice variant="warning" message="La configuration est incomplète. Complétez les secrets et services manquants dans les paramètres après redémarrage. Le compte actuel est conservé si les identifiants importés sont absents." />}
   </div>;
 }
 
-export default function ConfigurationBackupPanel({ initialSetup = false, onApplied, onBusyChange, onActionsChange }) {
-  const root = backupRoot(initialSetup);
+export default function ConfigurationBackupPanel({ onBusyChange, onActionsChange }) {
+  const root = backupRoot(false);
   const [state, setState] = useState(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -35,7 +34,6 @@ export default function ConfigurationBackupPanel({ initialSetup = false, onAppli
   const [passphrase, setPassphrase] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [importPhrase, setImportPhrase] = useState("");
-  const [bootstrap, setBootstrap] = useState("");
   const [file, setFile] = useState(null);
   const [consent, setConsent] = useState(false);
   const [securityConsent, setSecurityConsent] = useState(false);
@@ -45,7 +43,7 @@ export default function ConfigurationBackupPanel({ initialSetup = false, onAppli
   const exportRef = useRef(null);
   const refreshRef = useRef(null);
   const active = useRef(null), sequence = useRef(0), submitting = useRef(false);
-  const request = useCallback((path, options = {}) => configurationRequest(path, { bootstrap, ...options }), [bootstrap]);
+  const request = configurationRequest;
   const refresh = useCallback(async () => {
     const current = ++sequence.current;
     const next = await request(`${root}/state`);
@@ -101,10 +99,6 @@ export default function ConfigurationBackupPanel({ initialSetup = false, onAppli
     setDecision({ action, question });
   };
   const checkRestart = () => run(async () => {
-    if (initialSetup) {
-      const setup = await apiGet("/api/setup/state");
-      if (setup.onboardingDone || Array.isArray(setup.restoreSteps)) { onApplied?.(setup); return; }
-    }
     const next = await refresh();
     if (next.applied && !next.pending) setNotice("Configuration appliquée. Les données de bibliothèque ont été conservées.");
   });
@@ -129,9 +123,9 @@ export default function ConfigurationBackupPanel({ initialSetup = false, onAppli
     return () => onActionsChange(null);
   }, [onActionsChange, canExport, busy, exportState, phraseError, confirmationError]);
 
-  const fieldPrefix = initialSetup ? "setup-configuration" : "settings-configuration";
-  const sectionClass = initialSetup ? "setup-step" : "settings-card";
-  const title = label => initialSetup ? <h2>{label}</h2> : <div className="settings-card__title">{label}</div>;
+  const fieldPrefix = "settings-configuration";
+  const sectionClass = "settings-card";
+  const title = label => <div className="settings-card__title">{label}</div>;
   const secretRow = (key, label, value, update, hint, validation = null) => <div className="indexer-card">
     <div className="indexer-row indexer-row--settings">
       <label className="indexer-title" htmlFor={`${fieldPrefix}-${key}`}>{label}</label>
@@ -141,7 +135,7 @@ export default function ConfigurationBackupPanel({ initialSetup = false, onAppli
     {hint && <div className="settings-help" id={`${fieldPrefix}-${key}-hint`}>{hint}</div>}
   </div>;
   return <>
-    {!initialSetup && <section className={sectionClass} aria-label="Sauvegarder la configuration">
+    {<section className={sectionClass} aria-label="Sauvegarder la configuration">
       {title("Sauvegarder la configuration")}
       <p className="settings-help settings-help--spaced">Paramètres, intégrations et secrets chiffrés. Aucune release, entity ou image.</p>
       <form noValidate onSubmit={e => { e.preventDefault(); void exportArchive(); }}>
@@ -158,7 +152,6 @@ export default function ConfigurationBackupPanel({ initialSetup = false, onAppli
       {title("Restaurer une configuration")}
       <div className="indexer-list">
         <p className="settings-help settings-help--spaced">Importez une archive V2 ou une ancienne sauvegarde compatible. Vérifiez l’aperçu avant de confirmer.</p>
-        {initialSetup && secretRow("bootstrap", "Secret bootstrap", bootstrap, setBootstrap, "Uniquement si votre accès distant le demande.")}
         {state?.legacyRestorePending && <InlineNotice variant="warning" message="Une restauration V1 est en attente. Appliquez-la ou annulez-la via le bandeau existant avant tout import V2." />}
         {!state?.pending && <>
           <ConfigurationArchiveInput id={`${fieldPrefix}-archive`} file={file} disabled={busy || !!state?.legacyRestorePending}
@@ -185,8 +178,8 @@ export default function ConfigurationBackupPanel({ initialSetup = false, onAppli
             <div className="settings-help">Synchronisation initiale : {({ held: "En attente de confirmation", pending: "Planifiée", running: "En cours", done: "Terminée", cancelled: "Annulée" })[state.applied.syncState] || "En attente"}</div>
           </div>
           <div className="settings-card__actions">
-            {!initialSetup && state.applied.retentionPending && <button className="btn btn-danger" type="button" disabled={busy} onClick={() => appliedAction("retention", "Activer les limites importées plus strictes ? Les synchronisations suivantes pourront supprimer des releases selon ces règles. Cette confirmation ne lance pas de purge.")}>Activer la rétention importée</button>}
-            {!initialSetup && state.applied.syncState === "held" && <>
+            {state.applied.retentionPending && <button className="btn btn-danger" type="button" disabled={busy} onClick={() => appliedAction("retention", "Activer les limites importées plus strictes ? Les synchronisations suivantes pourront supprimer des releases selon ces règles. Cette confirmation ne lance pas de purge.")}>Activer la rétention importée</button>}
+            {state.applied.syncState === "held" && <>
               <button className="btn btn-accent" type="button" disabled={busy || state.applied.retentionPending} onClick={() => appliedAction("sync", "Autoriser la première synchronisation ? Elle appliquera les règles de rétention actives et pourra purger des releases.")}>Autoriser la première synchronisation</button>
               <button className="btn" type="button" disabled={busy} onClick={() => appliedAction("sync/cancel", "Annuler la demande de synchronisation initiale ?")}>Annuler cette synchronisation</button>
             </>}

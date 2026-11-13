@@ -43,8 +43,9 @@ internal static class ConfigurationRestorePlanner
         var hasLibrary = HasLibrary(conn, tx, hasMediaFiles);
         var fresh = conn.ExecuteScalar<long>("SELECT COUNT(*) FROM sources", transaction: tx) == 0 && !ui.OnboardingDone && !hasLibrary;
         var tighter = hasLibrary && (Tighter(imported.RssLimitPerCategory, general.RssLimitPerCategory) || Tighter(imported.RssLimitGlobalPerSource, general.RssLimitGlobalPerSource));
-        var complete = preview.IsComplete && (incomingSecurity.AuthMode == "open" || SmartAuthPolicy.IsAuthConfigured(incomingSecurity, null));
-        var securityChange = incomingSecurity.AuthMode == "open" || !fresh && JsonSerializer.Serialize(security, ConfigurationSchema.Json) != model.Settings["security"].ToJsonString();
+        var complete = preview.IsComplete && AuthenticationPolicy.IsAuthConfigured(incomingSecurity, null);
+        var securityChange = security.RequireHttps != incomingSecurity.RequireHttps || security.Username != incomingSecurity.Username ||
+            security.PasswordHash != incomingSecurity.PasswordHash || security.PasswordSalt != incomingSecurity.PasswordSalt || security.PublicBaseUrl != incomingSecurity.PublicBaseUrl;
         var op = Guid.NewGuid().ToString("N");
         var summary = new ConfigurationRestorePreview(op, fresh, hasLibrary, sources.Values.Count(x => x.HasValue), sources.Values.Count(x => !x.HasValue),
             conn.ExecuteScalar<int>("SELECT COUNT(DISTINCT source_id) FROM releases", transaction: tx) -
@@ -101,9 +102,17 @@ internal static class ConfigurationRestorePlanner
         }
         return Convert.ToHexString(hash.GetHashAndReset());
     }
-    internal static T Setting<T>(SqliteConnection c, SqliteTransaction tx, string key, T fallback) =>
-        c.ExecuteScalar<string?>("SELECT value_json FROM app_settings WHERE key=@key", new { key }, tx) is string json
-            ? JsonSerializer.Deserialize<T>(json, ConfigurationSchema.Json) ?? fallback : fallback;
+    internal static T Setting<T>(SqliteConnection c, SqliteTransaction tx, string key, T fallback)
+    {
+        var json = c.ExecuteScalar<string?>("SELECT value_json FROM app_settings WHERE key=@key", new { key }, tx);
+        if (json is null) return fallback;
+        if (typeof(T) == typeof(SecuritySettings))
+        {
+            var document = JsonNode.Parse(json)!.AsObject(); AuthenticationPolicy.NormalizeSecurityDocument(document);
+            return document.Deserialize<T>(ConfigurationSchema.Json) ?? fallback;
+        }
+        return JsonSerializer.Deserialize<T>(json, ConfigurationSchema.Json) ?? fallback;
+    }
     private static bool Tighter(int next, int old) => next > 0 && (old <= 0 || next < old);
     private static string Canonical(string? value)
     {

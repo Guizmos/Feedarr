@@ -3,4 +3,3 @@
 
 export * from "./metadataProviders.api.js";
 export * from "./metadataProviders.model.js";
-export { default as useMetadataProviders } from "./useMetadataProviders.js";

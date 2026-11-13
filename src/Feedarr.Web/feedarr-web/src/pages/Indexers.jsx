@@ -489,9 +489,6 @@ export default function Indexers() {
       }
 
       await load();
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new Event("onboarding:refresh"));
-      }
       closeModal();
     } catch (e2) {
       if (isSsrfBlocked(e2)) {

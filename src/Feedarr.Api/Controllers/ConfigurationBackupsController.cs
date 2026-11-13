@@ -21,7 +21,7 @@ public abstract class ConfigurationBackupControllerBase(
         Response.Headers.CacheControl="no-store";
         try
         {
-            if(setup.IsSetupCompleted()==InitialSetup)throw new BackupOperationException(InitialSetup?"setup_closed":"setup_required",403);
+            if(InitialSetup && setup.IsSetupCompleted())throw new BackupOperationException(InitialSetup?"setup_closed":"setup_required",403);
             restore.AuthorizeRequest(HttpContext);
             return await action();
         }
@@ -109,6 +109,7 @@ public abstract class ConfigurationBackupControllerBase(
     };
     private static string OperationMessage(string code)=>code switch
     {
+        "https_configuration_required"=>"Ouvrez Feedarr en HTTPS avant de confirmer une restauration qui impose HTTPS.",
         "setup_closed"=>"La restauration initiale est fermée. Utilisez les paramètres après authentification.",
         "configuration_restore_ambiguous_identity"=>"Plusieurs identités correspondent. La restauration est bloquée pour protéger la bibliothèque.",
         "configuration_restore_changed_or_invalid_state"=>"La configuration ou l’état a changé. Actualisez puis préparez à nouveau la restauration.",

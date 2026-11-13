@@ -91,13 +91,14 @@ public sealed class ConfigurationBackupsControllerTests
         target.Caller.Items[BasicAuthMiddleware.AuthPassedKey]=true;
         target.Caller.Request.Headers.Clear();Assert.Equal(403,Status(await api.State()));
         target.Caller.Request.Headers[RequestForgeryProtection.RequestHeaderName]="1";
-        Assert.Equal(403,Status(await Admin(target).State()));
+        // A caller already authorized by the middleware is independent of onboarding completeness.
+        Assert.IsType<OkObjectResult>(await Admin(target).State());
         target.Caller.Connection.RemoteIpAddress=IPAddress.Parse("8.8.8.8");Assert.Equal(403,Status(await api.State()));
     }
     [Theory]
-    [InlineData("/api/setup/configuration-restore/prepare","POST",true)]
-    [InlineData("/api/setup/configuration-restore/state","GET",true)]
-    [InlineData("/api/setup/configuration-restore/complete","POST",true)]
+    [InlineData("/api/setup/configuration-restore/prepare","POST",false)]
+    [InlineData("/api/setup/configuration-restore/state","GET",false)]
+    [InlineData("/api/setup/configuration-restore/complete","POST",false)]
     [InlineData("/api/setup/configuration-restore/export","POST",false)]
     [InlineData("/api/configuration-backups/export","POST",false)]
     [InlineData("/api/system/backups","POST",false)]
@@ -105,7 +106,7 @@ public sealed class ConfigurationBackupsControllerTests
     {
         using var target=new Target();var context=new DefaultHttpContext();context.Connection.RemoteIpAddress=IPAddress.Parse("8.8.8.8");
         context.Request.Method=method;context.Request.Path=path;context.Response.Body=new MemoryStream();
-        context.Request.Headers[SmartAuthPolicy.BootstrapTokenHeader]=target.Tokens.IssueToken();
+        context.Request.Headers[AuthenticationPolicy.BootstrapTokenHeader]=target.Tokens.IssueToken();
         var passed=false;var middleware=new BasicAuthMiddleware(_=>{passed=true;return Task.CompletedTask;},new ConfigurationBuilder().Build());
         await middleware.InvokeAsync(context,target.Settings,target.Cache,target.Setup,target.Tokens,
             new AuthThrottleService(new Feedarr.Api.Options.BasicAuthThrottleOptions(),TimeProvider.System),NullLogger<BasicAuthMiddleware>.Instance);

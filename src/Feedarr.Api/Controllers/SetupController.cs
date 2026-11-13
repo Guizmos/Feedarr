@@ -68,10 +68,10 @@ public sealed class SetupController : ControllerBase
 
         var ui = _settings.GetUi(new UiSettings());
         var security = _settings.GetSecurity(new SecuritySettings());
-        var bootstrapSecret = SmartAuthPolicy.GetBootstrapSecret(_config);
-        var authConfigured = SmartAuthPolicy.IsAuthConfigured(security, bootstrapSecret);
-        var authRequired = SmartAuthPolicy.IsAuthRequired(HttpContext, security);
-        var authMode = SmartAuthPolicy.NormalizeAuthMode(security);
+        var bootstrapSecret = AuthenticationPolicy.GetBootstrapSecret(_config);
+        var authConfigured = AuthenticationPolicy.IsAuthConfigured(security, bootstrapSecret);
+        var authRequired = AuthenticationPolicy.IsAuthRequired(HttpContext, security);
+        var requireHttps = security.RequireHttps;
 
         return Ok(new
         {
@@ -79,7 +79,7 @@ public sealed class SetupController : ControllerBase
             hasSources,
             hasJackettSource,
             hasProwlarrSource,
-            authMode,
+            requireHttps,
             authConfigured,
             authRequired,
             restoreSteps = _configurationRestore?.GetResumeStepsForSetup()
@@ -141,10 +141,9 @@ public sealed class SetupController : ControllerBase
     [EnableRateLimiting("bootstrap-token")]
     public IActionResult IssueBootstrapToken()
     {
-        // Bootstrap tokens are only valid during the initial setup phase.
-        // Once security is configured (onboarding done), issuing new tokens is not necessary
-        // and could be a sign of a misconfigured or attacked instance.
-        if (_setupState.IsSetupCompleted())
+        // Initial setup and recovery with missing credentials use the same scoped token.
+        // An installed instance with credentials must use normal authentication.
+        if (_setupState.IsSetupCompleted() && AuthenticationPolicy.IsAuthConfigured(_settings.GetSecurity(new SecuritySettings()), null))
         {
             _log.LogWarning(
                 "Bootstrap token request rejected: setup is already completed (remoteIp={RemoteIp})",
@@ -156,16 +155,16 @@ public sealed class SetupController : ControllerBase
             });
         }
 
-        var bootstrapSecret = SmartAuthPolicy.GetBootstrapSecret(_config);
+        var bootstrapSecret = AuthenticationPolicy.GetBootstrapSecret(_config);
         var allowed =
-            SmartAuthPolicy.IsLoopbackRequest(HttpContext) ||
-            SmartAuthPolicy.HasValidBootstrapSecretHeader(HttpContext, bootstrapSecret);
+            AuthenticationPolicy.IsLoopbackRequest(HttpContext) ||
+            AuthenticationPolicy.HasValidBootstrapSecretHeader(HttpContext, bootstrapSecret);
 
         if (!allowed)
         {
             var hasBootstrapHeader =
-                HttpContext.Request.Headers.ContainsKey(SmartAuthPolicy.BootstrapSecretHeader) ||
-                HttpContext.Request.Headers.ContainsKey(SmartAuthPolicy.LegacyBootstrapSecretHeader);
+                HttpContext.Request.Headers.ContainsKey(AuthenticationPolicy.BootstrapSecretHeader) ||
+                HttpContext.Request.Headers.ContainsKey(AuthenticationPolicy.LegacyBootstrapSecretHeader);
             _log.LogWarning(
                 "Bootstrap token request rejected at controller for {Method} {Path} (remoteIp={RemoteIp}, hasBootstrapHeader={HasBootstrapHeader})",
                 HttpContext.Request.Method,

@@ -70,7 +70,3 @@ export function downloadConfiguration(blob, browser = window, dom = document) {
     dom.body.appendChild(link); try { link.click(); } finally { link.remove(); }
   } finally { browser.setTimeout(() => browser.URL.revokeObjectURL(url), 1000); }
 }
-
-export function resumeSetupSteps(steps) {
-  return Array.isArray(steps) ? [...new Set(steps)].filter(id => Number.isInteger(id) && id >= 3 && id <= 8).sort((a, b) => a - b) : null;
-}

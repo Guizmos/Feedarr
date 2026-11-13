@@ -48,4 +48,45 @@ internal static class CredentialValidator
         }
     }
 
+    internal static (string hash, string salt) HashPassword(string password)
+    {
+        var salt = RandomNumberGenerator.GetBytes(16);
+        using var pbkdf2 = new Rfc2898DeriveBytes(password, salt, 100_000, HashAlgorithmName.SHA256);
+        var hash = pbkdf2.GetBytes(32);
+        return (Convert.ToBase64String(hash), Convert.ToBase64String(salt));
+    }
+
+    internal static bool TryValidatePasswordStrength(string password, out string error, out object requirements)
+    {
+        const int minLength = 12;
+        error = "";
+        requirements = new
+        {
+            minLength,
+            requireUpper = true,
+            requireLower = true,
+            requireDigit = true,
+            requireSymbol = true
+        };
+
+        if (password.Length < minLength)
+        {
+            error = $"Password too simple: minimum {minLength} characters with uppercase, lowercase, digit and symbol.";
+            return false;
+        }
+
+        var hasLower = password.Any(char.IsLower);
+        var hasUpper = password.Any(char.IsUpper);
+        var hasDigit = password.Any(char.IsDigit);
+        var hasSymbol = password.Any(ch => !char.IsLetterOrDigit(ch));
+
+        if (!hasLower || !hasUpper || !hasDigit || !hasSymbol)
+        {
+            error = "Password too simple: minimum 12 characters with uppercase, lowercase, digit and symbol.";
+            return false;
+        }
+
+        return true;
+    }
+
 }

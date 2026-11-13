@@ -296,29 +296,13 @@ public sealed class SettingsRepository
 
         try
         {
-            var loaded = JsonSerializer.Deserialize<SecuritySettings>(json, JsonOpts);
+            var document = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
+            AuthenticationPolicy.NormalizeSecurityDocument(document);
+            var loaded = document.Deserialize<SecuritySettings>(JsonOpts);
             if (loaded is null) return defaults;
 
-            if (json.Contains("authMode", StringComparison.OrdinalIgnoreCase))
-            {
-                defaults.AuthMode = loaded.AuthMode ?? defaults.AuthMode;
-            }
-            else
-            {
-                var legacyAuth = (loaded.Authentication ?? defaults.Authentication).Trim().ToLowerInvariant();
-                var legacyRequired = (loaded.AuthenticationRequired ?? defaults.AuthenticationRequired).Trim().ToLowerInvariant();
-                defaults.AuthMode = legacyAuth switch
-                {
-                    "none" => "open",
-                    "basic" when legacyRequired == "all" => "strict",
-                    "basic" => "smart",
-                    _ => defaults.AuthMode
-                };
-            }
-            if (!string.IsNullOrWhiteSpace(loaded.Authentication))
-                defaults.Authentication = loaded.Authentication;
-            if (!string.IsNullOrWhiteSpace(loaded.AuthenticationRequired))
-                defaults.AuthenticationRequired = loaded.AuthenticationRequired;
+            defaults.RequireHttps = loaded.RequireHttps;
+            defaults.TransportMigration = loaded.TransportMigration;
             if (json.Contains("publicBaseUrl", StringComparison.OrdinalIgnoreCase))
                 defaults.PublicBaseUrl = loaded.PublicBaseUrl ?? defaults.PublicBaseUrl;
             if (json.Contains("username", StringComparison.OrdinalIgnoreCase))
@@ -336,8 +320,38 @@ public sealed class SettingsRepository
         }
     }
 
+    public bool RequiresInitialAdministrator()
+    {
+        using var connection = _db.Open();
+        return connection.ExecuteScalar<int>("SELECT initialized FROM instance_initialization WHERE id=1") == 0;
+    }
+
+    public bool TryCreateInitialAdministrator(SecuritySettings security)
+    {
+        using var connection = _db.Open();
+        using var transaction = connection.BeginTransaction(deferred: false);
+        if (connection.ExecuteScalar<int>("SELECT initialized FROM instance_initialization WHERE id=1", transaction: transaction) != 0)
+            return false;
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        connection.Execute("""
+            INSERT INTO app_settings(key,value_json,updated_at_ts) VALUES('security',@json,@now)
+            ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at_ts=excluded.updated_at_ts;
+            UPDATE instance_initialization SET initialized=1 WHERE id=1;
+            """, new { json = SerializeSecurity(security), now }, transaction);
+        transaction.Commit();
+        return true;
+    }
+
+    private static string SerializeSecurity(SecuritySettings security)
+    {
+        var document = JsonSerializer.SerializeToNode(security, JsonOpts)!.AsObject();
+        if (security.AuthMode.Length > 0 || security.Authentication.Length > 0) document.Remove("requireHttps");
+        AuthenticationPolicy.NormalizeSecurityDocument(document);
+        return document.ToJsonString(JsonOpts);
+    }
+
     public void SaveSecurity(SecuritySettings settings)
-        => Upsert("security", JsonSerializer.Serialize(settings, JsonOpts));
+        => Upsert("security", SerializeSecurity(settings));
 
     public SecuritySettings GetSecuritySettings(SecuritySettings? defaults = null)
         => GetSecurity(defaults ?? SecuritySettings.BuildDefaults());
