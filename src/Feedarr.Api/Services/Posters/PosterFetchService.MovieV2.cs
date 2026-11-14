@@ -1,14 +1,33 @@
 using Feedarr.Api.Data.Repositories;
 using Feedarr.Api.Models;
 using Feedarr.Api.Services.Matching;
+using Feedarr.Api.Services.Categories;
+using Feedarr.Api.Services.Titles;
 using Feedarr.Api.Services.Tmdb;
 
 namespace Feedarr.Api.Services.Posters;
 
 public sealed partial class PosterFetchService
 {
-    private static bool UseMovieV2(UnifiedCategory category)
-        => category == UnifiedCategory.Film;
+    internal static bool UseMovieV2(ReleaseForPoster snapshot, UnifiedCategory category)
+    {
+        if (category == UnifiedCategory.Film) return true;
+        if (category is not (UnifiedCategory.Animation or UnifiedCategory.Spectacle)) return false;
+        // The category's default MediaType is not evidence: both categories map to movie.
+        // Reuse the existing episodic/broadcast parser as a veto, never infer a movie
+        // solely from the absence of an episode or from a release year.
+        if (snapshot.Season.HasValue || snapshot.Episode.HasValue || string.IsNullOrWhiteSpace(snapshot.Title) ||
+            TmdbIdentity.NormalizeType(snapshot.MediaType) == "tv" || TmdbIdentity.NormalizeType(snapshot.TmdbMediaType) == "tv") return false;
+        var parser = new TitleParser();
+        var episodic = parser.Parse(snapshot.Title, UnifiedCategory.Serie);
+        if (episodic.Season.HasValue || episodic.Episode.HasValue ||
+            parser.Parse(snapshot.Title, UnifiedCategory.Emission).AirDate is not null) return false;
+        var standardIds = (snapshot.CategoryIds ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(value => int.TryParse(value, out var id) ? id : 0)
+            .Append(snapshot.StdCategoryId ?? 0).Append(snapshot.CategoryId ?? 0).Append(snapshot.SpecCategoryId ?? 0)
+            .Where(CategorySelection.IsStandardById).ToArray();
+        return standardIds.Length > 0 && standardIds.All(id => CategorySelection.ToStandardParentId(id) == 2000);
+    }
 
     internal async Task<PosterFetchResult> FetchMovieV2Async(PosterFetchRoutingContext context, CancellationToken ct)
     {
@@ -22,7 +41,7 @@ public sealed partial class PosterFetchService
             var current = _releases.ReadMatchingShadowState(context.ReleaseId);
             if (current is null || current.Protected) return Abstain("protected_or_unavailable_identity", 409);
             _releases.ValidateMatching(context.ReleaseId);
-            var queries = SearchCandidateGenerator.Generate(new(current.RawTitle, UnifiedCategory.Film));
+            var queries = SearchCandidateGenerator.Generate(new(current.RawTitle, context.UnifiedCategory));
             if (queries.Count == 0) return Abstain("no_query");
             // Explicitly bounded plan: every generated title, configured locale + English official search fields,
             // unfiltered years, and every page. Any uncovered part abstains, even after an excellent hit.
@@ -55,7 +74,7 @@ public sealed partial class PosterFetchService
             }
             var projected = TmdbShadowCandidateAdapter.Project(observed);
             if (projected.Length > new CandidateRankingPolicy().MaximumResults) return Abstain("not_evaluable_result_budget");
-            var ranked = SearchCandidateRanker.Rank(new(queries, UnifiedCategory.Film, SearchMediaType.Movie,
+            var ranked = SearchCandidateRanker.Rank(new(queries, context.UnifiedCategory, SearchMediaType.Movie,
                 Season: current.Season, Episode: current.Episode), projected);
             if (ranked.Decision != CandidateDecision.Accept || ranked.SelectedIdentity is not { } identity)
                 return Abstain(ranked.Decision.ToString().ToLowerInvariant());

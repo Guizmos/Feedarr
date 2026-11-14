@@ -1,5 +1,6 @@
 using System.Globalization;
 using Feedarr.Api.Data.Repositories;
+using Feedarr.Api.Models;
 using Feedarr.Api.Services.Tmdb;
 
 namespace Feedarr.Api.Services.Posters;
@@ -16,13 +17,37 @@ public sealed partial class PosterFetchService
         if (details is null) throw new InvalidDataException("tmdb_details_unavailable");
         var posterPath = await RunTmdbAsync(token => _tmdb.GetPreferredPosterPathAsync(selected.TmdbId, "movie", token, verifyIdentity: true), ct).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(posterPath)) posterPath = selected.PosterPath;
-        if (string.IsNullOrWhiteSpace(posterPath))
-            return new(false, 422, new { error = "matching_v2_abstained", reason = "selected_identity_poster_unavailable" }, context.SourceId);
-        var bytes = await RunTmdbAsync(token => _tmdb.DownloadPosterW500Async(posterPath, token), ct).ConfigureAwait(false);
-        if (bytes is not { Length: > 0 }) throw new InvalidDataException("tmdb_poster_unavailable");
+        var posterProvider = "tmdb";
+        byte[]? bytes = null;
+        if (!string.IsNullOrWhiteSpace(posterPath))
+        {
+            try { bytes = await RunTmdbAsync(token => _tmdb.DownloadPosterW500Async(posterPath, token), ct).ConfigureAwait(false); }
+            catch (HttpRequestException) when (context.UnifiedCategory is (UnifiedCategory.Animation or UnifiedCategory.Spectacle))
+            {
+                // Only the image download failed. Metadata/identity errors and cancellation
+                // still propagate; the fallback below cannot choose a different movie.
+            }
+        }
+        // Preserve the historical image fallback for the migrated categories only.
+        // Fanart enriches the one accepted movie ID; it never selects another work.
+        if (bytes is not { Length: > 0 } && context.UnifiedCategory is (UnifiedCategory.Animation or UnifiedCategory.Spectacle))
+        {
+            var fanartPath = await RunFanartAsync(token => _fanart.GetMoviePosterUrlAsync(selected.TmdbId, token, selected.OriginalLanguage), ct).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(fanartPath))
+            {
+                bytes = await RunFanartAsync(token => _fanart.DownloadAsync(fanartPath, token), ct).ConfigureAwait(false);
+                if (bytes is { Length: > 0 }) { posterPath = fanartPath; posterProvider = "fanart"; }
+            }
+        }
+        if (bytes is not { Length: > 0 } || string.IsNullOrWhiteSpace(posterPath))
+        {
+            if (string.IsNullOrWhiteSpace(posterPath))
+                return new(false, 422, new { error = "matching_v2_abstained", reason = "selected_identity_poster_unavailable" }, context.SourceId);
+            throw new InvalidDataException("tmdb_poster_unavailable");
+        }
         _releases.ValidateMatching(id);
         // Never replace a shared live file. A crash before commit can only leave an unreferenced file.
-        var file = $"tmdb-movie-{selected.TmdbId}-v2-{Guid.NewGuid():N}.jpg";
+        var file = $"{posterProvider}-movie-{selected.TmdbId}-v2-{Guid.NewGuid():N}.jpg";
         var full = Path.Combine(PostersDirAbs, file);
         var committed = false;
         try
@@ -46,12 +71,13 @@ public sealed partial class PosterFetchService
         var storePending = true;
         try
         {
-            var materialized = await TryMaterializeStoreForReleaseAsync(id, "tmdb", $"movie:{selected.TmdbId}", file,
+            var materialized = await TryMaterializeStoreForReleaseAsync(id, posterProvider, $"movie:{selected.TmdbId}", file,
                 bytes, full, true, selected.TmdbId, posterPath, ".jpg", null, ct).ConfigureAwait(false);
             storePending = materialized.Status == StoreMaterializationStatus.Fail;
             _releases.ValidateMatching(id);
-            PosterAudit.UpdateAttemptSuccess(_releases, id, "tmdb", selected.TmdbId.ToString(CultureInfo.InvariantCulture),
-                null, "w500", ComputeSha256Hex(bytes));
+            PosterAudit.UpdateAttemptSuccess(_releases, id, posterProvider,
+                posterProvider == "tmdb" ? selected.TmdbId.ToString(CultureInfo.InvariantCulture) : $"movie:{selected.TmdbId}",
+                null, posterProvider == "tmdb" ? "w500" : null, ComputeSha256Hex(bytes));
         }
         catch (ReleaseRepository.StaleMatchException) { throw; }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }

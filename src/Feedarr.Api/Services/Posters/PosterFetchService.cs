@@ -1130,8 +1130,8 @@ public sealed partial class PosterFetchService
         }
 
         UnifiedCategoryMappings.TryParse(r.UnifiedCategory, out var initialCategory);
-        var activeMovieV2 = UseMovieV2(initialCategory);
-        if (initialCategory == UnifiedCategory.Film && MatchingShadowState.From(r).Protected)
+        var activeMovieV2 = UseMovieV2(r, initialCategory);
+        if (initialCategory is (UnifiedCategory.Film or UnifiedCategory.Animation or UnifiedCategory.Spectacle) && MatchingShadowState.From(r).Protected)
             return new(true, 200, new { ok = true, preserved = true, reason = "matching_v2_existing_identity_preserved" }, r.SourceId);
 
         string? existingFile = (string?)r.PosterFile;
@@ -1228,7 +1228,7 @@ public sealed partial class PosterFetchService
         var knownIds = new PosterMatchIds(tmdbIdStored, tvdbIdStored, null, null, null, r.TmdbMediaType ?? mediaType);
         var tvmazeEnabled = IsTvmazeEnabled();
 
-        if (UseMovieV2(unifiedCategory))
+        if (UseMovieV2(r, unifiedCategory))
         {
             var v2Context = new PosterFetchRoutingContext(id, title, year, categoryName, unifiedCategory,
                 mediaType, tmdbIdStored, tvdbIdStored, normalizedTitle, season, episode, ambiguity,

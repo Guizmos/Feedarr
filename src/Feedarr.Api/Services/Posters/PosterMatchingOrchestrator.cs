@@ -29,7 +29,7 @@ public sealed class PosterMatchingOrchestrator
         PosterFetchRoutingContext context,
         CancellationToken ct)
     {
-        if (context.UseMovieV2 && context.UnifiedCategory == UnifiedCategory.Film)
+        if (context.UseMovieV2 && context.UnifiedCategory is (UnifiedCategory.Film or UnifiedCategory.Animation or UnifiedCategory.Spectacle))
             return core.FetchMovieV2Async(context, ct);
         return context.UnifiedCategory switch
         {
