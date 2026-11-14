@@ -102,6 +102,20 @@ public sealed partial class ReleaseRepository
         var itemList = items as IList<TorznabItem> ?? items.ToList();
         var now = createdAtTs ?? DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
+        // Only release-owned snapshots are cleared. Shared entities/files stay intact.
+        var identityColumns = new[]
+        {
+            "entity_id", "tmdb_id", "tmdb_media_type", "tvdb_id",
+            "poster_file", "poster_path", "poster_key", "poster_store_dir", "poster_updated_at_ts",
+            "poster_provider", "poster_provider_id", "poster_hash", "poster_lang", "poster_size",
+            "poster_last_attempt_ts", "poster_last_error",
+            "ext_snapshot_version", "ext_provider", "ext_provider_id", "ext_title", "ext_overview", "ext_tagline",
+            "ext_genres", "ext_release_date", "ext_runtime_minutes", "ext_rating", "ext_votes",
+            "ext_directors", "ext_writers", "ext_cast", "ext_updated_at_ts",
+            "title_clean", "year", "season", "episode", "resolution", "source", "codec", "release_group", "media_type"
+        };
+        var resetIdentitySql = $"UPDATE releases SET {string.Join(",", identityColumns.Select(column => column + "=NULL"))} WHERE source_id=@sourceId AND guid=@guid";
+
         var sql = $"""
         INSERT INTO releases(
           source_id, guid, title, link, tracker_page_url, published_at_ts,
@@ -123,7 +137,7 @@ public sealed partial class ReleaseRepository
         )
         ON CONFLICT(source_id, guid) DO UPDATE SET
           title = CASE
-                    WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.title
+                    WHEN (COALESCE(releases.title_manual_override, 0) = 1 OR @preserveIdentity = 1) THEN releases.title
                     ELSE excluded.title
                   END,
           link = excluded.link,
@@ -135,50 +149,50 @@ public sealed partial class ReleaseRepository
                     grabs = COALESCE(excluded.grabs, releases.grabs),
           info_hash = COALESCE(excluded.info_hash, releases.info_hash),
           download_url = COALESCE(excluded.download_url, releases.download_url),
-          category_id = COALESCE(excluded.category_id, releases.category_id),
-          std_category_id = COALESCE(excluded.std_category_id, releases.std_category_id),
-          spec_category_id = COALESCE(excluded.spec_category_id, releases.spec_category_id),
-          unified_category = COALESCE(excluded.unified_category, releases.unified_category),
-          category_ids = COALESCE(excluded.category_ids, releases.category_ids),
-          title_normalized = COALESCE(excluded.title_normalized, releases.title_normalized),
-          dedupe_key = COALESCE(excluded.dedupe_key, releases.dedupe_key),
-          top_category_key = COALESCE(excluded.top_category_key, releases.top_category_key),
+          category_id = CASE WHEN (COALESCE(releases.title_manual_override, 0) = 1 OR @preserveIdentity = 1) THEN releases.category_id ELSE COALESCE(excluded.category_id, releases.category_id) END,
+          std_category_id = CASE WHEN (COALESCE(releases.title_manual_override, 0) = 1 OR @preserveIdentity = 1) THEN releases.std_category_id ELSE COALESCE(excluded.std_category_id, releases.std_category_id) END,
+          spec_category_id = CASE WHEN (COALESCE(releases.title_manual_override, 0) = 1 OR @preserveIdentity = 1) THEN releases.spec_category_id ELSE COALESCE(excluded.spec_category_id, releases.spec_category_id) END,
+          unified_category = CASE WHEN (COALESCE(releases.title_manual_override, 0) = 1 OR @preserveIdentity = 1) THEN releases.unified_category ELSE COALESCE(excluded.unified_category, releases.unified_category) END,
+          category_ids = CASE WHEN (COALESCE(releases.title_manual_override, 0) = 1 OR @preserveIdentity = 1) THEN releases.category_ids ELSE COALESCE(excluded.category_ids, releases.category_ids) END,
+          title_normalized = CASE WHEN (COALESCE(releases.title_manual_override, 0) = 1 OR @preserveIdentity = 1) THEN releases.title_normalized ELSE COALESCE(excluded.title_normalized, releases.title_normalized) END,
+          dedupe_key = CASE WHEN (COALESCE(releases.title_manual_override, 0) = 1 OR @preserveIdentity = 1) THEN releases.dedupe_key ELSE COALESCE(excluded.dedupe_key, releases.dedupe_key) END,
+          top_category_key = CASE WHEN (COALESCE(releases.title_manual_override, 0) = 1 OR @preserveIdentity = 1) THEN releases.top_category_key ELSE COALESCE(excluded.top_category_key, releases.top_category_key) END,
 
           title_clean = CASE
-                          WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.title_clean
+                          WHEN (COALESCE(releases.title_manual_override, 0) = 1 OR @preserveIdentity = 1) THEN releases.title_clean
                           ELSE COALESCE(excluded.title_clean, releases.title_clean)
                         END,
           year = CASE
-                   WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.year
-                   ELSE COALESCE(excluded.year, releases.year)
+                   WHEN (COALESCE(releases.title_manual_override, 0) = 1 OR @preserveIdentity = 1) THEN releases.year
+                          ELSE COALESCE(excluded.year, releases.year)
                  END,
           season = CASE
-                     WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.season
-                     ELSE COALESCE(excluded.season, releases.season)
+                     WHEN (COALESCE(releases.title_manual_override, 0) = 1 OR @preserveIdentity = 1) THEN releases.season
+                          ELSE COALESCE(excluded.season, releases.season)
                    END,
           episode = CASE
-                      WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.episode
-                      ELSE COALESCE(excluded.episode, releases.episode)
+                      WHEN (COALESCE(releases.title_manual_override, 0) = 1 OR @preserveIdentity = 1) THEN releases.episode
+                          ELSE COALESCE(excluded.episode, releases.episode)
                     END,
           resolution = CASE
-                         WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.resolution
-                         ELSE COALESCE(excluded.resolution, releases.resolution)
+                         WHEN (COALESCE(releases.title_manual_override, 0) = 1 OR @preserveIdentity = 1) THEN releases.resolution
+                          ELSE COALESCE(excluded.resolution, releases.resolution)
                        END,
           source = CASE
-                     WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.source
-                     ELSE COALESCE(excluded.source, releases.source)
+                     WHEN (COALESCE(releases.title_manual_override, 0) = 1 OR @preserveIdentity = 1) THEN releases.source
+                          ELSE COALESCE(excluded.source, releases.source)
                    END,
           codec = CASE
-                    WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.codec
-                    ELSE COALESCE(excluded.codec, releases.codec)
+                    WHEN (COALESCE(releases.title_manual_override, 0) = 1 OR @preserveIdentity = 1) THEN releases.codec
+                          ELSE COALESCE(excluded.codec, releases.codec)
                   END,
           release_group = CASE
-                            WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.release_group
-                            ELSE COALESCE(excluded.release_group, releases.release_group)
+                            WHEN (COALESCE(releases.title_manual_override, 0) = 1 OR @preserveIdentity = 1) THEN releases.release_group
+                          ELSE COALESCE(excluded.release_group, releases.release_group)
                           END,
           media_type = CASE
-                         WHEN COALESCE(releases.title_manual_override, 0) = 1 THEN releases.media_type
-                         ELSE COALESCE(excluded.media_type, releases.media_type)
+                         WHEN (COALESCE(releases.title_manual_override, 0) = 1 OR @preserveIdentity = 1) THEN releases.media_type
+                          ELSE COALESCE(excluded.media_type, releases.media_type)
                        END;
         """;
 
@@ -265,18 +279,25 @@ public sealed partial class ReleaseRepository
 
         // Chunked query pour éviter la limite SQLite ~999 items par clause IN
         var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var identities = new Dictionary<string, RssIdentityRow>(StringComparer.Ordinal);
         foreach (var chunk in SqlChunkHelper.Chunk(guidList, 500))
         {
-            var rows = conn.Query<string>(
-                "SELECT guid FROM releases WHERE source_id = @sid AND guid IN @guids",
+            var rows = conn.Query<RssIdentityRow>(
+                """
+                SELECT r.id Id,r.guid Guid,r.title Title,COALESCE(r.title_clean,r.title) TitleClean,r.year Year,r.media_type MediaType,
+                    r.title_manual_override ManualTitleOverride,me.manual_match_provider ManualMatchProvider
+                FROM releases r LEFT JOIN media_entities me ON me.id=r.entity_id
+                WHERE r.source_id=@sid AND r.guid IN @guids
+                """,
                 new { sid = sourceId, guids = chunk },
                 tx);
-            foreach (var g in rows) existing.Add(g);
+            foreach (var row in rows) { existing.Add(row.Guid); identities[row.Guid] = row; }
         }
 
         var insertedNew = guidList.Count - existing.Count;
 
-        ExecuteUpsertPrepared(conn, tx, sql, rowsPayload);
+        PrepareRssIdentityChanges(conn, tx, rowsPayload, identities);
+        ExecuteUpsertPrepared(conn, tx, sql, resetIdentitySql, rowsPayload);
 
         EnsureMediaEntitiesForReleases(conn, tx, sourceId, guidList, now);
 
@@ -306,6 +327,7 @@ public sealed partial class ReleaseRepository
         IDbConnection conn,
         IDbTransaction tx,
         string sql,
+        string resetIdentitySql,
         IReadOnlyList<UpsertRow> rows)
     {
         if (rows.Count == 0)
@@ -350,8 +372,15 @@ public sealed partial class ReleaseRepository
         AddParameter(cmd, "@codec", SqliteType.Text);
         AddParameter(cmd, "@group", SqliteType.Text);
         AddParameter(cmd, "@mediaType", SqliteType.Text);
+        AddParameter(cmd, "@preserveIdentity", SqliteType.Integer);
 
         cmd.Prepare();
+        using var reset = sqliteConn.CreateCommand();
+        reset.Transaction = sqliteTx;
+        reset.CommandText = resetIdentitySql;
+        AddParameter(reset, "@sourceId", SqliteType.Integer);
+        AddParameter(reset, "@guid", SqliteType.Text);
+        reset.Prepare();
 
         foreach (var row in rows)
         {
@@ -385,7 +414,14 @@ public sealed partial class ReleaseRepository
             SetParameterValue(cmd, "@codec", row.Codec);
             SetParameterValue(cmd, "@group", row.ReleaseGroup);
             SetParameterValue(cmd, "@mediaType", row.MediaType);
+            SetParameterValue(cmd, "@preserveIdentity", row.PreserveIdentity ? 1 : 0);
 
+            if (row.IdentityChanged)
+            {
+                SetParameterValue(reset, "@sourceId", row.sourceId);
+                SetParameterValue(reset, "@guid", row.Guid);
+                reset.ExecuteNonQuery();
+            }
             cmd.ExecuteNonQuery();
         }
     }
@@ -404,6 +440,8 @@ public sealed partial class ReleaseRepository
 
     private sealed class UpsertRow
     {
+        public bool IdentityChanged { get; set; }
+        public bool PreserveIdentity { get; set; }
         public long sourceId { get; init; }
         public string Guid { get; init; } = "";
         public string? Title { get; init; }
@@ -1661,6 +1699,7 @@ public sealed partial class ReleaseRepository
         var unifiedCategory = ResolveUnifiedCategory(seed);
         var unifiedCategoryText = unifiedCategory.ToString();
         var parsed = _parser.Parse(newTitle, unifiedCategory);
+        var titleNormalized = TitleNormalizer.NormalizeTitleStrict(parsed.TitleClean ?? newTitle);
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         conn.Execute(
@@ -1668,6 +1707,8 @@ public sealed partial class ReleaseRepository
             UPDATE releases
             SET title = @title,
                 title_manual_override = 1,
+                title_normalized = @titleNormalized,
+                dedupe_key = @dedupeKey,
                 tmdb_id=NULL, tmdb_media_type=NULL, tvdb_id=NULL,
                 poster_file=NULL, poster_path=NULL, poster_key=NULL, poster_store_dir=NULL,
                 poster_provider=NULL, poster_provider_id=NULL, poster_hash=NULL, poster_updated_at_ts=NULL,
@@ -1720,6 +1761,8 @@ public sealed partial class ReleaseRepository
             {
                 id,
                 title = newTitle,
+                titleNormalized,
+                dedupeKey = $"title_year:{titleNormalized}|{(parsed.Year.HasValue ? parsed.Year.Value.ToString() : "-")}|{parsed.MediaType?.Trim().ToLowerInvariant() ?? string.Empty}",
                 titleClean = parsed.TitleClean,
                 year = parsed.Year,
                 season = parsed.Season,
