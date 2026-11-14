@@ -23,9 +23,11 @@ for (const path of ["/library", "/library/top", "/settings/ui", "/settings/backu
     assert.equal(document.querySelectorAll(".http-transport-notice").length, 1);
     assert.equal(notice.parentElement, outer);
     assert.equal(notice.nextElementSibling, outer.querySelector(".content"));
-    assert.equal(notice.previousElementSibling, path === "/settings/backup" ? null : outer.querySelector(".subbar"));
+    assert.equal(notice.previousElementSibling, outer.querySelector(".subbar"));
     assert.ok(!document.querySelector(".sidebar").contains(notice));
     if (path === "/settings/backup") {
+      assert.equal(document.querySelectorAll(".subbar .subaction").length, 1);
+      assert.equal(document.querySelector(".subbar .subaction").getAttribute("aria-label"), "Rafraîchir");
       assert.equal(document.querySelectorAll(".settings-grid > .settings-card").length, 2);
       assert.equal(document.querySelectorAll(".configuration-backup-fields .indexer-row--settings").length, 4);
       assert.equal(document.querySelectorAll(".settings-card--full").length, 0);
@@ -56,6 +58,7 @@ test("restore preview, disabled state and result stay in the existing settings c
     await f.change("restore-password", "Temporary fixture password!"); await f.click("Analyser");
     await f.waitFor(() => !!resolvePreview);
     assert.ok([...document.querySelectorAll("fieldset")].every(field => field.disabled));
+    assert.ok(document.querySelector('.subbar [aria-label="Rafraîchir"]').disabled);
     await act(async () => resolvePreview(json({ expectedState: "fixture-state", matchedSources: 1, newSources: 1, disabledSources: 0,
       configuration: { settings: 4, sources: 2, indexerProviders: 1, externalProviders: 2, applications: 1, missingSecrets: 0 } })));
     await f.waitFor(() => document.querySelector(".configuration-backup-summary"));
@@ -66,4 +69,75 @@ test("restore preview, disabled state and result stay in the existing settings c
     assert.ok([...document.querySelectorAll("fieldset")].every(field => !field.disabled));
     assert.equal(document.getElementById("restore-password").value, "");
   } finally { await f.close(); }
+});
+
+test("backup refresh clears local passwords, selected file, preview and notices without an API call", async () => {
+  const calls = [];
+  const f = await fixture((url, init = {}) => {
+    if (url.includes("/api/configuration-backups/")) {
+      calls.push({ url, init });
+      return Promise.resolve(json({ expectedState: "fixture", configuration: { settings: 4, sources: 1, indexerProviders: 1, externalProviders: 0, applications: 0 }, matchedSources: 0, newSources: 1, disabledSources: 0 }));
+    }
+    return fetcher(url, init);
+  }, "/settings/backup", "http://feedarr.test");
+  try {
+    await f.waitFor(() => document.getElementById("backup-password"));
+    await f.change("backup-password", "Temporary password 1!"); await f.change("backup-confirmation", "Temporary password 2!");
+    await f.click("Télécharger la sauvegarde");
+    await f.waitFor(() => document.body.textContent.includes("ne correspondent pas"));
+    await f.click("Rafraîchir");
+    assert.equal(document.querySelector(".inline-notice--error"), null);
+    assert.equal(document.getElementById("backup-password").value, ""); assert.equal(document.getElementById("backup-confirmation").value, "");
+    const input = document.getElementById("restore-file"); input.required = false;
+    Object.defineProperty(input, "files", { configurable: true, value: [new window.File(["fixture"], "fixture.feedarr")] });
+    await act(async () => input.dispatchEvent(new window.Event("change", { bubbles: true })));
+    await f.change("restore-password", "Temporary fixture password!"); await f.click("Analyser");
+    await f.waitFor(() => document.querySelector(".configuration-backup-summary"));
+    assert.equal(calls.length, 1);
+    await f.click("Rafraîchir");
+    assert.equal(document.querySelector(".configuration-backup-summary"), null);
+    assert.equal(document.getElementById("restore-password").value, ""); assert.equal(input.value, "");
+    assert.equal(document.querySelector(".inline-notice"), null); assert.equal(calls.length, 1);
+    // The FileList is simulated, so verify React's selected-file state was cleared too.
+    await f.change("restore-password", "Temporary fixture password!"); await f.click("Analyser");
+    await f.waitFor(() => document.body.textContent.includes("Sélectionnez une sauvegarde"));
+    assert.equal(calls.length, 1); await f.click("Rafraîchir");
+    assert.equal(document.querySelector(".inline-notice"), null);
+  } finally { await f.close(); }
+});
+
+test("maintenance advanced visibility preserves analysis state and never analyses on toggle", async () => {
+  let resolveSettings, resolveAnalysis;
+  const calls = [];
+  const f = await fixture((url, init = {}) => {
+    if (url.endsWith("/api/settings/maintenance")) return new Promise(resolve => { resolveSettings = resolve; });
+    if (url.includes("/api/maintenance/history-cleanup")) {
+      calls.push({ url, init }); return new Promise(resolve => { resolveAnalysis = resolve; });
+    }
+    return fetcher(url, init);
+  }, "/settings/maintenance", "http://feedarr.test");
+  try {
+    const findCard = () => [...document.querySelectorAll(".settings-card")].find(card => card.textContent.includes("Historique des entities et posters"));
+    await f.waitFor(() => !!findCard());
+    const card = findCard();
+    assert.equal(card.hidden, true); assert.equal(window.getComputedStyle(card).display, "none"); assert.equal(calls.length, 0);
+    await act(async () => resolveSettings(json({ maintenanceAdvancedOptionsEnabled: false })));
+    assert.equal(card.hidden, true); assert.equal(calls.length, 0);
+    await f.click("Options avancées"); await f.waitFor(() => !card.hidden);
+    assert.equal(findCard(), card); assert.equal(card.parentElement.firstElementChild, card); assert.equal(calls.length, 0);
+    const action = [...card.querySelectorAll("button")].find(button => button.textContent === "Analyser sans supprimer");
+    assert.ok(action.closest(".indexer-actions")); assert.ok(action.closest(".indexer-row--settings"));
+    await f.click("Analyser sans supprimer"); await f.waitFor(() => !!resolveAnalysis);
+    assert.equal(calls.length, 1); assert.equal(calls[0].init.method || "GET", "GET");
+    await f.click("Options avancées"); assert.equal(card.hidden, true); assert.equal(calls.length, 1);
+    await act(async () => resolveAnalysis(json({ entityCandidates: 7, entityBatchCandidates: 2, dryRun: true, errors: 0, protectionReasons: {} })));
+    await f.click("Options avancées"); await f.waitFor(() => !card.hidden && !!card.querySelector("dl"));
+    assert.equal(findCard(), card); assert.match(card.querySelector("dd").textContent, /7 \/ 2/); assert.equal(calls.length, 1);
+    const cleanup = [...card.querySelectorAll("button")].find(button => button.textContent === "Confirmer le nettoyage du lot");
+    assert.ok(cleanup.disabled);
+  } finally {
+    resolveSettings?.(json({ maintenanceAdvancedOptionsEnabled: false }));
+    resolveAnalysis?.(json({ entityCandidates: 0, entityBatchCandidates: 0, dryRun: true, errors: 0, protectionReasons: {} }));
+    await f.close();
+  }
 });

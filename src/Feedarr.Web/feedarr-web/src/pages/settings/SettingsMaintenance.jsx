@@ -182,8 +182,8 @@ export default function SettingsMaintenance({
 
   return (
     <>
+      <HistoryRetentionMaintenance hidden={!advancedEnabled} disabled={otherLoading} onBusyChange={setHistoryBusy} />
       {advancedEnabled && <MatchingShadowPanel />}
-      <HistoryRetentionMaintenance disabled={otherLoading} onBusyChange={setHistoryBusy} />
       {advancedEnabled && (
         <div className="settings-card settings-card--full" id="maintenance-advanced">
           <div className="settings-card__head">

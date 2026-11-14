@@ -49,6 +49,7 @@ export async function fixture(fetcher, path = "/library", origin = "https://feed
       React.createElement(Route, { element: React.createElement(app.Shell) },
         React.createElement(Route, { path: "/library", element: React.createElement(app.Library) }),
         React.createElement(Route, { path: "/library/top", element: React.createElement(app.Top) }),
+        React.createElement(Route, { path: "/settings/maintenance", element: React.createElement(app.Settings) }),
         React.createElement(Route, { path: "/settings/ui", element: React.createElement(app.Settings) }),
         React.createElement(Route, { path: "/indexers", element: React.createElement(app.Indexers) }),
         React.createElement(Route, { path: "/settings/backup", element: React.createElement(app.Settings) }),

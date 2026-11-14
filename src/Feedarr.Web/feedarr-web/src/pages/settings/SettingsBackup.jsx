@@ -1,9 +1,10 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useSubbarSetter } from "../../layout/useSubbar.js";
 import { configurationFileError, configurationRequest, configurationUpload, downloadConfiguration } from "../../components/backup/configurationBackupApi.js";
 import { loadUiSettingsData } from "./hooks/useUiSettings.js";
 import { applyTheme } from "../../app/theme.js";
 import { applyUiLanguage } from "../../app/locale.js";
+import SubAction from "../../ui/SubAction.jsx";
 import InlineNotice from "./InlineNotice.jsx";
 
 export default function SettingsBackup() {
@@ -17,7 +18,19 @@ export default function SettingsBackup() {
   const [notice, setNotice] = useState(null);
   const request = useRef(null);
   const fileInput = useRef(null);
-  useEffect(() => { setContent(null); return () => { request.current?.abort(); request.current = null; }; }, [setContent]);
+  const refresh = useCallback(() => {
+    if (request.current) return;
+    setPassword(""); setConfirmation(""); setRestorePassword("");
+    setFile(null); setPreview(null); setNotice(null);
+    if (fileInput.current) fileInput.current.value = "";
+  }, []);
+  useEffect(() => {
+    setContent(<div className="settings-subbar-content">
+      <SubAction icon="refresh" label="Rafraîchir" onClick={refresh} disabled={!!busy} />
+    </div>);
+    return () => setContent(null);
+  }, [setContent, refresh, busy]);
+  useEffect(() => () => { request.current?.abort(); request.current = null; }, []);
 
   async function run(action, operation) {
     if (request.current) return;

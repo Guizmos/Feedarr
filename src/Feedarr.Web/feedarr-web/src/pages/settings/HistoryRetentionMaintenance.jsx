@@ -23,7 +23,7 @@ const protectionLabels = {
   "poster:referenced_before_delete": "Références apparues avant suppression",
 };
 
-export default function HistoryRetentionMaintenance({ disabled = false, onBusyChange }) {
+export default function HistoryRetentionMaintenance({ hidden = false, disabled = false, onBusyChange }) {
   const [report, setReport] = useState(null);
   const [busy, setBusy] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
@@ -47,10 +47,17 @@ export default function HistoryRetentionMaintenance({ disabled = false, onBusyCh
     } catch (e) { setError(e?.message || "Analyse de l’historique indisponible."); }
     finally { submitting.current = false; setBusy(false); onBusyChange?.(false); }
   };
-  return <div className="settings-card settings-card--full">
-    <div className="settings-card__title">Historique des entities et posters</div>
-    <p className="muted">Simulation par défaut. Délai de grâce : 30 jours. Les anciennes entities dont la provenance est inconnue, les corrections manuelles et les références métier sont conservées.</p>
-    <button type="button" className="btn" disabled={disabled || busy} onClick={() => run()}>{busy ? "Analyse en cours…" : "Analyser sans supprimer"}</button>
+  // Keep reports and in-flight guards when advanced options are temporarily hidden.
+  return <div className="settings-card settings-card--full" hidden={hidden}>
+    <div className="indexer-row indexer-row--settings">
+      <div>
+        <div className="settings-card__title">Historique des entities et posters</div>
+        <p className="muted">Simulation par défaut. Délai de grâce : 30 jours. Les anciennes entities dont la provenance est inconnue, les corrections manuelles et les références métier sont conservées.</p>
+      </div>
+      <div className="indexer-actions">
+        <button type="button" className="btn" disabled={disabled || busy} onClick={() => run()}>{busy ? "Analyse en cours…" : "Analyser sans supprimer"}</button>
+      </div>
+    </div>
     {error && <p role="alert" className="onboarding__error">{error}</p>}
     {report && <>
       <dl>
