@@ -38,6 +38,11 @@ public sealed class PosterFetchJobProcessor : IPosterFetchJobProcessor
 
     public async Task<PosterFetchProcessResult> ProcessJobAsync(PosterFetchJob job, int workerId, CancellationToken stoppingToken)
     {
+        if (stoppingToken.IsCancellationRequested) return new PosterFetchProcessResult(false);
+        using var budgetCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        budgetCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _opt.MaxItemDurationSeconds)));
+        var jobToken = budgetCts.Token;
+
         _log.LogInformation(
             "Poster worker {WorkerId} job start {ItemId} title={Title} year={Year} category={Category} force={Force} attempt={Attempt}",
             workerId,
@@ -57,7 +62,9 @@ public sealed class PosterFetchJobProcessor : IPosterFetchJobProcessor
 
         var maxAttempts = Math.Max(1, _opt.MaxAttempts);
         var requestTimeout = TimeSpan.FromSeconds(Math.Max(1, _opt.RequestTimeoutSeconds));
-        var maxItemDuration = TimeSpan.FromSeconds(Math.Max(1, _opt.MaxItemDurationSeconds));
+
+        if (stoppingToken.IsCancellationRequested) return new PosterFetchProcessResult(false);
+        if (jobToken.IsCancellationRequested) return TimeBudgetExceeded(job, workerId);
 
         if (!job.ForceRefresh && ShouldSkipByTtl(release))
         {
@@ -66,22 +73,26 @@ public sealed class PosterFetchJobProcessor : IPosterFetchJobProcessor
         }
 
         var attempt = job.AttemptCount;
-        var startedAt = DateTimeOffset.UtcNow;
         while (attempt < maxAttempts)
         {
+            if (stoppingToken.IsCancellationRequested) return new PosterFetchProcessResult(false);
+            if (jobToken.IsCancellationRequested) return TimeBudgetExceeded(job, workerId);
             attempt++;
             string? lastFailureOverride = null;
 
             try
             {
-                using var timeoutCts = new CancellationTokenSource(requestTimeout);
-                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, timeoutCts.Token);
+                // Each attempt keeps its own cap, but all stages/retries share the
+                // job deadline. Never detach work with WaitAsync on an uncancelled task.
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(jobToken);
+                linkedCts.CancelAfter(requestTimeout);
 
                 var res = await _posters.FetchPosterAsync(
                     job.ItemId,
                     linkedCts.Token,
                     logSingle: false,
                     skipIfExists: !job.ForceRefresh).ConfigureAwait(false);
+                linkedCts.Token.ThrowIfCancellationRequested();
 
                 if (res.Ok)
                 {
@@ -109,6 +120,10 @@ public sealed class PosterFetchJobProcessor : IPosterFetchJobProcessor
                 _log.LogWarning("Poster worker {WorkerId} job cancelled {ItemId}", workerId, job.ItemId);
                 return new PosterFetchProcessResult(false);
             }
+            catch (OperationCanceledException) when (budgetCts.IsCancellationRequested)
+            {
+                return TimeBudgetExceeded(job, workerId);
+            }
             catch (OperationCanceledException)
             {
                 _log.LogWarning("Poster worker {WorkerId} job timed out {ItemId} attempt={Attempt}", workerId, job.ItemId, attempt);
@@ -125,18 +140,13 @@ public sealed class PosterFetchJobProcessor : IPosterFetchJobProcessor
                 lastFailureOverride = error;
             }
 
+            if (stoppingToken.IsCancellationRequested) return new PosterFetchProcessResult(false);
+            if (jobToken.IsCancellationRequested) return TimeBudgetExceeded(job, workerId);
+
             if (attempt >= maxAttempts)
             {
                 _log.LogError("Poster worker {WorkerId} job failed after retries {ItemId}", workerId, job.ItemId);
                 LogRetroFailure(job, lastFailureOverride);
-                return new PosterFetchProcessResult(false);
-            }
-
-            if (DateTimeOffset.UtcNow - startedAt >= maxItemDuration)
-            {
-                _log.LogWarning("Poster worker {WorkerId} job time budget exceeded {ItemId}", workerId, job.ItemId);
-                PosterAudit.UpdateAttemptFailure(_releases, job.ItemId, null, null, null, null, "time budget exceeded");
-                LogRetroFailure(job, "time budget exceeded");
                 return new PosterFetchProcessResult(false);
             }
 
@@ -151,15 +161,27 @@ public sealed class PosterFetchJobProcessor : IPosterFetchJobProcessor
             _queue.RecordRetry();
             try
             {
-                await Task.Delay(delay, stoppingToken).ConfigureAwait(false);
+                await Task.Delay(delay, jobToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 _log.LogWarning("Poster worker {WorkerId} job cancelled during retry delay {ItemId}", workerId, job.ItemId);
                 return new PosterFetchProcessResult(false);
             }
+            catch (OperationCanceledException)
+            {
+                return TimeBudgetExceeded(job, workerId);
+            }
         }
 
+        return new PosterFetchProcessResult(false);
+    }
+
+    private PosterFetchProcessResult TimeBudgetExceeded(PosterFetchJob job, int workerId)
+    {
+        _log.LogWarning("Poster worker {WorkerId} job time budget exceeded {ItemId}", workerId, job.ItemId);
+        PosterAudit.UpdateAttemptFailure(_releases, job.ItemId, null, null, null, null, "time budget exceeded");
+        LogRetroFailure(job, "time budget exceeded");
         return new PosterFetchProcessResult(false);
     }
 
