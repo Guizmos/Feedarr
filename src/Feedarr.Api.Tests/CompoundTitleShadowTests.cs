@@ -29,8 +29,8 @@ public sealed class CompoundTitleShadowTests(ITestOutputHelper output)
         var queries = SearchCandidateGenerator.Generate(new(raw, UnifiedCategory.Film));
         var ranked = SearchCandidateRanker.Rank(new(queries, UnifiedCategory.Film, SearchMediaType.Movie), new[] { Candidate(id, year, localized, original) });
         Assert.NotEmpty(queries);
-        Assert.Equal(localized, MatchingShadowDiagnostics.SafeText(localized));
-        Assert.Null(MatchingShadowDiagnostics.RedactionReason(localized));
+        Assert.Equal(localized, MatchingDiagnosticProjection.SafeText(localized));
+        Assert.Null(MatchingDiagnosticProjection.RedactionReason(localized));
         Assert.Equal(CandidateDecision.Ambiguous, ranked.Decision);
         Assert.Null(ranked.SelectedIdentity);
         Assert.Null(queries[0].Year);
@@ -39,7 +39,7 @@ public sealed class CompoundTitleShadowTests(ITestOutputHelper output)
         Assert.Equal(year, candidate.TrailingYearHypothesis);
         Assert.Equal(.90, candidate.Confidence);
         Assert.Equal(id != 1173160, candidate.CompoundTitle is not null);
-        output.WriteLine($"{raw} => {string.Join(" / ", queries.Select(q => $"title={q.Title}, year={q.Year}, evidence={q.YearEvidence}"))}; decision={ranked.Decision}; reasons={string.Join(",",ranked.Candidates.SelectMany(c=>c.Contradictions.Select(x=>x.Code)))}; localized-display={MatchingShadowDiagnostics.SafeText(localized)}");
+        output.WriteLine($"{raw} => {string.Join(" / ", queries.Select(q => $"title={q.Title}, year={q.Year}, evidence={q.YearEvidence}"))}; decision={ranked.Decision}; reasons={string.Join(",",ranked.Candidates.SelectMany(c=>c.Contradictions.Select(x=>x.Code)))}; localized-display={MatchingDiagnosticProjection.SafeText(localized)}");
     }
     private static CandidateRankingContext Context(string title = "Le Festin nu Naked Lunch", int year = 1991)
         => new(new[] { new SearchCandidate(title, year, CandidateYearEvidence.Parsed, SearchCandidateOrigin.Primary) }, UnifiedCategory.Film, SearchMediaType.Movie);
@@ -208,27 +208,8 @@ public sealed class CompoundTitleShadowTests(ITestOutputHelper output)
     [InlineData("Movie.tracker.fr", "domain_like_text")]
     public void RedactionRemainsStrictButExplainsWhy(string title, string reason)
     {
-        Assert.Equal("[titre masqué : contenu sensible possible]", MatchingShadowDiagnostics.SafeText(title));
-        Assert.Equal(reason, MatchingShadowDiagnostics.RedactionReason(title));
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void ShadowAdapter_UsesOnlyReceivedOfficialRows_AndKeepsPartialCoverageNotEvaluable(bool complete)
-    {
-        var raw = "Le.Festin.Nu.Naked.Lunch.1991.BluRay";
-        var state = new MatchingShadowState { Id = 1, RawTitle = raw, Category = "film" };
-        var original = new Feedarr.Api.Services.Tmdb.TmdbClient.SearchResult(2742, "Naked Lunch", "Naked Lunch", null, "movie", 1991, "en");
-        var localized = original with { Title = "Le Festin nu" };
-        var batch = new MatchingShadowBatch("Le Festin nu Naked Lunch", 1991, new[] { original }, complete) {
-            ObservedResults = new[] { new Feedarr.Api.Services.Tmdb.TmdbClient.ObservedSearchResult(original, null), new(localized, "fr-FR") } };
-        var observed = MatchingShadowEvaluator.Observe(true, state, () => state, batch, new("Reject", null, null))!;
-        if (!complete) { Assert.Equal("not_evaluable", observed.Status); Assert.Null(observed.V2); return; }
-        Assert.Equal(CandidateDecision.Accept, observed.V2!.Decision);
-        var projection = MatchingShadowDiagnostics.Project(observed, raw, batch, 1);
-        Assert.Equal(2, Assert.Single(projection.Candidates).CompoundTitles!.Count);
-        Assert.All(projection.Candidates[0].CompoundTitles!, t => Assert.NotNull(t.Source));
+        Assert.Equal("[titre masqué : contenu sensible possible]", MatchingDiagnosticProjection.SafeText(title));
+        Assert.Equal(reason, MatchingDiagnosticProjection.RedactionReason(title));
     }
 
 }

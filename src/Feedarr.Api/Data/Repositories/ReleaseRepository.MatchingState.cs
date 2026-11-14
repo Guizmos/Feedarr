@@ -5,7 +5,6 @@ namespace Feedarr.Api.Data.Repositories;
 
 public sealed partial class ReleaseRepository
 {
-    internal ReleaseForPoster? MatchingSnapshotForShadow => _matchingSnapshot.Value;
     internal MatchingShadowState? ReadMatchingShadowState(long id)
     {
         using var connection = MatchingReadOnly.Open(_db);

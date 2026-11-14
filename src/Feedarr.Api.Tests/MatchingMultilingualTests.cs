@@ -29,9 +29,13 @@ public sealed class MatchingMultilingualTests(ITestOutputHelper output)
     private static TmdbClient.ObservedSearchResult Row(int id, string title, string original, int year, string? language = null, string type = "movie")
         => new(new(id, title, original, null, type, year, "en"), language);
     private static MatchingShadowObservation Observe(MatchingShadowState state, params TmdbClient.ObservedSearchResult[] rows)
-        => MatchingShadowEvaluator.Observe(true, state, () => state,
-            new(state.TitleClean!, state.Year, rows.Take(1).Select(r => r.Result).ToArray(), true) { ObservedResults = rows },
-            new("Accept", Identity(rows.FirstOrDefault()?.Result.TmdbId ?? 1), 1))!;
+    {
+        var queries = SearchCandidateGenerator.Generate(new(state.RawTitle, UnifiedCategory.Film));
+        var candidates = TmdbShadowCandidateAdapter.Project(rows);
+        var ranked = SearchCandidateRanker.Rank(new(queries, UnifiedCategory.Film, SearchMediaType.Movie), candidates);
+        return new(state.Id, "evaluated", new("Accept", Identity(rows.FirstOrDefault()?.Result.TmdbId ?? 1), 1), ranked, Array.Empty<string>(), false)
+            { InputState = state, ProviderCandidates = candidates, Queries = queries };
+    }
 
     [Theory]
     [MemberData(nameof(BetaProposals))]
@@ -126,38 +130,6 @@ public sealed class MatchingMultilingualTests(ITestOutputHelper output)
         Assert.Contains(Assert.Single(result.V2.Candidates).Contradictions, c => c.Code == "conflicting-provider-records");
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void PartialCoverageAndManualProtection_RemainNotEvaluable(bool manual)
-    {
-        var state = State("Le Robot sauvage", 2024) with { ManualProvider = manual ? "tmdb" : null };
-        var result = MatchingShadowEvaluator.Observe(true, state, () => state,
-            new(state.TitleClean!, 2024, new[] { Row(100, "Le Robot sauvage", "The Wild Robot", 2024).Result }, false), new("Reject", null, null))!;
-        Assert.Equal("not_evaluable", result.Status);
-        Assert.Null(result.V2);
-    }
-
-    [Fact]
-    public async Task LiveCapture_PreservesLocalizedRowsWithoutChangingHistoricalQueriesOrSelection()
-    {
-        using var off = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, completeTmdbMetadata: true, localizedMovieTitle: "La Matrice");
-        using var on = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, matchingShadowEnabled: true,
-            completeTmdbMetadata: true, localizedMovieTitle: "La Matrice");
-        var offId = off.IngestRelease("La.Matrice.1999.BluRay.x264-GRP", UnifiedCategory.Film);
-        var onId = on.IngestRelease("La.Matrice.1999.BluRay.x264-GRP", UnifiedCategory.Film);
-        var oldResult = await off.FetchAsync(offId);
-        var newResult = await on.FetchAsync(onId);
-        Assert.Equal(oldResult.Ok, newResult.Ok);
-        Assert.Equal(oldResult.StatusCode, newResult.StatusCode);
-        Assert.Equal(off.TmdbSearchRequests.Select(u => u.AbsoluteUri), on.TmdbSearchRequests.Select(u => u.AbsoluteUri));
-        Assert.Equal(off.GetReleaseForPoster(offId)!.TmdbId, on.GetReleaseForPoster(onId)!.TmdbId);
-        var observation = Assert.Single(on.ShadowObservations);
-        Assert.Equal(CandidateDecision.Accept, observation.V2!.Decision);
-        Assert.Contains("official-localized-title-exact", Assert.Single(observation.V2.Candidates).PositiveReasons);
-        Assert.Contains(Assert.Single(on.ShadowDiagnostics.Snapshot().Entries).Candidates[0].OfficialTitles!, t => t.Title == "La Matrice" && t.Kind == "Localized");
-    }
-
     [Fact]
     public void SameNumericId_CannotBorrowLocalizedTitleFromOtherTmdbType()
     {
@@ -166,16 +138,6 @@ public sealed class MatchingMultilingualTests(ITestOutputHelper output)
         Assert.Equal(CandidateDecision.Reject, result.V2!.Decision);
         Assert.Null(result.V2.SelectedIdentity);
         Assert.Equal(2, result.V2.Candidates.Count);
-    }
-
-    [Fact]
-    public void RawCapture_IsBounded_AndOverflowInvalidatesCoverage()
-    {
-        using var capture = new TmdbClient.MatchingShadowCapture(() => { });
-        capture.Expect(); capture.Observe(true); capture.Observe(true);
-        for (var i = 0; i < 101; i++) capture.Add(Row(i + 1, "A Title", "A Title", 2024));
-        Assert.Equal(100, capture.Results.Count);
-        Assert.False(capture.IsComplete);
     }
 
     [Fact]

@@ -19,7 +19,7 @@ public sealed partial class TmdbClient
         static int? Number(JsonElement? element) => element is { ValueKind: JsonValueKind.Number } e && e.TryGetInt32(out var n) ? n : null;
         if (data?.Results is null || Number(data.Page) != page || Number(data.TotalPages) is not { } pages || pages is < 0 or > 500 ||
             Number(data.TotalResults) is not { } total || total < 0 || data.Results.Count > 20) return null;
-        if ((total == 0 && (pages != 0 || page != 1 || data.Results.Count != 0)) ||
+        if ((total == 0 && (pages is not (0 or 1) || page != 1 || data.Results.Count != 0)) ||
             (total > 0 && (pages != (int)Math.Ceiling(total / 20d) || page > pages ||
              data.Results.Count != Math.Min(20, total - (page - 1) * 20)))) return null;
         if (data.Results.Any(r => r is null || r.Id <= 0 || (r.MediaType is { } media && (media.ValueKind != JsonValueKind.String || media.GetString() != "movie")) || string.IsNullOrWhiteSpace(r.Title) ||

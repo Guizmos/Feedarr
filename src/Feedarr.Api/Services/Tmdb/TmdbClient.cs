@@ -161,7 +161,6 @@ public sealed partial class TmdbClient
 
     public async Task<List<SearchResult>> SearchMovieListAsync(string title, int? year, CancellationToken ct, int limit = 10)
     {
-        _shadowCapture.Value?.Expect();
         var results = new List<SearchResult>();
         var mediaInfoLanguage = GetMediaInfoLanguage();
         results.AddRange(await SearchMovieListWithLanguageAsync(title, year, null, ct, limit).ConfigureAwait(false));        results.AddRange(await SearchMovieListWithLanguageAsync(title, year, mediaInfoLanguage, ct, limit).ConfigureAwait(false));        return results;
@@ -199,7 +198,6 @@ public sealed partial class TmdbClient
 
     public async Task<List<SearchResult>> SearchTvListAsync(string title, int? year, CancellationToken ct, int limit = 10)
     {
-        _shadowCapture.Value?.Expect();
         var results = new List<SearchResult>();
         var mediaInfoLanguage = GetMediaInfoLanguage();
         results.AddRange(await SearchTvListWithLanguageAsync(title, year, null, ct, limit).ConfigureAwait(false));        results.AddRange(await SearchTvListWithLanguageAsync(title, year, mediaInfoLanguage, ct, limit).ConfigureAwait(false));        return results;
@@ -756,7 +754,6 @@ public sealed partial class TmdbClient
         if (year is >= 1800 and <= 2100) url += $"&year={year.Value}";
 
         var r = await GetJsonAsync<SearchResponse>(url, ct).ConfigureAwait(false);
-        ObserveShadowResponse(r, limit, "movie", language);
         if (r?.Results is null) return new List<SearchResult>();
 
         return r.Results
@@ -793,7 +790,6 @@ public sealed partial class TmdbClient
         if (year is >= 1800 and <= 2100) url += $"&first_air_date_year={year.Value}";
 
         var r = await GetJsonAsync<SearchResponse>(url, ct).ConfigureAwait(false);
-        ObserveShadowResponse(r, limit, "tv", language);
         if (r?.Results is null) return new List<SearchResult>();
 
         return r.Results

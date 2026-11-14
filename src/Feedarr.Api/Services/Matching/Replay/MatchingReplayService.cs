@@ -18,7 +18,7 @@ public sealed record ReplaySnapshot(Guid? SessionId, long Generation, string Sta
     IReadOnlyList<ReplayCategoryBudget>? CategoryBudgets = null, int ReportVersion = 2);
 
 public sealed class MatchingReplayService(MatchingReplayReader reader, IHttpClientFactory clients,
-    MatchingShadowDiagnostics shadow, IHostApplicationLifetime lifetime) : IDisposable
+    IHostApplicationLifetime lifetime) : IDisposable
 {
     private readonly object _gate = new();
     private long _generation;
@@ -39,7 +39,6 @@ public sealed class MatchingReplayService(MatchingReplayReader reader, IHttpClie
         internal ReplayHttpBudget Budget { get; } = new(request.Budget);
         internal List<ReplayEntry> Entries { get; } = new();
         internal IReadOnlyList<ReplayDistribution> Distribution { get; set; } = preview.Distribution;
-        internal IReadOnlyList<MatchingShadowObservation> OfflineObservations { get; set; } = Array.Empty<MatchingShadowObservation>();
         internal int Total { get; set; } = releases.Count;
         internal string Status { get; set; } = "preparing";
         internal string? Error { get; set; }
@@ -54,15 +53,13 @@ public sealed class MatchingReplayService(MatchingReplayReader reader, IHttpClie
     }
     private (ReplayPreview Preview, IReadOnlyList<ReplayRelease> Releases) PlanCore(ReplayRequest request)
     {
-        var shadowIds = request.Selection!.Method == "shadow_divergences"
-            ? shadow.Snapshot().Entries.Where(e => e.Divergence).Select(e => e.ReleaseId).Distinct().Order().ToArray() : Array.Empty<long>();
-        var releases = reader.Select(request, shadowIds);
+        var releases = reader.Select(request);
         var distribution = releases.GroupBy(r => MatchingReplayReader.CanonicalCategory(r.State.Category))
             .Select(g => new ReplayDistribution(g.Key, g.Count(), g.Count(r => !r.HasPoster),
                 g.Count(r => !HasIdentity(r.State)), g.Count(r => r.State.Protected))).ToArray();
         var minimum = distribution.ToDictionary(g => g.Category, g => request.Mode == "offline" ? 0 :
             releases.Where(r => MatchingReplayReader.CanonicalCategory(r.State.Category) == g.Category).Sum(r => MinimumCalls(r.State)));
-        var allocation = ReplaySelectionRules.Allocate(distribution, minimum, request.Budget, request.Selection.FairBudget);
+        var allocation = ReplaySelectionRules.Allocate(distribution, minimum, request.Budget, request.Selection!.FairBudget);
         long generation; lock (_gate) generation = _generation;
         return (new(generation, request.Selection, releases.Select(r => r.State.Id).ToArray(), distribution, minimum.Values.Sum(), request.Budget,
             request.Mode == "tmdb" && minimum.Values.Sum() > 0, minimum.Values.Sum() > request.Budget || allocation.Any(a => a.Limit.HasValue && a.MinimumRequests > a.Limit), allocation), releases);
@@ -123,7 +120,6 @@ public sealed class MatchingReplayService(MatchingReplayReader reader, IHttpClie
         try
         {
             ct.ThrowIfCancellationRequested();
-            if (session.Request.Mode == "offline") session.OfflineObservations = shadow.Observations;
             var releases = session.Releases;
             lock (_gate) { if (!Current(session)) return; session.Status = "running"; }
             using var http = session.Request.Mode == "tmdb" ? clients.CreateClient("tmdb-matching-replay") : null;
@@ -139,7 +135,7 @@ public sealed class MatchingReplayService(MatchingReplayReader reader, IHttpClie
                 {
                     var result = await EvaluateAsync(release.State, session, http, providerHalted, ct).ConfigureAwait(false);
                     if (result.Reason is "provider_rate_limited" or "provider_authentication_failed" or "tmdb_not_configured") providerHalted = result.Reason;
-                    var detail = MatchingShadowDiagnostics.Project(result.Observation, release.State.RawTitle, null, watch.Elapsed.TotalMilliseconds);
+                    var detail = MatchingDiagnosticProjection.Project(result.Observation, release.State.RawTitle, watch.Elapsed.TotalMilliseconds);
                     var decisionDifference = result.Observation.Historical.Decision is "Accept" or "Reject" && result.Observation.V2 is not null
                         ? (bool?)(detail.Decision != result.Observation.Historical.Decision.ToLowerInvariant()) : null;
                     var identityDifference = detail.HistoricalIdentity is not null && detail.SelectedIdentity is not null
@@ -154,7 +150,7 @@ public sealed class MatchingReplayService(MatchingReplayReader reader, IHttpClie
                 {
                     entry = new(MatchingReplayReader.CanonicalCategory(release.State.Category), release.HasPoster, release.State.Protected,
                         "unknown", null, null, release.State.Year, release.State.Season, release.State.Episode, "diagnostic_read_or_evaluation_failed", session.Budget.Used - requestsBefore, true,
-                        MatchingShadowDiagnostics.Project(Missing(release.State, "diagnostic_read_or_evaluation_failed"), release.State.RawTitle, null, watch.Elapsed.TotalMilliseconds));
+                        MatchingDiagnosticProjection.Project(Missing(release.State, "diagnostic_read_or_evaluation_failed"), release.State.RawTitle, watch.Elapsed.TotalMilliseconds));
                 }
                 ct.ThrowIfCancellationRequested();
                 lock (_gate) { if (!Current(session)) return; session.Entries.Add(entry); }
@@ -191,13 +187,7 @@ public sealed class MatchingReplayService(MatchingReplayReader reader, IHttpClie
         var historical = Historical(expected);
         if (http is null)
         {
-            var observation = session.OfflineObservations.LastOrDefault(o => o.ReleaseId == expected.Id && o.InputState == expected && o.Status == "evaluated");
-            if (observation is null) return new(Missing(expected, "offline_provider_responses_unavailable") with { Queries = queries }, "offline_provider_responses_unavailable");
-            candidates = observation.ProviderCandidates;
-            historical = observation.Historical;
-            var locales = candidates.SelectMany(c => c.OfficialTitles ?? Array.Empty<OfficialProviderTitle>()).Where(t => t.Kind == ProviderTitleKind.Localized)
-                .Select(t => t.Language).Where(l => l is not null).Distinct(StringComparer.Ordinal).ToArray();
-            locale = locales.Length == 1 ? ReplayEvidence.SafeLocale(locales[0]) : null;
+            return NotEvaluable("offline_provider_responses_unavailable");
         }
         else
         {

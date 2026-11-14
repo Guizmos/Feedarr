@@ -51,11 +51,10 @@ public sealed partial class MatchingReplayTests
     {
         internal readonly PosterMatchingContractTestRig Rig = new(PosterContractScenario.MovieTmdbHit);
         internal readonly TestHostApplicationLifetime Lifetime = new();
-        internal readonly MatchingShadowDiagnostics Shadow = new();
         internal readonly Factory Factory;
         internal readonly MatchingReplayService Replay;
         internal Fixture(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? send = null)
-        { Factory = new(send); Replay = new(Rig.ReplayReader, Factory, Shadow, Lifetime); }
+        { Factory = new(send); Replay = new(Rig.ReplayReader, Factory, Lifetime); }
         internal long Seed(string title = "Le.Robot.sauvage.2024.BluRay.x264-GRP", UnifiedCategory category = UnifiedCategory.Film)
             => Rig.IngestRelease(title, category);
         internal void Start(string mode = "offline", int budget = 30, int count = 10)
@@ -105,7 +104,6 @@ public sealed partial class MatchingReplayTests
         Assert.Equal(10, report.Summary.NotEvaluable);
         Assert.All(report.Entries, e => Assert.Equal("offline_provider_responses_unavailable", e.Coverage));
         Assert.Equal(before, fixture.DiskSnapshot());
-        Assert.False(fixture.Shadow.Snapshot().Enabled);
     }
 
     [Fact]
@@ -120,7 +118,7 @@ public sealed partial class MatchingReplayTests
         Assert.Equal("1184918", entry.Detail.SelectedIdentity!.Id); Assert.Equal("movie", entry.Detail.SelectedIdentity.Type);
         Assert.Equal("unknown", entry.IdentityVerified); Assert.Null(entry.DecisionDifference); Assert.Null(entry.IdentityDifference);
         Assert.Contains(entry.Detail.Candidates[0].OfficialTitles!, t => t.Title == "Le Robot sauvage" && t.Language == "fr-FR");
-        Assert.Equal(before, fixture.DiskSnapshot()); Assert.Empty(fixture.Shadow.Snapshot().Entries);
+        Assert.Equal(before, fixture.DiskSnapshot());
     }
 
     [Fact]
@@ -148,25 +146,6 @@ public sealed partial class MatchingReplayTests
         using (var connection = fixture.Rig.Database.Open()) connection.Execute("UPDATE media_entities SET tmdb_id=999,tmdb_media_type=NULL WHERE id=(SELECT entity_id FROM releases WHERE id=@id)", new { id });
         fixture.Start("tmdb"); var entry = Assert.Single((await fixture.Done()).Entries);
         Assert.Null(entry.Detail.HistoricalIdentity); Assert.Null(entry.IdentityDifference); Assert.True(entry.Protected);
-    }
-
-    [Fact]
-    public async Task OfflineCanReuseOnlyCompleteMatchingShadowSnapshot_ForExactUnchangedState()
-    {
-        using var fixture = new Fixture(); var id = fixture.Seed();
-        var state = fixture.Rig.ReplayReader.Read(id)!;
-        var observation = MatchingShadowEvaluator.Observe(true, state, () => state,
-            new("Le Robot sauvage", 2024, new[] { new Feedarr.Api.Services.Tmdb.TmdbClient.SearchResult(1184918, "Le Robot sauvage", "The Wild Robot", null, "movie", 2024, "en") }, true),
-            new("Reject", null, null))!;
-        fixture.Shadow.SetEnabled(true);
-        fixture.Shadow.Publish(fixture.Shadow.TryBegin()!.Value, observation, state.RawTitle, null, 1);
-        fixture.Start(); var entry = Assert.Single((await fixture.Done()).Entries);
-        Assert.Equal("accept", entry.Detail.Decision); Assert.True(entry.DecisionDifference); Assert.Equal(0, fixture.Factory.Calls);
-        using (var connection = fixture.Rig.Database.Open()) connection.Execute("UPDATE releases SET year=1990 WHERE id=@id", new { id });
-        fixture.Start(); entry = Assert.Single((await fixture.Done()).Entries);
-        Assert.Equal("not_evaluable", entry.Detail.Decision);
-        Assert.Equal("offline_provider_responses_unavailable", entry.Coverage);
-        Assert.Single(fixture.Shadow.Snapshot().Entries);
     }
 
     [Fact]
@@ -360,7 +339,7 @@ public sealed partial class MatchingReplayTests
         fixture.Seed(); fixture.Start("tmdb"); await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         fixture.Lifetime.StopApplication(); await fixture.Done();
         using var restartedLifetime = new TestHostApplicationLifetime();
-        using var restarted = new MatchingReplayService(fixture.Rig.ReplayReader, fixture.Factory, new(), restartedLifetime);
+        using var restarted = new MatchingReplayService(fixture.Rig.ReplayReader, fixture.Factory, restartedLifetime);
         Assert.Null(restarted.Snapshot().SessionId); Assert.Equal("idle", restarted.Snapshot().Status); Assert.False(restarted.Snapshot().Running);
         Assert.Equal(1, fixture.Factory.Calls);
     }

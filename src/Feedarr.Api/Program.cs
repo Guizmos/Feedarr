@@ -212,7 +212,6 @@ builder.Services.AddSingleton<AudioMatchingStrategy>();
 builder.Services.AddSingleton<GenericMatchingStrategy>();
 builder.Services.AddSingleton<PosterMatchingOrchestrator>();
 builder.Services.AddSingleton<PosterThumbService>();
-builder.Services.AddSingleton<MatchingShadowDiagnostics>();
 builder.Services.AddSingleton<MatchingReplayReader>();
 builder.Services.AddSingleton<MatchingReplayService>();
 builder.Services.AddSingleton<PosterFetchService>();

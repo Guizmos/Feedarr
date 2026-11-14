@@ -6,7 +6,7 @@ namespace Feedarr.Api.Controllers;
 
 [ApiController]
 [RequestSizeLimit(16384)]
-[Route("api/diagnostics/matching-shadow/replay")]
+[Route("api/diagnostics/matching/replay")]
 public sealed class MatchingReplayController(MatchingReplayService replay) : ControllerBase
 {
     private bool Allowed()

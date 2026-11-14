@@ -21,12 +21,11 @@ public sealed class MatchingReplayReader(Db db, IApiKeyProtectionService protect
         using var connection = MatchingReadOnly.Open(db);
         return MatchingReadOnly.ReadState(connection, id);
     }
-    internal IReadOnlyList<ReplayRelease> Select(int count) => Select(ReplaySelectionRules.Normalize(new(count)), Array.Empty<long>());
-    internal IReadOnlyList<ReplayRelease> Select(ReplayRequest request, IReadOnlyList<long> shadowIds)
+    internal IReadOnlyList<ReplayRelease> Select(int count) => Select(ReplaySelectionRules.Normalize(new(count)));
+    internal IReadOnlyList<ReplayRelease> Select(ReplayRequest request)
     {
         var selection = request.Selection!;
-        var targetIds = selection.Method == "ids" ? selection.ReleaseIds! : shadowIds;
-        if (selection.Method == "shadow_divergences" && targetIds.Count == 0) return Array.Empty<ReplayRelease>();
+        var targetIds = selection.Method == "ids" ? selection.ReleaseIds! : Array.Empty<long>();
         var categoryAliases = selection.Categories!.SelectMany(c => c switch
         {
             "films" => new[] { "film", "films" }, "series" => new[] { "serie", "series" },

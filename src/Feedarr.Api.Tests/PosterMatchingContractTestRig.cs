@@ -76,7 +76,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
     private readonly IgdbClient _igdbDetails;
     private readonly RawgContractHandler _rawgHandler;
 
-    public PosterMatchingContractTestRig(PosterContractScenario scenario, bool matchingShadowEnabled = false, bool completeTmdbMetadata = false, int tmdbTotalPages = 1, string? localizedMovieTitle = null,
+    public PosterMatchingContractTestRig(PosterContractScenario scenario, bool completeTmdbMetadata = false, int tmdbTotalPages = 1, string? localizedMovieTitle = null,
         Action<AppOptions>? configure = null,
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? tmdbResponse = null)
     {
@@ -165,7 +165,6 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             NullLogger<PosterFetchService>.Instance);
 
         _posters = _createPosters(posterOptions);
-        _posters.ShadowDiagnostics.SetEnabled(matchingShadowEnabled);
         SeedSource();
     }
 
@@ -284,10 +283,8 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
     internal Feedarr.Api.Data.Db Database => _db;
     internal Feedarr.Api.Services.Matching.Replay.MatchingReplayReader ReplayReader => new(_db, new DeterministicProtectionService());
     internal PosterFetchService Posters => _posters;
-    internal Feedarr.Api.Services.Matching.MatchingShadowDiagnostics ShadowDiagnostics => _posters.ShadowDiagnostics;
     internal string DatabasePath => _db.DbPath;
     public ReleaseRepository Repository => _releases;
-    internal IReadOnlyList<Feedarr.Api.Services.Matching.MatchingShadowObservation> ShadowObservations => _posters.MatchingShadowObservations;
     public IReadOnlyList<Uri> TmdbSearchRequests => _tmdbHandler.SearchRequests;
     public IReadOnlyList<string> IgdbSearchRequests => _igdbHandler.SearchRequests;
     public IReadOnlyList<Uri> RawgSearchRequests => _rawgHandler.SearchRequests;

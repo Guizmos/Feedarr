@@ -17,6 +17,25 @@ public sealed partial class ActiveMovieMatchingTests
     private static HttpResponseMessage Page(params object[] rows) => Json(new { page = 1, total_pages = rows.Length == 0 ? 0 : 1, total_results = rows.Length, results = rows });
     private static long Movie(PosterMatchingContractTestRig rig, string raw = "The.Matrix.1999.1080p.BluRay.x264-GRP") => rig.IngestRelease(raw, UnifiedCategory.Film);
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task EmptyProviderSearchIsCompleteWithZeroOrOneTotalPages(int totalPages)
+    {
+        var searches = 0;
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit,
+            completeTmdbMetadata: true, tmdbResponse: (request, _) =>
+            {
+                if (!request.RequestUri!.AbsolutePath.Contains("search/movie")) return Task.FromResult<HttpResponseMessage?>(null);
+                searches++;
+                return Task.FromResult<HttpResponseMessage?>(Json(new { page = 1, total_pages = totalPages, total_results = 0, results = Array.Empty<object>() }));
+            });
+        var result = await rig.FetchAsync(Movie(rig));
+        Assert.False(result.Ok);
+        Assert.Contains("\"reason\":\"reject\"", JsonSerializer.Serialize(result.Body));
+        Assert.Equal(2, searches);
+    }
+
     [Fact]
     public async Task OnAcceptUsesExistingTypedPublicationAndOfficialMetadata()
     {

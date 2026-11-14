@@ -12,53 +12,10 @@ public sealed record ShadowEntry(long ReleaseId, string RawTitle, string Histori
     double? HistoricalScore, string Decision, ShadowIdentity? SelectedIdentity, bool Divergence,
     double DurationMs, bool PreserveExisting, IReadOnlyList<string> Reasons,
     IReadOnlyList<ShadowQuery> Queries, IReadOnlyList<ShadowCandidate> Candidates, string? RawTitleMaskReason = null);
-public sealed record ShadowSnapshot(bool Enabled, long Generation, int Capacity, int Observations, int Releases,
-    int Evaluated, int EvaluatedReleases, int Accept, int Ambiguous, int Reject, int NotEvaluable, int Divergences,
-    double AverageDurationMs, IReadOnlyList<ShadowEntry> Entries);
-
-/// <summary>Process-local switch and bounded window; no configuration persistence, provider or database writer.</summary>
-public sealed class MatchingShadowDiagnostics
+internal static class MatchingDiagnosticProjection
 {
-    public const int Capacity = 64;
-    private readonly object _gate = new();
-    private readonly Queue<(MatchingShadowObservation Observation, ShadowEntry Entry)> _entries = new();
-    private bool _enabled; // Always OFF on process/service creation, including configured legacy App options.
-    private long _generation;
-
-    internal long? TryBegin() { lock (_gate) return _enabled ? _generation : null; }
-    internal bool IsCurrent(long generation) { lock (_gate) return _enabled && generation == _generation; }
-    public ShadowSnapshot SetEnabled(bool enabled, long? expectedGeneration = null)
-    {
-        lock (_gate)
-        {
-            if (enabled && expectedGeneration.HasValue && expectedGeneration != _generation) return SnapshotUnsafe();
-            _enabled = enabled; _generation++;
-            return SnapshotUnsafe();
-        }
-    }
-    public ShadowSnapshot Reset()
-    {
-        lock (_gate) { _generation++; _entries.Clear(); return SnapshotUnsafe(); }
-    }
-    public ShadowSnapshot Snapshot() { lock (_gate) return SnapshotUnsafe(); }
-    internal IReadOnlyList<MatchingShadowObservation> Observations
-    { get { lock (_gate) return _entries.Select(e => e.Observation).ToArray(); } }
-
-    internal void Publish(long generation, MatchingShadowObservation observation, string? rawTitle,
-        MatchingShadowBatch? batch, double durationMs)
-    {
-        if (!IsCurrent(generation)) return;
-        var entry = Project(observation, rawTitle, batch, durationMs);
-        lock (_gate)
-        {
-            if (!_enabled || generation != _generation) return; // Stop/reset never waits for text projection.
-            while (_entries.Count >= Capacity) _entries.Dequeue();
-            _entries.Enqueue((observation, entry));
-        }
-    }
-
     internal static ShadowEntry Project(MatchingShadowObservation observation, string? rawTitle,
-        MatchingShadowBatch? batch, double durationMs)
+        double durationMs)
     {
         var result = observation.V2;
         var decision = result?.Decision.ToString().ToLowerInvariant() ?? "not_evaluable";
@@ -69,9 +26,7 @@ public sealed class MatchingShadowDiagnostics
             (result!.Decision == CandidateDecision.Accept && result.SelectedIdentity != historical.Identity));
         var candidates = result?.Candidates.Select(c =>
         {
-            var row = batch?.Results?.FirstOrDefault(r => r.TmdbId.ToString(System.Globalization.CultureInfo.InvariantCulture) == c.Identity.Id &&
-                TmdbIdentity.NormalizeType(r.MediaType) == (c.Identity.MediaType == SearchMediaType.Movie ? "movie" : "tv"));
-            return new ShadowCandidate(Identity(c.Identity)!, SafeText(row?.Title ?? observation.ProviderCandidates.FirstOrDefault(p => p.Identity == c.Identity)?.Title), row?.Year ?? observation.ProviderCandidates.FirstOrDefault(p => p.Identity == c.Identity)?.Year, c.Confidence,
+            return new ShadowCandidate(Identity(c.Identity)!, SafeText(observation.ProviderCandidates.FirstOrDefault(p => p.Identity == c.Identity)?.Title), observation.ProviderCandidates.FirstOrDefault(p => p.Identity == c.Identity)?.Year, c.Confidence,
                 c.Decision.ToString().ToLowerInvariant(), c.PositiveReasons.ToArray(), c.Contradictions.Select(x => x.Code).ToArray(),
                 observation.ProviderCandidates.Where(p => p.Identity == c.Identity).SelectMany(p => p.OfficialTitles ?? Array.Empty<OfficialProviderTitle>())
                     .Distinct().Select(ProjectTitle).ToArray(),
@@ -85,16 +40,6 @@ public sealed class MatchingShadowDiagnostics
             observation.MissingInformation.Concat(result?.Reasons ?? Array.Empty<string>()).ToArray(), queries, candidates, RedactionReason(rawTitle));
     }
 
-    private ShadowSnapshot SnapshotUnsafe()
-    {
-        var entries = _entries.Select(e => e.Entry).Reverse().ToArray();
-        return new(_enabled, _generation, Capacity, entries.Length, entries.Select(e => e.ReleaseId).Distinct().Count(),
-            entries.Count(e => e.Decision != "not_evaluable"), entries.Where(e => e.Decision != "not_evaluable").Select(e => e.ReleaseId).Distinct().Count(),
-            entries.Count(e => e.Decision == "accept"),
-            entries.Count(e => e.Decision == "ambiguous"), entries.Count(e => e.Decision == "reject"),
-            entries.Count(e => e.Decision == "not_evaluable"), entries.Count(e => e.Divergence),
-            entries.Length == 0 ? 0 : entries.Average(e => e.DurationMs), entries);
-    }
     private static ShadowIdentity? Identity(SearchIdentity? identity) => identity is null ? null :
         new(identity.Provider, identity.MediaType == SearchMediaType.Movie ? "movie" : identity.MediaType == SearchMediaType.Series ? "tv" : "unknown", identity.Id);
 

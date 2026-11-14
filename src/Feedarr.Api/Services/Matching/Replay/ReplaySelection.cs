@@ -19,7 +19,7 @@ internal static class ReplaySelectionRules
         var s = request.Selection ?? new();
         var categories = (s.Categories ?? Categories).ToArray();
         var ids = (s.ReleaseIds ?? Array.Empty<long>()).ToArray();
-        if (s.Method is not ("sample" or "ids" or "shadow_divergences") || s.Filter is not ("all" or "without_poster" or "without_identity" or "with_identity") ||
+        if (s.Method is not ("sample" or "ids") || s.Filter is not ("all" or "without_poster" or "without_identity" or "with_identity") ||
             categories.Length is < 1 or > 5 || categories.Any(c => !Categories.Contains(c, StringComparer.Ordinal)) || categories.Distinct().Count() != categories.Length ||
             ids.Length > 200 || ids.Any(id => id is < 1 or > 9007199254740991) || ids.Distinct().Count() != ids.Length ||
             (s.Method == "ids" ? ids.Length == 0 : ids.Length != 0)) throw new ArgumentException("replay_selection_invalid");

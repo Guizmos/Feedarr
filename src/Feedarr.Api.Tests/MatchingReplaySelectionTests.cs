@@ -127,24 +127,6 @@ public sealed partial class MatchingReplayTests
     }
 
     [Fact]
-    public void ShadowDivergencesSelectionUsesOnlyTheCurrentBoundedWindow()
-    {
-        using var fixture = new Fixture(); var id = fixture.Seed(); fixture.Seed();
-        var state = fixture.Rig.ReplayReader.Read(id)!;
-        var candidate = new Feedarr.Api.Services.Tmdb.TmdbClient.SearchResult(1184918, "Le Robot sauvage", "The Wild Robot", null, "movie", 2024, "en");
-        var batch = new MatchingShadowBatch("Le Robot sauvage", 2024, new[] { candidate }, true);
-        var observation = MatchingShadowEvaluator.Observe(true, state, () => state, batch, new("Reject", null, null))!;
-        fixture.Shadow.SetEnabled(true); fixture.Shadow.Publish(fixture.Shadow.TryBegin()!.Value, observation, state.RawTitle, batch, 1);
-        Assert.True(Assert.Single(fixture.Shadow.Snapshot().Entries).Divergence);
-        var request = Request(fixture, Selection("shadow_divergences"));
-        var preview = fixture.Replay.Preview(request); Assert.Equal(new[] { id }, preview.SelectedIds);
-        fixture.Shadow.Reset();
-        Assert.Empty(fixture.Replay.Preview(request).SelectedIds);
-        Assert.Throws<InvalidOperationException>(() => fixture.Replay.Start(request with { ExpectedIds = preview.SelectedIds }));
-        Assert.Equal(0, fixture.Factory.Created);
-    }
-
-    [Fact]
     public async Task CategoryQuotasAreFairAndCannotBorrowAnotherCategoryBudget()
     {
         using var fixture = new Fixture();
