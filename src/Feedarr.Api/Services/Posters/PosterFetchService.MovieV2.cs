@@ -7,11 +7,8 @@ namespace Feedarr.Api.Services.Posters;
 
 public sealed partial class PosterFetchService
 {
-    private readonly long _movieV2CohortMinimum;
-
-    private bool UseMovieV2(ReleaseForPoster snapshot, UnifiedCategory category)
-        => _opt.MatchingV2MoviesEnabled && category == UnifiedCategory.Film &&
-           snapshot.Id >= Math.Max(_movieV2CohortMinimum, _opt.MatchingV2MoviesMinReleaseId);
+    private static bool UseMovieV2(UnifiedCategory category)
+        => category == UnifiedCategory.Film;
 
     internal async Task<PosterFetchResult> FetchMovieV2Async(PosterFetchRoutingContext context, CancellationToken ct)
     {
@@ -25,8 +22,6 @@ public sealed partial class PosterFetchService
             var current = _releases.ReadMatchingShadowState(context.ReleaseId);
             if (current is null || current.Protected) return Abstain("protected_or_unavailable_identity", 409);
             _releases.ValidateMatching(context.ReleaseId);
-            if (_opt.MatchingV2MoviesSearchBudget is < 1 or > 12 || _opt.MatchingV2MoviesMaxPagesPerQuery is < 1 or > 3)
-                return Abstain("invalid_search_budget");
             var queries = SearchCandidateGenerator.Generate(new(current.RawTitle, UnifiedCategory.Film));
             if (queries.Count == 0) return Abstain("no_query");
             // Explicitly bounded plan: every generated title, configured locale + English official search fields,
@@ -43,14 +38,14 @@ public sealed partial class PosterFetchService
                 var ids = new HashSet<int>();
                 for (var page = 1; page <= pages; page++)
                 {
-                    if (++used > _opt.MatchingV2MoviesSearchBudget) return Abstain("not_evaluable_search_budget");
+                    if (++used > 12) return Abstain("not_evaluable_search_budget");
                     var response = await RunTmdbAsync(inner => _tmdb.SearchMovieMatchingPageAsync(title, language, page, inner), timeout.Token).ConfigureAwait(false);
                     if (response is null) return Abstain("not_evaluable_provider_coverage");
                     if (total.HasValue && (response.TotalResults != total || response.TotalPages != pages))
                         return Abstain("not_evaluable_provider_changed_during_pagination");
                     total = response.TotalResults;
                     pages = response.TotalPages;
-                    if (pages > _opt.MatchingV2MoviesMaxPagesPerQuery) return Abstain("not_evaluable_page_budget");
+                    if (pages > 3) return Abstain("not_evaluable_page_budget");
                     foreach (var result in response.Results)
                     {
                         if (!ids.Add(result.TmdbId)) return Abstain("not_evaluable_duplicate_page_identity");

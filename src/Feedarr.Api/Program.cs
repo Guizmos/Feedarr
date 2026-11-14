@@ -149,7 +149,6 @@ SqlMapper.AddTypeHandler(new SqliteNullableInt32Handler());
 
 // Options + DB
 builder.Services.AddOptions<AppOptions>().Bind(builder.Configuration.GetSection("App"))
-    .Validate(o => o.ValidMatchingV2Rollout, "Matching V2 movies requires an explicit positive rollout ID and bounded search budgets.")
     .ValidateOnStart();
 builder.Services.Configure<PosterFetchOptions>(builder.Configuration.GetSection("PosterFetch"));
 builder.Services.Configure<ProviderStatsFlushOptions>(builder.Configuration.GetSection("App:ProviderStatsFlush"));
@@ -792,11 +791,6 @@ app.Services.GetRequiredService<MigrationsRunner>().Run();
 
 // Migrate existing API keys to encrypted format
 await app.Services.GetRequiredService<ApiKeyMigrationService>().MigrateAsync();
-
-// Freeze the V2 new-release boundary before hosted workers start (singleton is otherwise lazy).
-if (app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<AppOptions>>().Value.MatchingV2MoviesEnabled)
-    app.Services.GetRequiredService<PosterFetchService>();
-
 
 // Build fingerprint — visible dans les logs au démarrage pour confirmer que le bon binaire tourne.
 // Chercher : [BUILD] CATS_STANDARDONLY_V2

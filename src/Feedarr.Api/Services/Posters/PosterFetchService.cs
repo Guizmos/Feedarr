@@ -130,7 +130,6 @@ public sealed partial class PosterFetchService
         _thumbQueue = thumbQueue ?? NoOpPosterThumbQueue.Instance;
         _externalProviderLimiter = externalProviderLimiter ?? NoOpExternalProviderLimiter.Instance;
         _opt = opt.Value;
-        _movieV2CohortMinimum = _opt.MatchingV2MoviesEnabled ? _releases.InitializeMovieV2Cohort(_opt.MatchingV2MoviesMinReleaseId) : long.MaxValue;
         _env = env;
         _matchingOrchestrator = matchingOrchestrator;
         _activeConfigResolver = activeConfigResolver;
@@ -1134,8 +1133,8 @@ public sealed partial class PosterFetchService
         }
 
         UnifiedCategoryMappings.TryParse(r.UnifiedCategory, out var initialCategory);
-        var activeMovieV2 = UseMovieV2(r, initialCategory);
-        if (_opt.MatchingV2MoviesEnabled && initialCategory == UnifiedCategory.Film && MatchingShadowState.From(r).Protected)
+        var activeMovieV2 = UseMovieV2(initialCategory);
+        if (initialCategory == UnifiedCategory.Film && MatchingShadowState.From(r).Protected)
             return new(true, 200, new { ok = true, preserved = true, reason = "matching_v2_existing_identity_preserved" }, r.SourceId);
 
         string? existingFile = (string?)r.PosterFile;
@@ -1233,7 +1232,7 @@ public sealed partial class PosterFetchService
         var knownIds = new PosterMatchIds(tmdbIdStored, tvdbIdStored, null, null, null, r.TmdbMediaType ?? mediaType);
         var tvmazeEnabled = IsTvmazeEnabled();
 
-        if (UseMovieV2(r, unifiedCategory))
+        if (UseMovieV2(unifiedCategory))
         {
             var v2Context = new PosterFetchRoutingContext(id, title, year, categoryName, unifiedCategory,
                 mediaType, tmdbIdStored, tvdbIdStored, normalizedTitle, season, episode, ambiguity,

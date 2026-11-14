@@ -11,7 +11,6 @@ namespace Feedarr.Api.Tests;
 
 public sealed partial class ActiveMovieMatchingTests
 {
-    private static void Enable(AppOptions o) { o.MatchingV2MoviesEnabled = true; o.MatchingV2MoviesMinReleaseId = 1; }
     private static HttpResponseMessage Json(object value) => new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json") };
     private static object Row(int id, string title = "The Matrix", string? poster = "/matrix.jpg", string year = "1999-03-31") =>
         new { id, title, original_title = title, poster_path = poster, release_date = year, original_language = "en" };
@@ -19,28 +18,9 @@ public sealed partial class ActiveMovieMatchingTests
     private static long Movie(PosterMatchingContractTestRig rig, string raw = "The.Matrix.1999.1080p.BluRay.x264-GRP") => rig.IngestRelease(raw, UnifiedCategory.Film);
 
     [Fact]
-    public void EnablingRequiresExplicitRolloutWatermarkAndBoundedBudgets()
-    {
-        var options = new AppOptions(); Assert.True(options.ValidMatchingV2Rollout);
-        options.MatchingV2MoviesEnabled = true; Assert.False(options.ValidMatchingV2Rollout);
-        options.MatchingV2MoviesMinReleaseId = 1; Assert.True(options.ValidMatchingV2Rollout);
-        options.MatchingV2MoviesSearchBudget = 13; Assert.False(options.ValidMatchingV2Rollout);
-    }
-
-    [Fact]
-    public async Task OffRetainsHistoricalQueriesAndPublication()
-    {
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit);
-        var id = Movie(rig);
-        Assert.True((await rig.FetchAsync(id)).Ok);
-        Assert.Equal(100, rig.GetReleaseForPoster(id)!.TmdbId);
-        Assert.All(rig.TmdbSearchRequests, request => Assert.False(QueryHelpers.ParseQuery(request.Query).ContainsKey("page")));
-    }
-
-    [Fact]
     public async Task OnAcceptUsesExistingTypedPublicationAndOfficialMetadata()
     {
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, completeTmdbMetadata: true, configure: Enable);
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, completeTmdbMetadata: true);
         var id = Movie(rig);
         var result = await rig.FetchAsync(id);
         Assert.True(result.Ok, JsonSerializer.Serialize(result.Body));
@@ -58,7 +38,7 @@ public sealed partial class ActiveMovieMatchingTests
     public async Task RejectionAmbiguityAndMissingCoverageNeverDownloadOrFallback(bool complete, bool competing)
     {
         var downloads = 0;
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, completeTmdbMetadata: complete, configure: Enable,
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, completeTmdbMetadata: complete,
             tmdbResponse: (r, _) =>
             {
                 if (r.RequestUri!.Host.Contains("image.tmdb")) downloads++;
@@ -72,7 +52,7 @@ public sealed partial class ActiveMovieMatchingTests
     [Fact]
     public async Task HistoricalCacheCannotAssociateWrongIdentity()
     {
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, completeTmdbMetadata: true, configure: Enable);
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, completeTmdbMetadata: true);
         var id = Movie(rig);
         rig.SeedPosterMatch("movie", "The Matrix", 1999, 999, null, null, "tmdb-movie-999-w500.jpg", "tmdb", "tmdb", "movie:999");
         Assert.True((await rig.FetchAsync(id)).Ok);
@@ -85,7 +65,7 @@ public sealed partial class ActiveMovieMatchingTests
     [InlineData(false)]
     public async Task ManualTitleOrEstablishedIdentityIsPreservedWithoutSearch(bool manual)
     {
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, completeTmdbMetadata: true, configure: Enable);
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, completeTmdbMetadata: true);
         var id = Movie(rig);
         if (manual) rig.SetManualTitleForTest(id);
         else { using var db = rig.Database.Open(); db.Execute("UPDATE media_entities SET tmdb_id=999,tmdb_media_type='movie' WHERE id=(SELECT entity_id FROM releases WHERE id=@id)", new { id }); }
@@ -94,31 +74,12 @@ public sealed partial class ActiveMovieMatchingTests
         if (!manual) Assert.Equal(999, rig.GetReleaseForPoster(id)!.TmdbId);
     }
 
-    [Fact]
-    public async Task WatermarkPreventsOldBacklogFromUsingV2()
-    {
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, configure: o => { Enable(o); o.MatchingV2MoviesMinReleaseId = 1_000_000; });
-        Assert.True((await rig.FetchAsync(Movie(rig))).Ok);
-        Assert.All(rig.TmdbSearchRequests, request => Assert.DoesNotContain("page=", request.Query));
-    }
-
-    [Fact]
-    public async Task BudgetExhaustionAbstainsEvenAfterExactHit()
-    {
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, completeTmdbMetadata: true,
-            configure: o => { Enable(o); o.MatchingV2MoviesSearchBudget = 1; });
-        var id = Movie(rig);
-        Assert.False((await rig.FetchAsync(id)).Ok);
-        Assert.Null(rig.GetReleaseForPoster(id)!.TmdbId);
-        Assert.Single(rig.TmdbSearchRequests);
-    }
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task ProviderErrorOrTimeoutAbstains(bool timeout)
     {
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, configure: Enable,
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit,
             tmdbResponse: (_, _) => timeout ? throw new TaskCanceledException() : throw new HttpRequestException("private-canary"));
         var id = Movie(rig);
         var result = await rig.FetchAsync(id);
@@ -130,7 +91,7 @@ public sealed partial class ActiveMovieMatchingTests
     public async Task PaginationFindsCloseCompetitorOnSecondPage()
     {
         var requests = 0;
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, configure: Enable,
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit,
             tmdbResponse: (r, _) =>
             {
                 requests++;
@@ -148,7 +109,7 @@ public sealed partial class ActiveMovieMatchingTests
     public async Task MissingSelectedPosterNeverChoosesRunnerUp()
     {
         var requests = new List<string>();
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, configure: Enable,
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit,
             tmdbResponse: (r, _) =>
             {
                 requests.Add(r.RequestUri!.AbsoluteUri);
@@ -167,7 +128,7 @@ public sealed partial class ActiveMovieMatchingTests
     public async Task AllGeneratedVariantsAreCoveredWithoutUsingHypothesisAsYearFilter()
     {
         var queries = new List<string>();
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, configure: Enable,
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit,
             tmdbResponse: (r, _) =>
             {
                 var parameters = QueryHelpers.ParseQuery(r.RequestUri!.Query);
@@ -186,7 +147,7 @@ public sealed partial class ActiveMovieMatchingTests
     [InlineData("overflow")]
     public async Task InvalidOrUncoveredProviderPagesAbstain(string defect)
     {
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, configure: Enable,
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit,
             tmdbResponse: (_, _) => Task.FromResult<HttpResponseMessage?>(Json(new {
                 page = defect == "page" ? 2 : 1,
                 total_pages = defect == "overflow" ? 4 : 1,
@@ -200,7 +161,7 @@ public sealed partial class ActiveMovieMatchingTests
     [Fact]
     public async Task TwoReleasesSharingAnEntityCannotReplaceFirstAcceptedIdentity()
     {
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, completeTmdbMetadata: true, configure: Enable);
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, completeTmdbMetadata: true);
         var first = Movie(rig);
         var second = Movie(rig);
         Assert.True((await rig.FetchAsync(first)).Ok);
@@ -235,7 +196,7 @@ public sealed partial class ActiveMovieMatchingTests
     {
         PosterMatchingContractTestRig? rig = null;
         var downloads = 0;
-        using (rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, completeTmdbMetadata: true, configure: Enable,
+        using (rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, completeTmdbMetadata: true,
             tmdbResponse: (r, _) =>
             {
                 if (r.RequestUri!.Host.Contains("image.tmdb")) downloads++;
