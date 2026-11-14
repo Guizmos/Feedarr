@@ -13,4 +13,3 @@ public sealed class BackupOperationStateDto
     public int ActiveSyncActivities { get; set; }
     public bool SyncBlocked { get; set; }
 }
-

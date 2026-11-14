@@ -168,7 +168,7 @@ public sealed class MatchingShadowDiagnosticsTests
         using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit);
         var context = new DefaultHttpContext();
         context.Items[BasicAuthMiddleware.AuthPassedKey] = authenticated;
-       
+
         var controller = new MatchingShadowController(rig.Posters) { ControllerContext = new() { HttpContext = context } };
         var allowed = authenticated;
         Assert.Equal(allowed, controller.Get() is OkObjectResult);
