@@ -14,6 +14,9 @@ public sealed class WebSessionService(Db db, TimeProvider clock, SettingsReposit
     public const int AbsoluteSeconds = 12 * 60 * 60;
     public const int PersistentIdleSeconds = 7 * 24 * 60 * 60;
     public const int PersistentAbsoluteSeconds = 30 * 24 * 60 * 60;
+    // Persist at most once per minute. Idle expiry is conservative (up to 59s
+    // earlier), never extended by unpersisted reads or process-local state.
+    private const int ActivityUpdateIntervalSeconds = 60;
 
     public long Generation()
     {
@@ -78,15 +81,30 @@ public sealed class WebSessionService(Db db, TimeProvider clock, SettingsReposit
         if (token is null) return null;
         var now = clock.GetUtcNow().ToUnixTimeSeconds();
         using var connection = db.Open();
-        // Check generation and both deadlines atomically on every authenticated request.
-        var row = connection.QuerySingleOrDefault<SessionRow>("""
-            UPDATE web_sessions SET last_seen_ts = @now
+        // Always validate against SQLite: no cached authorization, including posters.
+        const string validSession = """
             WHERE token_hash = @hash AND generation = (SELECT generation FROM web_security_generation WHERE id = 1)
               AND expires_ts > @now AND last_seen_ts + idle_seconds > @now AND (secure_only=0 OR @https=1)
-            RETURNING expires_ts AS Absolute, idle_seconds AS Idle, remember_me AS Remember
-            """, new { hash = Hash(token), now, https = context.Request.IsHttps ? 1 : 0 });
+            """;
+        const string columns = "last_seen_ts AS LastSeen, expires_ts AS Absolute, idle_seconds AS Idle, remember_me AS Remember";
+        const string read = "SELECT " + columns + " FROM web_sessions " + validSession;
+        var args = new { hash = Hash(token), now, https = context.Request.IsHttps ? 1 : 0,
+            cutoff = now - ActivityUpdateIntervalSeconds };
+        var row = connection.QuerySingleOrDefault<SessionRow>(read, args);
+        if (row is null) return null;
+        if (row.LastSeen <= args.cutoff)
+        {
+            // Recheck authorization atomically when touching, including a revoke
+            // between SELECT and UPDATE. The cutoff coalesces concurrent writers.
+            row = connection.QuerySingleOrDefault<SessionRow>(
+                "UPDATE web_sessions SET last_seen_ts = @now " + validSession +
+                " AND last_seen_ts <= @cutoff RETURNING " + columns, args)
+                // Another request may have touched first; validate again rather
+                // than treating a zero-row UPDATE as either authorized or revoked.
+                ?? connection.QuerySingleOrDefault<SessionRow>(read, args);
+        }
         return row is null ? null : new(WebSessionSecurity.CsrfFor(token),
-            DateTimeOffset.FromUnixTimeSeconds(Math.Min(row.Absolute, now + row.Idle)),
+            DateTimeOffset.FromUnixTimeSeconds(Math.Min(row.Absolute, row.LastSeen + row.Idle)),
             DateTimeOffset.FromUnixTimeSeconds(row.Absolute), row.Remember != 0);
     }
 
@@ -111,6 +129,7 @@ public sealed class WebSessionService(Db db, TimeProvider clock, SettingsReposit
 
     private sealed class SessionRow
     {
+        public long LastSeen { get; set; }
         public long Absolute { get; set; }
         public long Idle { get; set; }
         public int Remember { get; set; }

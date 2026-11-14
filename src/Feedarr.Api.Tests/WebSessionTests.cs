@@ -537,6 +537,79 @@ public sealed class WebSessionTests
     private static string Basic(string user, string password) => "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes(user + ":" + password));
     private static string Cookie(HttpContext context) => context.Response.Headers.SetCookie.ToString().Split(';')[0];
 
+    [Fact]
+    public async Task PosterBurst_MeasuresAndBoundsPersistedActivityUpdates()
+    {
+        using var f = new Fixture(); var (cookie, _) = f.Login(); f.CountActivityUpdates();
+        f.Clock.Advance(TimeSpan.FromSeconds(1));
+        for (var i = 0; i < 200; i++) Assert.True(await f.Invoke(f.Context($"/api/posters/release/{i}", cookie: cookie)));
+        Console.WriteLine($"200 poster requests immediately after login: {f.ActivityUpdates()} session UPDATEs");
+        Assert.Equal(0, f.ActivityUpdates());
+        f.Clock.Advance(TimeSpan.FromSeconds(59));
+        for (var i = 0; i < 200; i++) Assert.True(await f.Invoke(f.Context($"/api/posters/release/{i}", cookie: cookie)));
+        Console.WriteLine($"200 poster requests at activity refresh boundary: {f.ActivityUpdates()} session UPDATEs");
+        Assert.Equal(1, f.ActivityUpdates());
+    }
+
+    [Fact]
+    public async Task ConcurrentPosterBurst_CoalescesWritesAndLogoutImmediatelyRejectsRemainder()
+    {
+        using var f = new Fixture(); var (cookie, _) = f.Login(); f.CountActivityUpdates();
+        f.Clock.Advance(TimeSpan.FromSeconds(60));
+        await Parallel.ForEachAsync(Enumerable.Range(0, 100), new ParallelOptions { MaxDegreeOfParallelism = 8 },
+            async (i, _) => Assert.True(await f.Invoke(f.Context($"/api/posters/release/{i}", cookie: cookie))));
+        f.Sessions.Revoke(f.Context(cookie: cookie));
+        await Parallel.ForEachAsync(Enumerable.Range(100, 100), new ParallelOptions { MaxDegreeOfParallelism = 8 }, async (i, _) =>
+        {
+            var context = f.Context($"/api/posters/release/{i}", cookie: cookie);
+            Assert.False(await f.Invoke(context)); Assert.Equal(401, context.Response.StatusCode);
+        });
+        Assert.Equal(1, f.ActivityUpdates());
+        var restarted = new WebSessionService(f.Db, f.Clock, f.Settings);
+        Assert.Null(restarted.Authenticate(f.Context(cookie: cookie)));
+        Console.WriteLine("Concurrent burst: 100 accepted, revoke, 100 rejected; 1 activity UPDATE");
+    }
+
+    [Fact]
+    public async Task ConcurrentPosterBurst_200ValidRequestsPerformOnlyOneDueUpdate()
+    {
+        using var f = new Fixture(); var (cookie, _) = f.Login(); f.CountActivityUpdates();
+        f.Clock.Advance(TimeSpan.FromSeconds(60));
+        await Parallel.ForEachAsync(Enumerable.Range(0, 200), new ParallelOptions { MaxDegreeOfParallelism = 8 },
+            async (i, _) => Assert.True(await f.Invoke(f.Context($"/api/posters/release/{i}", cookie: cookie))));
+        Assert.Equal(1, f.ActivityUpdates());
+        Console.WriteLine("200 concurrent poster requests: 1 persisted activity UPDATE");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ThrottledActivity_UsesPersistedIdleDeadlineAndSurvivesRestart(bool remember)
+    {
+        using var f = new Fixture(); var (cookie, initial) = f.Login(remember); f.CountActivityUpdates();
+        f.Clock.Advance(TimeSpan.FromSeconds(59));
+        var restarted = new WebSessionService(f.Db, f.Clock, f.Settings);
+        var active = Assert.IsType<WebSession>(restarted.Authenticate(f.Context(cookie: cookie)));
+        Assert.Equal(initial.ExpiresAt, active.ExpiresAt); // No fictitious renewal on a read.
+        Assert.Equal(0, f.ActivityUpdates());
+        f.Clock.Advance(TimeSpan.FromSeconds(1));
+        var renewed = Assert.IsType<WebSession>(restarted.Authenticate(f.Context(cookie: cookie)));
+        Assert.Equal(initial.ExpiresAt.AddSeconds(60), renewed.ExpiresAt);
+        Assert.Equal(1, f.ActivityUpdates());
+        f.Clock.Advance(TimeSpan.FromSeconds(remember ? WebSessionService.PersistentIdleSeconds : WebSessionService.IdleSeconds));
+        Assert.Null(new WebSessionService(f.Db, f.Clock, f.Settings).Authenticate(f.Context(cookie: cookie)));
+        Assert.Equal(1, f.ActivityUpdates());
+
+        // An access below the threshold never grants an unpersisted grace period.
+        var (secondCookie, secondInitial) = f.Login(remember);
+        f.Clock.Advance(TimeSpan.FromSeconds(59));
+        Assert.Equal(secondInitial.ExpiresAt,
+            restarted.Authenticate(f.Context(cookie: secondCookie))!.ExpiresAt);
+        f.Clock.Advance(TimeSpan.FromSeconds((remember ? WebSessionService.PersistentIdleSeconds : WebSessionService.IdleSeconds) - 59));
+        Assert.Null(restarted.Authenticate(f.Context(cookie: secondCookie)));
+        Assert.Equal(1, f.ActivityUpdates());
+    }
+
     private sealed class Fixture : IDisposable
     {
         internal const string Password = "WebSessionPassword123!";
@@ -590,6 +663,21 @@ public sealed class WebSessionTests
             await middleware.InvokeAsync(context, Settings, cache, Throttle,
                 NullLogger<BasicAuthMiddleware>.Instance, Sessions);
             return called;
+        }
+        internal void CountActivityUpdates()
+        {
+            using var c = Db.Open();
+            // Test-only instrumentation: count modified session rows, not WAL bytes.
+            c.Execute("""
+                CREATE TABLE fixture_session_writes(count INTEGER NOT NULL);
+                INSERT INTO fixture_session_writes VALUES(0);
+                CREATE TRIGGER fixture_session_touch AFTER UPDATE OF last_seen_ts ON web_sessions
+                BEGIN UPDATE fixture_session_writes SET count=count+1; END;
+                """);
+        }
+        internal long ActivityUpdates()
+        {
+            using var c = Db.Open(); return c.ExecuteScalar<long>("SELECT count FROM fixture_session_writes");
         }
         internal WebApplication Application()
         {
