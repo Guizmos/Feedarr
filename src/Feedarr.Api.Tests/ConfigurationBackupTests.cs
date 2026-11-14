@@ -7,6 +7,8 @@ using Feedarr.Api.Options;
 using Feedarr.Api.Services.Backup;
 using Feedarr.Api.Services.Backup.Configuration;
 using Feedarr.Api.Services.Security;
+using Feedarr.Api.Services.ExternalProviders;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Caching.Memory;
@@ -36,6 +38,8 @@ public sealed class ConfigurationBackupTests
         using (var oc = origin.Db.Open())
         {
             origin.Set(oc, "general", new GeneralSettings { SyncIntervalMinutes = 123, AutoSyncEnabled = false });
+            // A large regenerable CAPS cache must not consume the configuration archive's row budget.
+            oc.Execute("WITH RECURSIVE ids(n) AS (SELECT 10000 UNION ALL SELECT n+1 FROM ids WHERE n<20000) INSERT INTO source_categories(source_id,cat_id,name) SELECT 135,n,'cached' FROM ids");
             // Same IGDB credentials avoid an unnecessary OAuth restart.
             oc.Execute("DELETE FROM external_provider_instances WHERE provider_key='igdb'");
         }
@@ -57,6 +61,9 @@ public sealed class ConfigurationBackupTests
         var afterContext = new DefaultHttpContext(); afterContext.Request.Scheme = "https"; afterContext.Request.Headers.Cookie = cookie;
         Assert.NotNull(sessions.Authenticate(afterContext));
         Assert.Equal(123, settings.GetGeneral(new()).SyncIntervalMinutes);
+        var instances = new ExternalProviderInstanceRepository(target.Db, settings, target.Protection, target.Registry, NullLogger<ExternalProviderInstanceRepository>.Instance);
+        var resolver = new ActiveExternalProviderConfigResolver(instances, target.Registry, NullLogger<ActiveExternalProviderConfigResolver>.Instance);
+        Assert.Equal("tmdb-apiKey-secret", resolver.Resolve("tmdb").Auth["apiKey"]);
         var sourceKey = c.ExecuteScalar<string>("SELECT api_key FROM sources WHERE id=135");
         Assert.Equal("source-secret", target.Protection.Unprotect(sourceKey!));
         Assert.False(origin.Protection.TryUnprotect(sourceKey!, out _));
@@ -124,6 +131,27 @@ public sealed class ConfigurationBackupTests
         c.Execute("UPDATE sources SET api_key='ENC:broken'");
         var error = await Assert.ThrowsAsync<ConfigurationArchiveException>(() => target.Service.ExportAsync(Password));
         Assert.Equal(ConfigurationArchiveError.UnreadableSecrets, error.Code);
+    }
+
+    [Fact]
+    public async Task SharedEndpointConnectionsRetainDistinctIdentities()
+    {
+        using var origin = new Fixture(); using var target = new Fixture();
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        foreach (var f in new[] { origin, target })
+        {
+            using var c = f.Db.Open();
+            c.Execute("INSERT INTO providers(type,name,base_url,api_key_encrypted,enabled,created_at_ts,updated_at_ts) VALUES('jackett','second','https://indexer.example',@key,1,1,1)", new { key = f.Protection.Protect("second-provider") });
+            c.Execute("INSERT INTO arr_applications(type,name,base_url,api_key_encrypted,is_default,created_at_ts,updated_at_ts) VALUES('sonarr','second','http://sonarr:8989',@key,0,1,1)", new { key = f.Protection.Protect("second-application") });
+        }
+        var bytes = await origin.Service.ExportAsync(Password); var restore = Service(target, cache);
+        var p = await restore.PreviewAsync(new MemoryStream(bytes), Password);
+        await restore.ApplyAsync(new MemoryStream(bytes), Password, p.ExpectedState);
+        using var targetDb = target.Db.Open();
+        Assert.Equal(2, targetDb.ExecuteScalar<int>("SELECT COUNT(*) FROM providers"));
+        Assert.Equal(2, targetDb.ExecuteScalar<int>("SELECT COUNT(*) FROM arr_applications"));
+        Assert.Equal("provider-secret", target.Protection.Unprotect(targetDb.ExecuteScalar<string>("SELECT api_key_encrypted FROM providers WHERE id=98")!));
+        Assert.Equal("second-provider", target.Protection.Unprotect(targetDb.ExecuteScalar<string>("SELECT api_key_encrypted FROM providers WHERE name='second'")!));
     }
 
     private static ConfigurationRestoreService Service(Fixture f, IMemoryCache cache) => new(f.Db, f.Service, f.Protection, f.Registry, new BackupExecutionCoordinator(), cache, new OutboundDestinationPolicy(new OutboundSecurityOptions()));

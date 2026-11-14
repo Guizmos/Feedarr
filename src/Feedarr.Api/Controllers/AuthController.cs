@@ -4,8 +4,6 @@ using Feedarr.Api.Services.Security;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Caching.Memory;
-using Feedarr.Api.Services.Backup;
-using Feedarr.Api.Services.Backup.Configuration;
 
 namespace Feedarr.Api.Controllers;
 
@@ -59,7 +57,7 @@ public sealed class AuthController(
         // Read the generation first: changes during validation make Create fail closed.
         var generation = sessions.Generation();
         var security = settings.GetSecurity(new SecuritySettings());
-        if (!AuthenticationPolicy.IsAuthConfigured(security, null))
+        if (!AuthenticationPolicy.IsAuthConfigured(security))
             return Failure(409, "credentials_not_configured");
 
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
@@ -86,7 +84,7 @@ public sealed class AuthController(
     public IActionResult Session()
     {
         var security = settings.GetSecurity(new SecuritySettings());
-        var session = AuthenticationPolicy.IsAuthConfigured(security, null)
+        var session = AuthenticationPolicy.IsAuthConfigured(security)
             ? sessions.Authenticate(HttpContext) : null;
         return Ok(State(security, session));
     }
@@ -106,12 +104,12 @@ public sealed class AuthController(
     {
         authenticated = session is not null,
         authRequired = AuthenticationPolicy.IsAuthRequired(HttpContext, security),
-        authConfigured = AuthenticationPolicy.IsAuthConfigured(security, null),
+        authConfigured = AuthenticationPolicy.IsAuthConfigured(security),
         requireHttps = security.RequireHttps,
         initialAdminRequired = settings.RequiresInitialAdministrator(),
         secureTransport = Request.IsHttps,
         setupCompleted = true, // Compatibility only: configuration is no longer a prerequisite for access.
-        webSessionAvailable = AuthenticationPolicy.CanUseTransport(Request, security, HttpContext.RequestServices?.GetService<IConfiguration>()) && AuthenticationPolicy.IsAuthConfigured(security, null),
+        webSessionAvailable = AuthenticationPolicy.CanUseTransport(Request, security, HttpContext.RequestServices?.GetService<IConfiguration>()) && AuthenticationPolicy.IsAuthConfigured(security),
         httpRecovery = HttpContext.RequestServices?.GetService<IConfiguration>()?.GetValue<bool>("Security:AllowHttpRecovery") ?? false,
         csrfToken = session?.CsrfToken,
         expiresAt = session?.ExpiresAt,

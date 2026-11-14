@@ -56,30 +56,18 @@ internal sealed class ConfigurationSnapshotReader(IApiKeyProtectionService prote
         var selections = ReadRows("source_selected_categories", ConfigurationSchema.SelectionFields);
         foreach (var r in sources) Remap(r, "providerKey", providerMap);
         foreach (var rows in new[] { categories, mappings, selections }) foreach (var r in rows) Remap(r, "sourceKey", sourceMap);
-        // Keep definitions needed to explain configured selections/mappings and
-        // their ancestors, not the complete reconstructible CAPS category cache.
-        var definitions = categories.ToDictionary(r => (ConfigurationSchema.Text(r, "sourceKey"), r["cat_id"]!.GetValue<long>()));
-        var needed = mappings.Concat(selections).Select(r => (ConfigurationSchema.Text(r, "sourceKey"), r["cat_id"]!.GetValue<long>())).ToHashSet();
-        var pending = new Queue<(string, long)>(needed);
-        while (pending.TryDequeue(out var identity))
-            if (definitions.TryGetValue(identity, out var row) && row["parent_cat_id"] is not null)
-            {
-                var parent = (identity.Item1, row["parent_cat_id"]!.GetValue<long>());
-                if (parent.Item2 > 0 && needed.Add(parent)) pending.Enqueue(parent);
-            }
-        categories.RemoveAll(r => !needed.Contains((ConfigurationSchema.Text(r, "sourceKey"), r["cat_id"]!.GetValue<long>())));
         RemapUi("defaultFilterSourceId", sourceMap, []);
         RemapUi("defaultFilterApplication", appMap, ["__hide_apps__"]);
-        foreach (var p in providers) p["api_key"] = Secret(ConfigurationSchema.Text(p, "api_key"), ConfigurationSchema.Text(p, "key"), "api_key");
-        foreach (var s in sources) s["api_key"] = Secret(ConfigurationSchema.Text(s, "api_key"), ConfigurationSchema.Text(s, "key"), "api_key");
-        foreach (var a in apps) a["api_key_encrypted"] = Secret(ConfigurationSchema.Text(a, "api_key_encrypted"), ConfigurationSchema.Text(a, "key"), "api_key_encrypted");
+        foreach (var p in providers) p["api_key"] = Secret(ConfigurationSchema.Text(p, "api_key"));
+        foreach (var s in sources) s["api_key"] = Secret(ConfigurationSchema.Text(s, "api_key"));
+        foreach (var a in apps) a["api_key_encrypted"] = Secret(ConfigurationSchema.Text(a, "api_key_encrypted"));
         foreach (var e in external)
         {
             if (!registry.TryGet(ConfigurationSchema.Text(e, "provider_key"), out var definition)) ConfigurationSchema.Fail();
             var auth = (JsonObject)e["auth_json"]!;
             foreach (var f in definition.FieldsSchema)
                 if (auth[f.Key] is not null && (f.Secret || protection.IsProtected(auth[f.Key]!.GetValue<string>())))
-                    auth[f.Key] = Secret(auth[f.Key]!.GetValue<string>(), ConfigurationSchema.Text(e, "key"), f.Key);
+                    auth[f.Key] = Secret(auth[f.Key]!.GetValue<string>());
         }
         tx.Commit();
         return new ConfigurationDocument
@@ -107,7 +95,7 @@ internal sealed class ConfigurationSnapshotReader(IApiKeyProtectionService prote
         JsonObject Setting<T>(string name, T fallback) => JsonSerializer.SerializeToNode(
             rawSettings.TryGetValue(name, out var value) ? JsonSerializer.Deserialize<T>(value, ConfigurationSchema.Json) ?? fallback : fallback,
             ConfigurationSchema.Json)!.AsObject();
-        string Secret(string value, string itemKey, string field)
+        string Secret(string value)
         {
             if (value.Length == 0) return "";
             if (protection.TryUnprotect(value, out var plain) && plain is not null) return plain;
@@ -148,7 +136,17 @@ internal sealed class ConfigurationSnapshotReader(IApiKeyProtectionService prote
             using var command = conn.CreateCommand(); command.Transaction = tx;
             var order = table == "external_provider_instances" && columns.Contains("updated_at_ts") && columns.Contains("created_at_ts")
                 ? " ORDER BY updated_at_ts DESC, created_at_ts DESC" : "";
-            command.CommandText = $"SELECT {string.Join(',', select)} FROM \"{table}\"{order} LIMIT 10001";
+            // Only configured categories and their ancestors belong in a backup, not the CAPS cache.
+            var configured = table == "source_categories" ? """
+                WITH RECURSIVE configured(source_id,cat_id) AS (
+                    SELECT source_id,cat_id FROM source_selected_categories
+                    UNION SELECT source_id,cat_id FROM source_category_mappings
+                    UNION SELECT c.source_id,c.parent_cat_id FROM source_categories c
+                    JOIN configured s ON s.source_id=c.source_id AND s.cat_id=c.cat_id
+                    WHERE c.parent_cat_id > 0)
+                """ : "";
+            var filter = table == "source_categories" ? " WHERE (source_id,cat_id) IN (SELECT source_id,cat_id FROM configured)" : "";
+            command.CommandText = $"{configured} SELECT {string.Join(',', select)} FROM \"{table}\"{filter}{order} LIMIT 10001";
             using var rows = command.ExecuteReader();
             while (rows.Read())
             {

@@ -7627,7 +7627,7 @@ body.library-select-mode .list-edit{ display: none; }
   }
 }
 
-/* Restoration notice participates in the shell's normal flex flow. */
+/* Keep the header and content in the shell's normal flex flow. */
 .app-shell > .topbar { flex-shrink: 0; }
 .app-shell > .body { position: relative; overflow: hidden; }
 .app-shell .content-outer { height: 100%; min-height: 0; }

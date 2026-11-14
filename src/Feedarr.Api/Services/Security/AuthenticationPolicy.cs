@@ -1,9 +1,5 @@
-using System.Net;
-using System.Security.Cryptography;
-using System.Text;
 using Feedarr.Api.Models.Settings;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 
 namespace Feedarr.Api.Services.Security;
@@ -29,9 +25,8 @@ public static class AuthenticationPolicy
         document.Remove("authMode"); document.Remove("authentication"); document.Remove("authenticationRequired");
     }
 
-    public static bool IsAuthConfigured(SecuritySettings settings, string? bootstrapSecret)
+    public static bool IsAuthConfigured(SecuritySettings settings)
     {
-        _ = bootstrapSecret;
         return
             !string.IsNullOrWhiteSpace(settings.Username) &&
             !string.IsNullOrWhiteSpace(settings.PasswordHash) &&

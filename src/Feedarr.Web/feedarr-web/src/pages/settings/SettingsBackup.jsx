@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useSubbarSetter } from "../../layout/useSubbar.js";
 import { configurationFileError, configurationRequest, configurationUpload, downloadConfiguration } from "../../components/backup/configurationBackupApi.js";
+import { loadUiSettingsData } from "./hooks/useUiSettings.js";
+import { applyTheme } from "../../app/theme.js";
+import { applyUiLanguage } from "../../app/locale.js";
 import InlineNotice from "./InlineNotice.jsx";
 
 export default function SettingsBackup() {
@@ -14,7 +17,7 @@ export default function SettingsBackup() {
   const [notice, setNotice] = useState(null);
   const request = useRef(null);
   const fileInput = useRef(null);
-  useEffect(() => { setContent(null); return () => request.current?.abort(); }, [setContent]);
+  useEffect(() => { setContent(null); return () => { request.current?.abort(); request.current = null; }; }, [setContent]);
 
   async function run(action, operation) {
     if (request.current) return;
@@ -48,6 +51,10 @@ export default function SettingsBackup() {
       setPreview(null);
       const result = await configurationRequest("restore", { body, signal });
       if (!result?.applied) throw new Error("Le serveur n’a pas confirmé la restauration.");
+      try {
+        const { ui } = await loadUiSettingsData();
+        applyTheme(ui.theme, true); applyUiLanguage(ui.uiLanguage, true);
+      } catch { /* The restore is committed; UI preferences can reload on the next visit. */ }
       setRestorePassword(""); setFile(null); if (fileInput.current) fileInput.current.value = "";
       setNotice({ variant: "success", message: result.restartRequired ? "Configuration restaurée. Redémarrez Feedarr pour appliquer tous les paramètres." : "Configuration restaurée. Vos connexions utilisent les nouveaux paramètres." });
     });

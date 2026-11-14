@@ -1,14 +1,9 @@
-using System.IO.Compression;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Dapper;
 using Feedarr.Api.Data;
 using Feedarr.Api.Models.Settings;
 using Feedarr.Api.Options;
-using Feedarr.Api.Services.Backup;
 using Feedarr.Api.Services.Backup.Configuration;
 using Feedarr.Api.Services.ExternalProviders;
 using Feedarr.Api.Services.Security;
@@ -25,7 +20,7 @@ public sealed class ConfigurationArchiveServiceTests
 {
     internal sealed class Fixture : IDisposable
     {
-        public string Root { get; } = Path.Combine(Path.GetTempPath(), "feedarr-v2-tests", Guid.NewGuid().ToString("N"));
+        public string Root { get; } = Path.Combine(Path.GetTempPath(), "feedarr-configuration-tests", Guid.NewGuid().ToString("N"));
         public Db Db { get; }
         public ApiKeyProtectionService Protection { get; }
         public IDataProtectionProvider DataProtection { get; }

@@ -65,7 +65,7 @@ test("all same-origin mutations receive CSRF, including security and legacy dire
     await refreshSession();
     const calls = [];
     const transport = createSessionFetch(async (url, init) => { calls.push({ url, init }); return json({}); }, "https://feedarr.test", "");
-    for (const path of ["/api/settings/security", "/api/settings/general", "/api/configuration-backups/prepare", "/api/sources"]) {
+    for (const path of ["/api/settings/security", "/api/settings/general", "/api/configuration-backups/restore", "/api/sources"]) {
       await transport(path, { method: "PUT", headers: { "X-Feedarr-Request": "1" } });
       const headers = calls.at(-1).init.headers;
       assert.equal(headers.get("X-Feedarr-CSRF"), "bound-csrf");

@@ -117,28 +117,18 @@ HTTPS redirection should be handled by the reverse proxy.
 
 ## Configuration
 
-On first run, Feedarr remains locked until the Setup Wizard (`/setup`) is completed.
+On first run, create the administrator account, then configure Feedarr freely. Authentication is mandatory; HTTP and HTTPS are allowed by default. Enable HTTPS-only access in Security once HTTPS works.
 
-For WAN deployments:
+Configuration pages:
 
-- Enable authentication
-- Use a TLS reverse proxy
-
-Direct configuration pages:
-
-- Setup: `/setup`
 - General settings: `/settings`
-- Providers: `/settings/providers`
 - External services: `/settings/externals`
 - Applications: `/settings/applications`
-- Users: `/settings/users`
+- Security: `/settings/users`
 - Backup/restore: `/settings/backup`
 - Indexers: `/indexers`
 
-Full step-by-step guides:
-
-- [English (default)](docs/configuration-wizard.md)
-- [Français](docs/configuration-wizard.fr.md)
+[Configuration guide](docs/configuration-wizard.md) · [Guide français](docs/configuration-wizard.fr.md) · [Encrypted backups / sauvegardes](docs/configuration-backup.md)
 
 ---
 
@@ -219,8 +209,8 @@ No data migration required.
 
 - All external provider API keys are encrypted at rest
 - Sources, Providers and ARR applications use unified encryption
-- Backup restore supports both legacy and current schema versions
-- Legacy plaintext credentials are automatically normalized during restore
+- Password-encrypted configuration backups use AES-256-GCM and PBKDF2-SHA256
+- Restores preserve the target administrator, sessions, transport policy and library
 - SQLite foreign keys enforced
 - Critical endpoints rate-limited
 - Designed for reverse proxy TLS deployments

@@ -381,7 +381,7 @@ public sealed class SettingsController : ControllerBase
         var security = _repo.GetSecuritySettings();
         return Ok(new { requireHttps = security.RequireHttps, publicBaseUrl = security.PublicBaseUrl,
             username = security.Username, hasPassword = security.PasswordHash.Length > 0,
-            authConfigured = AuthenticationPolicy.IsAuthConfigured(security, null), authRequired = true,
+            authConfigured = AuthenticationPolicy.IsAuthConfigured(security), authRequired = true,
             transportMigration = security.TransportMigration });
     }
 
@@ -419,7 +419,7 @@ public sealed class SettingsController : ControllerBase
             }
             (next.PasswordHash, next.PasswordSalt) = CredentialValidator.HashPassword(dto.Password);
         }
-        if (!AuthenticationPolicy.IsAuthConfigured(next, null) || System.Text.Encoding.UTF8.GetByteCount(next.Username) > 512)
+        if (!AuthenticationPolicy.IsAuthConfigured(next) || System.Text.Encoding.UTF8.GetByteCount(next.Username) > 512)
             return Problem(title: "credentials_required", statusCode: 400);
         if (next.RequireHttps && !current.RequireHttps)
         {

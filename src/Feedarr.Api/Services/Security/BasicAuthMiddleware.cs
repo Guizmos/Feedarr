@@ -68,7 +68,7 @@ public sealed class BasicAuthMiddleware
             return settingsRepo.GetSecurity(new SecuritySettings());
         }) ?? new SecuritySettings();
 
-        var authConfigured = AuthenticationPolicy.IsAuthConfigured(security, null);
+        var authConfigured = AuthenticationPolicy.IsAuthConfigured(security);
         if (!AuthenticationPolicy.CanUseTransport(context.Request, security, _config))
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
