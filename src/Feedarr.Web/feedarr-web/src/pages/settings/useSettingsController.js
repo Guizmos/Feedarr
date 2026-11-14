@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet } from "../../api/client.js";
 import { sleep } from "./settingsUtils.js";
-import usePolling from "../../hooks/usePolling.js";
 
 // Specialized hooks
 import useExternalProviderInstances from "./hooks/useExternalProviderInstances.js";
@@ -25,7 +24,6 @@ export default function useSettingsController(section = "general") {
   const showApplications = false;
   const showUsers = false;
   const showMaintenance = section === "maintenance";
-  const showBackup = section === "backup";
   const settingsTitle = settingsTitleBySection[section] || "Paramètres";
 
   // Global state
@@ -35,7 +33,6 @@ export default function useSettingsController(section = "general") {
   const [hostPort, setHostPort] = useState("");
   const [initialHostPort, setInitialHostPort] = useState("");
   const [urlBase] = useState("");
-  const [backupPollMs, setBackupPollMs] = useState(3000);
 
   // Compose specialized hooks
   const providers = useExternalProviderInstances();
@@ -47,17 +44,11 @@ export default function useSettingsController(section = "general") {
   const loadProviderStatsRef = useRef(providers.loadProviderStats);
   const saveExternalKeysRef = useRef(providers.saveExternalKeys);
   const setReleasesCountRef = useRef(providers.setReleasesCount);
-  const loadBackupsRef = useRef(maintenance.loadBackups);
-  const loadBackupStateRef = useRef(maintenance.loadBackupState);
   const loadMaintenanceSettingsRef = useRef(maintenanceSettings.loadMaintenanceSettings);
 
   // Additional refs for action handlers
   const handleClearCacheRef = useRef(maintenance.handleClearCache);
   const handlePurgeLogsRef = useRef(maintenance.handlePurgeLogs);
-  const handleBackupCreateRef = useRef(maintenance.handleBackupCreate);
-  const handleBackupDownloadRef = useRef(maintenance.handleBackupDownload);
-  const handleBackupRestoreRef = useRef(maintenance.handleBackupRestore);
-  const handleBackupDeleteRef = useRef(maintenance.handleBackupDelete);
   const loadStatsRef = useRef(maintenance.loadStats);
   const handleVacuumRef = useRef(maintenance.handleVacuum);
   const handlePurgeSelectiveRef = useRef(maintenance.handlePurgeSelective);
@@ -76,15 +67,9 @@ export default function useSettingsController(section = "general") {
   loadProviderStatsRef.current = providers.loadProviderStats;
   saveExternalKeysRef.current = providers.saveExternalKeys;
   setReleasesCountRef.current = providers.setReleasesCount;
-  loadBackupsRef.current = maintenance.loadBackups;
-  loadBackupStateRef.current = maintenance.loadBackupState;
   loadMaintenanceSettingsRef.current = maintenanceSettings.loadMaintenanceSettings;
   handleClearCacheRef.current = maintenance.handleClearCache;
   handlePurgeLogsRef.current = maintenance.handlePurgeLogs;
-  handleBackupCreateRef.current = maintenance.handleBackupCreate;
-  handleBackupDownloadRef.current = maintenance.handleBackupDownload;
-  handleBackupRestoreRef.current = maintenance.handleBackupRestore;
-  handleBackupDeleteRef.current = maintenance.handleBackupDelete;
   loadStatsRef.current = maintenance.loadStats;
   handleVacuumRef.current = maintenance.handleVacuum;
   handlePurgeSelectiveRef.current = maintenance.handlePurgeSelective;
@@ -170,15 +155,11 @@ export default function useSettingsController(section = "general") {
   // Handle refresh
   const handleRefresh = useCallback(() => {
     load();
-    if (showBackup) {
-      loadBackupsRef.current();
-      loadBackupStateRef.current();
-    }
     if (showMaintenance) {
       loadStatsRef.current();
       loadMaintenanceSettingsRef.current();
     }
-  }, [load, showBackup, showMaintenance]);
+  }, [load, showMaintenance]);
 
   // Initial load - run only once
   const hasLoadedRef = useRef(false);
@@ -187,33 +168,6 @@ export default function useSettingsController(section = "general") {
     hasLoadedRef.current = true;
     load();
   }, [load]);
-
-  // Load backup data when section is active
-  const backupLoadedRef = useRef(false);
-  useEffect(() => {
-    if (!showBackup) {
-      backupLoadedRef.current = false;
-      return;
-    }
-    if (backupLoadedRef.current) return;
-    backupLoadedRef.current = true;
-    loadBackupsRef.current();
-    loadBackupStateRef.current();
-  }, [showBackup]);
-
-  useEffect(() => {
-    if (!showBackup) return;
-    setBackupPollMs(3000);
-  }, [showBackup]);
-
-  usePolling(() => {
-    if (!showBackup) return;
-    Promise.resolve(loadBackupStateRef.current())
-      .then(() => setBackupPollMs(3000))
-      .catch(() => {
-        setBackupPollMs((prev) => Math.min(15000, Math.max(3000, prev * 2)));
-      });
-  }, backupPollMs, showBackup);
 
   // Load maintenance stats when section is active
   const maintenanceLoadedRef = useRef(false);
@@ -310,38 +264,6 @@ export default function useSettingsController(section = "general") {
     }
   }, []);
 
-  const handleBackupCreate = useCallback(async () => {
-    try {
-      await handleBackupCreateRef.current();
-    } catch (e) {
-      setErr(e?.message || "Erreur");
-    }
-  }, []);
-
-  const handleBackupDownload = useCallback(async (name) => {
-    try {
-      await handleBackupDownloadRef.current(name);
-    } catch (e) {
-      setErr(e?.message || "Erreur");
-    }
-  }, []);
-
-  const handleBackupRestore = useCallback(async () => {
-    try {
-      await handleBackupRestoreRef.current();
-    } catch (e) {
-      setErr(e?.message || "Erreur");
-    }
-  }, []);
-
-  const handleBackupDelete = useCallback(async () => {
-    try {
-      await handleBackupDeleteRef.current();
-    } catch (e) {
-      setErr(e?.message || "Erreur");
-    }
-  }, []);
-
   // Wrap provider handlers with error handling
   const confirmExternalDelete = useCallback(async () => {
     try {
@@ -368,7 +290,6 @@ export default function useSettingsController(section = "general") {
     showApplications,
     showUsers,
     showMaintenance,
-    showBackup,
     loading,
     err,
     handleRefresh,
@@ -459,36 +380,6 @@ export default function useSettingsController(section = "general") {
       maintenanceSettingsDirty: maintenanceSettings.isDirty,
       restoreRecommendedDefaults: maintenanceSettings.restoreRecommendedDefaults,
       toggleAdvancedOptions: maintenanceSettings.toggleAdvancedOptions,
-    },
-    backup: {
-      backupCreateOpen: maintenance.backupCreateOpen,
-      backupCreateLoading: maintenance.backupCreateLoading,
-      backups: maintenance.backups,
-      backupsLoading: maintenance.backupsLoading,
-      backupDownloadName: maintenance.backupDownloadName,
-      backupRestoreOpen: maintenance.backupRestoreOpen,
-      backupRestoreTarget: maintenance.backupRestoreTarget,
-      backupRestoreLoading: maintenance.backupRestoreLoading,
-      backupRestorePreview: maintenance.backupRestorePreview,
-      backupRestorePreviewLoading: maintenance.backupRestorePreviewLoading,
-      backupDeleteOpen: maintenance.backupDeleteOpen,
-      backupDeleteTarget: maintenance.backupDeleteTarget,
-      backupDeleteLoading: maintenance.backupDeleteLoading,
-      backupError: maintenance.backupError,
-      backupNotice: maintenance.backupNotice,
-      backupState: maintenance.backupState,
-      loadBackups: maintenance.loadBackups,
-      loadBackupState: maintenance.loadBackupState,
-      openBackupCreate: maintenance.openBackupCreate,
-      closeBackupCreate: maintenance.closeBackupCreate,
-      handleBackupCreate,
-      handleBackupDownload,
-      openBackupRestore: maintenance.openBackupRestore,
-      closeBackupRestore: maintenance.closeBackupRestore,
-      handleBackupRestore,
-      openBackupDelete: maintenance.openBackupDelete,
-      closeBackupDelete: maintenance.closeBackupDelete,
-      handleBackupDelete,
     },
     users: null,
   };

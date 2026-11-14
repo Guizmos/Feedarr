@@ -3,7 +3,6 @@ import { useLocation } from "react-router-dom";
 import { useSubbarSetter } from "../layout/useSubbar.js";
 import SubAction from "../ui/SubAction.jsx";
 import Loader from "../ui/Loader.jsx";
-import { getSaveActionVisualState } from "./settings/settingsUiPageModel.js";
 
 import useSettingsController from "./settings/useSettingsController.js";
 import SettingsGeneral from "./settings/SettingsGeneral.jsx";
@@ -18,6 +17,8 @@ const SettingsArrPage = React.lazy(() => import("./settings/SettingsArrPage.jsx"
 export default function Settings() {
   const location = useLocation();
   const section = location.pathname.split("/")[2] || "general";
+
+  if (section === "backup") return <SettingsBackup />;
 
   if (section === "ui") {
     return (
@@ -55,7 +56,6 @@ function SettingsStandardPage({ section }) {
     showGeneral,
     showExternals,
     showMaintenance,
-    showBackup,
     handleRefresh,
     handleSave,
     saveState,
@@ -65,7 +65,6 @@ function SettingsStandardPage({ section }) {
     general,
     providers,
     maintenance,
-    backup,
   } = controller;
 
   // Refs for stable callback references in subbar - direct assignment (refs don't trigger re-renders)
@@ -76,16 +75,6 @@ function SettingsStandardPage({ section }) {
   handleSaveRef.current = handleSave;
   openExternalModalAddRef.current = openExternalModalAdd;
   const [posterModalOpen, setPosterModalOpen] = useState(false);
-  const [backupActions, setBackupActions] = useState(null);
-  const backupRefreshRef = useRef(null);
-  backupRefreshRef.current = () => {
-    if (backupActions?.busy) return;
-    void backupActions?.refresh();
-    void backup.loadBackups();
-    void backup.loadBackupState();
-  };
-
-
   useEffect(() => {
     setContent(
       <div
@@ -95,19 +84,8 @@ function SettingsStandardPage({ section }) {
         <SubAction
           icon="refresh"
           label="Rafraîchir"
-          onClick={showBackup ? () => backupRefreshRef.current?.() : handleRefresh}
-          disabled={showBackup && (loading || !backupActions || backupActions.busy)}
+          onClick={handleRefresh}
         />
-        {showBackup && (
-          <SubAction
-            icon={getSaveActionVisualState(backupActions?.saveState).icon}
-            label="Sauvegarder"
-            onClick={() => backupActions?.export()}
-            disabled={loading || !backupActions?.canExport}
-            className={getSaveActionVisualState(backupActions?.saveState).className}
-            title={backupActions?.validationMessage || "Sauvegarder la configuration"}
-          />
-        )}
         {showMaintenance && (
           <>
             <SubAction
@@ -148,7 +126,7 @@ function SettingsStandardPage({ section }) {
             />
           </>
         )}
-        {!showMaintenance && !showBackup && !showExternals && (
+        {!showMaintenance && !showExternals && (
           <SubAction
             icon={
               saveState === "loading"
@@ -192,8 +170,6 @@ function SettingsStandardPage({ section }) {
     setContent,
     handleRefresh,
     showMaintenance,
-    showBackup,
-    backupActions,
     loading,
     showExternals,
     saveState,
@@ -231,7 +207,6 @@ function SettingsStandardPage({ section }) {
               <SettingsMaintenance {...maintenance} />
             </Suspense>
           )}
-          {showBackup && <SettingsBackup {...backup} onActionsChange={setBackupActions} />}
         </div>
       )}
     </div>

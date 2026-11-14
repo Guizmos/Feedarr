@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ScrollContainerProvider } from "../context/ScrollContainerContext.js";
 import { Outlet } from "react-router-dom";
-import RestorePendingBanner from "./RestorePendingBanner.jsx";
 import HttpTransportNotice from "./HttpTransportNotice.jsx";
 import Topbar from "./Topbar.jsx";
 import Sidebar from "./Sidebar.jsx";
@@ -180,7 +179,6 @@ export default function Shell() {
         <div className={`app app-shell ${isNavOpen ? "is-open" : ""}`}>
           <Topbar onToggleNav={toggleNav} />
           <HttpTransportNotice />
-          <RestorePendingBanner />
           <div className="body">
             <button
               type="button"

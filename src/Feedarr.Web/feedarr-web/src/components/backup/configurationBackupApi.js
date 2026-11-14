@@ -1,72 +1,63 @@
 import { resolveApiUrl } from "../../api/client.js";
 
-export const MAX_CONFIGURATION_UPLOAD = 64 * 1024 * 1024;
-export const backupRoot = initial => initial ? "/api/setup/configuration-restore" : "/api/configuration-backups";
+export const MAX_CONFIGURATION_UPLOAD = 8 * 1024 * 1024 + 128;
+const signature = "FEEDARR-CONFIG-3\n";
 
-export async function configurationRequest(path, { method = "GET", body, bootstrap = "", signal, fetcher = fetch, binary = false } = {}) {
+export async function configurationRequest(action, { body, signal, fetcher = fetch, binary = false } = {}) {
   const controller = new AbortController();
   const abort = () => controller.abort(signal.reason);
   if (signal?.aborted) abort(); else signal?.addEventListener("abort", abort, { once: true });
-  const timer = setTimeout(() => controller.abort(new DOMException("La demande a dépassé le délai de deux minutes. Réessayez.", "TimeoutError")), 120000);
-  const headers = { "X-Feedarr-Request": "1", Accept: binary ? "application/zip" : "application/json" };
-  if (bootstrap) headers["X-Bootstrap-Secret"] = bootstrap;
-  if (body && !(body instanceof FormData)) headers["Content-Type"] = "application/json";
+  const timer = setTimeout(() => controller.abort(new DOMException("Délai dépassé. Vérifiez le résultat avant de réessayer.", "TimeoutError")), 120000);
+  const headers = { "X-Feedarr-Request": "1", Accept: binary ? "application/octet-stream" : "application/json" };
+  if (!(body instanceof FormData)) headers["Content-Type"] = "application/json";
   try {
-    const response = await fetcher(resolveApiUrl(path), { method, headers, credentials: "include", signal: controller.signal,
-      body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined });
+    const response = await fetcher(resolveApiUrl(`/api/configuration-backups/${action}`), { method: "POST", headers, credentials: "include", signal: controller.signal,
+      body: body instanceof FormData ? body : JSON.stringify(body) });
     if (!response.ok) {
-      let payload; try { payload = await response.json(); } catch { /* Never echo response text or upload content. */ }
+      let payload; try { payload = await response.json(); } catch { /* Never echo raw server content. */ }
       const known = {
-        AuthenticationFailed: "Phrase secrète incorrecte ou archive altérée.",
-        InvalidPassphrase: "Utilisez une phrase secrète de 12 à 1024 caractères.",
-        UnreadableSecrets: "Des secrets locaux sont indéchiffrables. La sauvegarde a été refusée.",
-        UnsupportedVersion: "Cette version de sauvegarde n’est pas compatible.",
-        InvalidArchive: "Archive invalide.", InvalidConfiguration: "Configuration incohérente.",
-        configuration_restore_ambiguous_identity: "Identités ambiguës : aucune restauration n’a été préparée.",
-        configuration_restore_changed_or_invalid_state: "L’état a changé ou une confirmation reste nécessaire. Actualisez avant de réessayer.",
-        configuration_restore_conflict_or_unreadable_state: "Une restauration existe déjà ou son état nécessite une vérification.",
-        configuration_restore_restart_required: "La restauration est confirmée. Redémarrez Feedarr puis vérifiez son application avant de modifier la configuration.",
-        setup_closed: "Le setup est terminé. Reconnectez-vous et utilisez les paramètres.",
+        AuthenticationFailed: "Mot de passe incorrect ou sauvegarde altérée.",
+        InvalidPassphrase: "Utilisez un mot de passe de 12 à 1024 caractères.",
+        UnreadableSecrets: "Des secrets locaux sont indéchiffrables. Aucune sauvegarde n’a été créée.",
+        UnsupportedVersion: "Version de sauvegarde incompatible.",
+        InvalidArchive: "Fichier de sauvegarde invalide.", InvalidConfiguration: "Configuration invalide.",
+        SizeLimitExceeded: "La sauvegarde dépasse la limite de 8 Mio.",
       };
-      const error = new Error(known[payload?.code] || (response.status === 413 ? "Fichier trop volumineux (64 Mio maximum)." : response.status === 429 ? "Trop de demandes. Patientez avant de réessayer." : response.status === 403 || response.status === 401 ? "Autorisation requise. Vérifiez la connexion ou le secret bootstrap." : "L’opération a échoué. Actualisez puis réessayez."));
-      error.status = response.status; throw error;
+      const message = known[payload?.code] || (response.status === 409 ? "La configuration a changé. Analysez à nouveau la sauvegarde." : response.status === 413 ? "Fichier trop volumineux (8 Mio maximum)." : response.status === 429 ? "Trop de demandes. Patientez une minute." : [401, 403].includes(response.status) ? "Autorisation refusée. Vérifiez votre connexion." : "L’opération a échoué. Aucune configuration partielle n’est conservée.");
+      const error = new Error(message); error.status = response.status; throw error;
     }
-    if (response.status === 204) return null;
     if (binary) {
       const blob = await response.blob();
-      // Reject an HTTP 200 proxy/login page instead of downloading a fake ZIP.
-      const signature = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
-      if (signature[0] !== 0x50 || signature[1] !== 0x4b || signature[2] !== 3 || signature[3] !== 4)
-        throw new Error("Le serveur n’a pas renvoyé une archive ZIP valide. Vérifiez votre connexion puis réessayez.");
+      if (await blob.slice(0, signature.length).text() !== signature)
+        throw new Error("Le serveur n’a pas renvoyé une sauvegarde Feedarr valide.");
       return blob;
     }
     return await response.json();
   } catch (error) {
     if (controller.signal.aborted) throw controller.signal.reason;
-    if (error instanceof TypeError) throw new Error("Connexion au serveur impossible. Vérifiez le réseau puis réessayez.");
+    if (error instanceof TypeError) throw new Error("Connexion interrompue. Vérifiez le résultat avant de réessayer.");
     throw error;
   } finally { clearTimeout(timer); signal?.removeEventListener("abort", abort); }
 }
 
 export function configurationFileError(file) {
-  if (!file) return "Sélectionnez une archive.";
-  if (!/\.zip$/i.test(file.name || "")) return "Format incorrect : sélectionnez une archive ZIP (.zip).";
+  if (!file) return "Sélectionnez une sauvegarde.";
+  if (!/\.feedarr$/i.test(file.name || "")) return "Sélectionnez un fichier .feedarr.";
   if (!file.size) return "Le fichier est vide.";
-  if (file.size > MAX_CONFIGURATION_UPLOAD) return "Fichier trop volumineux (64 Mio maximum).";
+  if (file.size > MAX_CONFIGURATION_UPLOAD) return "Fichier trop volumineux (8 Mio maximum).";
   return "";
 }
 
-export function configurationUpload(file, passphrase) {
-  const error = configurationFileError(file);
-  if (error) throw new Error(error);
-  const body = new FormData(); body.append("passphrase", passphrase); body.append("archive", file); return body;
+export function configurationUpload(file, password) {
+  const error = configurationFileError(file); if (error) throw new Error(error);
+  const body = new FormData(); body.append("password", password); body.append("file", file); return body;
 }
 
 export function downloadConfiguration(blob, browser = window, dom = document) {
-  if (!blob?.size) throw new Error("L’archive reçue est vide. Aucun téléchargement n’a été lancé.");
+  if (!blob?.size) throw new Error("La sauvegarde reçue est vide.");
   const url = browser.URL.createObjectURL(blob);
   try {
-    const link = dom.createElement("a"); link.href = url; link.download = "feedarr-configuration.zip";
+    const link = dom.createElement("a"); link.href = url; link.download = "feedarr-configuration.feedarr";
     dom.body.appendChild(link); try { link.click(); } finally { link.remove(); }
   } finally { browser.setTimeout(() => browser.URL.revokeObjectURL(url), 1000); }
 }
