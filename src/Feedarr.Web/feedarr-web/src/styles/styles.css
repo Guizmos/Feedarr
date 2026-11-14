@@ -718,6 +718,9 @@ body{
   font-size: 20px;
   font-weight: 800;
 }
+.page--top24h .pagehead h1 + .muted{
+  margin-top: 5px;
+}
 .pagehead__divider{
   height: 1px;
   background: var(--panel-border, #d6dbe6);

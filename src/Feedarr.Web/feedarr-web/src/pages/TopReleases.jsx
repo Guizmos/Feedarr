@@ -12,7 +12,6 @@ import { fmtBytes, fmtDateFromTs } from "../utils/formatters.js";
 import useArrApps from "../hooks/useArrApps.js";
 import { normalizeRequestMode } from "../utils/appTypes.js";
 import { getSourceColor } from "../utils/sourceColors.js";
-import { getActiveUiLanguage } from "../app/locale.js";
 import { normalizeCategoryGroupKey } from "../domain/categories/index.js";
 import TopReleasesSubSelectIcon from "./topReleases/components/TopReleasesSubSelectIcon.jsx";
 import {
@@ -641,7 +640,6 @@ export default function TopReleases() {
     return selected?.name || selected?.title || "";
   }, [sourceId, sources]);
 
-  const uiLanguage = getActiveUiLanguage();
   const totalItems = useMemo(
     () => categorySections.reduce((sum, section) => sum + Number(section.count || 0), 0),
     [categorySections]
@@ -650,17 +648,14 @@ export default function TopReleases() {
     if (!windowInfo?.sinceUtc) return "";
     const date = new Date(windowInfo.sinceUtc);
     if (Number.isNaN(date.getTime())) return "";
-    return date.toLocaleString(uiLanguage, { dateStyle: "short", timeStyle: "short" });
-  }, [windowInfo?.sinceUtc, uiLanguage]);
+    return `${date.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" })} ${date.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
+  }, [windowInfo?.sinceUtc]);
   const sortLabel = useMemo(() => getSortLabel(sortUsed), [sortUsed]);
   const dedupeLabel = useMemo(() => getDedupeLabel(dedupeUsed, supportsEntityDedupe), [dedupeUsed, supportsEntityDedupe]);
-  const topSummary = useMemo(() => {
-    const hours = Number(windowInfo?.hours || TOP_HOURS);
-    const field = String(windowInfo?.field || "published_at_ts");
-    const sourceSummary = selectedSourceName ? ` • Source: ${selectedSourceName}` : " • Tous indexeurs";
-    const sinceSummary = sinceLabel ? ` • Depuis ${sinceLabel}` : "";
-    return `Classement ${sortLabel} • Dedup ${dedupeLabel} • Fenetre ${field} sur ${hours}h${sinceSummary} • ${totalItems} items • ${categorySections.length} categories${sourceSummary}`;
-  }, [windowInfo?.hours, windowInfo?.field, selectedSourceName, sinceLabel, totalItems, categorySections.length, sortLabel, dedupeLabel]);
+  const topSummary = useMemo(
+    () => `Classement ${sortLabel} · Depuis ${sinceLabel || "—"} · ${totalItems} items · ${categorySections.length} catégories`,
+    [sortLabel, sinceLabel, totalItems, categorySections.length]
+  );
 
   if (loading) return <Loader />;
   if (err) return <div className="error">{err}</div>;
