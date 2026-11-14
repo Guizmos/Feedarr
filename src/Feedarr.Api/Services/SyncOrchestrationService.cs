@@ -42,6 +42,9 @@ internal sealed record SyncSourcesRunResult(
 
 public sealed class SyncOrchestrationService
 {
+    internal const string AlreadyRunningError = "sync_already_running";
+    // Singleton service: share exclusion across every trigger, retaining only active IDs.
+    private readonly ConcurrentDictionary<long, byte> _runningSources = new();
     private readonly TorznabClient _torznab;
     private readonly SourceRepository _sources;
     private readonly ReleaseRepository _releases;
@@ -115,10 +118,12 @@ public sealed class SyncOrchestrationService
     {
         using var syncCts = CreateManualSyncCancellationSource(requestAborted, _appLifetime.ApplicationStopping);
         var syncCt = syncCts.Token;
+        syncCt.ThrowIfCancellationRequested();
+        if (!TryEnterSource(src.Id)) return new(false, null, null, 0, 0, AlreadyRunningError);
 
         try
         {
-            var result = await ExecuteSourceSyncAsync(src, new ManualSyncPolicy(), rssOnly, syncCt).ConfigureAwait(false);
+            var result = await ExecuteSourceSyncCoreAsync(src, new ManualSyncPolicy(), rssOnly, syncCt).ConfigureAwait(false);
             _providerStats.RecordSyncJob(result.Ok);
 
             return new SyncOrchestrationResult(
@@ -155,6 +160,11 @@ public sealed class SyncOrchestrationService
             _activity.Add(src.Id, "error", "sync", $"Sync ERROR: {safeError}");
             _providerStats.RecordSyncJob(false);
             return new SyncOrchestrationResult(false, null, null, 0, 0, safeError);
+        }
+        finally
+        {
+            // Include manual error/timeout status writes in the protected lifetime.
+            _runningSources.TryRemove(src.Id, out _);
         }
     }
 
@@ -244,6 +254,25 @@ public sealed class SyncOrchestrationService
     }
 
     public async Task<SyncExecutionResult> ExecuteSourceSyncAsync(Source src, SyncPolicy policy, bool rssOnly, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (!TryEnterSource(src.Id))
+            return new(false, src.Id, src.Name ?? "", "", null, null, 0, 0, AlreadyRunningError, 0, 0, 0, 0, 0);
+        try
+        {
+            return await ExecuteSourceSyncCoreAsync(src, policy, rssOnly, ct).ConfigureAwait(false);
+        }
+        finally { _runningSources.TryRemove(src.Id, out _); }
+    }
+
+    private bool TryEnterSource(long sourceId)
+    {
+        if (_runningSources.TryAdd(sourceId, 0)) return true;
+        _log.LogInformation("Sync skipped sourceId={SourceId} reason={Reason}", sourceId, AlreadyRunningError);
+        return false;
+    }
+
+    private async Task<SyncExecutionResult> ExecuteSourceSyncCoreAsync(Source src, SyncPolicy policy, bool rssOnly, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         var input = BuildPlanInput(src, policy, rssOnly);

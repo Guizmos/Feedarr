@@ -1,3 +1,7 @@
+using Dapper;
+using Feedarr.Api.Controllers;
+using Feedarr.Api.Services.Backup;
+using Microsoft.AspNetCore.Mvc;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -198,18 +202,124 @@ public sealed class SyncExecutorParityTests
         return new CategorySnapshot(id, label);
     }
 
+    [Fact]
+    public async Task SameSourceManualAndAuto_DoNotDuplicateRssWritesOrPosterJobs()
+    {
+        using var handler = new GatedFeedHandler();
+        using var c = new SyncTestContext(handler);
+        var source = c.CreateConfiguredSource("Shared", "http://fixture.test/api");
+        c.CountWrites();
+        var first = c.Service.ExecuteManualSyncAsync(source, true, default);
+        await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var second = c.Service.ExecuteAutoSyncSourceAsync(source, default);
+        handler.Release.TrySetResult();
+        Assert.True((await first.WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        var duplicate = await second.WaitAsync(TimeSpan.FromSeconds(10));
+        var writes = c.Writes();
+        Console.WriteLine($"same source: RSS={handler.Calls}, release writes={writes.Releases}, source status writes={writes.Status}, sync history={writes.History}, poster jobs={c.Queue.Jobs}");
+        Assert.False(duplicate.Ok); Assert.Equal("sync_already_running", duplicate.Error);
+        Assert.Equal(1, handler.Calls); Assert.Equal(4, writes.Releases);
+        Assert.Equal(1, writes.Status); Assert.Equal(2, writes.History); Assert.Equal(2, c.Queue.Jobs);
+    }
+
+    [Fact]
+    public async Task DistinctSources_OverlapAndBothComplete()
+    {
+        using var handler = new GatedFeedHandler(); using var c = new SyncTestContext(handler);
+        var a = c.CreateConfiguredSource("A", "http://fixture.test/a");
+        var b = c.CreateConfiguredSource("B", "http://fixture.test/b");
+        var first = c.Service.ExecuteManualSyncAsync(a, true, default);
+        var second = c.Service.ExecuteAutoSyncSourceAsync(b, default);
+        try { Assert.Equal(2, handler.InFlight); Assert.Equal(2, handler.Calls); }
+        finally { handler.Release.TrySetResult(); }
+        Assert.True((await first.WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        Assert.True((await second.WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ErrorOrCancellation_ReleasesSourceForNextSync(bool cancel)
+    {
+        using var handler = new GatedFeedHandler(); using var c = new SyncTestContext(handler);
+        var source = c.CreateConfiguredSource("Retry", "http://fixture.test/api");
+        using var stop = new CancellationTokenSource();
+        var first = c.Service.ExecuteManualSyncAsync(source, true, stop.Token);
+        await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        if (cancel)
+        {
+            stop.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+        }
+        else
+        {
+            handler.Fail = true; handler.Release.TrySetResult();
+            Assert.False((await first.WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        }
+        handler.Fail = false; handler.Release.TrySetResult();
+        Assert.True((await c.Service.ExecuteAutoSyncSourceAsync(source, default).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        Assert.Equal(2, handler.Calls);
+    }
+
+    [Fact]
+    public async Task ManualAndSchedulerApis_ReportBusyWithoutAnotherFetchOrFailedJob()
+    {
+        using var handler = new GatedFeedHandler(); using var c = new SyncTestContext(handler);
+        var source = c.CreateConfiguredSource("Busy", "http://fixture.test/api");
+        var active = c.Service.ExecuteManualSyncAsync(source, true, default);
+        await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        try
+        {
+            var sourcesApi = new SourcesController(null!, c.Sources, null!, c.Releases, c.Activity, null!,
+                new BackupExecutionCoordinator(), c.Service, NullLogger<SourcesController>.Instance);
+            var jobs = c.ProviderStats.IndexerSnapshot().SyncJobs;
+            var manual = Assert.IsType<ConflictObjectResult>(await sourcesApi.Sync(source.Id, true, default));
+            using var manualBody = JsonDocument.Parse(JsonSerializer.Serialize(manual.Value));
+            Assert.Equal("sync_already_running", manualBody.RootElement.GetProperty("error").GetString());
+            var scheduler = new SchedulerController(c.Sources, c.Releases, c.Activity, c.Service, null!, null!, null!, null!,
+                new BackupExecutionCoordinator(), NullLogger<SchedulerController>.Instance);
+            var scheduled = Assert.IsType<ConflictObjectResult>(await scheduler.Run(default));
+            using var body = JsonDocument.Parse(JsonSerializer.Serialize(scheduled.Value));
+            Assert.Equal("sync_already_running", body.RootElement.GetProperty("error").GetString());
+            Assert.Equal(source.Id, Assert.Single(body.RootElement.GetProperty("sourceIds").EnumerateArray()).GetInt64());
+            Assert.Equal(jobs, c.ProviderStats.IndexerSnapshot().SyncJobs);
+            Assert.Equal(1, handler.Calls);
+        }
+        finally { handler.Release.TrySetResult(); await active.WaitAsync(TimeSpan.FromSeconds(10)); }
+    }
+
+    private sealed class GatedFeedHandler : HttpMessageHandler
+    {
+        public readonly TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int Calls, InFlight;
+        public bool Fail;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Interlocked.Increment(ref Calls); Interlocked.Increment(ref InFlight); Started.TrySetResult();
+            try
+            {
+                await Release.Task.WaitAsync(ct);
+                if (Fail) throw new SsrfBlockedException(); // Non-retryable simulated upstream failure.
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(StaticTorznabFeedHandler.BuildRssFeed(), Encoding.UTF8, "application/xml") };
+            }
+            finally { Interlocked.Decrement(ref InFlight); }
+        }
+    }
+
     private sealed record CategorySnapshot(int Id, string? Label);
 
     private sealed class SyncTestContext : IDisposable
     {
         private readonly TestWorkspace _workspace = new();
 
-        public SyncTestContext()
+        public SyncTestContext(HttpMessageHandler? handler = null)
         {
             Options = OptionsFactory.Create(new AppOptions
             {
                 DataDir = _workspace.DataDir,
                 DbFileName = "feedarr.db",
+                RssOnlySync = handler is not null,
                 RssLimitPerCategory = 50,
                 RssLimitGlobalPerSource = 250
             });
@@ -240,7 +350,7 @@ public sealed class SyncExecutorParityTests
             Queue = new AlwaysEnqueuePosterFetchQueue();
 
             var torznab = new TorznabClient(
-                new HttpClient(new StaticTorznabFeedHandler()),
+                new HttpClient(handler ?? new StaticTorznabFeedHandler()),
                 new TorznabRssParser(),
                 NullLogger<TorznabClient>.Instance);
 
@@ -286,6 +396,23 @@ public sealed class SyncExecutorParityTests
             return Sources.Get(sourceId)!;
         }
 
+        public void CountWrites()
+        {
+            using var db = Db.Open();
+            db.Execute("""
+                CREATE TABLE fixture_sync_writes(releases INTEGER,status INTEGER);
+                INSERT INTO fixture_sync_writes VALUES(0,0);
+                CREATE TRIGGER fixture_insert AFTER INSERT ON releases BEGIN UPDATE fixture_sync_writes SET releases=releases+1; END;
+                CREATE TRIGGER fixture_update AFTER UPDATE ON releases BEGIN UPDATE fixture_sync_writes SET releases=releases+1; END;
+                CREATE TRIGGER fixture_status AFTER UPDATE OF last_sync_at_ts ON sources BEGIN UPDATE fixture_sync_writes SET status=status+1; END;
+                """);
+        }
+        public (long Releases, long Status, long History) Writes()
+        {
+            using var db = Db.Open();
+            return db.QuerySingle<(long,long,long)>("SELECT releases,status,(SELECT COUNT(*) FROM activity_log WHERE event_type='sync') FROM fixture_sync_writes");
+        }
+
         public void Dispose()
         {
             _workspace.Dispose();
@@ -302,7 +429,7 @@ public sealed class SyncExecutorParityTests
             });
         }
 
-        private static string BuildRssFeed()
+        internal static string BuildRssFeed()
         {
             var sb = new StringBuilder();
             sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
@@ -330,10 +457,11 @@ public sealed class SyncExecutorParityTests
 
     private sealed class AlwaysEnqueuePosterFetchQueue : IPosterFetchQueue
     {
+        public int Jobs;
         public ValueTask<PosterFetchEnqueueResult> EnqueueAsync(PosterFetchJob job, CancellationToken ct, TimeSpan timeout)
             => ValueTask.FromResult(new PosterFetchEnqueueResult(PosterFetchEnqueueStatus.Enqueued));
         public ValueTask<PosterFetchEnqueueBatchResult> EnqueueManyAsync(IReadOnlyList<PosterFetchJob> jobs, CancellationToken ct, TimeSpan timeout)
-            => ValueTask.FromResult(new PosterFetchEnqueueBatchResult(jobs.Count, 0, 0, 0));
+            { Interlocked.Add(ref Jobs, jobs.Count); return ValueTask.FromResult(new PosterFetchEnqueueBatchResult(jobs.Count, 0, 0, 0)); }
 
         public ValueTask<PosterFetchJob> DequeueAsync(CancellationToken ct)
             => ValueTask.FromCanceled<PosterFetchJob>(ct);

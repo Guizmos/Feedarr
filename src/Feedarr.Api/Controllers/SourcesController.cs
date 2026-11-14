@@ -390,6 +390,8 @@ public sealed class SourcesController : ControllerBase
         if (src is null) return NotFound(new { error = "source not found" });
 
         var result = await _syncOrchestration.ExecuteManualSyncAsync(src, rssOnly ?? false, ct);
+        if (result.Error == SyncOrchestrationService.AlreadyRunningError)
+            return Conflict(new { ok = false, error = result.Error, message = "Synchronisation déjà en cours pour cette source." });
         if (result.Error == SsrfBlockedException.Code) throw new SsrfBlockedException();
         if (!result.Ok)
             return StatusCode(500, new { ok = false, error = "internal server error" });

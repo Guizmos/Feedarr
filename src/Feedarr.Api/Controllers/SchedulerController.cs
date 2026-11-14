@@ -63,7 +63,12 @@ public sealed class SchedulerController : ControllerBase
             .ToList();
 
         _log.LogInformation("Scheduler sync run starting sources={Count}", sources.Count);
-        await _syncOrchestration.ExecuteSourcesAsync(sources, new SchedulerSyncPolicy(), rssOnly: false, ct).ConfigureAwait(false);
+        var run = await _syncOrchestration.ExecuteSourcesDetailedAsync(sources, new SchedulerSyncPolicy(), rssOnly: false, ct).ConfigureAwait(false);
+        var busySourceIds = run.Sources.Where(source => source.ErrorMessage == SyncOrchestrationService.AlreadyRunningError)
+            .Select(source => source.SourceId).ToArray();
+        if (busySourceIds.Length > 0)
+            return Conflict(new { ok = false, error = SyncOrchestrationService.AlreadyRunningError, sourceIds = busySourceIds,
+                message = "Synchronisation déjà en cours pour certaines sources. Les autres sources ont été traitées." });
 
         return Ok(new { ok = true });
     }
