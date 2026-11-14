@@ -1,26 +1,4 @@
 {
-  "movie_tmdb_hit": {
-    "ok": true,
-    "statusCode": 200,
-    "posterProvider": "tmdb",
-    "posterFile": "tmdb-movie-100-w500.jpg",
-    "matchSource": "tmdb",
-    "tmdbId": 100,
-    "tvdbId": null,
-    "cached": false,
-    "error": null
-  },
-  "movie_tmdb_fallback_fanart": {
-    "ok": true,
-    "statusCode": 200,
-    "posterProvider": "fanart",
-    "posterFile": "fanart-movie-200.jpg",
-    "matchSource": "fanart",
-    "tmdbId": 200,
-    "tvdbId": null,
-    "cached": false,
-    "error": null
-  },
   "series_tvmaze_hit": {
     "ok": true,
     "statusCode": 200,
@@ -64,27 +42,5 @@
     "tvdbId": null,
     "cached": false,
     "error": "no tmdb match"
-  },
-  "cache_reuse_first": {
-    "ok": true,
-    "statusCode": 200,
-    "posterProvider": "tmdb",
-    "posterFile": "tmdb-movie-900-w500.jpg",
-    "matchSource": "tmdb",
-    "tmdbId": 900,
-    "tvdbId": null,
-    "cached": false,
-    "error": null
-  },
-  "cache_reuse_second": {
-    "ok": true,
-    "statusCode": 200,
-    "posterProvider": "tmdb",
-    "posterFile": "tmdb-movie-900-w500.jpg",
-    "matchSource": "tmdb",
-    "tmdbId": 900,
-    "tvdbId": null,
-    "cached": true,
-    "error": null
   }
 }

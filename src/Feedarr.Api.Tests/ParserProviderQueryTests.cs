@@ -23,10 +23,8 @@ public sealed class ParserProviderQueryTests
         var requests = rig.TmdbSearchRequests.Where(uri => uri.AbsolutePath.EndsWith("/search/movie")).ToList();
         Assert.NotEmpty(requests);
         Assert.All(requests, uri => Assert.Equal(title, QueryHelpers.ParseQuery(uri.Query)["query"].ToString()));
-        if (year.HasValue)
-            Assert.Contains(requests, uri => QueryHelpers.ParseQuery(uri.Query)["year"].ToString() == year.Value.ToString());
-        else
-            Assert.All(requests, uri => Assert.False(QueryHelpers.ParseQuery(uri.Query).ContainsKey("year")));
+        // V2 keeps the parsed year for scoring, without hiding competing identities at search time.
+        Assert.All(requests, uri => Assert.False(QueryHelpers.ParseQuery(uri.Query).ContainsKey("year")));
     }
 
     [Theory]

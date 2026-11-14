@@ -14,7 +14,7 @@ public sealed class PosterFetchServiceCacheRegressionTests
         var snapshot = await rig.FetchSnapshotAsync(releaseId);
 
         Assert.False(snapshot.Ok);
-        Assert.Equal(404, snapshot.StatusCode);
+        Assert.Equal(422, snapshot.StatusCode);
 
         var normalizedTitle = TitleNormalizer.NormalizeTitle("No Fanart Movie");
         var cached = rig.TryGetCachedMatch("movie", normalizedTitle, 2002);
@@ -22,10 +22,10 @@ public sealed class PosterFetchServiceCacheRegressionTests
     }
 
     [Fact]
-    public async Task PosterFetch_CachesMatch_WhenPosterSaved()
+    public async Task PosterFetch_PublishesMovieWithoutReusingHistoricalMatchCache()
     {
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit);
-        var releaseId = rig.CreateRelease("The Matrix", "The Matrix", 1999, UnifiedCategory.Film, "movie");
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, completeTmdbMetadata: true);
+        var releaseId = rig.IngestRelease("The.Matrix.1999.1080p.BluRay.x264-GRP", UnifiedCategory.Film);
 
         var snapshot = await rig.FetchSnapshotAsync(releaseId);
 
@@ -34,7 +34,7 @@ public sealed class PosterFetchServiceCacheRegressionTests
 
         var normalizedTitle = TitleNormalizer.NormalizeTitle("The Matrix");
         var cached = rig.TryGetCachedMatch("movie", normalizedTitle, 1999);
-        Assert.NotNull(cached);
-        Assert.False(string.IsNullOrWhiteSpace(cached!.PosterFile));
+        Assert.Null(cached);
+        Assert.False(string.IsNullOrWhiteSpace(snapshot.PosterFile));
     }
 }

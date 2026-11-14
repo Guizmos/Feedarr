@@ -14,7 +14,7 @@ public sealed class PosterJobDeadlineTests
     public async Task SlowStagesShareGlobalBudgetAndNextFastJobStillSucceeds()
     {
         var slow = true; var active = 0; var cancelled = 0; var calls = 0; var responses = 0; var disposed = 0;
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, tmdbResponse: async (request, ct) =>
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, completeTmdbMetadata: true, tmdbResponse: async (request, ct) =>
         {
             Interlocked.Increment(ref calls); Interlocked.Increment(ref active);
             try
@@ -64,7 +64,7 @@ public sealed class PosterJobDeadlineTests
     public async Task GlobalDeadlineAlsoInterruptsRetryBackoffWithoutStartingAnotherAttempt()
     {
         var calls = 0; var active = 0;
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, tmdbResponse: async (_, ct) =>
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, completeTmdbMetadata: true, tmdbResponse: async (_, ct) =>
         {
             Interlocked.Increment(ref calls); Interlocked.Increment(ref active);
             try { await Task.Delay(Timeout.Infinite, ct); return null; }
@@ -88,20 +88,25 @@ public sealed class PosterJobDeadlineTests
     {
         var slow = false; var active = 0;
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, tmdbResponse: async (_, ct) =>
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, completeTmdbMetadata: true, tmdbResponse: async (_, ct) =>
         {
             Interlocked.Increment(ref active);
             try { if (slow) { started.TrySetResult(); await Task.Delay(Timeout.Infinite, ct); } return null; }
             finally { Interlocked.Decrement(ref active); }
         });
-        var id = Release(rig); Assert.True((await rig.FetchAsync(id)).Ok);
+        var id = Release(rig);
+        var initial = await rig.FetchAsync(id);
+        Assert.True(initial.Ok, System.Text.Json.JsonSerializer.Serialize(initial.Body));
         var before = rig.GetReleaseForPoster(id)!;
         var file = Path.Combine(rig.Posters.PostersDirPath, before.PosterFile!);
         var bytes = await File.ReadAllBytesAsync(file);
         slow = true;
         var processor = Processor(rig, new PosterFetchQueue(NullLogger<PosterFetchQueue>.Instance), 10, serviceCancellation ? 10 : 1, 3);
         using var stop = new CancellationTokenSource();
-        var task = processor.ProcessJobAsync(Job(id), 1, stop.Token);
+        // Established identities no longer trigger network work. Cancel a pending job
+        // while checking that the existing poster and metadata remain intact.
+        var pending = rig.IngestRelease("Pending.Movie.1999.1080p.BluRay.x264-GRP", UnifiedCategory.Film);
+        var task = processor.ProcessJobAsync(Job(pending), 1, stop.Token);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(3));
         if (serviceCancellation) stop.Cancel();
         Assert.False((await task.WaitAsync(TimeSpan.FromSeconds(2))).Succeeded);
@@ -109,14 +114,14 @@ public sealed class PosterJobDeadlineTests
         Assert.Equal(bytes, await File.ReadAllBytesAsync(file));
         Assert.Equal(before.ExtOverview, rig.GetReleaseForPoster(id)!.ExtOverview);
         Assert.Empty(Directory.EnumerateFiles(rig.Posters.PostersDirPath, "*.tmp", SearchOption.AllDirectories));
-        if (!serviceCancellation) Assert.Equal("time budget exceeded", rig.GetReleaseForPoster(id)!.PosterLastError);
+        if (!serviceCancellation) Assert.Equal("time budget exceeded", rig.GetReleaseForPoster(pending)!.PosterLastError);
     }
 
     [Fact]
     public async Task PerAttemptTimeoutStillRetriesSuccessfullyWithinGlobalBudget()
     {
         var calls = 0;
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, tmdbResponse: (_, _) =>
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit, completeTmdbMetadata: true, tmdbResponse: (_, _) =>
             Interlocked.Increment(ref calls) == 1
                 ? Task.FromException<HttpResponseMessage?>(new OperationCanceledException("simulated HTTP timeout"))
                 : Task.FromResult<HttpResponseMessage?>(null));
@@ -138,7 +143,7 @@ public sealed class PosterJobDeadlineTests
         }
     }
 
-    private static long Release(PosterMatchingContractTestRig rig) => rig.CreateRelease("The.Matrix.1999.1080p", "The Matrix", 1999, UnifiedCategory.Film, "movie");
+    private static long Release(PosterMatchingContractTestRig rig) => rig.IngestRelease("The.Matrix.1999.1080p.BluRay.x264-GRP", UnifiedCategory.Film);
     private static PosterFetchJob Job(long id) => new(id, "The Matrix", 1999, UnifiedCategory.Film, true, 0, null, null);
     private static PosterFetchJobProcessor Processor(PosterMatchingContractTestRig rig, PosterFetchQueue queue, int request, int total, int attempts) =>
         new(NullLogger<PosterFetchJobProcessor>.Instance, queue, rig.Posters, rig.Repository, null!,

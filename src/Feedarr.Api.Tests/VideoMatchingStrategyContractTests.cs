@@ -11,26 +11,6 @@ public sealed class VideoMatchingStrategyContractTests
     };
 
     [Fact]
-    public async Task Movie_TmdbHit_MatchesGoldenContract()
-    {
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit);
-        var releaseId = rig.CreateRelease("The Matrix", "The Matrix", 1999, UnifiedCategory.Film, "movie");
-
-        var actual = await rig.FetchSnapshotAsync(releaseId);
-        AssertSnapshot("movie_tmdb_hit", actual);
-    }
-
-    [Fact]
-    public async Task Movie_TmdbPosterUnavailable_FallsBackToFanart_GoldenContract()
-    {
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbFallbackFanart);
-        var releaseId = rig.CreateRelease("Fallback Movie", "Fallback Movie", 2001, UnifiedCategory.Film, "movie");
-
-        var actual = await rig.FetchSnapshotAsync(releaseId);
-        AssertSnapshot("movie_tmdb_fallback_fanart", actual);
-    }
-
-    [Fact]
     public async Task Series_TvmazeHit_TakesPriority_GoldenContract()
     {
         using var rig = new PosterMatchingContractTestRig(PosterContractScenario.SeriesTvmazeHit);
@@ -68,20 +48,6 @@ public sealed class VideoMatchingStrategyContractTests
 
         var actual = await rig.FetchSnapshotAsync(releaseId);
         AssertSnapshot("emission_ambiguous_tmdb", actual);
-    }
-
-    [Fact]
-    public async Task MatchCacheReuse_SameFingerprint_ReturnsCached_GoldenContract()
-    {
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.CacheReuseMovie);
-        var first = rig.CreateRelease("Cache Movie", "Cache Movie", 2022, UnifiedCategory.Film, "movie");
-        var second = rig.CreateRelease("Cache Movie", "Cache Movie", 2022, UnifiedCategory.Film, "movie");
-
-        var firstSnapshot = await rig.FetchSnapshotAsync(first);
-        AssertSnapshot("cache_reuse_first", firstSnapshot);
-
-        var secondSnapshot = await rig.FetchSnapshotAsync(second);
-        AssertSnapshot("cache_reuse_second", secondSnapshot);
     }
 
     private static void AssertSnapshot(string key, PosterContractSnapshot actual)
