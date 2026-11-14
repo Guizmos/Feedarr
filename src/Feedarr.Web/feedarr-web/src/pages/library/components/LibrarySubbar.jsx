@@ -193,7 +193,7 @@ export default function LibrarySubbar({
           <option value={100}>100</option>
           <option value={200}>200</option>
           <option value={500}>500</option>
-          <option value="all">Tous</option>
+          <option value="all">Tous (par pages)</option>
         </SubSelectIcon>
       </div>
 

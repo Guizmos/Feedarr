@@ -26,13 +26,13 @@ public sealed class FeedController : ControllerBase
     // Tri-state schema probe cache: 0=unknown, 1=exists, -1=absent. Written once per process lifetime.
     private static int _schemaHasCategories;
     private static int _schemaHasFts;
-    private static readonly Regex SearchTokenRegex = new(@"[a-zA-Z0-9_-]+", RegexOptions.Compiled);
+    private static readonly Regex SearchTokenRegex = new(@"[\p{L}\p{N}\p{M}_-]+", RegexOptions.Compiled);
     private const int MaxFtsTokenLength = 64;
     private const int TopMaxHours = 24 * 7;
     private const int TopMaxTake = 50;
     private const int PagedFeedDefaultLimit = 50;
     private const int PagedFeedMaxLimit = 200;
-    private const int PagedFeedCursorVersion = 1;
+    private const int PagedFeedCursorVersion = 2;
     private const int PagedFeedMaxCursorLength = 2048;
     private const string PagedPublishedAtSql =
         "CASE WHEN releases.published_at_ts IS NULL OR releases.published_at_ts < 0 THEN 0 ELSE releases.published_at_ts END";
@@ -137,6 +137,8 @@ public sealed class FeedController : ControllerBase
 
     private class FeedRow
     {
+        [System.Text.Json.Serialization.JsonIgnore]
+        public string? PageSortValue { get; set; }
         public long Id { get; set; }
         public long SourceId { get; set; }
         public string? Title { get; set; }
@@ -210,8 +212,8 @@ public sealed class FeedController : ControllerBase
         public long LastId { get; set; }
         public long SnapshotMaxId { get; set; }
         public string? QueryFingerprint { get; set; }
-        public long? LastPrimaryValue { get; set; }
         public long? LastSecondaryValue { get; set; }
+        public string? LastSortValue { get; set; }
     }
 
     private static string? CanonicalizeUnifiedCategoryKey(string? key)
@@ -280,7 +282,7 @@ public sealed class FeedController : ControllerBase
             return null;
 
         var tokens = SearchTokenRegex
-            .Matches(input.ToLowerInvariant())
+            .Matches(input.Normalize(NormalizationForm.FormC).ToLowerInvariant())
             .Select(m => m.Value.Trim())
             .Where(t => t.Length >= 2 && t.Length <= MaxFtsTokenLength)
             .Distinct()
@@ -583,7 +585,12 @@ public sealed class FeedController : ControllerBase
         [FromQuery] int? seen,
         [FromQuery] int? minSeeders,
         [FromQuery(Name = "sourceId")] long[]? sourceIds,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        [FromQuery] string direction = "desc",
+        [FromQuery] string? quality = null,
+        [FromQuery] long? publishedAfter = null,
+        [FromQuery] bool missingPoster = false,
+        [FromQuery] bool categorized = false)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -592,8 +599,12 @@ public sealed class FeedController : ControllerBase
             return BadRequest(new { error = "invalid_limit", message = $"limit must be between 1 and {PagedFeedMaxLimit}" });
 
         var effectiveSort = string.IsNullOrWhiteSpace(sort) ? "date" : sort.Trim().ToLowerInvariant();
-        if (effectiveSort is not ("date" or "seeders" or "grabs" or "score"))
-            return BadRequest(new { error = "invalid_sort", message = "sort must be date, seeders, grabs, or score" });
+        if (effectiveSort is not ("date" or "seeders" or "grabs" or "score" or "title" or "source" or "category" or "episode" or "quality" or "codec" or "size"))
+            return BadRequest(new { error = "invalid_sort", message = "unsupported sort" });
+
+        if (direction is not ("asc" or "desc") || publishedAfter is < 0)
+            return BadRequest(new { error = "invalid_filters" });
+        quality = string.IsNullOrWhiteSpace(quality) ? null : quality.Trim().ToLowerInvariant();
 
         if (seen is not null && seen is not 0 and not 1)
             return BadRequest(new { error = "invalid_seen", message = "seen must be 0 or 1" });
@@ -623,8 +634,9 @@ public sealed class FeedController : ControllerBase
             normalizedCategory,
             seen,
             minSeeders,
-            normalizedSourceIds);
+            normalizedSourceIds, direction, quality, publishedAfter, missingPoster, categorized);
 
+        var textSort = effectiveSort is "title" or "source" or "category" or "codec";
         PagedFeedCursor? decodedCursor = null;
         if (!string.IsNullOrWhiteSpace(cursor))
         {
@@ -638,7 +650,7 @@ public sealed class FeedController : ControllerBase
                 decodedCursor.SnapshotMaxId <= 0 ||
                 decodedCursor.LastId > decodedCursor.SnapshotMaxId ||
                 decodedCursor.QueryFingerprint?.Length != 64 ||
-                (effectiveSort != "date" && decodedCursor.LastPrimaryValue is null) ||
+                (!textSort && decodedCursor.LastSortValue is null) ||
                 (effectiveSort == "grabs" && decodedCursor.LastSecondaryValue is null))
             {
                 return BadRequest(new { error = "invalid_cursor", message = "cursor is invalid or unsupported" });
@@ -661,6 +673,12 @@ public sealed class FeedController : ControllerBase
         var resolvedCategoryKeySql = hasCategories
             ? ResolvedTopCategoryKeySql
             : $"COALESCE(NULLIF(releases.top_category_key, ''), {UnifiedCategoryToKeySql}, {TitleHeuristicTopCategoryKeySql})";
+
+        var sortExpression = PagedSortExpression(effectiveSort, resolvedCategoryKeySql);
+        if (textSort) conn.CreateFunction<string?, string>("feed_lower", value => (value ?? string.Empty).ToLowerInvariant(), isDeterministic: true);
+        var comparison = direction == "asc" ? ">" : "<";
+        var sqlDirection = direction == "asc" ? "ASC" : "DESC";
+        var sortParameter = textSort ? "@lastSortValue" : "CAST(@lastSortValue AS INTEGER)";
 
         var sourceWhere = new List<string> { "sources.enabled = 1" };
         var args = new DynamicParameters();
@@ -722,17 +740,21 @@ public sealed class FeedController : ControllerBase
             args.Add("minSeeders", minSeeders.Value);
         }
 
-        if (decodedCursor is not null)
+        if (categorized) where.Add($"({resolvedCategoryKeySql}) IS NOT NULL");
+        if (publishedAfter is not null)
         {
-            where.Add(BuildPagedFeedKeysetSql(effectiveSort));
-            args.Add("lastPublishedAt", decodedCursor.LastPublishedAt);
-            args.Add("lastId", decodedCursor.LastId);
-            if (decodedCursor.LastPrimaryValue is not null)
-                args.Add("lastPrimaryValue", decodedCursor.LastPrimaryValue.Value);
-            if (decodedCursor.LastSecondaryValue is not null)
-                args.Add("lastSecondaryValue", decodedCursor.LastSecondaryValue.Value);
+            where.Add("releases.published_at_ts >= @publishedAfter");
+            args.Add("publishedAfter", publishedAfter);
         }
-
+        if (missingPoster) where.Add("COALESCE(releases.poster_file, me.poster_file, '') = ''");
+        // Facets cover the matching catalog, not just the current page. Do not narrow
+        // them by the selected quality/category, so the user can change either filter.
+        var facetWhere = where.Where(w => !w.Contains("= @unifiedCategory")).ToList();
+        if (quality is not null)
+        {
+            where.Add("lower(trim(COALESCE(releases.resolution, ''))) = @quality");
+            args.Add("quality", quality);
+        }
         var categoryColumns = hasCategories
             ? $"sc.name as categoryName, ({resolvedCategoryKeySql}) as unifiedCategoryKey, ({ResolvedTopCategoryLabelSql}) as unifiedCategoryLabel,"
             : $"NULL as categoryName, ({resolvedCategoryKeySql}) as unifiedCategoryKey, NULL as unifiedCategoryLabel,";
@@ -743,8 +765,27 @@ public sealed class FeedController : ControllerBase
               """
             : string.Empty;
 
+        if (decodedCursor is not null)
+        {
+            var tail = $"({PagedPublishedAtSql}, releases.id) {comparison} (@lastPublishedAt, @lastId)";
+            if (effectiveSort == "grabs")
+                tail = $"({PagedSeedersSql} {comparison} @lastSecondaryValue OR ({PagedSeedersSql} = @lastSecondaryValue AND {tail}))";
+            where.Add($"({sortExpression} {comparison} {sortParameter} OR ({sortExpression} = {sortParameter} AND {tail}))");
+            // Text anchors are looked up by primary key: never put a potentially
+            // long title/source name into the bounded opaque cursor.
+            var lastSortValue = textSort
+                ? conn.ExecuteScalar<string>($"SELECT {sortExpression} FROM releases INNER JOIN sources ON sources.id = releases.source_id {categoryJoin} WHERE releases.id = @id", new { id = decodedCursor.LastId })
+                : decodedCursor.LastSortValue;
+            if (lastSortValue is null) return BadRequest(new { error = "invalid_cursor", message = "cursor anchor is unavailable; refresh the results" });
+            args.Add("lastSortValue", lastSortValue);
+            args.Add("lastPublishedAt", decodedCursor.LastPublishedAt);
+            args.Add("lastId", decodedCursor.LastId);
+            args.Add("lastSecondaryValue", decodedCursor.LastSecondaryValue);
+        }
+
         var sql = $"""
         SELECT
+          {(textSort ? "NULL" : $"CAST({sortExpression} AS TEXT)")} as pageSortValue,
           releases.id as id,
           releases.source_id as sourceId,
           releases.title,
@@ -811,7 +852,7 @@ public sealed class FeedController : ControllerBase
         {categoryJoin}
         LEFT JOIN release_arr_status ras ON ras.release_id = releases.id
         WHERE {string.Join(" AND ", where)}
-        ORDER BY {BuildPagedFeedOrderSql(effectiveSort)}
+        ORDER BY {sortExpression} {sqlDirection}, {(effectiveSort == "grabs" ? PagedSeedersSql + " " + sqlDirection + "," : "")} {PagedPublishedAtSql} {sqlDirection}, releases.id {sqlDirection}
         LIMIT @lim;
         """;
 
@@ -835,14 +876,26 @@ public sealed class FeedController : ControllerBase
                 LastId = last.Id,
                 SnapshotMaxId = snapshotMaxId,
                 QueryFingerprint = fingerprint,
-                LastPrimaryValue = GetPagedFeedPrimaryValue(effectiveSort, last),
+                LastSortValue = last.PageSortValue,
                 LastSecondaryValue = effectiveSort == "grabs" ? last.Seeders ?? 0 : null
             });
+        }
+
+        object? facets = null;
+        if (decodedCursor is null)
+        {
+            var facetFrom = $"FROM releases INNER JOIN sources ON sources.id = releases.source_id LEFT JOIN media_entities me ON me.id = releases.entity_id {categoryJoin} WHERE {string.Join(" AND ", facetWhere)}";
+            facets = new
+            {
+                categories = conn.Query<string>($"SELECT DISTINCT ({resolvedCategoryKeySql}) {facetFrom} AND ({resolvedCategoryKeySql}) IS NOT NULL ORDER BY 1", args).ToArray(),
+                qualities = conn.Query<string>($"SELECT DISTINCT trim(releases.resolution) {facetFrom} AND COALESCE(trim(releases.resolution), '') <> '' ORDER BY 1", args).ToArray()
+            };
         }
 
         return Ok(new
         {
             items = rows,
+            facets,
             pagination = new
             {
                 limit = effectiveLimit,
@@ -853,7 +906,7 @@ public sealed class FeedController : ControllerBase
             query = new
             {
                 sort = effectiveSort,
-                direction = "desc",
+                direction,
                 q = normalizedQuery,
                 sourceIds = normalizedSourceIds,
                 unifiedCategory = normalizedCategory,
@@ -863,39 +916,20 @@ public sealed class FeedController : ControllerBase
         });
     }
 
-    private static string BuildPagedFeedOrderSql(string sort)
+    private static string PagedSortExpression(string sort, string categorySql) => sort switch
     {
-        return sort switch
-        {
-            "seeders" => $"{PagedSeedersSql} DESC, {PagedPublishedAtSql} DESC, releases.id DESC",
-            "grabs" => $"{PagedGrabsSql} DESC, {PagedSeedersSql} DESC, {PagedPublishedAtSql} DESC, releases.id DESC",
-            "score" => $"{PagedScoreSql} DESC, {PagedPublishedAtSql} DESC, releases.id DESC",
-            _ => $"{PagedPublishedAtSql} DESC, releases.id DESC"
-        };
-    }
-
-    private static string BuildPagedFeedKeysetSql(string sort)
-    {
-        var dateAndId = $"({PagedPublishedAtSql} < @lastPublishedAt OR ({PagedPublishedAtSql} = @lastPublishedAt AND releases.id < @lastId))";
-        return sort switch
-        {
-            "seeders" => $"({PagedSeedersSql} < @lastPrimaryValue OR ({PagedSeedersSql} = @lastPrimaryValue AND {dateAndId}))",
-            "grabs" => $"({PagedGrabsSql} < @lastPrimaryValue OR ({PagedGrabsSql} = @lastPrimaryValue AND ({PagedSeedersSql} < @lastSecondaryValue OR ({PagedSeedersSql} = @lastSecondaryValue AND {dateAndId}))))",
-            "score" => $"({PagedScoreSql} < @lastPrimaryValue OR ({PagedScoreSql} = @lastPrimaryValue AND {dateAndId}))",
-            _ => dateAndId
-        };
-    }
-
-    private static long? GetPagedFeedPrimaryValue(string sort, FeedRow row)
-    {
-        return sort switch
-        {
-            "seeders" => row.Seeders ?? 0,
-            "grabs" => row.Grabs ?? 0,
-            "score" => ((long)(row.Grabs ?? 0) * 5L) + (row.Seeders ?? 0),
-            _ => null
-        };
-    }
+        "seeders" => PagedSeedersSql,
+        "grabs" => PagedGrabsSql,
+        "score" => PagedScoreSql,
+        "title" => "feed_lower(COALESCE(NULLIF(releases.title_clean, ''), releases.title, ''))",
+        "source" => "feed_lower(COALESCE(sources.name, ''))",
+        "category" => $"CASE ({categorySql}) {string.Join(" ", CategoryGroupCatalog.CanonicalKeys.Select(key => $"WHEN '{key}' THEN '{CategoryGroupCatalog.LabelForKey(key).ToLowerInvariant().Replace("'", "''")}'"))} ELSE '' END",
+        "codec" => "feed_lower(COALESCE(releases.codec, ''))",
+        "size" => "COALESCE(releases.size_bytes, 0)",
+        "episode" => "(MAX(COALESCE(releases.season, 0), 0) * 1000 + MAX(COALESCE(releases.episode, 0), 0))",
+        "quality" => "CASE WHEN lower(releases.resolution) LIKE '%2160%' OR lower(releases.resolution) LIKE '%4k%' THEN 4 WHEN releases.resolution LIKE '%1080%' THEN 3 WHEN releases.resolution LIKE '%720%' THEN 2 WHEN releases.resolution LIKE '%480%' THEN 1 ELSE 0 END",
+        _ => PagedPublishedAtSql
+    };
 
     private static string BuildPagedFeedFingerprint(
         string sort,
@@ -903,7 +937,8 @@ public sealed class FeedController : ControllerBase
         string? unifiedCategory,
         int? seen,
         int? minSeeders,
-        IReadOnlyList<long> sourceIds)
+        IReadOnlyList<long> sourceIds,
+        string direction, string? quality, long? publishedAfter, bool missingPoster, bool categorized)
     {
         var canonical = string.Join("\n", new[]
         {
@@ -912,7 +947,9 @@ public sealed class FeedController : ControllerBase
             $"unifiedCategory={unifiedCategory ?? string.Empty}",
             $"seen={seen?.ToString() ?? string.Empty}",
             $"minSeeders={minSeeders?.ToString() ?? string.Empty}",
-            $"sourceIds={string.Join(',', sourceIds)}"
+            $"sourceIds={string.Join(',', sourceIds)}",
+            $"direction={direction}", $"quality={quality}", $"publishedAfter={publishedAfter}",
+            $"missingPoster={missingPoster}", $"categorized={categorized}"
         });
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }

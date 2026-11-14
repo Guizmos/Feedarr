@@ -490,6 +490,105 @@ public sealed class FeedCursorPaginationTests
         Assert.Equal(2, document.RootElement.GetArrayLength());
     }
 
+    [Theory]
+    [InlineData("Amélie", "Amélie")]
+    [InlineData("Amelie", "Amélie")]
+    [InlineData("Ame\u0301lie", "Amélie")]
+    [InlineData("Pokémon", "Pokémon")]
+    [InlineData("Pokemon", "Pokémon")]
+    [InlineData("Poke\u0301mon", "Pokémon")]
+    public void Releases_UnicodeSearchFindsOldTitlesBeyondLegacyWindow(string query, string title)
+    {
+        using var context = new FeedTestContext();
+        var source = context.InsertSource("unicode");
+        context.InsertReleases(source, 1200, 20_000);
+        var wanted = context.InsertRelease(source, "wanted", title, 1, "films", "Film");
+        var legacy = Assert.IsType<OkObjectResult>(context.Controller.Latest(source, 1500, null, null, null, null));
+        using var window = SerializeHttpJson(legacy.Value);
+        Assert.Equal(500, window.RootElement.GetArrayLength());
+        Assert.DoesNotContain(window.RootElement.EnumerateArray(), item => Id(item) == wanted);
+        using var page = GetPage(context.Controller, 50, q: query);
+        Assert.Equal(wanted, Id(Assert.Single(Items(page))));
+        // The historical endpoint shares the same fixed tokenization.
+        using var searchedLegacy = SerializeHttpJson(Assert.IsType<OkObjectResult>(context.Controller.Latest(source, 50, query, null, null, null)).Value);
+        Assert.Equal(wanted, Id(Assert.Single(searchedLegacy.RootElement.EnumerateArray())));
+    }
+
+    [Fact]
+    public void Releases_LargeCatalog_AllLibrarySortsAndCombinedFiltersAreGlobalAndBounded()
+    {
+        using var context = new FeedTestContext();
+        var first = context.InsertSource("alpha");
+        var second = context.InsertSource("zulu");
+        context.InsertSortableReleases(first, 1200, 20_000);
+        context.InsertSortableReleases(second, 1200, 20_000);
+        context.ConfigureLibraryFields();
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        List<JsonElement> Read(string sort = "date", string direction = "desc", string? quality = null, long? after = null, bool missing = false)
+        {
+            var result = new List<JsonElement>();
+            string? cursor = null;
+            do
+            {
+                using var page = GetPage(context.Controller, 200, cursor: cursor, sort: sort, direction: direction,
+                    quality: quality, publishedAfter: after, missingPoster: missing, q: "Wanted", unifiedCategory: "films", sourceIds: [first, second], seen: 0);
+                Assert.InRange(Items(page).Count, 1, 200);
+                result.AddRange(Items(page).Select(item => item.Clone()));
+                cursor = Pagination(page).GetProperty("nextCursor").GetString();
+            } while (cursor is not null);
+            Assert.Equal(result.Count, result.Select(Id).Distinct().Count());
+            return result;
+        }
+        var baseline = Read();
+        Assert.Equal(2400, baseline.Count);
+        foreach (var direction in new[] { "asc", "desc" })
+        foreach (var sort in new[] { "date", "title", "source", "category", "episode", "quality", "codec", "size", "seeders", "grabs", "score" })
+        {
+            IComparable Key(JsonElement item) => sort switch
+            {
+                "title" => item.GetProperty("title").GetString()!.ToLowerInvariant(),
+                "source" => SourceId(item) == first ? "alpha" : "zulu",
+                "category" => "films",
+                "codec" => item.GetProperty("codec").GetString()!,
+                "size" => item.GetProperty("sizeBytes").GetInt64(),
+                "episode" => item.GetProperty("season").GetInt64() * 1000 + item.GetProperty("episode").GetInt64(),
+                "quality" => item.GetProperty("resolution").GetString() == "1080p" ? 3L : 2L,
+                "seeders" => item.GetProperty("seeders").GetInt64(),
+                "grabs" => item.GetProperty("grabs").GetInt64(),
+                "score" => item.GetProperty("grabs").GetInt64() * 5 + item.GetProperty("seeders").GetInt64(),
+                _ => item.GetProperty("publishedAt").GetInt64()
+            };
+            var comparer = Comparer<IComparable>.Create((a, b) => a is string text ? StringComparer.Ordinal.Compare(text, (string)b) : a.CompareTo(b));
+            var expected = direction == "asc" ? baseline.OrderBy(Key, comparer) : baseline.OrderByDescending(Key, comparer);
+            if (sort == "grabs") expected = direction == "asc" ? expected.ThenBy(i => i.GetProperty("seeders").GetInt64()) : expected.ThenByDescending(i => i.GetProperty("seeders").GetInt64());
+            expected = direction == "asc"
+                ? expected.ThenBy(i => i.GetProperty("publishedAt").GetInt64()).ThenBy(Id)
+                : expected.ThenByDescending(i => i.GetProperty("publishedAt").GetInt64()).ThenByDescending(Id);
+            Assert.Equal(expected.Select(Id), Read(sort, direction).Select(Id));
+        }
+        var filtered = Read("size", "asc", "1080p", 19_000, true);
+        Assert.Equal(baseline.Where(i => i.GetProperty("resolution").GetString() == "1080p" && i.GetProperty("publishedAt").GetInt64() >= 19_000 && i.GetProperty("posterUrl").ValueKind == JsonValueKind.Null).OrderBy(i => i.GetProperty("sizeBytes").GetInt64()).ThenBy(i => i.GetProperty("publishedAt").GetInt64()).ThenBy(Id).Select(Id), filtered.Select(Id));
+        using var firstPage = GetPage(context.Controller, 1, quality: "1080p");
+        Assert.Contains("720p", firstPage.RootElement.GetProperty("facets").GetProperty("qualities").EnumerateArray().Select(i => i.GetString()));
+        var cursor = Pagination(firstPage).GetProperty("nextCursor").GetString();
+        AssertError(context.Controller.Releases(1, cursor, "date", null, null, null, null, null, quality: "720p"), "cursor_query_mismatch");
+        Console.WriteLine($"Catalog: 2400 rows, 22 sort/direction traversals, pages <= 200, combined matches={filtered.Count}, elapsed={watch.ElapsedMilliseconds}ms");
+    }
+
+    [Fact]
+    public void Releases_LongUnicodeTitlesKeepTextCursorsBounded()
+    {
+        using var context = new FeedTestContext();
+        var source = context.InsertSource("long-title");
+        var first = context.InsertRelease(source, "long-a", new string('É', 3000), 2, "films", "Film");
+        var second = context.InsertRelease(source, "long-b", new string('é', 3000), 1, "films", "Film");
+        using var page = GetPage(context.Controller, 1, sort: "title");
+        var cursor = Pagination(page).GetProperty("nextCursor").GetString();
+        Assert.True(cursor!.Length <= 2048);
+        using var next = GetPage(context.Controller, 1, cursor: cursor, sort: "title");
+        Assert.Equal(new[] { first, second }, Items(page).Concat(Items(next)).Select(Id));
+    }
+
     private static JsonDocument GetPage(
         FeedController controller,
         int limit,
@@ -499,10 +598,14 @@ public sealed class FeedCursorPaginationTests
         int? seen = null,
         int? minSeeders = null,
         long[]? sourceIds = null,
-        string sort = "date")
+        string sort = "date",
+        string direction = "desc",
+        string? quality = null,
+        long? publishedAfter = null,
+        bool missingPoster = false)
     {
         var result = Assert.IsType<OkObjectResult>(
-            controller.Releases(limit, cursor, sort, q, unifiedCategory, seen, minSeeders, sourceIds));
+            controller.Releases(limit, cursor, sort, q, unifiedCategory, seen, minSeeders, sourceIds, direction: direction, quality: quality, publishedAfter: publishedAfter, missingPoster: missingPoster));
         return SerializeHttpJson(result.Value);
     }
 
@@ -585,6 +688,17 @@ public sealed class FeedCursorPaginationTests
                     transaction);
             }
             transaction.Commit();
+        }
+
+        public void ConfigureLibraryFields()
+        {
+            using var conn = _db.Open();
+            conn.Execute("""
+                UPDATE releases SET resolution = CASE WHEN id % 2 = 0 THEN '1080p' ELSE '720p' END,
+                    codec = CASE WHEN id % 3 = 0 THEN 'x265' ELSE 'x264' END,
+                    season = id % 4, episode = id % 20, size_bytes = (id % 37) * 1000,
+                    poster_file = CASE WHEN id % 5 = 0 THEN 'fixture.jpg' ELSE NULL END;
+                """);
         }
 
         public void InsertSortableReleases(long sourceId, int count, long firstPublishedAt)

@@ -28,12 +28,11 @@ import {
   normalizeTitleKey,
   sortManualResultsBySize,
 } from "./utils/helpers.js";
-import { loadSourceFeeds, sourceFailureMessage } from "./utils/sourceFeeds.js";
-import { buildFeedParams } from "./utils/feedParams.js";
+import { buildFeedParams, loadLibraryPage } from "./utils/feedParams.js";
 import { ARR_STATUS_TTL_MS, ARR_STATUS_BATCH_SIZE } from "./utils/constants.js";
 import useLibraryFilters from "./hooks/useLibraryFilters.js";
 import useLibrarySelection from "./hooks/useLibrarySelection.js";
-import useLibraryDerivedData from "./hooks/useLibraryDerivedData.js";
+import useLibraryDerivedData, { matchesApplicationFilter } from "./hooks/useLibraryDerivedData.js";
 import LibraryGrid from "./components/LibraryGrid.jsx";
 import LibraryList from "./components/LibraryList.jsx";
 import LibraryBanner from "./components/LibraryBanner.jsx";
@@ -233,7 +232,6 @@ export default function Library() {
   const [sourcesError, setSourcesError] = useState("");
   const [sourcesLoading, setSourcesLoading] = useState(true);
   const [sourcesRetry, setSourcesRetry] = useState(0);
-  const [sourceWarning, setSourceWarning] = useState("");
   const enabledSources = useMemo(
     () => (sources || []).filter((s) => Number(s.enabled ?? 1) === 1),
     [sources]
@@ -284,6 +282,9 @@ export default function Library() {
 
   // Items
   const [items, setItems] = useState([]);
+  const [facets, setFacets] = useState(null);
+  const [page, setPage] = useState({ cursor: null, nextCursor: null, previous: [] });
+  const pageParamsRef = useRef(null);
 
   // Refs
   const posterRefreshRef = useRef({ attempts: 0, timer: null });
@@ -377,7 +378,15 @@ export default function Library() {
   );
 
   // Load items
-  const load = useCallback(async () => {
+  const filterApplicationType = useMemo(() => {
+    if (!filters.applicationId) return "";
+    if (filters.applicationId === "__hide_apps__") return "__hide_apps__";
+    const row = installedApps.find((app) => String(app.id) === String(filters.applicationId));
+    return row?.type ? String(row.type).toLowerCase() : "";
+  }, [filters.applicationId, installedApps]);
+
+  const load = useCallback(async (cursor = null, previous = [], reuseParams = false) => {
+    if (typeof cursor !== "string") cursor = null;
     if (loadAbortRef.current) loadAbortRef.current.abort();
     const abortController = new AbortController();
     loadAbortRef.current = abortController;
@@ -390,56 +399,49 @@ export default function Library() {
       posterRefreshRef.current.timer = null;
     }
     setErr("");
-    setSourceWarning("");
 
-    const baseLimit = filters.limit === "all" ? 500 : Math.max(1, Number(filters.limit) || 100);
-    const fetchLimit = filters.limit === "all" ? 1500 : Math.min(baseLimit * 3, 1500);
-    const sid = Number(filters.sourceId);
+    const windowSize = filters.limit === "all" ? 200 : Math.min(1000, Math.max(1, Number(filters.limit) || 100));
+    if (!reuseParams || !pageParamsRef.current) pageParamsRef.current = buildFeedParams({
+      sourceId: filters.sourceId, q: filters.q, seen: filters.seen,
+      categoryId: filters.categoryId, quality: filters.quality, maxAgeDays: filters.maxAgeDays,
+      viewMode: filters.viewMode, sortBy: filters.sortBy,
+      listSortBy: filters.listSortBy, listSortDir: filters.listSortDir,
+    });
     setLoading(true);
-
     try {
-      if (!Number.isFinite(sid) || sid <= 0) {
-        if (enabledSources.length === 0) {
-          if (isLatestRequest()) setItems([]);
-          return;
-        }
-        const params = buildFeedParams(filters.q, filters.seen, fetchLimit);
-
-        const result = await loadSourceFeeds(enabledSources, params, {
-          signal: abortController.signal, fetchFeed: apiGet,
-        });
-        if (!isLatestRequest()) return;
-        if (result.outcome === "error") {
-          setErr(sourceFailureMessage(result.failedSourceIds, true));
-          setItems([]);
-          return;
-        }
-        if (result.outcome === "partial") setSourceWarning(sourceFailureMessage(result.failedSourceIds));
-        const merged = result.items
-          .map((it) => ({
-            ...it,
-            size: fmtBytes(it.sizeBytes),
-            date: fmtDateFromTs(it.publishedAt),
-          }));
-
-        merged.sort((a, b) => Number(b.publishedAt || 0) - Number(a.publishedAt || 0));
-        if (isLatestRequest()) setItems(merged);
-      } else {
-        const params = buildFeedParams(filters.q, filters.seen, fetchLimit);
-
-        const data = await apiGet(`/api/feed/${sid}?${params.toString()}`, {
-          signal: abortController.signal,
-        });
-        if (!isLatestRequest()) return;
-        if (!Array.isArray(data)) throw new Error("Invalid feed response");
-        const mapped = data.map((it) => ({
-          ...it,
-          sourceId: it.sourceId ?? sid,
-          size: fmtBytes(it.sizeBytes),
-          date: fmtDateFromTs(it.publishedAt),
-        }));
-        if (isLatestRequest()) setItems(mapped);
+      if (!enabledSources.length) {
+        if (isLatestRequest()) { setItems([]); setFacets(null); setPage({ cursor: null, nextCursor: null, previous: [] }); }
+        return;
       }
+      const selectItems = filterApplicationType ? async (rows, signal) => {
+        const selected = [];
+        for (let i = 0; i < rows.length; i += ARR_STATUS_BATCH_SIZE) {
+          const batch = rows.slice(i, i + ARR_STATUS_BATCH_SIZE);
+          const response = await apiPost("/api/arr/status", { items: batch.map(it => ({
+            releaseId: it.id, tvdbId: it.tvdbId || null, tmdbId: it.tmdbId || null,
+            mediaType: isSeriesItem(it) ? "series" : "movie", title: it.titleClean || it.title || null,
+          })) }, { signal });
+          if (!Array.isArray(response?.results) || response.results.length !== batch.length)
+            throw new Error("Incomplete application status response");
+          const statuses = new Map(response.results.map(row => [Number(row.releaseId), row]));
+          for (const item of batch) {
+            const status = statuses.get(Number(item.id));
+            if (!status) throw new Error("Missing application status");
+            if (matchesApplicationFilter(item, status, filterApplicationType))
+              selected.push({ ...item, libraryArrStatus: status });
+          }
+        }
+        return selected;
+      } : null;
+      const result = await loadLibraryPage(pageParamsRef.current, {
+        cursor, limit: windowSize, signal: abortController.signal, fetchFeed: apiGet, selectItems,
+      });
+      if (!isLatestRequest()) return;
+      setItems(result.items.map(it => ({ ...it, size: fmtBytes(it.sizeBytes), date: fmtDateFromTs(it.publishedAt) })));
+      if (result.facets) setFacets(result.facets);
+      setArrStatusMap(Object.fromEntries(result.items.filter(it => it.libraryArrStatus).map(it => [it.id, it.libraryArrStatus])));
+      setPage({ cursor, nextCursor: result.nextCursor, previous });
+      scrollRef?.current?.scrollTo({ top: 0, behavior: "instant" });
     } catch (e) {
       if (!isLatestRequest()) return;
       setErr("Impossible de charger les releases. Réessayez.");
@@ -447,7 +449,9 @@ export default function Library() {
     } finally {
       if (isLatestRequest()) setLoading(false);
     }
-  }, [filters.sourceId, enabledSources, filters.limit, filters.q, filters.seen, setErr, setLoading]);
+  }, [filters.sourceId, enabledSources, filters.limit, filters.q, filters.seen,
+    filters.categoryId, filters.quality, filters.maxAgeDays, filters.viewMode,
+    filters.sortBy, filters.listSortBy, filters.listSortDir, filterApplicationType, scrollRef, setErr, setLoading]);
 
   useEffect(() => {
     posterRefreshRef.current.attempts = 0;
@@ -613,43 +617,13 @@ export default function Library() {
   // Filtered items
   const getUnifiedLabel = useCallback((it) => it?.unifiedCategoryLabel || "", []);
 
-  // Destructure filter properties for stable dependencies
   const filterCategoryId = filters.categoryId;
   const filterApplicationId = filters.applicationId;
   const filterQuality = filters.quality;
-  const filterSeen = filters.seen;
-  const filterSortBy = filters.sortBy;
-  const filterMaxAgeDays = filters.maxAgeDays;
-  const filterQ = filters.q;
-  const filterViewMode = filters.viewMode;
-  const filterListSortBy = filters.listSortBy;
-  const filterListSortDir = filters.listSortDir;
-  const filterLimit = filters.limit;
-  const filterApplicationType = useMemo(() => {
-    if (!filterApplicationId) return "";
-    if (filterApplicationId === "__hide_apps__") return "__hide_apps__";
-    const row = installedApps.find((app) => String(app.id) === String(filterApplicationId));
-    return row?.type ? String(row.type).toLowerCase() : "";
-  }, [filterApplicationId, installedApps]);
-
-  const { visibleItems, categoriesForDropdown, qualityOptions } = useLibraryDerivedData({
-    items,
-    sourceNameById,
-    filterCategoryId,
-    filterApplicationType,
-    filterQuality,
-    filterSeen,
-    filterSortBy,
-    filterMaxAgeDays,
-    filterQ,
-    filterViewMode,
-    filterListSortBy,
-    filterListSortDir,
-    filterLimit,
-    arrStatusById: arrStatusMap,
+  const { qualityOptions, visibleItems, categoriesForDropdown } = useLibraryDerivedData({
+    items, facets, filterCategoryId, filterQuality,
   });
 
-  // Reset category if it no longer exists
   const setFilterCategoryId = filters.setCategoryId;
   const setFilterApplicationId = filters.setApplicationId;
   const setFilterQuality = filters.setQuality;
@@ -830,10 +804,11 @@ export default function Library() {
           : prev
       );
       closeRename();
+      await load();
     } catch (e) {
       setErr(e?.message || "Erreur renommage");
     }
-  }, [renameTarget, renameValue, closeRename, setErr, setSelectedItem]);
+  }, [renameTarget, renameValue, closeRename, setErr, setSelectedItem, load]);
 
   // Destructure selection for stable references
   const selectionSelectedIds = selection.selectedIds;
@@ -863,7 +838,8 @@ export default function Library() {
       selectionSelectedIds.has(x.id) ? { ...x, seen: value ? 1 : 0 } : x
     ));
     selectionExitMode();
-  }, [selectionSelectedIds, selectionExitMode]);
+    await load();
+  }, [selectionSelectedIds, selectionExitMode, load]);
 
   const searchManualTimerRef = useRef(null);
   const searchManual = useCallback((query, mediaType) => {
@@ -1035,10 +1011,11 @@ export default function Library() {
       triggerPosterPolling("manual-set");
       closeManualPoster();
       selectionClearSelection();
+      if (filters.viewMode === "missing") await load();
     } catch (e) {
       setManualErr(e?.message || "Erreur poster manuel");
     }
-  }, [manualTarget, closeManualPoster, selectionClearSelection, setManualErr, setSelectedItem]);
+  }, [manualTarget, closeManualPoster, selectionClearSelection, setManualErr, setSelectedItem, filters.viewMode, load]);
 
   // Déstructurer les propriétés pour éviter les re-renders infinis dans useEffect
   const {
@@ -1221,12 +1198,6 @@ export default function Library() {
         <LibraryWelcome />
       )}
 
-      {!loading && !sourcesLoading && sourceWarning && !sourcesError && !err && (
-        <div className="onboarding__warn" role="status">
-          {sourceWarning}{" "}<button className="btn" type="button" onClick={load}>Réessayer</button>
-        </div>
-      )}
-
       {!loading && !sourcesLoading && (err || sourcesError) && (
         <div className="errorbox">
           <div className="errorbox__title">Erreur</div>
@@ -1235,7 +1206,7 @@ export default function Library() {
         </div>
       )}
 
-      {!loading && !sourcesLoading && !sourcesError && !err && (!sourceWarning || visibleItems.length > 0) && (viewMode === "grid" || viewMode === "missing") && (
+      {!loading && !sourcesLoading && !sourcesError && !err && (viewMode === "grid" || viewMode === "missing") && (
         <LibraryGrid
           items={visibleItems}
           onDownload={download}
@@ -1254,7 +1225,7 @@ export default function Library() {
         />
       )}
 
-      {!loading && !sourcesLoading && !sourcesError && !err && (!sourceWarning || visibleItems.length > 0) && viewMode === "poster" && (
+      {!loading && !sourcesLoading && !sourcesError && !err && viewMode === "poster" && (
         <LibraryPoster
           items={visibleItems}
           onOpen={openDetails}
@@ -1271,7 +1242,7 @@ export default function Library() {
         />
       )}
 
-      {!loading && !sourcesLoading && !sourcesError && !err && (!sourceWarning || visibleItems.length > 0) && viewMode === "list" && (
+      {!loading && !sourcesLoading && !sourcesError && !err && viewMode === "list" && (
         <LibraryList
           items={visibleItems}
           selectionMode={selectionMode}
@@ -1288,7 +1259,7 @@ export default function Library() {
         />
       )}
 
-      {!loading && !sourcesLoading && !sourcesError && !err && (!sourceWarning || visibleItems.length > 0) && viewMode === "banner" && (
+      {!loading && !sourcesLoading && !sourcesError && !err && viewMode === "banner" && (
         <LibraryBanner
           items={visibleItems}
           selectionMode={selectionMode}
@@ -1298,6 +1269,16 @@ export default function Library() {
           sourceNameById={sourceNameById}
           sourceColorById={sourceColorById}
         />
+      )}
+
+      {!loading && !sourcesLoading && !sourcesError && !err && (page.previous.length > 0 || page.nextCursor) && (
+        <nav className="formactions" aria-label="Pagination de la bibliothèque">
+          <button type="button" className="btn" disabled={!page.previous.length}
+            onClick={() => load(page.previous.at(-1), page.previous.slice(0, -1), true)}>Précédent</button>
+          <span className="muted">Page {page.previous.length + 1}</span>
+          <button type="button" className="btn" disabled={!page.nextCursor}
+            onClick={() => load(page.nextCursor, [...page.previous, page.cursor], true)}>Suivant</button>
+        </nav>
       )}
 
       <ReleaseModal
