@@ -12,7 +12,7 @@ import { createDomEnvironment } from "./domEnvironment.mjs";
 const require = createRequire(import.meta.url);
 const source = fileURLToPath(new URL("../", import.meta.url));
 const compiled = await build({
-  stdin: { contents: `export {default as Gate} from './src/auth/AuthGate.jsx'; export {default as Login} from './src/pages/Login.jsx'; export {default as Shell} from './src/layout/Shell.jsx'; export {default as Library} from './src/pages/library/Library.jsx'; export {default as Indexers} from './src/pages/Indexers.jsx'; export {default as Settings} from './src/pages/Settings.jsx'; export * from './src/auth/session.js';`, resolveDir: fileURLToPath(new URL("../../", import.meta.url)), loader: "jsx" },
+  stdin: { contents: `export {default as Gate} from './src/auth/AuthGate.jsx'; export {default as Login} from './src/pages/Login.jsx'; export {default as Shell} from './src/layout/Shell.jsx'; export {default as Library} from './src/pages/library/Library.jsx'; export {default as Top} from './src/pages/TopReleases.jsx'; export {default as Indexers} from './src/pages/Indexers.jsx'; export {default as Settings} from './src/pages/Settings.jsx'; export * from './src/auth/session.js';`, resolveDir: fileURLToPath(new URL("../../", import.meta.url)), loader: "jsx" },
   alias: Object.fromEntries([["@", ""], ["@api", "api"], ["@utils", "utils"], ["@pages", "pages"], ["@ui", "ui"], ["@hooks", "hooks"], ["@layout", "layout"]].map(([key, value]) => [key, join(source, value)])),
   define: { "import.meta.env": JSON.stringify({ BASE_URL: "/", DEV: false }) },
   jsx: "automatic",
@@ -48,6 +48,8 @@ export async function fixture(fetcher, path = "/library", origin = "https://feed
       React.createElement(Route, { path: "/login", element: React.createElement(app.Login) }),
       React.createElement(Route, { element: React.createElement(app.Shell) },
         React.createElement(Route, { path: "/library", element: React.createElement(app.Library) }),
+        React.createElement(Route, { path: "/library/top", element: React.createElement(app.Top) }),
+        React.createElement(Route, { path: "/settings/ui", element: React.createElement(app.Settings) }),
         React.createElement(Route, { path: "/indexers", element: React.createElement(app.Indexers) }),
         React.createElement(Route, { path: "/settings/backup", element: React.createElement(app.Settings) }),
         React.createElement(Route, { path: "/settings/users", element: React.createElement(app.Settings) })))))));

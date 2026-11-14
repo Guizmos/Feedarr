@@ -7652,9 +7652,17 @@ body.library-select-mode .list-edit{ display: none; }
   font-size: 12px;
 }
 
-/* Existing settings cards, with a bounded responsive form. */
-.configuration-backup-fields { border: 0; padding: 0; margin: 18px 0 0; display: grid; gap: 16px; max-width: 560px; min-width: 0; }
-.configuration-backup-fields label { display: grid; gap: 6px; font-weight: 600; }
-.configuration-backup-fields input { width: 100%; min-width: 0; box-sizing: border-box; }
-.configuration-backup-fields .formactions { margin: 0; flex-wrap: wrap; }
-.configuration-backup-summary { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+/* Backup controls use the same cards and rows as the UI settings. */
+.configuration-backup-fields { border: 0; padding: 0; margin: 12px 0 0; min-width: 0; }
+.configuration-backup-fields .indexer-actions { min-width: 0; max-width: 100%; }
+.configuration-backup-fields input { width: 240px; max-width: 100%; box-sizing: border-box; }
+.configuration-backup-fields .formactions,
+.configuration-backup-summary .formactions { flex-wrap: wrap; }
+.configuration-backup-fields input[type="file"] { height: auto; padding: 0; border: 0; background: transparent; }
+.configuration-backup-fields input::file-selector-button {
+  border: 1px solid var(--panel-border); border-radius: 6px;
+  background: var(--panel); color: var(--text); font: inherit;
+  padding: 7px 10px; margin-right: 8px; cursor: pointer;
+}
+.configuration-backup-fields input:disabled::file-selector-button { cursor: default; opacity: .6; }
+.configuration-backup-summary { margin-top: 12px; }

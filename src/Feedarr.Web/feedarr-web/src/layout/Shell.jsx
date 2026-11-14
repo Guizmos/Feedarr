@@ -178,7 +178,6 @@ export default function Shell() {
       <SubbarProvider>
         <div className={`app app-shell ${isNavOpen ? "is-open" : ""}`}>
           <Topbar onToggleNav={toggleNav} />
-          <HttpTransportNotice />
           <div className="body">
             <button
               type="button"
@@ -192,6 +191,7 @@ export default function Shell() {
             <ScrollContainerProvider scrollRef={contentRef}>
               <div className="content-outer">
                 <Subbar />
+                <HttpTransportNotice />
                 <div className="content" ref={contentRef}>
                   <Outlet />
                 </div>

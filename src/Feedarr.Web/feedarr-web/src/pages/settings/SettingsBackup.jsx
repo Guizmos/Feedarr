@@ -65,31 +65,51 @@ export default function SettingsBackup() {
     <div className="pagehead__divider" />
     {notice && <InlineNotice {...notice} />}
     <div className="settings-grid">
-      <section className="settings-card settings-card--full">
-        <h2 className="settings-card__title">Sauvegarder</h2>
-        <p className="settings-help">Téléchargez vos paramètres et connexions dans un fichier chiffré. Conservez son mot de passe : il sera nécessaire pour le restaurer.</p>
+      <section className="settings-card">
+        <div className="settings-card__title">Sauvegarder</div>
+        <p className="settings-help settings-help--spaced">Téléchargez vos paramètres et connexions dans un fichier chiffré. Conservez son mot de passe : il sera nécessaire pour le restaurer.</p>
         <form onSubmit={exportBackup}>
-          <fieldset disabled={!!busy} className="configuration-backup-fields">
-            <label htmlFor="backup-password">Mot de passe<input id="backup-password" type="password" autoComplete="new-password" required minLength={12} maxLength={1024} value={password} onChange={e => setPassword(e.target.value)} /></label>
-            <label htmlFor="backup-confirmation">Confirmer le mot de passe<input id="backup-confirmation" type="password" autoComplete="new-password" required minLength={12} maxLength={1024} value={confirmation} onChange={e => setConfirmation(e.target.value)} /></label>
+          <fieldset disabled={!!busy} className="indexer-list configuration-backup-fields">
+            <div className="indexer-card">
+              <div className="indexer-row indexer-row--settings">
+                <label className="indexer-title" htmlFor="backup-password">Mot de passe</label>
+                <div className="indexer-actions"><input id="backup-password" type="password" autoComplete="new-password" required minLength={12} maxLength={1024} value={password} onChange={e => setPassword(e.target.value)} /></div>
+              </div>
+            </div>
+            <div className="indexer-card">
+              <div className="indexer-row indexer-row--settings">
+                <label className="indexer-title" htmlFor="backup-confirmation">Confirmer le mot de passe</label>
+                <div className="indexer-actions"><input id="backup-confirmation" type="password" autoComplete="new-password" required minLength={12} maxLength={1024} value={confirmation} onChange={e => setConfirmation(e.target.value)} /></div>
+              </div>
+            </div>
             <div className="formactions"><button className="btn btn-accent" type="submit">{busy === "export" ? "Création…" : "Télécharger la sauvegarde"}</button></div>
           </fieldset>
         </form>
       </section>
-      <section className="settings-card settings-card--full">
-        <h2 className="settings-card__title">Restaurer</h2>
-        <p className="settings-help">Le compte administrateur, la politique HTTP/HTTPS et votre bibliothèque restent conservés.</p>
+      <section className="settings-card">
+        <div className="settings-card__title">Restaurer</div>
+        <p className="settings-help settings-help--spaced">Le compte administrateur, la politique HTTP/HTTPS et votre bibliothèque restent conservés.</p>
         <form onSubmit={analyse}>
-          <fieldset disabled={!!busy} className="configuration-backup-fields">
-            <label htmlFor="restore-file">Sauvegarde .feedarr<input ref={fileInput} id="restore-file" type="file" accept=".feedarr" required onChange={e => { setFile(e.target.files?.[0] || null); setPreview(null); }} /></label>
-            <label htmlFor="restore-password">Mot de passe de la sauvegarde<input id="restore-password" type="password" autoComplete="off" required minLength={12} maxLength={1024} value={restorePassword} onChange={e => { setRestorePassword(e.target.value); setPreview(null); }} /></label>
+          <fieldset disabled={!!busy} className="indexer-list configuration-backup-fields">
+            <div className="indexer-card">
+              <div className="indexer-row indexer-row--settings">
+                <label className="indexer-title" htmlFor="restore-file">Sauvegarde .feedarr</label>
+                <div className="indexer-actions"><input ref={fileInput} id="restore-file" type="file" accept=".feedarr" required onChange={e => { setFile(e.target.files?.[0] || null); setPreview(null); }} /></div>
+              </div>
+            </div>
+            <div className="indexer-card">
+              <div className="indexer-row indexer-row--settings">
+                <label className="indexer-title" htmlFor="restore-password">Mot de passe de la sauvegarde</label>
+                <div className="indexer-actions"><input id="restore-password" type="password" autoComplete="off" required minLength={12} maxLength={1024} value={restorePassword} onChange={e => { setRestorePassword(e.target.value); setPreview(null); }} /></div>
+              </div>
+            </div>
             {fileError && <InlineNotice variant="error" message={fileError} />}
             <div className="formactions"><button className="btn" type="submit" disabled={!!fileError}>{busy === "preview" ? "Analyse…" : "Analyser"}</button></div>
           </fieldset>
         </form>
-        {preview && <div className="configuration-backup-summary" role="status">
+        {preview && <div className="indexer-card configuration-backup-summary" role="status">
           <p>{preview.configuration.settings} sections de paramètres · {preview.configuration.sources} sources · {preview.configuration.indexerProviders} indexeurs · {preview.configuration.externalProviders + preview.configuration.applications} connexions</p>
-          <p className="settings-help">{preview.matchedSources} sources mises à jour · {preview.newSources} ajoutées · {preview.disabledSources} désactivées. Les données associées sont conservées.</p>
+          <p className="settings-help settings-help--spaced">{preview.matchedSources} sources mises à jour · {preview.newSources} ajoutées · {preview.disabledSources} désactivées. Les données associées sont conservées.</p>
           {preview.configuration.missingSecrets > 0 && <InlineNotice variant="warning" message="Certaines connexions n’ont pas de secret configuré dans cette sauvegarde." />}
           <div className="formactions"><button className="btn btn-accent" type="button" disabled={!!busy} onClick={restore}>Confirmer la restauration</button><button className="btn" type="button" disabled={!!busy} onClick={() => setPreview(null)}>Annuler</button></div>
         </div>}
