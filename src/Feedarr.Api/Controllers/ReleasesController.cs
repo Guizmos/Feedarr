@@ -24,6 +24,7 @@ public sealed class ReleasesController : ControllerBase
     private readonly IgdbClient _igdb;
     private readonly IHttpClientFactory _httpFactory;
     private readonly ILogger<ReleasesController> _log;
+    private readonly OutboundDestinationPolicy _outboundPolicy;
 
     public ReleasesController(
         ReleaseRepository releases,
@@ -31,7 +32,8 @@ public sealed class ReleasesController : ControllerBase
         TitleParser parser,
         IgdbClient igdb,
         IHttpClientFactory httpFactory,
-        ILogger<ReleasesController> log)
+        ILogger<ReleasesController> log,
+        OutboundDestinationPolicy? outboundPolicy = null)
     {
         _releases = releases;
         _db = db;
@@ -39,6 +41,7 @@ public sealed class ReleasesController : ControllerBase
         _igdb = igdb;
         _httpFactory = httpFactory;
         _log = log;
+        _outboundPolicy = outboundPolicy ?? new OutboundDestinationPolicy(new Feedarr.Api.Options.OutboundSecurityOptions());
     }
 
     // Local browser-session preparation only: no torrent or provider request.
@@ -86,7 +89,8 @@ public sealed class ReleasesController : ControllerBase
             _log.LogWarning("Download rejected: missing download_url for releaseId={ReleaseId}", id);
             return NotFound(new { error = "release not found or no download_url" });
         }
-        if (!OutboundUrlGuard.TryNormalizeDownloadUrl(url, out var normalizedUrl, out var validationError))
+        if (!OutboundUrlGuard.TryNormalizeDownloadUrl(url, out var normalizedUrl, out var validationError,
+                _outboundPolicy, OutboundDestinationContext.TrustedIntegration))
         {
             if (validationError == "download_url host not allowed") RecordDownloadFailure(SsrfBlockedException.Code);
             _log.LogWarning("Download rejected: invalid download_url for releaseId={ReleaseId}", id);
@@ -110,22 +114,6 @@ public sealed class ReleasesController : ControllerBase
             HttpResponseMessage? response = null;
             try
             {
-                var downloadUri = new Uri(normalizedUrl, UriKind.Absolute);
-                if (downloadUri.Scheme is "http" or "https")
-                {
-                    var (allowed, hostError) = await OutboundUrlGuard.ValidateOutboundHostAsync(downloadUri.Host, ct);
-                    if (!allowed)
-                    {
-                        RecordDownloadFailure(hostError?.Contains("blocked IP address", StringComparison.Ordinal) == true
-                            ? SsrfBlockedException.Code : "network_error");
-                        _log.LogWarning(
-                            "Download rejected: blocked host for releaseId={ReleaseId} host={IndexerHost}",
-                            id,
-                            indexerHost);
-                        return BadRequest(new { error = "download_url host not allowed" });
-                    }
-                }
-
                 using var request = new HttpRequestMessage(HttpMethod.Get, normalizedUrl);
                 request.Options.Set(ProtocolDowngradeRedirectHandler.AllowHttpsToHttpDowngradeOption, true);
                 response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);

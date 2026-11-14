@@ -122,7 +122,7 @@ public sealed class TrustedIntegrationFlowTests
     }
 
     [Fact]
-    public async Task WrongPortIsBlockedAndDownloadsNeverInheritTrustedHostsOrNetworks()
+    public async Task WrongPortIsBlockedAndDefaultDownloadValidationRemainsStrict()
     {
         using var context = new FlowContext(Policy());
         await Assert.ThrowsAsync<SsrfBlockedException>(() => context.Prowlarr.ListIndexersAsync("http://prowlarr:9697", "key", default));

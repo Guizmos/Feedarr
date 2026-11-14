@@ -261,19 +261,16 @@ builder.Services.AddHttpClient("torrent-download", c =>
     AllowAutoRedirect = false,
     UseProxy = false,
     ConnectCallback = (connection, ct) => sp.GetRequiredService<ValidatedOutboundConnector>()
-        .ConnectAsync(connection.DnsEndPoint.Host, connection.DnsEndPoint.Port, OutboundDestinationContext.Strict, ct),
+        .ConnectAsync(connection.DnsEndPoint.Host, connection.DnsEndPoint.Port, OutboundDestinationContext.TrustedIntegration, ct),
     SslOptions = new System.Net.Security.SslClientAuthenticationOptions
     {
         RemoteCertificateValidationCallback = allowInvalidCerts ? (_, _, _, _) => true : null
     }
-}).AddHttpMessageHandler<ProtocolDowngradeRedirectHandler>()
-  .AddHttpMessageHandler<SsrfGuardHandler>();
+}).AddHttpMessageHandler(sp => new ProtocolDowngradeRedirectHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), OutboundDestinationContext.TrustedIntegration))
+  .AddHttpMessageHandler(sp => new SsrfGuardHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), sp.GetRequiredService<IOutboundDnsResolver>(), OutboundDestinationContext.TrustedIntegration));
 
 // Resilience: transient retry handler for external HTTP clients
 builder.Services.AddTransient<TransientHttpRetryHandler>();
-builder.Services.AddTransient<ProtocolDowngradeRedirectHandler>();
-// SSRF guard: DNS re-validates the destination before each call on user-configurable clients
-builder.Services.AddTransient<SsrfGuardHandler>();
 builder.Services.AddOptions<OutboundSecurityOptions>()
     .Bind(builder.Configuration.GetSection("App:Security")).ValidateOnStart();
 builder.Services.AddSingleton<Microsoft.Extensions.Options.IValidateOptions<OutboundSecurityOptions>, OutboundSecurityOptionsValidator>();

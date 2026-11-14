@@ -183,7 +183,9 @@ public static class OutboundUrlGuard
         return true;
     }
 
-    public static bool TryNormalizeDownloadUrl(string? rawUrl, out string normalizedUrl, out string error)
+    public static bool TryNormalizeDownloadUrl(string? rawUrl, out string normalizedUrl, out string error,
+        OutboundDestinationPolicy? policy = null,
+        OutboundDestinationContext context = OutboundDestinationContext.Strict)
     {
         normalizedUrl = string.Empty;
         error = "download_url invalid";
@@ -222,7 +224,9 @@ public static class OutboundUrlGuard
                 return false;
             }
 
-            if (IsBlockedHost(uri.Host))
+            if (OutboundDestinationPolicy.IsForbiddenHost(uri.IdnHost) ||
+                (IPAddress.TryParse(uri.IdnHost, out var ip) &&
+                 !(policy ?? StrictPolicy).Allows(uri.IdnHost, uri.Port, ip, context)))
             {
                 error = "download_url host not allowed";
                 return false;
@@ -231,42 +235,6 @@ public static class OutboundUrlGuard
 
         normalizedUrl = trimmed;
         return true;
-    }
-
-    /// <summary>
-    /// Resolves all DNS addresses for <paramref name="host"/> and verifies that none fall
-    /// within a blocked range. Call this before making outbound HTTP requests to guard against
-    /// DNS-rebinding SSRF attacks (a public hostname that resolves to an internal IP).
-    /// </summary>
-    /// <returns>
-    /// <c>(true, null)</c> if all resolved addresses are public;
-    /// <c>(false, reason)</c> if any address is blocked or resolution fails.
-    /// </returns>
-    public static async Task<(bool Allowed, string? Error)> ValidateOutboundHostAsync(
-        string host,
-        CancellationToken cancellationToken = default)
-    {
-        IPAddress[] addresses;
-        try
-        {
-            addresses = await Dns.GetHostAddressesAsync(host, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            // DNS failure treated as blocked (fail-safe — if we can't resolve, we can't validate)
-            return (false, $"host '{host}' could not be resolved: {ex.Message}");
-        }
-
-        if (addresses.Length == 0)
-            return (false, $"host '{host}' has no DNS records");
-
-        foreach (var ip in addresses)
-        {
-            if (!StrictPolicy.Allows(host, 0, ip, OutboundDestinationContext.Strict))
-                return (false, $"host '{host}' resolves to a blocked IP address ({ip})");
-        }
-
-        return (true, null);
     }
 
     // -----------------------------------------------------------------------
