@@ -33,7 +33,7 @@ public sealed class ActivityRepository
         _signal.Notify("activity");
     }
 
-    public IEnumerable<dynamic> List(int limit = 100, long? sourceId = null, string? eventType = null, string? level = null)
+    public IEnumerable<dynamic> List(int limit = 100, long? sourceId = null, string? eventType = null, string? level = null, string? scope = null)
     {
         using var conn = _db.Open();
         limit = Math.Clamp(limit, 1, 500);
@@ -41,6 +41,11 @@ public sealed class ActivityRepository
         var where = new List<string>();
         var args = new DynamicParameters();
         args.Add("lim", limit);
+
+        if (string.Equals(scope, "logs", StringComparison.OrdinalIgnoreCase))
+            where.Add("(event_type IS NULL OR lower(event_type) <> 'sync')");
+        else if (string.Equals(scope, "history", StringComparison.OrdinalIgnoreCase))
+            where.Add("lower(event_type) = 'sync'");
 
         if (sourceId is not null)
         {
@@ -50,7 +55,7 @@ public sealed class ActivityRepository
 
         if (!string.IsNullOrWhiteSpace(eventType))
         {
-            where.Add("event_type = @etype");
+            where.Add("lower(event_type) = lower(@etype)");
             args.Add("etype", eventType.Trim());
         }
 

@@ -79,7 +79,7 @@ export default function useMaintenanceActions() {
   async function handlePurgeLogs() {
     setPurgeLogsLoading(true);
     try {
-      await apiPost("/api/activity/purge", {});
+      await apiPost("/api/activity/purge?scope=logs", {});
       setPurgeLogsOpen(false);
     } catch (e) {
       throw new Error(e?.message || "Erreur purge logs");

@@ -36,6 +36,7 @@ export default function Activity() {
     try {
       const params = new URLSearchParams();
       params.set("limit", String(limit));
+      params.set("scope", "logs");
       if (eventType) params.set("eventType", eventType);
       if (level) params.set("level", level);
 
@@ -107,7 +108,6 @@ export default function Activity() {
           title={tr("Type de logs", "Log type")}
         >
           <option value="">{tr("Tous", "All")}</option>
-          <option value="sync">Sync</option>
           <option value="source">{tr("Source", "Source")}</option>
           <option value="poster_fetch">{tr("Posters", "Posters")}</option>
         </SubSelectIcon>
@@ -167,7 +167,7 @@ export default function Activity() {
   async function purgeLogs() {
     setPurgeLoading(true);
     try {
-      await apiPost("/api/activity/purge?scope=all", {});
+      await apiPost("/api/activity/purge?scope=logs", {});
       setExpandedIds(new Set());
       setPurgeOpen(false);
       await load();

@@ -23,10 +23,14 @@ public sealed class ActivityController : ControllerBase
         [FromQuery] int? limit,
         [FromQuery] long? sourceId,
         [FromQuery] string? eventType,
-        [FromQuery] string? level)
+        [FromQuery] string? level,
+        [FromQuery] string? scope = null)
     {
+        var normalized = string.IsNullOrWhiteSpace(scope) ? "all" : scope.Trim().ToLowerInvariant();
+        if (normalized is not ("all" or "logs" or "history"))
+            return BadRequest(new { error = "invalid activity scope" });
         var safeLimit = Math.Clamp(limit ?? 100, 1, 500);
-        return Ok(_repo.List(safeLimit, sourceId, eventType, level));
+        return Ok(_repo.List(safeLimit, sourceId, eventType, level, normalized));
     }
 
     // POST /api/activity/purge

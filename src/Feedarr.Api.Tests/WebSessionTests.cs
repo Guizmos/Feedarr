@@ -204,6 +204,20 @@ public sealed class WebSessionTests
         }
     }
 
+    [Fact]
+    public async Task ActivityPurgeRequiresAuthenticationAndSessionCsrf()
+    {
+        using var f = new Fixture();
+        var anonymous = f.Context("/api/activity/purge", "POST");
+        Assert.False(await f.Invoke(anonymous)); Assert.Equal(401, anonymous.Response.StatusCode);
+        var (cookie, session) = f.Login();
+        var context = f.Context("/api/activity/purge", "POST", cookie);
+        Assert.False(await f.Invoke(context)); Assert.Equal(403, context.Response.StatusCode);
+        context = f.Context("/api/activity/purge", "POST", cookie);
+        context.Request.Headers[WebSessionSecurity.CsrfHeader] = session.CsrfToken;
+        Assert.True(await f.Invoke(context)); Assert.Equal(200, context.Response.StatusCode);
+    }
+
     [Theory]
     [InlineData("open", true)]
     [InlineData("smart", true)]
