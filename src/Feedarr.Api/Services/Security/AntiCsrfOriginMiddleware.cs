@@ -9,8 +9,6 @@ public sealed class AntiCsrfOriginMiddleware
     {
         "/api/security",
         "/api/settings/security",
-        "/api/setup/state",
-        "/api/setup/bootstrap-token",
         "/api/system/onboarding"
     };
 
@@ -27,7 +25,7 @@ public sealed class AntiCsrfOriginMiddleware
         ILogger<AntiCsrfOriginMiddleware> log)
     {
         var request = context.Request;
-        // Cookie authentication must never inherit the legacy Basic/bootstrap exemptions.
+        // Cookie authentication must never inherit the Basic exemptions.
         if (!RequestForgeryProtection.IsSafeMethod(request.Method) &&
             context.Items.TryGetValue(WebSessionSecurity.SessionKey, out var authenticated) &&
             authenticated is WebSession session)

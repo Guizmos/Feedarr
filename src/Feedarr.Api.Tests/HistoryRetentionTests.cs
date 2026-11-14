@@ -38,6 +38,21 @@ public sealed partial class RetentionServiceTests
             File.GetLastWriteTimeUtc(path).Ticks + ":" + Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))));
 
     [Fact]
+    public async Task HistoryCleanupCannotRunDuringConfigurationRestore()
+    {
+        var coordinator = new Feedarr.Api.Services.Backup.BackupExecutionCoordinator();
+        using var c = new RetentionTestContext(coordinator: coordinator);
+        var file = AddHistoryFile(c, "tmdb-106-w500.jpg");
+        var id = AddHistoryEntity(c, "restore");
+        await coordinator.RunExclusiveAsync("restore-configuration", null, async _ =>
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => c.Service.CleanupHistoryAsync(HistoryExecute));
+            Assert.True(HistoryExists(c, id)); Assert.True(File.Exists(file));
+            return true;
+        });
+    }
+
+    [Fact]
     public async Task HistoryCleanup_OnlyProvenAutomaticUnreferencedEntitiesAfterGraceAreEligible()
     {
         using var c = new RetentionTestContext();
@@ -271,54 +286,9 @@ public sealed partial class RetentionServiceTests
         Assert.Null(next.NextPoster);
     }
 
-    [Theory]
-    [InlineData("pending.json")]
-    [InlineData("operation.json")]
-    [InlineData("building-incomplete")]
-    public async Task HistoryCleanup_PendingOrBuildingRestorePreventsAllDeletion(string marker)
-    {
-        using var c = new RetentionTestContext();
-        var file = AddHistoryFile(c, "tmdb-106-w500.jpg");
-        var id = AddHistoryEntity(c, "restore");
-        var root = Path.Combine(Path.GetDirectoryName(c.Db.DbPath)!, "restore-state");
-        Directory.CreateDirectory(root);
-        if (marker.StartsWith("building")) Directory.CreateDirectory(Path.Combine(root, marker));
-        else File.WriteAllText(Path.Combine(root, marker), "existing restore state; never touch");
-        var before = HistorySnapshot(root);
-        var result = await c.Service.CleanupHistoryAsync(HistoryExecute);
-        Assert.True(result.RestoreProtected);
-        Assert.Equal(0, result.EntitiesDeleted);
-        Assert.Equal(0, result.PostersDeleted);
-        Assert.True(HistoryExists(c, id));
-        Assert.True(File.Exists(file));
-        Assert.Equal(before.OrderBy(row => row.Key), HistorySnapshot(root).OrderBy(row => row.Key));
-    }
 
-    [Theory]
-    [InlineData("plan.bin", false)]
-    [InlineData("plan.bin.tmp", false)]
-    [InlineData("plan.bin", true)]
-    [InlineData("plan.bin.tmp", true)]
-    public async Task HistoryCleanup_ConfigurationRestoreV2PreventsAllDeletion(string marker, bool directory)
-    {
-        using var c = new RetentionTestContext();
-        var file = AddHistoryFile(c, "tmdb-106-w500.jpg");
-        var id = AddHistoryEntity(c, "configuration restore");
-        var root = Path.Combine(Path.GetDirectoryName(c.Db.DbPath)!, "configuration-restore");
-        Directory.CreateDirectory(root);
-        var path = Path.Combine(root, marker);
-        if (directory) Directory.CreateDirectory(path);
-        else File.WriteAllText(path, "existing restore state; never touch");
-        var before = HistorySnapshot(root);
-        var result = await c.Service.CleanupHistoryAsync(HistoryExecute);
-        Assert.True(result.RestoreProtected);
-        Assert.Equal(0, result.EntitiesDeleted);
-        Assert.Equal(0, result.PostersDeleted);
-        Assert.True(HistoryExists(c, id));
-        Assert.True(File.Exists(file));
-        Assert.Equal(before.OrderBy(row => row.Key), HistorySnapshot(root).OrderBy(row => row.Key));
-        if (directory) Assert.True(Directory.Exists(path));
-    }
+
+
 
     [Fact]
     public async Task HistoryCleanup_UnknownRecentAndSymlinkFilesStayProtectedAndMissingStoresAreNotRepaired()

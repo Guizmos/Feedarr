@@ -282,15 +282,14 @@ public sealed partial class MatchingReplayTests
     }
 
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, true)]
-    [InlineData(true, false)]
-    public void PreviewRequiresExistingAuthentication(bool authenticated, bool bootstrap)
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PreviewRequiresExistingAuthentication(bool authenticated)
     {
         using var fixture = new Fixture(); fixture.Seed();
-        var context = new DefaultHttpContext(); context.Items[BasicAuthMiddleware.AuthPassedKey] = authenticated; context.Items[BasicAuthMiddleware.BootstrapTokenActiveKey] = bootstrap;
+        var context = new DefaultHttpContext(); context.Items[BasicAuthMiddleware.AuthPassedKey] = authenticated;
         var controller = new MatchingReplayController(fixture.Replay) { ControllerContext = new() { HttpContext = context } };
-        Assert.Equal(authenticated && !bootstrap, controller.Preview(new()) is OkObjectResult);
+        Assert.Equal(authenticated, controller.Preview(new()) is OkObjectResult);
         Assert.Equal("no-store", context.Response.Headers.CacheControl.ToString()); Assert.Equal(0, fixture.Factory.Created);
     }
 }

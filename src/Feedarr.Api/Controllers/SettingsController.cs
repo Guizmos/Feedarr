@@ -34,7 +34,6 @@ public sealed class SettingsController : ControllerBase
     private readonly Db? _db;
     private readonly IMemoryCache _cache;
     private readonly IConfiguration _config;
-    private readonly BootstrapTokenService _bootstrapTokens;
     private readonly ILogger<SettingsController> _log;
 
     public SettingsController(
@@ -46,7 +45,6 @@ public sealed class SettingsController : ControllerBase
         TvMazeClient tvmaze,
         IMemoryCache cache,
         IConfiguration config,
-        BootstrapTokenService bootstrapTokens,
         ILogger<SettingsController> log,
         ExternalProviderInstanceRepository? externalProviderInstances = null,
         Db? db = null)
@@ -61,7 +59,6 @@ public sealed class SettingsController : ControllerBase
         _db = db;
         _cache = cache;
         _config = config;
-        _bootstrapTokens = bootstrapTokens;
         _log = log;
     }
 
@@ -430,7 +427,7 @@ public sealed class SettingsController : ControllerBase
             if (!Request.IsHttps)
                 return Problem(title: "https_configuration_required", detail: "Ouvrez Feedarr en HTTPS avec une configuration TLS valide avant d’activer cette option.", statusCode: 400);
         }
-        _repo.PutSecuritySettings(next); _cache.Remove(SecuritySettingsCache.CacheKey); _bootstrapTokens.InvalidateAll();
+        _repo.PutSecuritySettings(next); _cache.Remove(SecuritySettingsCache.CacheKey);
         return GetSecurity();
     }
 

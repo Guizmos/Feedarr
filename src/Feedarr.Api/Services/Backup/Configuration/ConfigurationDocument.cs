@@ -21,18 +21,13 @@ public sealed class ConfigurationDocument
     public required List<JsonObject> Selections { get; init; }
 }
 
-public sealed record ConfigurationPreview(
-    int Sources, int Indexers, int IndexerProviders, int ExternalProviders,
-    int Applications, int Categories, int Mappings, int Selections, int Settings, int Parameters,
-    int MissingSecrets, bool IsComplete);
+public sealed record ConfigurationPreview(int Sources, int IndexerProviders, int ExternalProviders, int Applications, int Settings, int MissingSecrets);
 
 public sealed class ConfigurationArchiveReadResult
 {
     // Safe default for future API serialization: only the aggregate preview is exposed.
     [JsonIgnore] public ConfigurationDocument Configuration { get; init; } = null!;
     public required ConfigurationPreview Preview { get; init; }
-    public required bool IsLegacy { get; init; }
-    public IReadOnlyList<ConfigurationSecretRequirement> SecretsToReenter { get; init; } = [];
 }
 
 public sealed record ConfigurationSecretRequirement(string ItemKey, string Field);

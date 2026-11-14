@@ -187,28 +187,7 @@ public sealed partial class RetentionServiceTests
         Assert.True(Directory.Exists(Path.Combine(context.Posters.PosterStoreDirPath, "rawg-b")));
     }
 
-    [Fact]
-    public void StoreGc_PendingRestoreCopiesRemainIntact()
-    {
-        using var context = new RetentionTestContext();
-        var active = context.CreateStoreDirectory("rawg-staged");
-        var data = Path.GetDirectoryName(context.Db.DbPath)!;
-        var pending = new PendingRestoreStore(data, "feedarr.db");
-        var work = pending.NewWorkDirectory();
-        using (var source = context.Db.Open())
-        using (var destination = new SqliteConnection($"Data Source={Path.Combine(work, "incoming.db")}"))
-        {
-            destination.Open();
-            source.BackupDatabase(destination);
-        }
-        var status = pending.Publish(work, "audit.zip", null, default);
-        var staged = Path.Combine(data, "restore-state", "stages", status.Id!, "posters", "store", "rawg-staged", "original.jpg");
-        var bytes = File.ReadAllBytes(staged);
-        Assert.True(context.Posters.CleanupOrphanedStoreDir("rawg-staged").Deleted);
-        Assert.False(Directory.Exists(active));
-        Assert.Equal(bytes, File.ReadAllBytes(staged));
-        Assert.True(pending.GetStatus().Pending);
-    }
+
 
     [Fact]
     public async Task StoreGc_PublisherRecreatesStoreAfterConcurrentDeletion()

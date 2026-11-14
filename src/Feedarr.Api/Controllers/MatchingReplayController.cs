@@ -13,7 +13,7 @@ public sealed class MatchingReplayController(MatchingReplayService replay) : Con
     {
         Response.Headers.CacheControl = "no-store";
         Response.Headers.Pragma = "no-cache";
-        return HttpContext.Items[BasicAuthMiddleware.AuthPassedKey] is true && HttpContext.Items[BasicAuthMiddleware.BootstrapTokenActiveKey] is not true;
+        return HttpContext.Items[BasicAuthMiddleware.AuthPassedKey] is true;
     }
     [HttpGet]
     public IActionResult Get() => Allowed() ? Ok(replay.Snapshot()) : Unauthorized();

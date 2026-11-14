@@ -172,7 +172,6 @@ public sealed class MaintenanceSettingsValidationTests
                 null!,
                 _cache,
                 _configuration,
-                new Feedarr.Api.Services.Security.BootstrapTokenService(),
                 NullLogger<SettingsController>.Instance);
 
             controller.ControllerContext = new ControllerContext

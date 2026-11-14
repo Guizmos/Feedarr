@@ -27,12 +27,10 @@ public sealed class AuthController(
     [RequestSizeLimit(8192)]
     public IActionResult CreateAdmin([FromBody] CreateAdminRequest request,
         [FromServices] IConfiguration configuration,
-        [FromServices] IMemoryCache cache, [FromServices] ConfigurationRestorePlanStore plans,
-        [FromServices] PendingRestoreStore pending)
+        [FromServices] IMemoryCache cache)
     {
         if (!WebSessionSecurity.HasSameOrigin(Request)) return ForbiddenCsrf();
         if (!settings.RequiresInitialAdministrator()) return Failure(409, "administrator_already_created");
-        if (plans.BlocksSync || pending.GetStatus().Pending) return Failure(409, "restore_restart_required");
         var username = (request.Username ?? "").Trim();
         if (username.Length == 0 || System.Text.Encoding.UTF8.GetByteCount(username) > 512 ||
             request.Password is null || request.Password.Length > 4096 || request.Password != request.PasswordConfirmation)

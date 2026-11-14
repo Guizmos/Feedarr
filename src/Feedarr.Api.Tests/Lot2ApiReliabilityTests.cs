@@ -129,7 +129,6 @@ public sealed class Lot2ApiReliabilityTests
             tvmaze,
             new MemoryCache(new MemoryCacheOptions()),
             BuildConfiguration(),
-            new Feedarr.Api.Services.Security.BootstrapTokenService(),
             NullLogger<SettingsController>.Instance);
 
         var action = await controller.TestExternal(
@@ -182,7 +181,7 @@ public sealed class Lot2ApiReliabilityTests
     {
         var repoRoot = FindRepositoryRoot();
         var coordinatorPath = Path.Combine(repoRoot, "src", "Feedarr.Api", "Services", "Backup", "BackupExecutionCoordinator.cs");
-        var backupServicePath = Path.Combine(repoRoot, "src", "Feedarr.Api", "Services", "Backup", "BackupService.cs");
+        var backupServicePath = Path.Combine(repoRoot, "src", "Feedarr.Api", "Services", "Backup", "Configuration", "ConfigurationRestoreService.cs");
 
         var coordinator = File.ReadAllText(coordinatorPath);
         var backupService = File.ReadAllText(backupServicePath);

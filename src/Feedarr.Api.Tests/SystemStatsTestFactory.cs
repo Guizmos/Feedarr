@@ -32,17 +32,6 @@ internal static class SystemStatsTestFactory
         });
 
         var settings = new SettingsRepository(db);
-        var backup = new BackupService(
-            db,
-            new TestWebHostEnvironment(workspace.RootDir),
-            options,
-            settings,
-            new BackupValidationService(),
-            new BackupExecutionCoordinator(),
-            new PassthroughProtectionService(),
-            NullLogger<BackupService>.Instance);
-        backup.InitializeForStartup();
-
         using var appLifetime = new TestHostApplicationLifetime();
         var storageCache = new StorageUsageCacheService(
             new MemoryCache(new MemoryCacheOptions()),
@@ -58,7 +47,6 @@ internal static class SystemStatsTestFactory
             settings,
             new ProviderStatsService(new StatsRepository(db, new MemoryCache(new MemoryCacheOptions()))),
             new ApiRequestMetricsService(),
-            backup,
             new SystemStatusCacheService(
                 new MemoryCache(new MemoryCacheOptions()),
                 new SystemStatusSnapshotProvider(db, NullLogger<SystemStatusSnapshotProvider>.Instance),

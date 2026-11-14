@@ -26,17 +26,7 @@ public sealed partial class RetentionService
     }
 
     private bool HistoryRestoreProtected()
-    {
-        if (Backup.Configuration.ConfigurationRestorePlanStore.HasPlan(
-                Path.GetDirectoryName(_posters!.PostersDirPath)!)) return true;
-        var root = Path.Combine(Path.GetDirectoryName(_posters!.PostersDirPath)!, "restore-state");
-        return File.Exists(Path.Combine(root, "pending.json")) || Directory.Exists(Path.Combine(root, "pending.json")) ||
-               File.Exists(Path.Combine(root, "operation.json")) || Directory.Exists(Path.Combine(root, "operation.json")) ||
-               File.Exists(Path.Combine(root, "pending.json.tmp")) || File.Exists(Path.Combine(root, "operation.json.tmp")) ||
-               File.Exists(Path.Combine(Path.GetDirectoryName(root)!, "restore.restart-required.flag")) ||
-               (Directory.Exists(Path.Combine(root, "stages")) && Directory.EnumerateDirectories(Path.Combine(root, "stages")).Any()) ||
-               (Directory.Exists(root) && Directory.EnumerateDirectories(root, "building-*").Any());
-    }
+        => _historyCoordinator.GetState().Operation == "restore-configuration";
 
     private HistoryCleanupReport CleanupHistoryCore(HistoryCleanupRequest request, CancellationToken ct)
     {

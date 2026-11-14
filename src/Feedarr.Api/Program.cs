@@ -65,12 +65,9 @@ var dataDirPath = Path.IsPathRooted(configuredDataDir)
     ? configuredDataDir
     : Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, configuredDataDir));
 // Must precede DataProtection, DI construction, migrations, workers and HTTP.
-var pendingRestore = new PendingRestoreStore(dataDirPath,
-    builder.Configuration.GetValue<string>("App:DbFileName") ?? "feedarr.db");
-using var databaseProcessLease = pendingRestore.AcquireProcessLease();
-Feedarr.Api.Services.Backup.Configuration.ConfigurationRestorePlanStore.EnsureNoLegacyConflict(dataDirPath);
-pendingRestore.ApplyAtStartup();
-builder.Services.AddSingleton(pendingRestore);
+Directory.CreateDirectory(dataDirPath);
+using var databaseProcessLease = new FileStream(Path.Combine(dataDirPath, "feedarr.process.lock"),
+    FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
 var keysPath = Path.Combine(dataDirPath, "keys");
 Directory.CreateDirectory(keysPath);
 MigrateLegacyDataProtectionKeys(Path.Combine(AppContext.BaseDirectory, "Data", "keys"), keysPath);
@@ -193,16 +190,11 @@ builder.Services.AddSingleton<SystemStatusCacheService>();
 builder.Services.AddSingleton<ProviderStatsService>();
 builder.Services.AddSingleton<ApiRequestMetricsService>();
 builder.Services.AddSingleton<BackupExecutionCoordinator>();
-builder.Services.AddSingleton<BackupValidationService>();
 builder.Services.AddSingleton<Feedarr.Api.Services.Backup.Configuration.ConfigurationArchiveService>();
-builder.Services.AddSingleton<Feedarr.Api.Services.Backup.Configuration.ConfigurationRestorePlanStore>();
 builder.Services.AddSingleton<Feedarr.Api.Services.Backup.Configuration.ConfigurationRestoreService>();
-builder.Services.AddSingleton<BackupService>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<BackupService>());
 builder.Services.AddSingleton<UnifiedCategoryService>();
 builder.Services.AddSingleton<UnifiedCategoryResolver>();
 builder.Services.AddMemoryCache();
-builder.Services.AddSingleton<BootstrapTokenService>();
 builder.Services.AddSingleton<WebSessionService>();
 builder.Services.AddSingleton<AuthThrottleService>();
 builder.Services.AddSingleton<CategoryRecommendationService>();
@@ -595,24 +587,6 @@ builder.Services.AddRateLimiter(options =>
         }
     };
 
-    // Strict rate limit on bootstrap-token issuance: 5 per minute per IP.
-    // Prevents brute-forcing the X-Bootstrap-Secret header.
-    var bootstrapTokenRateLimit = Math.Max(1, builder.Configuration.GetValue("App:RateLimit:BootstrapToken:PermitLimit", 5));
-    var bootstrapTokenWindowSeconds = Math.Clamp(builder.Configuration.GetValue("App:RateLimit:BootstrapToken:WindowSeconds", 60), 10, 3600);
-    options.AddPolicy("bootstrap-token", httpContext =>
-    {
-        var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        return RateLimitPartition.GetFixedWindowLimiter(
-            $"bootstrap:{ip}",
-            _ => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = bootstrapTokenRateLimit,
-                Window = TimeSpan.FromSeconds(bootstrapTokenWindowSeconds),
-                QueueLimit = 0,
-                AutoReplenishment = true
-            });
-    });
-
     WebSessionSecurity.AddLoginRateLimit(options);
 
     options.AddPolicy("configuration-backup", httpContext => RateLimitPartition.GetFixedWindowLimiter(
@@ -666,12 +640,6 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 
-var forwardedOptions = app.Services.GetRequiredService<IOptions<ForwardedHeadersOptions>>().Value;
-app.Use((context, next) =>
-{
-    AuthenticationPolicy.CaptureConnection(context, forwardedOptions);
-    return next(context);
-});
 app.UseForwardedHeaders();
 
 // Correlation ID: must run early so downstream middleware and controllers
@@ -807,7 +775,6 @@ app.UseMiddleware<BasicAuthMiddleware>();
 // Browser-origin guard for unsafe requests. Allows same-origin or allowlisted
 // origins/referers, and requires an explicit trusted header for non-browser clients.
 app.UseMiddleware<AntiCsrfOriginMiddleware>();
-app.UseMiddleware<Feedarr.Api.Services.Backup.Configuration.ConfigurationRestoreLockMiddleware>();
 
 // Diagnostics may only observe requests already authorized by administrator authentication.
 app.UseMiddleware<Feedarr.Api.Middleware.DownloadDiagnosticsMiddleware>();
@@ -825,12 +792,9 @@ var db = app.Services.GetRequiredService<Db>();
 db.EnsureWalMode();
 app.Services.GetRequiredService<MigrationsRunner>().Run();
 
-// Apply confirmed configuration before any startup credential normalization can change its baseline.
-app.Services.GetRequiredService<Feedarr.Api.Services.Backup.Configuration.ConfigurationRestoreService>().ApplyAtStartup();
 
 // Migrate existing API keys to encrypted format
 await app.Services.GetRequiredService<ApiKeyMigrationService>().MigrateAsync();
-app.Services.GetRequiredService<BackupService>().InitializeForStartup();
 
 // Freeze the V2 new-release boundary before hosted workers start (singleton is otherwise lazy).
 if (app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<AppOptions>>().Value.MatchingV2MoviesEnabled)

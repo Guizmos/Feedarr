@@ -161,17 +161,16 @@ public sealed class MatchingShadowDiagnosticsTests
     }
 
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, true)]
-    [InlineData(true, false)]
-    public void Api_RequiresExistingAuthentication_RejectsBootstrap_AndNeverCaches(bool authenticated, bool bootstrap)
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Api_RequiresExistingAuthentication_AndNeverCaches(bool authenticated)
     {
         using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit);
         var context = new DefaultHttpContext();
         context.Items[BasicAuthMiddleware.AuthPassedKey] = authenticated;
-        context.Items[BasicAuthMiddleware.BootstrapTokenActiveKey] = bootstrap;
+       
         var controller = new MatchingShadowController(rig.Posters) { ControllerContext = new() { HttpContext = context } };
-        var allowed = authenticated && !bootstrap;
+        var allowed = authenticated;
         Assert.Equal(allowed, controller.Get() is OkObjectResult);
         Assert.Equal(allowed, controller.Set(new(true, rig.ShadowDiagnostics.Snapshot().Generation)) is OkObjectResult);
         Assert.Equal(allowed, rig.ShadowDiagnostics.Snapshot().Enabled);

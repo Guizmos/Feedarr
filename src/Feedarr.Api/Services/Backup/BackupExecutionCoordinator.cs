@@ -12,16 +12,14 @@ public sealed class BackupExecutionCoordinator
     private readonly SemaphoreSlim _operationGate = new(1, 1);
     private readonly object _stateLock = new();
     private readonly BadgeSignal? _badgeSignal;
-    private readonly Configuration.ConfigurationRestorePlanStore? _configurationRestore;
 
     private bool _syncBlocked;
     private int _activeSyncActivities;
     private BackupOperationStateDto _state = new();
 
-    public BackupExecutionCoordinator(BadgeSignal? badgeSignal = null, Configuration.ConfigurationRestorePlanStore? configurationRestore = null)
+    public BackupExecutionCoordinator(BadgeSignal? badgeSignal = null)
     {
         _badgeSignal = badgeSignal;
-        _configurationRestore = configurationRestore;
     }
 
     public BackupOperationStateDto GetState()
@@ -48,7 +46,7 @@ public sealed class BackupExecutionCoordinator
     {
         lock (_stateLock)
         {
-            if (_syncBlocked || _configurationRestore?.BlocksSync == true)
+            if (_syncBlocked)
                 return null;
 
             _activeSyncActivities++;

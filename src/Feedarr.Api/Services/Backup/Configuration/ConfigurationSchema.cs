@@ -9,7 +9,7 @@ namespace Feedarr.Api.Services.Backup.Configuration;
 
 internal static class ConfigurationSchema
 {
-    internal const int Version = 1;
+    internal const int Version = 3;
     internal const int MaxRows = 10_000;
     internal const int MaxStringLength = 16_384;
     internal static readonly JsonSerializerOptions Json = new()
@@ -29,7 +29,7 @@ internal static class ConfigurationSchema
     internal static readonly Dictionary<string, string> CategoryFields = Fields("sourceKey:s cat_id:i name:s parent_cat_id:n is_sub:b unified_key:? unified_label:?");
     internal static readonly Dictionary<string, string> MappingFields = Fields("sourceKey:s cat_id:i group_key:? group_label:?");
     internal static readonly Dictionary<string, string> SelectionFields = Fields("sourceKey:s cat_id:i");
-    internal static readonly string[] SettingNames = ["general", "ui", "arr", "maintenance", "security"];
+    internal static readonly string[] SettingNames = ["general", "ui", "arr", "maintenance"];
     private static Dictionary<string, string> Fields(string fields) => fields.Split(' ').Select(x => x.Split(':')).ToDictionary(x => x[0], x => x[1]);
     internal static void Fail() => throw new ConfigurationArchiveException(ConfigurationArchiveError.InvalidConfiguration);
     internal static string Text(JsonObject row, string key) => row[key]?.GetValue<string>() ?? "";
@@ -42,9 +42,20 @@ internal static class ConfigurationSchema
         ValidateSettings<GeneralSettings>(model.Settings["general"]);
         ValidateSettings<ArrSettings>(model.Settings["arr"]);
         ValidateSettings<MaintenanceSettings>(model.Settings["maintenance"]);
-        AuthenticationPolicy.NormalizeSecurityDocument(model.Settings["security"]);
-        ValidateSettings<SecuritySettings>(model.Settings["security"]);
         ValidateSettings<UiSettings>(model.Settings["ui"]);
+        var general = model.Settings["general"].Deserialize<GeneralSettings>(Json)!;
+        var arr = model.Settings["arr"].Deserialize<ArrSettings>(Json)!;
+        var maintenance = model.Settings["maintenance"].Deserialize<MaintenanceSettings>(Json)!;
+        if (general.SyncIntervalMinutes is < 1 or > 1440 || general.ArrSyncIntervalMinutes is < 1 or > 1440 ||
+            general.RssLimitPerCategory is < 1 or > 200 || general.RssLimitGlobalPerSource is < 1 or > 2000 ||
+            general.RssLimitGlobalPerSource < general.RssLimitPerCategory || arr.ArrSyncIntervalMinutes is < 1 or > 1440 ||
+            general.RequestIntegrationMode is not ("arr" or "overseerr" or "jellyseerr" or "seer") ||
+            arr.RequestIntegrationMode is not ("arr" or "overseerr" or "jellyseerr" or "seer") ||
+            maintenance.SyncSourcesMaxConcurrency is < 1 or > 4 || maintenance.PosterWorkers is < 1 or > 2 ||
+            maintenance.SyncRunTimeoutMinutes is < 3 or > 30 || maintenance.ProviderRateLimitMode is not ("auto" or "manual")) Fail();
+        var manual = maintenance.ProviderConcurrencyManual;
+        if (manual is null || manual.Tmdb is < 1 or > 3 || manual.Igdb is < 1 or > 2 || manual.Fanart is < 1 or > 2 ||
+            manual.Tvmaze is < 1 or > 2 || manual.Others is < 1 or > 2) Fail();
         if (model.Settings["ui"].ContainsKey("onboardingDone")) Fail();
         ValidateRows(model.Providers, ProviderFields);
         ValidateRows(model.Sources, SourceFields);
@@ -104,16 +115,8 @@ internal static class ConfigurationSchema
         foreach (var section in model.Settings.Values) CheckStrings(section);
         foreach (var rows in new[] { model.Providers, model.Sources, model.ExternalProviders, model.Applications, model.Categories, model.Mappings, model.Selections })
             foreach (var row in rows) CheckStrings(row);
-        var security = model.Settings["security"].Deserialize<SecuritySettings>(Json)!;
-        if (security.PasswordHash.Length > 0 || security.PasswordSalt.Length > 0)
-        {
-            try { if (Convert.FromBase64String(security.PasswordHash).Length != 32 || Convert.FromBase64String(security.PasswordSalt).Length != 16) Fail(); }
-            catch (FormatException) { Fail(); }
-        }
         var missing = MissingRequiredSecrets(model, registry).Count;
-        return new(model.Sources.Count, model.Sources.Count, model.Providers.Count, model.ExternalProviders.Count,
-            model.Applications.Count, model.Categories.Count, model.Mappings.Count, model.Selections.Count,
-            model.Settings.Count, model.Settings.Sum(x => x.Value.Count), missing, missing == 0 && model.Sources.Count > 0);
+        return new(model.Sources.Count, model.Providers.Count, model.ExternalProviders.Count, model.Applications.Count, model.Settings.Count, missing);
     }
 
     internal static List<ConfigurationSecretRequirement> MissingRequiredSecrets(ConfigurationDocument model, ExternalProviderRegistry registry)
@@ -132,9 +135,6 @@ internal static class ConfigurationSchema
             foreach (var field in definition.FieldsSchema.Where(f => f.Required && string.IsNullOrWhiteSpace(e["auth_json"]![f.Key]?.GetValue<string>())))
                 result.Add(new(Text(e, "key"), field.Key));
         }
-        var security = model.Settings["security"].Deserialize<SecuritySettings>(Json)!;
-        if (!AuthenticationPolicy.IsAuthConfigured(security, null))
-            result.Add(new("security", "basicCredentials"));
         return result;
     }
 

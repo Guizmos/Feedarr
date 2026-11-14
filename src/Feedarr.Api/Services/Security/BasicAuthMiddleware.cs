@@ -12,12 +12,6 @@ public sealed class BasicAuthMiddleware
 {
     internal const string AuthPassedKey = "feedarr.auth.passed";
 
-    /// <summary>
-    /// Set in HttpContext.Items when the request was authenticated via a bootstrap token.
-    /// Controllers can read this to call <see cref="BootstrapTokenService.InvalidateAll"/>
-    /// after a successful security config save.
-    /// </summary>
-    internal const string BootstrapTokenActiveKey = "feedarr.auth.bootstrap_token_active";
 
     private readonly RequestDelegate _next;
     private readonly IConfiguration _config;

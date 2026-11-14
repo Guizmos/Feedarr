@@ -378,19 +378,18 @@ public sealed partial class MatchingReplayTests
     }
 
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, true)]
-    [InlineData(true, false)]
-    public void ApiAndExport_RequireExistingAuthentication_AndCannotBeCached(bool auth, bool bootstrap)
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ApiAndExport_RequireExistingAuthentication_AndCannotBeCached(bool auth)
     {
         using var fixture = new Fixture();
-        var context = new DefaultHttpContext(); context.Items[BasicAuthMiddleware.AuthPassedKey] = auth; context.Items[BasicAuthMiddleware.BootstrapTokenActiveKey] = bootstrap;
+        var context = new DefaultHttpContext(); context.Items[BasicAuthMiddleware.AuthPassedKey] = auth;
         var controller = new MatchingReplayController(fixture.Replay) { ControllerContext = new() { HttpContext = context } };
-        Assert.Equal(auth && !bootstrap, controller.Get() is OkObjectResult);
-        Assert.Equal(auth && !bootstrap, controller.Export() is OkObjectResult);
-        Assert.Equal(auth && !bootstrap, controller.Start(new()) is AcceptedResult);
-        Assert.Equal(auth && !bootstrap, controller.Stop() is OkObjectResult);
-        Assert.Equal(auth && !bootstrap, controller.Reset() is OkObjectResult);
+        Assert.Equal(auth, controller.Get() is OkObjectResult);
+        Assert.Equal(auth, controller.Export() is OkObjectResult);
+        Assert.Equal(auth, controller.Start(new()) is AcceptedResult);
+        Assert.Equal(auth, controller.Stop() is OkObjectResult);
+        Assert.Equal(auth, controller.Reset() is OkObjectResult);
         Assert.Equal("no-store", context.Response.Headers.CacheControl.ToString());
     }
 

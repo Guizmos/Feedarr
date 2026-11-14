@@ -179,7 +179,7 @@ public sealed partial class RetentionServiceTests
         private readonly TestWebHostEnvironment _environment;
         private readonly Microsoft.Extensions.Options.IOptions<AppOptions> _options;
 
-        public RetentionTestContext(IPosterFileStore? fileStore = null, IPosterThumbQueue? thumbQueue = null)
+        public RetentionTestContext(IPosterFileStore? fileStore = null, IPosterThumbQueue? thumbQueue = null, Feedarr.Api.Services.Backup.BackupExecutionCoordinator? coordinator = null)
         {
             _workspace = new TestWorkspace();
             _environment = new TestWebHostEnvironment(_workspace.RootDir);
@@ -235,7 +235,7 @@ public sealed partial class RetentionServiceTests
                 resolver,
                 NullLogger<PosterFetchService>.Instance, thumbQueue: thumbQueue, fileStore: fileStore);
 
-            Service = new RetentionService(Releases, Posters, fileStore ?? new PosterFileStore(), NullLogger<RetentionService>.Instance);
+            Service = new RetentionService(Releases, Posters, fileStore ?? new PosterFileStore(), NullLogger<RetentionService>.Instance, coordinator);
 
             using var conn = Db.Open();
             var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();

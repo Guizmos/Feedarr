@@ -166,7 +166,6 @@ public sealed class UiSettingsValidationTests
                 null!,
                 _cache,
                 _configuration,
-                new Feedarr.Api.Services.Security.BootstrapTokenService(),
                 NullLogger<SettingsController>.Instance,
                 externalProviderInstances: null,
                 db: Db);

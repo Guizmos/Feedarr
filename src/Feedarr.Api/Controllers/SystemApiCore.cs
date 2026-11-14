@@ -46,7 +46,6 @@ public sealed partial class SystemApiCore : ControllerBase
     private readonly SettingsRepository _settings;
     private readonly ProviderStatsService _providerStats;
     private readonly ApiRequestMetricsService _apiRequestMetrics;
-    private readonly BackupService _backupService;
     private readonly SystemStatusCacheService _systemStatusCache;
     private readonly IMemoryCache _cache;
     private readonly SetupStateService _setupState;
@@ -59,7 +58,6 @@ public sealed partial class SystemApiCore : ControllerBase
         SettingsRepository settings,
         ProviderStatsService providerStats,
         ApiRequestMetricsService apiRequestMetrics,
-        BackupService backupService,
         SystemStatusCacheService systemStatusCache,
         IMemoryCache cache,
         SetupStateService setupState,
@@ -71,7 +69,6 @@ public sealed partial class SystemApiCore : ControllerBase
         _settings = settings;
         _providerStats = providerStats;
         _apiRequestMetrics = apiRequestMetrics;
-        _backupService = backupService;
         _systemStatusCache = systemStatusCache;
         _cache = cache;
         _setupState = setupState;
@@ -174,157 +171,6 @@ public sealed partial class SystemApiCore : ControllerBase
     {
         _setupState.ResetSetupCompleted();
         return Ok(new { ok = true, onboardingDone = false });
-    }
-
-    // GET /api/system/backups
-    [HttpGet("backups")]
-    public IActionResult Backups()
-    {
-        return Ok(_backupService.ListBackups());
-    }
-
-    // GET /api/system/backups/state
-    [HttpGet("backups/state")]
-    public IActionResult BackupState()
-    {
-        return Ok(_backupService.GetOperationState());
-    }
-
-    // POST /api/system/backups/purge
-    [HttpPost("backups/purge")]
-    public async Task<IActionResult> PurgeBackups(CancellationToken ct)
-    {
-        var deleted = await _backupService.PurgeBackupsAsync(ct);
-        return Ok(new { ok = true, deleted });
-    }
-
-    // POST /api/system/backups
-    [HttpPost("backups")]
-    public async Task<IActionResult> CreateBackup(CancellationToken ct)
-    {
-        try
-        {
-            var backup = await _backupService.CreateBackupAsync(GetAppVersion(), ct);
-            return Ok(backup);
-        }
-        catch (BackupOperationException ex)
-        {
-            return ToBackupErrorResult(ex);
-        }
-    }
-
-    // DELETE /api/system/backups/{name}
-    [HttpDelete("backups/{name}")]
-    public async Task<IActionResult> DeleteBackup([FromRoute] string name, CancellationToken ct)
-    {
-        try
-        {
-            await _backupService.DeleteBackupAsync(name, ct);
-            return Ok(new { ok = true });
-        }
-        catch (BackupOperationException ex)
-        {
-            return ToBackupErrorResult(ex);
-        }
-    }
-
-    // GET /api/system/backups/{name}/download
-    [HttpGet("backups/{name}/download")]
-    public IActionResult DownloadBackup([FromRoute] string name)
-    {
-        try
-        {
-            var (safeName, path) = _backupService.GetExistingBackupFile(name);
-            return PhysicalFile(path, "application/zip", safeName);
-        }
-        catch (BackupOperationException ex)
-        {
-            return ToBackupErrorResult(ex);
-        }
-    }
-
-    // POST /api/system/backups/{name}/restore?confirm=false
-    //
-    // confirm=false (default): dry-run preview — validates the archive and reports which credentials
-    //   would be re-encrypted or cleared, WITHOUT touching the live database.
-    //   Response: { dryRun: true, wouldReencrypt: N, wouldClear: N }
-    //
-    // confirm=true: performs the actual restore. If wouldClear > 0, the caller MUST have passed
-    //   confirm=true explicitly, acknowledging that some credentials will be erased.
-    //   Response: { ok: true, needsRestart: true, reencryptedCredentials: N, clearedUndecryptableCredentials: N }
-    [HttpPost("backups/{name}/restore")]
-    public async Task<IActionResult> RestoreBackup([FromRoute] string name, [FromQuery] bool confirm = false, CancellationToken ct = default, [FromQuery] string? replacePendingId = null, [FromQuery] bool background = false)
-    {
-        try
-        {
-            if (!confirm)
-            {
-                // Dry-run: return a preview without modifying anything.
-                var preview = await _backupService.PreviewRestoreBackupAsync(name, GetAppVersion(), ct);
-
-                var previewWarning = preview.WouldClear > 0
-                    ? $"{preview.WouldClear} credential(s) could not be decrypted with the current key ring " +
-                      "and would be permanently cleared. Pass confirm=true to proceed."
-                    : null;
-
-                return Ok(new
-                {
-                    dryRun = true,
-                    wouldReencrypt = preview.WouldReencrypt,
-                    wouldClear = preview.WouldClear,
-                    warning = previewWarning
-                });
-            }
-
-            if (background)
-            {
-                // Accept quickly; the hosted service owns cancellation, not the HTTP connection.
-                ct.ThrowIfCancellationRequested();
-                var preparation = _backupService.StartRestorePreparation(name, GetAppVersion(), replacePendingId);
-                return Accepted("/api/system/backups/state", new { accepted = true, preparationId = preparation.Id });
-            }
-
-            // Preserve the synchronous contract for clients predating background preparation.
-            // Prepare only: active database remains unchanged until process startup.
-            var result = await _backupService.RestoreBackupAsync(name, GetAppVersion(), ct, replacePendingId);
-
-            var warning = result.ClearedUndecryptableCredentials > 0
-                ? $"{result.ClearedUndecryptableCredentials} credential(s) could not be decrypted " +
-                  "and will be cleared in the restored database after restart. Reconfigure them in Settings → External Providers."
-                : null;
-
-            if (result.ClearedUndecryptableCredentials > 0)
-                _log.LogWarning(
-                    "RestoreBackup {Name}: {Cleared} credential(s) cleared – key ring mismatch",
-                    name, result.ClearedUndecryptableCredentials);
-
-            return Ok(new
-            {
-                ok = true,
-                needsRestart = true,
-                reencryptedCredentials = result.ReencryptedCredentials,
-                clearedUndecryptableCredentials = result.ClearedUndecryptableCredentials,
-                missingPosters = result.MissingPosters,
-                warning
-            });
-        }
-        catch (BackupOperationException ex)
-        {
-            return ToBackupErrorResult(ex);
-        }
-    }
-
-    public IActionResult PendingRestoreState() => Ok(_backupService.GetPendingRestore());
-
-    public IActionResult CancelPendingRestore(string id)
-    {
-        try { _backupService.CancelPendingRestore(id); return Ok(new { ok = true }); }
-        catch (BackupOperationException ex) { return ToBackupErrorResult(ex); }
-        catch (Exception ex)
-        {
-            _log.LogError(ex, "Pending restore cancellation failed");
-            return StatusCode(500, new { error = "restore cancellation failed; check server logs" });
-        }
     }
 
     // GET /api/system/storage
@@ -466,23 +312,7 @@ public sealed partial class SystemApiCore : ControllerBase
         => !string.IsNullOrWhiteSpace(value)
         && value.Trim().StartsWith("beta-", StringComparison.OrdinalIgnoreCase);
 
-    private IActionResult ToBackupErrorResult(BackupOperationException ex)
-    {
-        if (ex.StatusCode >= StatusCodes.Status500InternalServerError)
-        {
-            _log.LogError(ex, "Backup operation failed with status code {StatusCode}", ex.StatusCode);
-            return StatusCode(ex.StatusCode, new { error = "internal server error" });
-        }
 
-        var safeError = ErrorMessageSanitizer.ToOperationalMessage(ex, "backup operation failed");
-        return ex.StatusCode switch
-        {
-            StatusCodes.Status400BadRequest => BadRequest(new { error = safeError }),
-            StatusCodes.Status404NotFound => NotFound(new { error = safeError }),
-            StatusCodes.Status409Conflict => Conflict(new { error = safeError }),
-            _ => StatusCode(ex.StatusCode, new { error = safeError })
-        };
-    }
 
     private sealed class ArrAppStatsRow
     {

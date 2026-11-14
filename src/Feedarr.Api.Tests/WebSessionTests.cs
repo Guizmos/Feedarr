@@ -177,7 +177,7 @@ public sealed class WebSessionTests
     [Theory]
     [InlineData("/api/settings/security")]
     [InlineData("/api/settings/general")]
-    [InlineData("/api/setup/configuration-restore/prepare")]
+    [InlineData("/api/configuration-backups/restore")]
     [InlineData("/api/system/onboarding")]
     [InlineData("/api/sources")]
     [InlineData("/api/releases/7/seen")]
@@ -334,7 +334,6 @@ public sealed class WebSessionTests
         var options = new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost };
         options.KnownNetworks.Clear(); options.KnownProxies.Clear();
         options.KnownProxies.Add(IPAddress.Parse(trusted ? "10.0.0.2" : "10.0.0.3"));
-        AuthenticationPolicy.CaptureConnection(c, options);
         IActionResult? result = null;
         await new ForwardedHeadersMiddleware(ctx => { result = f.Controller(ctx).Login(new("admin", Fixture.Password)); return Task.CompletedTask; },
             NullLoggerFactory.Instance, OptionsFactory.Create(options)).Invoke(c);
@@ -436,18 +435,7 @@ public sealed class WebSessionTests
         Assert.NotNull(f.Sessions.Authenticate(f.Context(cookie: Cookie(c))));
     }
 
-    [Fact]
-    public async Task LegacyBootstrapEndpointAlsoRequiresAuthenticatedSessionCsrf()
-    {
-        using var f = new Fixture();
-        var (cookie, session) = f.Login();
-        var context = f.Context("/api/setup/bootstrap-token", "POST", cookie);
-        context.Request.Headers[WebSessionSecurity.CsrfHeader] = session.CsrfToken;
-        Assert.True(await f.Invoke(context));
-        context.Request.Headers.Remove(WebSessionSecurity.CsrfHeader);
-        Assert.False(await f.Invoke(context));
-        Assert.Equal(403, context.Response.StatusCode);
-    }
+
 
     [Fact]
     public void UnknownAlteredAndRevokedCookies_CannotAuthenticate()
@@ -597,7 +585,6 @@ public sealed class WebSessionTests
             builder.Services.AddSingleton(Sessions);
             builder.Services.AddSingleton(Throttle);
             builder.Services.AddSingleton<IMemoryCache>(cache);
-            builder.Services.AddSingleton<BootstrapTokenService>();
             builder.Services.AddScoped<RequireAuthFilter>();
             builder.Services.AddScoped<ApiErrorNormalizationFilter>();
             builder.Services.AddControllers(options =>

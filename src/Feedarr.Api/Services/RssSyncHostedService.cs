@@ -35,16 +35,7 @@ public sealed class RssSyncHostedService : BackgroundService
 
             try
             {
-                using var restoreScope = _scopeFactory.CreateScope();
-                var restore = restoreScope.ServiceProvider.GetRequiredService<Backup.Configuration.ConfigurationRestoreService>();
-                var handledRestoreSync = await restore.RunInitialSyncCycleAsync(async (id, token) =>
-                {
-                    var source = restoreScope.ServiceProvider.GetRequiredService<SourceRepository>().ListEnabledForSync().SingleOrDefault(s => s.Id == id);
-                    if (source is null) return true;
-                    var sync = restoreScope.ServiceProvider.GetRequiredService<SyncOrchestrationService>();
-                    return (await sync.ExecuteAutoSyncSourceAsync(source, token).ConfigureAwait(false)).Ok;
-                }, stoppingToken).ConfigureAwait(false);
-                if (!handledRestoreSync && IsAutoSyncEnabled())
+                if (IsAutoSyncEnabled())
                 {
                     using var lease = _backupCoordinator.TryEnterSyncActivity("rss-auto-sync");
                     if (lease is null)

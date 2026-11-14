@@ -64,7 +64,7 @@ public sealed class AuthenticationMiddlewareTests
             }).Build();
             var context=new DefaultHttpContext();context.Request.Scheme="http";context.Request.Path="/api/sources";context.Connection.RemoteIpAddress=IPAddress.Parse(ip);context.Response.Body=new MemoryStream();
             if(basic)context.Request.Headers.Authorization="Basic "+Convert.ToBase64String(Encoding.UTF8.GetBytes("admin:Fixture-Password42!"));
-            if(secret is not null)context.Request.Headers[AuthenticationPolicy.BootstrapSecretHeader]=secret;
+            if(secret is not null)context.Request.Headers["X-Bootstrap-Secret"]=secret;
             var middleware=new BasicAuthMiddleware(c=>{c.Response.StatusCode=200;return Task.CompletedTask;},config);
             await middleware.InvokeAsync(context,Settings,Cache,new AuthThrottleService(new BasicAuthThrottleOptions(),TimeProvider.System),NullLogger<BasicAuthMiddleware>.Instance);
             return context.Response.StatusCode;

@@ -10,8 +10,7 @@ public sealed class MatchingShadowController(PosterFetchService posters) : Contr
 {
     public sealed record SwitchRequest(bool Enabled, long? Generation = null);
 
-    private bool Authenticated => HttpContext.Items[BasicAuthMiddleware.AuthPassedKey] is true &&
-        HttpContext.Items[BasicAuthMiddleware.BootstrapTokenActiveKey] is not true;
+    private bool Authenticated => HttpContext.Items[BasicAuthMiddleware.AuthPassedKey] is true;
     private void PrivateResponse()
     {
         Response.Headers.CacheControl = "no-store";

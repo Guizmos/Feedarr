@@ -46,8 +46,8 @@ public sealed class TrustedIntegrationFlowTests
     public async Task SetupDiscoveryCapsRssAndSavedProviderShareDockerAuthorization()
     {
         using var context = new FlowContext(Policy());
-        Assert.IsType<OkObjectResult>(context.Setup.UpsertIndexerProvider("prowlarr", new()
-        { BaseUrl = "prowlarr:9696/api/v1", ApiKey = "key" }));
+        Assert.IsType<OkObjectResult>(context.ProviderController.Create(new()
+        { Type = "prowlarr", BaseUrl = "prowlarr:9696/api/v1", ApiKey = "key" }));
         var provider = Assert.Single(context.Providers.List());
         var id = Convert.ToInt64(provider.Id);
         var discovery = await context.ProviderController.ListIndexers(id, default);
@@ -112,8 +112,8 @@ public sealed class TrustedIntegrationFlowTests
     public async Task EmptyConfigurationDeniesPrivateDestinationsWithoutNetworkTraffic()
     {
         using var context = new FlowContext(new OutboundDestinationPolicy(new OutboundSecurityOptions()));
-        var rejected = context.Setup.UpsertIndexerProvider("prowlarr", new()
-        { BaseUrl = "http://10.50.0.15:9696", ApiKey = "key" });
+        var rejected = context.ProviderController.Create(new()
+        { Type = "prowlarr", BaseUrl = "http://10.50.0.15:9696", ApiKey = "key" });
         Assert.Equal(SsrfBlockedException.Code, Assert.IsType<ProblemDetails>(Assert.IsType<ObjectResult>(rejected).Value).Title);
         Assert.Empty(context.Providers.List());
         await Assert.ThrowsAsync<SsrfBlockedException>(() => context.Prowlarr.ListIndexersAsync("http://prowlarr:9696", "key", default));
@@ -212,7 +212,7 @@ public sealed class TrustedIntegrationFlowTests
     {
         using var context = new FlowContext(new OutboundDestinationPolicy(new OutboundSecurityOptions
         { TrustedNetworks = ["10.50.0.0/24"] }));
-        Assert.IsType<OkObjectResult>(context.Setup.UpsertIndexerProvider(type, new() { BaseUrl = url, ApiKey = "key" }));
+        Assert.IsType<OkObjectResult>(context.ProviderController.Create(new() { Type = type, BaseUrl = url, ApiKey = "key" }));
         var provider = Assert.Single(context.Providers.List());
         Assert.Equal(expected, (string)provider.BaseUrl);
         Assert.IsType<OkObjectResult>(context.ProviderController.Update(Convert.ToInt64(provider.Id), new ProviderUpdateDto
@@ -279,7 +279,6 @@ public sealed class TrustedIntegrationFlowTests
         public readonly IntegrationTransport Transport = new();
         public ProviderRepository Providers { get; }
         public SourceRepository Sources { get; }
-        public SetupController Setup { get; }
         public ProvidersController ProviderController { get; }
         public SourcesController SourcesController { get; }
         public CategoriesController Categories { get; }
@@ -303,8 +302,6 @@ public sealed class TrustedIntegrationFlowTests
             Prowlarr = new ProwlarrClient(Client(), policy);
             Torznab = new TorznabClient(Client(), new TorznabRssParser(), NullLogger<TorznabClient>.Instance, policy);
             var caps = new CategoryRecommendationService(Sources, Torznab, _cache, NullLogger<CategoryRecommendationService>.Instance);
-            Setup = new SetupController(db, settings, Providers, new ConfigurationBuilder().Build(), new BootstrapTokenService(),
-                new SetupStateService(settings, _cache), NullLogger<SetupController>.Instance, policy);
             ProviderController = new ProvidersController(Providers, Sources, jackett, Prowlarr, _cache, NullLogger<ProvidersController>.Instance, policy);
             var releases = new ReleaseRepository(db, new TitleParser(), new UnifiedCategoryResolver());
             Sync = new SyncOrchestrationService(Torznab, Sources, releases, activity, settings,
