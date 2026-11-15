@@ -42,6 +42,27 @@ réseau sur le même snapshot et le même stock de réponses publiques. Aucun fe
 Le rejeu ne publie aucune association. Il mesure les décisions proposées, pas le taux
 historique de réussite du V1 ni la justesse de toutes les associations existantes.
 
+Résultat du rejeu final sur les 132 releases TV :
+
+| Décision proposée | Avant | Après |
+| --- | ---: | ---: |
+| Acceptation | 4 | 105 |
+| Ambiguïté | 86 | 8 |
+| Rejet | 38 | 5 |
+| Non évaluable | 4 | 14 |
+
+Sur les 28 releases sans identité, les propositions acceptées passent de 1 à 17
+(+16 propositions, à distinguer des gains vérifiés). Dix labels ont été revus ; neuf
+sont comparables avec la référence : **9 gains corrects, 0 régression et 0 faux positif
+observé sur ce sous-ensemble**. Aucune conclusion de justesse exhaustive n'est tirée
+pour les cas non revus. Les décisions des 173 autres releases restent identiques.
+
+Les 14 cas TV non évaluables correspondent à : pagination dupliquée (1), captures
+réseau manquantes (4), preuves non capturées par les gardes du benchmark (4), budget
+de candidats (3), contradictions entre dates des fournisseurs (2). Ces deux derniers
+cas s'abstiennent plutôt que choisir silencieusement une date. Les accès HTTP logiques
+du replay passent de 261 à 807 ; les rejeux comparés font **zéro appel réseau réel**.
+
 La revue progressive des labels utilise les noms officiels, dates, saisons et métadonnées
 fournisseur ; elle ne transforme pas les associations historiques en vérité. Les cas
 non revus et les réponses manquantes restent explicitement non évaluables.
