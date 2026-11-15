@@ -57,7 +57,6 @@ public sealed partial class TitleParser
             {
                 p.AirDate = airDateIso;
                 if (year.HasValue) p.Year = year;
-                return;
             }
 
             ParseSeriesTokens(raw, p);

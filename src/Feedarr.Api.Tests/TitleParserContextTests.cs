@@ -97,6 +97,19 @@ public sealed class TitleParserContextTests
         var parsed = new TitleParser().Parse(raw, UnifiedCategory.Emission);
         Assert.Equal("Le French Show", parsed.TitleClean);
         Assert.Equal(2026, parsed.Year); Assert.Equal(airDate, parsed.AirDate);
+        Assert.Null(parsed.Season); Assert.Null(parsed.Episode);
+    }
+
+    [Theory]
+    [InlineData("Star.Academy.S14E45.Quotidienne.34.2026-11-14.FRENCH.1080p.WEB.AAC.2.0.H264-BYOR")]
+    [InlineData("Star.Academy.S14E45.Quotidienne.34.2026-11-14.FRENCH.1080p.TF1P.WEB.H264-BYOR.mkv")]
+    public void Parse_EmissionPreservesDateAndEpisodeTogether(string raw)
+    {
+        var parsed = new TitleParser().Parse(raw, UnifiedCategory.Emission);
+        Assert.Equal("2026-11-14", parsed.AirDate);
+        Assert.Equal(2026, parsed.Year);
+        Assert.Equal(14, parsed.Season);
+        Assert.Equal(45, parsed.Episode);
     }
 
 }

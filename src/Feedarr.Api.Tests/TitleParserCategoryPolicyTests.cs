@@ -12,7 +12,7 @@ public sealed class TitleParserCategoryPolicyTests
     [InlineData("Show.S01E02.2005.1080p.WEB-DL.x264-TEAM", UnifiedCategory.Serie, "Show", 2005, 1, 2, null, "series")]
     [InlineData("[Fansub].Show.S01E02.1080p", UnifiedCategory.Anime, "Show", null, 1, 2, null, "anime")]
     [InlineData("Show.S01E02.1080p.WEB-DL.x264-TEAM", UnifiedCategory.Animation, "Show S01E02", null, null, null, null, "movie")]
-    [InlineData("Show.2026.11.12.S01E02.1080p", UnifiedCategory.Emission, "Show", 2026, null, null, "2026-11-12", "series")]
+    [InlineData("Show.2026.11.12.S01E02.1080p", UnifiedCategory.Emission, "Show", 2026, 1, 2, "2026-11-12", "series")]
     [InlineData("Show.S03E04.1080p", UnifiedCategory.Emission, "Show", null, 3, 4, null, "series")]
     [InlineData("Portal.2.Update.v1.2.3-CODEX", UnifiedCategory.JeuWindows, "Portal 2", null, null, null, null, "game")]
     [InlineData("F1.2026.Update.v1.2.3-CODEX", UnifiedCategory.JeuWindows, "F1 2026", null, null, null, null, "game")]
@@ -41,7 +41,8 @@ public sealed class TitleParserCategoryPolicyTests
             var game = parser.Parse("F1.2026.Update.v1.2.3-CODEX", UnifiedCategory.JeuWindows);
             var episode = parser.Parse("Show.S03E04.1080p", UnifiedCategory.Serie);
             Assert.Equal("2026-11-12", broadcast.AirDate);
-            Assert.Null(broadcast.Season);
+            Assert.Equal(1, broadcast.Season);
+            Assert.Equal(2, broadcast.Episode);
             Assert.Equal("F1 2026", game.TitleClean);
             Assert.Null(game.Year);
             Assert.Null(game.AirDate);

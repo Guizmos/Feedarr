@@ -104,8 +104,8 @@ public sealed class TitleParserSuffixSequenceTests
         var parser = new TitleParser();
         var emission = parser.Parse("Show.S21E15.02.11.2026.VFF.1080p.WEB.H264-TEAM", UnifiedCategory.Emission);
         Assert.Equal("2026-11-02", emission.AirDate);
-        Assert.Null(emission.Season);
-        Assert.Null(emission.Episode);
+        Assert.Equal(21, emission.Season);
+        Assert.Equal(15, emission.Episode);
         var animation = parser.Parse("Show.S01E03.1080p.WEB.H264-TEAM", UnifiedCategory.Animation);
         Assert.Equal("movie", animation.MediaType);
         Assert.Null(animation.Season);
