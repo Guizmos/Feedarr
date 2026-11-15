@@ -9,7 +9,13 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
     public static readonly TimeSpan DefaultEnqueueTimeout = TimeSpan.FromSeconds(1);
     public static readonly TimeSpan DefaultBatchEnqueueTimeout = TimeSpan.FromSeconds(2);
 
-    private readonly Channel<long> _channel;
+    // The channel carries wake-up/capacity tokens, never IDs. Removing/promoting
+    // a FIFO node cannot leave a duplicate or stale token behind.
+    private readonly Channel<byte> _channel;
+    private readonly LinkedList<long> _normal = new();
+    private readonly LinkedList<long> _background = new();
+    private const int NormalBurstLimit = 4;
+    private int _normalBurst;
     private readonly ConcurrentDictionary<long, QueueEntry> _entries = new();
     private readonly ILogger<PosterFetchQueue> _log;
     private readonly object _gate = new();
@@ -29,7 +35,7 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
     public PosterFetchQueue(ILogger<PosterFetchQueue> log)
     {
         _log = log;
-        _channel = Channel.CreateBounded<long>(new BoundedChannelOptions(Capacity)
+        _channel = Channel.CreateBounded<byte>(new BoundedChannelOptions(Capacity)
         {
             SingleReader = false,
             SingleWriter = false,
@@ -38,7 +44,7 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
         });
     }
 
-    public int Count => (int)_channel.Reader.Count;
+    public int Count { get { lock (_gate) return _normal.Count + _background.Count; } }
 
     public async ValueTask<PosterFetchEnqueueResult> EnqueueAsync(PosterFetchJob job, CancellationToken ct, TimeSpan timeout)
     {
@@ -192,12 +198,20 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
     {
         while (true)
         {
-            var itemId = await _channel.Reader.ReadAsync(ct).ConfigureAwait(false);
+            await _channel.Reader.WaitToReadAsync(ct).ConfigureAwait(false);
             lock (_gate)
             {
-                if (!_entries.TryGetValue(itemId, out var entry) || !entry.Pending)
-                    continue;
-
+                ct.ThrowIfCancellationRequested();
+                // Consume the token and FIFO node under the same lock as producers:
+                // total pending jobs stays bounded even with two waiting workers.
+                if (!_channel.Reader.TryRead(out _)) continue;
+                var background = _background.Count > 0 && (_normal.Count == 0 || _normalBurst >= NormalBurstLimit);
+                var fifo = background ? _background : _normal;
+                var node = fifo.First!;
+                fifo.RemoveFirst();
+                var entry = _entries[node.Value];
+                entry.PendingNode = null;
+                _normalBurst = background ? 0 : Math.Min(NormalBurstLimit, _normalBurst + 1);
                 entry.Pending = false;
                 entry.InFlight = true;
 
@@ -254,17 +268,15 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
 
     public int ClearPending()
     {
-        var cleared = 0;
-        while (_channel.Reader.TryRead(out var itemId))
+        int cleared;
+        lock (_gate)
         {
-            lock (_gate)
-            {
-                if (_entries.TryGetValue(itemId, out var entry) && entry.Pending)
-                {
-                    _entries.TryRemove(itemId, out _);
-                    cleared++;
-                }
-            }
+            cleared = _normal.Count + _background.Count;
+            foreach (var itemId in _normal.Concat(_background)) _entries.TryRemove(itemId, out _);
+            _normal.Clear();
+            _background.Clear();
+            _normalBurst = 0;
+            while (_channel.Reader.TryRead(out _)) { }
         }
 
         if (cleared > 0)
@@ -326,7 +338,13 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
 
         if (entry.Pending)
         {
-            entry.Job = MergePendingJob(entry.Job, job);
+            var merged = MergePendingJob(entry.Job, job);
+            if (entry.Job.Priority == PosterFetchPriority.Background && merged.Priority == PosterFetchPriority.Normal)
+            {
+                _background.Remove(entry.PendingNode!);
+                entry.PendingNode = _normal.AddLast(job.ItemId);
+            }
+            entry.Job = merged;
             Interlocked.Increment(ref _jobsCoalesced);
             result = new PosterFetchEnqueueResult(PosterFetchEnqueueStatus.Coalesced);
             return true;
@@ -350,11 +368,12 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
         if (TryCoalesceLocked(job, out var coalesced))
             return coalesced.Status;
 
-        if (_channel.Writer.TryWrite(job.ItemId))
+        if (_channel.Writer.TryWrite(0))
         {
             _entries[job.ItemId] = new QueueEntry(job, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
             {
-                Pending = true
+                Pending = true,
+                PendingNode = (job.Priority == PosterFetchPriority.Background ? _background : _normal).AddLast(job.ItemId)
             };
             Interlocked.Increment(ref _jobsEnqueued);
             return PosterFetchEnqueueStatus.Enqueued;
@@ -370,13 +389,16 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
             ? incoming.RetroLogFile
             : existing.RetroLogFile;
 
-        if (forceRefresh == existing.ForceRefresh && retroLogFile == existing.RetroLogFile)
+        var priority = existing.Priority == PosterFetchPriority.Normal || incoming.Priority == PosterFetchPriority.Normal
+            ? PosterFetchPriority.Normal : PosterFetchPriority.Background;
+        if (forceRefresh == existing.ForceRefresh && retroLogFile == existing.RetroLogFile && priority == existing.Priority)
             return existing;
 
         return existing with
         {
             ForceRefresh = forceRefresh,
-            RetroLogFile = retroLogFile
+            RetroLogFile = retroLogFile,
+            Priority = priority
         };
     }
 
@@ -386,6 +408,8 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
         return baseJob with
         {
             ForceRefresh = true,
+            Priority = baseJob.Priority == PosterFetchPriority.Normal || incoming.Priority == PosterFetchPriority.Normal
+                ? PosterFetchPriority.Normal : PosterFetchPriority.Background,
             AttemptCount = 0,
             RetroLogFile = !string.IsNullOrWhiteSpace(incoming.RetroLogFile)
                 ? incoming.RetroLogFile
@@ -416,6 +440,7 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
 
         public PosterFetchJob Job { get; set; }
         public long EnqueuedAtMs { get; }
+        public LinkedListNode<long>? PendingNode { get; set; }
         public bool Pending { get; set; }
         public bool InFlight { get; set; }
         public PosterFetchJob? FollowUpJob { get; set; }

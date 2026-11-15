@@ -119,7 +119,7 @@ public sealed class MissingPosterSweepWorker : BackgroundService
         {
             var job = _jobs.Create(id, forceRefresh: false);
             if (job is not null)
-                jobs.Add(job);
+                jobs.Add(job with { Priority = PosterFetchPriority.Background });
         }
 
         if (jobs.Count == 0)

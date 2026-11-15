@@ -2,6 +2,8 @@ using Feedarr.Api.Models;
 
 namespace Feedarr.Api.Services.Posters;
 
+public enum PosterFetchPriority { Normal, Background }
+
 public sealed record PosterFetchJob(
     long ItemId,
     string Title,
@@ -10,4 +12,5 @@ public sealed record PosterFetchJob(
     bool ForceRefresh,
     int AttemptCount,
     long? EntityId,
-    string? RetroLogFile);
+    string? RetroLogFile,
+    PosterFetchPriority Priority = PosterFetchPriority.Normal);

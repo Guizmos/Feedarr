@@ -18,7 +18,7 @@ public sealed class PosterFetchWorkerPoolTests
     {
         using var ctx = new WorkerPoolContext(posterWorkers: 2);
 
-        await ctx.Queue.EnqueueAsync(CreateJob(1), CancellationToken.None, PosterFetchQueue.DefaultEnqueueTimeout);
+        await ctx.Queue.EnqueueAsync(CreateJob(1) with { Priority = PosterFetchPriority.Background }, CancellationToken.None, PosterFetchQueue.DefaultEnqueueTimeout);
         await ctx.Queue.EnqueueAsync(CreateJob(2), CancellationToken.None, PosterFetchQueue.DefaultEnqueueTimeout);
 
         await ctx.Pool.StartAsync(CancellationToken.None);
@@ -43,7 +43,7 @@ public sealed class PosterFetchWorkerPoolTests
     {
         using var ctx = new WorkerPoolContext(posterWorkers: 1);
 
-        await ctx.Queue.EnqueueAsync(CreateJob(1), CancellationToken.None, PosterFetchQueue.DefaultEnqueueTimeout);
+        await ctx.Queue.EnqueueAsync(CreateJob(1) with { Priority = PosterFetchPriority.Background }, CancellationToken.None, PosterFetchQueue.DefaultEnqueueTimeout);
         await ctx.Queue.EnqueueAsync(CreateJob(2), CancellationToken.None, PosterFetchQueue.DefaultEnqueueTimeout);
 
         await ctx.Pool.StartAsync(CancellationToken.None);

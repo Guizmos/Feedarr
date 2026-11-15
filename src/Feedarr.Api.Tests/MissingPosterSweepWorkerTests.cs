@@ -105,6 +105,8 @@ public sealed class MissingPosterSweepWorkerTests
         Assert.Equal(1, queue.EnqueueManyCalls);
         Assert.Contains(id1, queue.LastJobIds);
         Assert.Contains(id2, queue.LastJobIds);
+        Assert.Equal(2, queue.LastJobPriorities.Count);
+        Assert.All(queue.LastJobPriorities, priority => Assert.Equal(PosterFetchPriority.Background, priority));
     }
 
     [Fact]
@@ -255,6 +257,7 @@ public sealed class MissingPosterSweepWorkerTests
         }
 
         public int EnqueueManyCalls { get; private set; }
+        public IReadOnlyList<PosterFetchPriority> LastJobPriorities { get; private set; } = Array.Empty<PosterFetchPriority>();
         public IReadOnlyList<long> LastJobIds { get; private set; } = Array.Empty<long>();
 
         public ValueTask<PosterFetchEnqueueResult> EnqueueAsync(PosterFetchJob job, CancellationToken ct, TimeSpan timeout)
@@ -264,6 +267,7 @@ public sealed class MissingPosterSweepWorkerTests
         {
             EnqueueManyCalls++;
             LastJobIds = jobs.Select(job => job.ItemId).ToArray();
+            LastJobPriorities = jobs.Select(job => job.Priority).ToArray();
             return new ValueTask<PosterFetchEnqueueBatchResult>(_batchResult);
         }
 
