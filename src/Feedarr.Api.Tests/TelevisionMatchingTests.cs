@@ -50,7 +50,12 @@ public sealed class TelevisionMatchingTests
         using var rig = new PosterMatchingContractTestRig(PosterContractScenario.SeriesTvmazeMissTmdb, completeTmdbMetadata: true);
         var id = rig.IngestRelease("Show.Tmdb.Hit.S01.1080p.WEB.x264-GRP", category);
         if (manual) rig.SetManualTitleForTest(id);
-        else { using var db = rig.Database.Open(); db.Execute("UPDATE media_entities SET tmdb_id=999,tmdb_media_type='tv',ext_overview='keep' WHERE id=(SELECT entity_id FROM releases WHERE id=@id)", new { id }); }
+        else
+        {
+            rig.Repository.SaveTmdbId(id, 999, "tv");
+            rig.Repository.UpdateExternalDetails(id, "tmdb", "999", "Verified series", "keep", null, null, null,
+                null, null, null, null, null, null, "tv");
+        }
         await rig.FetchAsync(id);
         Assert.Empty(rig.TmdbSearchRequests);
         if (!manual) { Assert.Equal(999, rig.GetReleaseForPoster(id)!.TmdbId); Assert.Equal("keep", rig.GetReleaseForPoster(id)!.ExtOverview); }

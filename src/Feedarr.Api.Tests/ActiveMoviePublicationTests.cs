@@ -149,9 +149,19 @@ public sealed partial class ActiveMovieMatchingTests
         Assert.True(File.Exists(Path.Combine(rig.PostersDirectory, published.PosterFile!)));
         var searches = rig.TmdbSearchRequests.Count;
         rig.RestartPosters(_ => { });
-        await rig.Posters.FetchPosterAsync(id, default, false, skipIfExists: false);
+        var refreshed = await rig.Posters.FetchPosterAsync(id, default, false, skipIfExists: false);
+        Assert.True(refreshed.Ok);
+        Assert.True(JsonSerializer.SerializeToElement(refreshed.Body).GetProperty("storePending").GetBoolean());
         Assert.Equal(searches, rig.TmdbSearchRequests.Count);
-        Assert.Equal(published.PosterFile, rig.GetReleaseForPoster(id)!.PosterFile);
+        var after = rig.GetReleaseForPoster(id)!;
+        Assert.Equal(published.TmdbId, after.TmdbId);
+        Assert.Equal(published.TmdbMediaType, after.TmdbMediaType);
+        Assert.Equal(published.MatchRevision, after.MatchRevision);
+        Assert.Equal(published.ExtProviderId, after.ExtProviderId);
+        Assert.Equal(published.ExtTitle, after.ExtTitle);
+        Assert.NotEqual(published.PosterFile, after.PosterFile);
+        Assert.Equal(File.ReadAllBytes(Path.Combine(rig.PostersDirectory, published.PosterFile!)),
+            File.ReadAllBytes(Path.Combine(rig.PostersDirectory, after.PosterFile!)));
     }
 
     [Fact]

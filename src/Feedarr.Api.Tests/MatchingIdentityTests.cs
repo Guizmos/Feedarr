@@ -42,13 +42,17 @@ public sealed partial class PosterFetchStoreMaterializationTests
     }
 
     [Fact]
-    public void TmdbCandidates_DeduplicateWithinTypeOnly()
+    public void V2Candidates_DeduplicateWithinTypeOnly()
     {
-        var method = typeof(PosterFetchService).GetMethod("DedupCandidates", BindingFlags.NonPublic | BindingFlags.Static)!;
-        var movie = new TmdbClient.SearchResult(123, "Same", null, "/movie.jpg", "movie", 2024, "en");
-        var tv = movie with { MediaType = "series", PosterPath = "/tv.jpg" };
-        var result = (List<TmdbClient.SearchResult>)method.Invoke(null, new object[] { new[] { movie, tv, movie, tv } })!;
-        Assert.Equal(new[] { movie, tv }, result);
+        var movie = new ProviderSearchCandidate(new("tmdb", SearchMediaType.Movie, "123"), "Same", 2024);
+        var tv = movie with { Identity = new("tmdb", SearchMediaType.Series, "123") };
+        var ranked = SearchCandidateRanker.Rank(new(new[] {
+            new SearchCandidate("Same", 2024, CandidateYearEvidence.Parsed, SearchCandidateOrigin.Primary)
+        }, UnifiedCategory.Film, SearchMediaType.Movie), new[] { movie, tv, movie, tv });
+        Assert.Equal(CandidateDecision.Accept, ranked.Decision);
+        Assert.Equal(movie.Identity, ranked.SelectedIdentity);
+        Assert.Equal(2, ranked.Candidates.Count);
+        Assert.Contains(ranked.Candidates, row => row.Identity == tv.Identity && row.Decision == CandidateDecision.Reject);
     }
 
     [Fact]
@@ -99,7 +103,9 @@ public sealed partial class PosterFetchStoreMaterializationTests
         Assert.True(result.Ok);
         var after = c.Releases.GetForPoster(id)!;
         Assert.Equal(200, after.TmdbId);
-        Assert.Equal(before.PosterFile, after.PosterFile);
+        if (skipIfExists) Assert.Equal(before.PosterFile, after.PosterFile);
+        else Assert.NotEqual(before.PosterFile, after.PosterFile);
+        Assert.True(File.Exists(Path.Combine(c.PostersDir, after.PosterFile!)));
         Assert.Equal(before.MatchRevision, after.MatchRevision);
         Assert.Equal("200", after.ManualMatchId);
     }
@@ -168,7 +174,8 @@ public sealed partial class PosterFetchStoreMaterializationTests
         Assert.True((await c.Posters.FetchPosterAsync(id, default, false, false)).Ok);
         var preserved = c.Releases.GetForPoster(id)!;
         Assert.Equal(300, preserved.TmdbId);
-        Assert.Equal(unlocked.PosterFile, preserved.PosterFile);
+        Assert.NotEqual(unlocked.PosterFile, preserved.PosterFile);
+        Assert.True(File.Exists(Path.Combine(c.PostersDir, preserved.PosterFile!)));
         Assert.Equal(unlocked.MatchRevision, preserved.MatchRevision);
         Assert.Equal(0, c.TmdbHandler.MovieSearchCalls);
     }

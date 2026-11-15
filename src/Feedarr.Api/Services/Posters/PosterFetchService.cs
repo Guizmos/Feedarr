@@ -62,14 +62,14 @@ public sealed partial class PosterFetchService
     private readonly object _storeLocksGate = new();
     private readonly TimeSpan _thumbEnqueueTimeout;
 
-    private enum StoreMaterializationStatus
+    internal enum StoreMaterializationStatus
     {
         Ok,
         Skip,
         Fail
     }
 
-    private sealed record StoreMaterializationResult(
+    internal sealed record StoreMaterializationResult(
         StoreMaterializationStatus Status,
         string? StoreDir,
         string Reason,
@@ -315,7 +315,7 @@ public sealed partial class PosterFetchService
             ct).ConfigureAwait(false);
     }
 
-    private async Task<StoreMaterializationResult> TryMaterializeStoreForReleaseAsync(
+    internal async Task<StoreMaterializationResult> TryMaterializeStoreForReleaseAsync(
         long releaseId,
         string? provider,
         string? providerId,

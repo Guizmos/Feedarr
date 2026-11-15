@@ -8,13 +8,13 @@ namespace Feedarr.Api.Services.Posters;
 public sealed partial class PosterFetchService
 {
     private async Task<PosterFetchResult> PublishVideoV2Async(PosterFetchRoutingContext context,
-        TmdbClient.SearchResult selected, CancellationToken ct, bool refreshExisting = false)
+        TmdbClient.SearchResult selected, CancellationToken ct, bool refreshExisting = false, TmdbClient.DetailsResult? preservedDetails = null)
     {
         var id = context.ReleaseId;
         var type = selected.MediaType == "tv" ? "tv" : "movie";
         // No business mutation before all mandatory network work completes. Response IDs must agree,
         // not merely the requested URL; missing fields stay null, never inherited from another work.
-        var details = await RunTmdbAsync(token => type == "tv" ? _tmdb.GetTvPublicationDetailsAsync(selected.TmdbId, token) : _tmdb.GetMoviePublicationDetailsAsync(selected.TmdbId, token), ct).ConfigureAwait(false);
+        var details = preservedDetails ?? await RunTmdbAsync(token => type == "tv" ? _tmdb.GetTvPublicationDetailsAsync(selected.TmdbId, token) : _tmdb.GetMoviePublicationDetailsAsync(selected.TmdbId, token), ct).ConfigureAwait(false);
         if (details is null) throw new InvalidDataException("tmdb_details_unavailable");
         var posterPath = await RunTmdbAsync(token => _tmdb.GetPreferredPosterPathAsync(selected.TmdbId, type == "tv" ? "series" : "movie", token, verifyIdentity: true), ct).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(posterPath)) posterPath = selected.PosterPath;

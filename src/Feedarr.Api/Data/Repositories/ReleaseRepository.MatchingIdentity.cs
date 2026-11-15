@@ -25,7 +25,8 @@ public sealed partial class ReleaseRepository
     {
         var current = conn.QueryFirstOrDefault<ReleaseForPoster>("""
             SELECT r.entity_id EntityId, me.match_revision MatchRevision,
-                   r.title Title,r.unified_category UnifiedCategory,r.media_type MediaType,r.season Season,r.episode Episode,
+                   r.title Title,r.unified_category UnifiedCategory,
+                   CASE COALESCE(me.tmdb_media_type,r.tmdb_media_type) WHEN 'tv' THEN 'series' WHEN 'movie' THEN 'movie' ELSE r.media_type END MediaType,r.season Season,r.episode Episode,
                    r.category_id CategoryId,r.std_category_id StdCategoryId,r.spec_category_id SpecCategoryId,r.category_ids CategoryIds,
                    me.manual_match_provider ManualMatchProvider, me.manual_match_id ManualMatchId,
                    me.manual_match_type ManualMatchType,
@@ -70,11 +71,12 @@ public sealed partial class ReleaseRepository
         if (_matchingSnapshot.Value is not { } snapshot) return;
         var row = conn.QuerySingle<ReleaseForPoster>("""
             SELECT r.entity_id EntityId, me.match_revision MatchRevision,
+              CASE COALESCE(me.tmdb_media_type,r.tmdb_media_type) WHEN 'tv' THEN 'series' WHEN 'movie' THEN 'movie' ELSE r.media_type END MediaType,
               COALESCE(me.tmdb_id,r.tmdb_id) TmdbId, COALESCE(me.tmdb_media_type,r.tmdb_media_type) TmdbMediaType,
               COALESCE(me.ext_provider,r.ext_provider) ExtProvider, COALESCE(me.ext_provider_id,r.ext_provider_id) ExtProviderId
             FROM releases r LEFT JOIN media_entities me ON me.id=r.entity_id WHERE r.id=@id
             """, new { id }, tx);
-        snapshot.EntityId = row.EntityId; snapshot.MatchRevision = row.MatchRevision;
+        snapshot.EntityId = row.EntityId; snapshot.MatchRevision = row.MatchRevision; snapshot.MediaType = row.MediaType;
         snapshot.TmdbId = row.TmdbId; snapshot.TmdbMediaType = row.TmdbMediaType;
         snapshot.ExtProvider = row.ExtProvider; snapshot.ExtProviderId = row.ExtProviderId;
     }

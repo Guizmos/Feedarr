@@ -115,7 +115,7 @@ public sealed partial class PosterFetchStoreMaterializationTests
         resume.SetResult();
         Assert.Equal(409, (await old).StatusCode);
         var row = c.Releases.GetForPoster(id)!;
-        Assert.Equal(200, row.TmdbId); Assert.Null(row.ExtOverview);
+        Assert.Equal(200, row.TmdbId); Assert.Equal(manual ? "Mock overview" : null, row.ExtOverview);
         if (manual) Assert.Equal("200", row.ManualMatchId);
         else Assert.Equal("Replacement", row.ExtTitle);
     }
@@ -211,12 +211,15 @@ public sealed partial class PosterFetchStoreMaterializationTests
     {
         using var rig = new PosterMatchingContractTestRig(PosterContractScenario.SeriesTvmazeHit);
         var id = rig.CreateRelease("Show Tvmaze Hit", "Show Tvmaze Hit", 2015, UnifiedCategory.Serie, "series", tmdbId: 501);
+        rig.Repository.SaveTmdbId(id, 501, "tv");
         rig.Repository.UpdateExternalDetails(id, "tmdb", "501", "Show Tvmaze Hit", "Verified overview", null, null, "2015-01-01", null, null, null, null, null, null, "tv");
         Assert.True((await rig.FetchAsync(id)).Ok);
         var row = rig.GetReleaseForPoster(id)!;
         Assert.Equal("Verified overview", row.ExtOverview);
-        Assert.Equal(501, row.TmdbId); Assert.Null(row.PosterProvider);
-        Assert.Null(row.PosterFile); Assert.Empty(rig.TmdbSearchRequests);
+        Assert.Equal(501, row.TmdbId); Assert.Equal("tmdb", row.PosterProvider);
+        Assert.NotNull(row.PosterFile);
+        Assert.True(File.Exists(Path.Combine(rig.Posters.PostersDirPath, row.PosterFile!)));
+        Assert.Empty(rig.TmdbSearchRequests);
         Assert.Equal(0, rig.TmdbDetailsCalls);
     }
 

@@ -266,8 +266,14 @@ public sealed partial class RetentionServiceTests
         File.WriteAllBytes(Path.Combine(context.Posters.PostersDirPath, row.PosterFile!), PosterTestImage.Create());
         using (var conn = context.Db.Open())
             conn.Execute("UPDATE releases SET unified_category='JeuWindows',media_type='game',poster_provider='rawg',poster_provider_id=@providerId WHERE id=@id", new { id, providerId });
-        var result = await context.Posters.FetchPosterAsync(id, default, logSingle: false);
-        Assert.True(result.Ok);
+        // Exercise the actual local publication/store boundary, not a removed matching-cache shortcut.
+        using var publication = await context.Releases.PosterLifecycle.EnterPublicationAsync(default);
+        using var matching = context.Releases.BeginMatching(context.Releases.GetForPoster(id)!);
+        var bytes = File.ReadAllBytes(Path.Combine(context.Posters.PostersDirPath, row.PosterFile!));
+        var result = await context.Posters.TryMaterializeStoreForReleaseAsync(id, "rawg", providerId, row.PosterFile!, bytes,
+            Path.Combine(context.Posters.PostersDirPath, row.PosterFile!), true, null, null, ".png", null, default);
+        Assert.Equal(PosterFetchService.StoreMaterializationStatus.Ok, result.Status);
+        Assert.Equal(bytes, File.ReadAllBytes(Directory.GetFiles(Path.Combine(context.Posters.PosterStoreDirPath, "rawg-" + providerId), "original.*").Single()));
     }
 
     private sealed class FailingStoreDirectory(bool silentFailure) : IPosterFileStore

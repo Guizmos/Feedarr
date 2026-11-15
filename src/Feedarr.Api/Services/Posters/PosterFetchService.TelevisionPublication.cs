@@ -7,7 +7,7 @@ namespace Feedarr.Api.Services.Posters;
 
 public sealed partial class PosterFetchService
 {
-    private async Task<PosterFetchResult> PublishTvMazeV2Async(PosterFetchRoutingContext context, int showId, CancellationToken ct, bool refreshExisting = false)
+    private async Task<PosterFetchResult> PublishTvMazeV2Async(PosterFetchRoutingContext context, int showId, CancellationToken ct, bool refreshExisting = false, TmdbClient.DetailsResult? preservedDetails = null)
     {
         var raw = await RunTvMazeAsync(token => _tvmaze.GetMatchingEvidenceAsync($"shows/{showId}", token), ct).ConfigureAwait(false);
         if (raw is not { } show || TelevisionCandidates.Number(show, "id") != showId)
@@ -20,7 +20,7 @@ public sealed partial class PosterFetchService
         var bytes = await RunTvMazeAsync(token => _tvmaze.DownloadImageAsync(image, token), ct).ConfigureAwait(false);
         if (bytes is not { Length: > 0 }) throw new InvalidDataException("tvmaze_poster_unavailable");
         var summary = TelevisionCandidates.Text(show, "summary");
-        var details = new TmdbClient.DetailsResult(name, summary is null ? null : System.Net.WebUtility.HtmlDecode(Regex.Replace(summary, "<[^>]+>", "")),
+        var details = preservedDetails ?? new TmdbClient.DetailsResult(name, summary is null ? null : System.Net.WebUtility.HtmlDecode(Regex.Replace(summary, "<[^>]+>", "")),
             null, show.TryGetProperty("genres", out var genres) && genres.ValueKind == System.Text.Json.JsonValueKind.Array ?
                 string.Join(", ", genres.EnumerateArray().Where(g => g.ValueKind == System.Text.Json.JsonValueKind.String).Select(g => g.GetString())) : null,
             TelevisionCandidates.Text(show, "premiered"), TelevisionCandidates.Number(show, "runtime"), null, null, null, null, null);

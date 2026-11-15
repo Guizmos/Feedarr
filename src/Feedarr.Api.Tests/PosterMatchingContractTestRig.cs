@@ -726,6 +726,8 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
                 return "{\"posters\":[],\"backdrops\":[]}";
             if (path.Contains("/movie/900/images"))
                 return "{\"posters\":[{\"file_path\":\"/tmdb/cache-900.jpg\",\"iso_639_1\":\"en\",\"vote_average\":8,\"vote_count\":10,\"width\":1000,\"height\":1500}],\"backdrops\":[]}";
+            if (path.Contains("/tv/501/images") || path.Contains("/tv/999/images"))
+                return "{\"posters\":[{\"file_path\":\"/tmdb/known-tv.jpg\",\"iso_639_1\":\"en\",\"vote_average\":8,\"vote_count\":10,\"width\":1000,\"height\":1500}],\"backdrops\":[]}";
             if (path.Contains("/tv/600/images"))
                 return "{\"posters\":[{\"file_path\":\"/tmdb/series-600-pref.jpg\",\"iso_639_1\":\"en\",\"vote_average\":8,\"vote_count\":10,\"width\":1000,\"height\":1500}],\"backdrops\":[]}";
             if (path.Contains("/tv/800/images"))

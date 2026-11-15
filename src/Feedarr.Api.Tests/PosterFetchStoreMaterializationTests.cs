@@ -502,26 +502,28 @@ public sealed partial class PosterFetchStoreMaterializationTests
             if (path.Contains("/search/tv"))
                 return Task.FromResult(SearchResponse(TvSearchJson ?? "{\"results\":[]}"));
 
-            if (path.Contains("/movie/100/images"))
+            var match = System.Text.RegularExpressions.Regex.Match(path, @"/movie/(?<id>\d+)(?:/|$)");
+            var movieId = match.Success ? int.Parse(match.Groups["id"].Value) : 0;
+            if (movieId > 0 && path.EndsWith("/images"))
             {
                 return Task.FromResult(JsonResponse(
-                    "{\"id\":100,\"posters\":[{\"file_path\":\"/tmdb/matrix-pref.jpg\",\"iso_639_1\":\"en\",\"vote_average\":8,\"vote_count\":100,\"width\":1000,\"height\":1500}],\"backdrops\":[]}"));
+                    "{\"id\":" + movieId + ",\"posters\":[{\"file_path\":\"/tmdb/matrix-pref.jpg\",\"iso_639_1\":\"en\",\"vote_average\":8,\"vote_count\":100,\"width\":1000,\"height\":1500}],\"backdrops\":[]}"));
             }
 
-            if (path.Contains("/movie/100/credits"))
+            if (movieId > 0 && path.EndsWith("/credits"))
             {
                 MovieCreditsCalls++;
-                return Task.FromResult(JsonResponse("{\"id\":100,\"cast\":[],\"crew\":[]}"));
+                return Task.FromResult(JsonResponse("{\"id\":" + movieId + ",\"cast\":[],\"crew\":[]}"));
             }
 
-            if (path.Contains("/movie/100"))
+            if (movieId > 0)
             {
                 MovieDetailsCalls++;
                 var releaseDate = MovieSearchJson is null ? "1999-03-31" : JsonNode.Parse(MovieSearchJson)!["results"]!.AsArray()
                     .FirstOrDefault(row => row?["id"]?.GetValue<int>() == 100)?["release_date"]?.GetValue<string>() ?? "1999-03-31";
                 return Task.FromResult(JsonResponse(System.Text.Json.JsonSerializer.Serialize(new
                 {
-                    id = 100, title = "The Matrix", release_date = releaseDate, overview = "Mock overview",
+                    id = movieId, title = "The Matrix", release_date = releaseDate, overview = "Mock overview",
                     genres = Array.Empty<object>(), vote_average = 8, vote_count = 100
                 })));
             }

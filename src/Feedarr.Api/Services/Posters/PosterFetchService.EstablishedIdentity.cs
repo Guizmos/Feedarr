@@ -17,8 +17,9 @@ public sealed partial class PosterFetchService
             return new(true, 200, new { ok = true, preserved = true, posterFile = known.PosterFile }, known.SourceId);
         var provider = known.ManualMatchProvider ?? known.ExtProvider ?? (known.TmdbId is > 0 ? "tmdb" : known.PosterProvider);
         var providerId = known.ManualMatchId ?? known.ExtProviderId ?? (known.TmdbId is > 0 ? known.TmdbId.Value.ToString(CultureInfo.InvariantCulture) : known.PosterProviderId);
-        PosterFetchResult Unavailable(string reason, int status = 422) => known.ManualMatchProvider is not null && skipIfExists
-            ? new(true, 200, new { ok = true, manual = true, preserved = true, refreshUnavailable = reason }, known.SourceId)
+        PosterFetchResult Unavailable(string reason, int status = 422) => known.ManualMatchProvider is not null && skipIfExists || reason == "historical_identity_type_required" &&
+            (skipIfExists || known.MatchRevision is null && known.PosterFile?.Contains("-manual", StringComparison.OrdinalIgnoreCase) == true)
+            ? new(true, 200, new { ok = true, manual = known.ManualMatchProvider is not null || known.PosterFile?.Contains("-manual", StringComparison.OrdinalIgnoreCase) == true, preserved = true, refreshUnavailable = reason }, known.SourceId)
             : new(false, status, new { error = "identity_refresh_unavailable", reason, preserved = true }, known.SourceId);
         if (provider is null || string.IsNullOrWhiteSpace(providerId)) return Unavailable("bound_identity_unavailable", 409);
         if (known.ManualMatchProvider is null &&
@@ -30,15 +31,18 @@ public sealed partial class PosterFetchService
         {
             UnifiedCategoryMappings.TryParse(known.UnifiedCategory, out var category);
             var context = new PosterFetchRoutingContext(id, category, IsTvmazeEnabled(), true, known.SourceId);
+            var preservedDetails = skipIfExists && known.ExtSnapshotVersion == 1 && known.ExtProvider == provider && known.ExtProviderId == providerId
+                ? new TmdbClient.DetailsResult(known.ExtTitle, known.ExtOverview, known.ExtTagline, known.ExtGenres, known.ExtReleaseDate,
+                    known.ExtRuntimeMinutes, known.ExtRating, known.ExtVotes, known.ExtDirectors, known.ExtWriters, known.ExtCast) : null;
             if (provider == "tmdb")
             {
                 var type = TmdbIdentity.NormalizeType(known.ManualMatchType ?? known.TmdbMediaType);
                 if (type is null || !int.TryParse(providerId, out var tmdbId) || tmdbId <= 0) return Unavailable("historical_identity_type_required", 409);
                 return await PublishVideoV2Async(context,
-                    new TmdbClient.SearchResult(tmdbId, known.ExtTitle ?? known.Title ?? "", null, null, type, known.Year, null), deadline.Token, refreshExisting: true).ConfigureAwait(false);
+                    new TmdbClient.SearchResult(tmdbId, known.ExtTitle ?? known.Title ?? "", null, null, type, known.Year, null), deadline.Token, refreshExisting: true, preservedDetails: preservedDetails).ConfigureAwait(false);
             }
             if (provider == "tvmaze" && int.TryParse(providerId, out var showId) && showId > 0)
-                return await PublishTvMazeV2Async(context, showId, deadline.Token, refreshExisting: true).ConfigureAwait(false);
+                return await PublishTvMazeV2Async(context, showId, deadline.Token, refreshExisting: true, preservedDetails: preservedDetails).ConfigureAwait(false);
             // A persisted URL belongs to the already-bound identity. In particular, do
             // not infer track/album or issue/volume from an ambiguous historical number.
             var image = known.PosterPath;
