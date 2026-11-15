@@ -73,6 +73,7 @@ public sealed class FeedCursorPaginationTests
         do
         {
             using var page = GetPage(context.Controller, limit: 200, cursor: cursor);
+            Assert.Equal(525, page.RootElement.GetProperty("totalCount").GetInt64());
             ids.AddRange(Items(page).Select(Id));
             cursor = Pagination(page).GetProperty("nextCursor").ValueKind == JsonValueKind.Null
                 ? null
@@ -230,6 +231,7 @@ public sealed class FeedCursorPaginationTests
                 unifiedCategory: "films",
                 sourceIds: [secondSource, firstSource],
                 sort: sort);
+            Assert.Equal(520, page.RootElement.GetProperty("totalCount").GetInt64());
             pageCount++;
             ids.AddRange(Items(page).Select(Id));
             cursor = Pagination(page).GetProperty("nextCursor").GetString();
@@ -589,6 +591,23 @@ public sealed class FeedCursorPaginationTests
         Assert.Equal(new[] { first, second }, Items(page).Concat(Items(next)).Select(Id));
     }
 
+    [Fact]
+    public void Releases_TotalCountIsReusedBetweenPagesAndRefreshedForANewQuery()
+    {
+        using var context = new FeedTestContext();
+        var source = context.InsertSource("count-snapshot");
+        context.InsertReleases(source, 305, 10_000);
+        using var first = GetPage(context.Controller, 100);
+        Assert.Equal(305, first.RootElement.GetProperty("totalCount").GetInt64());
+        using (var conn = context.Database.Open()) conn.Execute("DELETE FROM releases WHERE id=(SELECT MIN(id) FROM releases)");
+        using var next = GetPage(context.Controller, 100, cursor: Pagination(first).GetProperty("nextCursor").GetString());
+        Assert.Equal(305, next.RootElement.GetProperty("totalCount").GetInt64());
+        using var refreshed = GetPage(context.Controller, 100);
+        Assert.Equal(304, refreshed.RootElement.GetProperty("totalCount").GetInt64());
+        using var changedFilter = GetPage(context.Controller, 100, seen: 1);
+        Assert.Equal(0, changedFilter.RootElement.GetProperty("totalCount").GetInt64());
+    }
+
     private static JsonDocument GetPage(
         FeedController controller,
         int limit,
@@ -634,6 +653,7 @@ public sealed class FeedCursorPaginationTests
         private readonly Db _db;
 
         public FeedController Controller { get; }
+        public Db Database => _db;
 
         public FeedTestContext()
         {

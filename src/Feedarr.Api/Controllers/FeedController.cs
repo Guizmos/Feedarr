@@ -667,6 +667,7 @@ public sealed class FeedController : ControllerBase
         using var conn = _db.Open();
         var hasCategories = SchemaProbe(conn, ref _schemaHasCategories, "source_categories");
         var hasFts = SchemaProbe(conn, ref _schemaHasFts, "releases_fts");
+        using var readTransaction = conn.BeginTransaction(deferred: true);
         // Use the same effective category for filtering and projection. The persisted
         // top key remains authoritative, with the established Top-feed fallbacks for
         // older or incomplete rows.
@@ -693,7 +694,7 @@ public sealed class FeedController : ControllerBase
             FROM releases
             INNER JOIN sources ON sources.id = releases.source_id
             WHERE {string.Join(" AND ", sourceWhere)};
-            """, args) ?? 0;
+            """, args, readTransaction) ?? 0;
 
         var where = new List<string>(sourceWhere) { "releases.id <= @snapshotMaxId" };
         args.Add("snapshotMaxId", snapshotMaxId);
@@ -765,6 +766,22 @@ public sealed class FeedController : ControllerBase
               """
             : string.Empty;
 
+        // Count the exact filtered snapshot before adding the keyset tail. First pages
+        // refresh the count; later pages reuse it without trusting client-supplied totals.
+        var countKey = $"feed-count:{fingerprint}:{snapshotMaxId}";
+        long totalCount;
+        if (decodedCursor is null || !_cache.TryGetValue(countKey, out totalCount))
+        {
+            totalCount = conn.ExecuteScalar<long>($"""
+                SELECT COUNT(*) FROM releases
+                INNER JOIN sources ON sources.id = releases.source_id
+                LEFT JOIN media_entities me ON me.id = releases.entity_id
+                {categoryJoin}
+                WHERE {string.Join(" AND ", where)}
+                """, args, readTransaction);
+            _cache.Set(countKey, totalCount, TimeSpan.FromMinutes(10));
+        }
+
         if (decodedCursor is not null)
         {
             var tail = $"({PagedPublishedAtSql}, releases.id) {comparison} (@lastPublishedAt, @lastId)";
@@ -774,7 +791,7 @@ public sealed class FeedController : ControllerBase
             // Text anchors are looked up by primary key: never put a potentially
             // long title/source name into the bounded opaque cursor.
             var lastSortValue = textSort
-                ? conn.ExecuteScalar<string>($"SELECT {sortExpression} FROM releases INNER JOIN sources ON sources.id = releases.source_id {categoryJoin} WHERE releases.id = @id", new { id = decodedCursor.LastId })
+                ? conn.ExecuteScalar<string>($"SELECT {sortExpression} FROM releases INNER JOIN sources ON sources.id = releases.source_id {categoryJoin} WHERE releases.id = @id", new { id = decodedCursor.LastId }, readTransaction)
                 : decodedCursor.LastSortValue;
             if (lastSortValue is null) return BadRequest(new { error = "invalid_cursor", message = "cursor anchor is unavailable; refresh the results" });
             args.Add("lastSortValue", lastSortValue);
@@ -856,7 +873,7 @@ public sealed class FeedController : ControllerBase
         LIMIT @lim;
         """;
 
-        var rows = conn.Query<FeedRow>(sql, args).ToList();
+        var rows = conn.Query<FeedRow>(sql, args, readTransaction).ToList();
         var hasMore = rows.Count > effectiveLimit;
         if (hasMore)
             rows.RemoveAt(rows.Count - 1);
@@ -887,14 +904,16 @@ public sealed class FeedController : ControllerBase
             var facetFrom = $"FROM releases INNER JOIN sources ON sources.id = releases.source_id LEFT JOIN media_entities me ON me.id = releases.entity_id {categoryJoin} WHERE {string.Join(" AND ", facetWhere)}";
             facets = new
             {
-                categories = conn.Query<string>($"SELECT DISTINCT ({resolvedCategoryKeySql}) {facetFrom} AND ({resolvedCategoryKeySql}) IS NOT NULL ORDER BY 1", args).ToArray(),
-                qualities = conn.Query<string>($"SELECT DISTINCT trim(releases.resolution) {facetFrom} AND COALESCE(trim(releases.resolution), '') <> '' ORDER BY 1", args).ToArray()
+                categories = conn.Query<string>($"SELECT DISTINCT ({resolvedCategoryKeySql}) {facetFrom} AND ({resolvedCategoryKeySql}) IS NOT NULL ORDER BY 1", args, readTransaction).ToArray(),
+                qualities = conn.Query<string>($"SELECT DISTINCT trim(releases.resolution) {facetFrom} AND COALESCE(trim(releases.resolution), '') <> '' ORDER BY 1", args, readTransaction).ToArray()
             };
         }
 
+        readTransaction.Commit();
         return Ok(new
         {
             items = rows,
+            totalCount,
             facets,
             pagination = new
             {

@@ -28,7 +28,7 @@ import {
   normalizeTitleKey,
   sortManualResultsBySize,
 } from "./utils/helpers.js";
-import { buildFeedParams, loadLibraryPage } from "./utils/feedParams.js";
+import { buildFeedParams, loadLibraryPage, appendLibraryItems } from "./utils/feedParams.js";
 import { ARR_STATUS_TTL_MS, ARR_STATUS_BATCH_SIZE } from "./utils/constants.js";
 import useLibraryFilters from "./hooks/useLibraryFilters.js";
 import useLibrarySelection from "./hooks/useLibrarySelection.js";
@@ -283,6 +283,8 @@ export default function Library() {
   // Items
   const [items, setItems] = useState([]);
   const [facets, setFacets] = useState(null);
+  const [totalCount, setTotalCount] = useState(null);
+  const [more, setMore] = useState({ loading: false, error: "" });
   const [page, setPage] = useState({ cursor: null, nextCursor: null, previous: [] });
   const pageParamsRef = useRef(null);
 
@@ -385,7 +387,7 @@ export default function Library() {
     return row?.type ? String(row.type).toLowerCase() : "";
   }, [filters.applicationId, installedApps]);
 
-  const load = useCallback(async (cursor = null, previous = [], reuseParams = false) => {
+  const load = useCallback(async (cursor = null, previous = [], reuseParams = false, append = false) => {
     if (typeof cursor !== "string") cursor = null;
     if (loadAbortRef.current) loadAbortRef.current.abort();
     const abortController = new AbortController();
@@ -400,17 +402,23 @@ export default function Library() {
     }
     setErr("");
 
-    const windowSize = filters.limit === "all" ? 200 : Math.min(1000, Math.max(1, Number(filters.limit) || 100));
+    const windowSize = filters.limit === "all" ? 100 : Math.min(1000, Math.max(1, Number(filters.limit) || 100));
     if (!reuseParams || !pageParamsRef.current) pageParamsRef.current = buildFeedParams({
       sourceId: filters.sourceId, q: filters.q, seen: filters.seen,
       categoryId: filters.categoryId, quality: filters.quality, maxAgeDays: filters.maxAgeDays,
       viewMode: filters.viewMode, sortBy: filters.sortBy,
       listSortBy: filters.listSortBy, listSortDir: filters.listSortDir,
     });
-    setLoading(true);
+    setMore({ loading: append, error: "" });
+    if (!append) {
+      setLoading(true);
+      setItems([]);
+      setTotalCount(null);
+      setPage({ cursor: null, nextCursor: null, previous: [] });
+    }
     try {
       if (!enabledSources.length) {
-        if (isLatestRequest()) { setItems([]); setFacets(null); setPage({ cursor: null, nextCursor: null, previous: [] }); }
+        if (isLatestRequest()) { setItems([]); setFacets(null); setTotalCount(0); setPage({ cursor: null, nextCursor: null, previous: [] }); }
         return;
       }
       const selectItems = filterApplicationType ? async (rows, signal) => {
@@ -437,17 +445,22 @@ export default function Library() {
         cursor, limit: windowSize, signal: abortController.signal, fetchFeed: apiGet, selectItems,
       });
       if (!isLatestRequest()) return;
-      setItems(result.items.map(it => ({ ...it, size: fmtBytes(it.sizeBytes), date: fmtDateFromTs(it.publishedAt) })));
+      const incoming = result.items.map(it => ({ ...it, size: fmtBytes(it.sizeBytes), date: fmtDateFromTs(it.publishedAt) }));
+      setItems(current => append ? appendLibraryItems(current, incoming) : incoming);
+      setTotalCount(current => append ? current ?? result.totalCount : result.totalCount);
       if (result.facets) setFacets(result.facets);
       setArrStatusMap(Object.fromEntries(result.items.filter(it => it.libraryArrStatus).map(it => [it.id, it.libraryArrStatus])));
       setPage({ cursor, nextCursor: result.nextCursor, previous });
-      scrollRef?.current?.scrollTo({ top: 0, behavior: "instant" });
+      if (!append) scrollRef?.current?.scrollTo({ top: 0, behavior: "instant" });
     } catch (e) {
       if (!isLatestRequest()) return;
-      setErr("Impossible de charger les releases. Réessayez.");
-      setItems([]);
+      if (append) setMore({ loading: false, error: "Impossible de charger la suite. Réessayez." });
+      else { setErr("Impossible de charger les releases. Réessayez."); setItems([]); }
     } finally {
-      if (isLatestRequest()) setLoading(false);
+      if (isLatestRequest()) {
+        setLoading(false);
+        setMore(current => ({ ...current, loading: false }));
+      }
     }
   }, [filters.sourceId, enabledSources, filters.limit, filters.q, filters.seen,
     filters.categoryId, filters.quality, filters.maxAgeDays, filters.viewMode,
@@ -1154,7 +1167,7 @@ export default function Library() {
         <div>
           <h1>{selectedSourceName}</h1>
           <div className="muted">
-            {err ? "—" : `Résultats: ${visibleItems.length}`}
+            {err || totalCount === null ? "Résultats : —" : `Résultats : ${totalCount.toLocaleString(getActiveUiLanguage())}${filterApplicationType ? " (avant filtre Applications)" : ""}`}
           </div>
         </div>
         {(viewMode === "grid" || viewMode === "missing" || viewMode === "poster") && (
@@ -1271,13 +1284,27 @@ export default function Library() {
         />
       )}
 
-      {!loading && !sourcesLoading && !sourcesError && !err && (page.previous.length > 0 || page.nextCursor) && (
-        <nav className="formactions" aria-label="Pagination de la bibliothèque">
-          <button type="button" className="btn" disabled={!page.previous.length}
-            onClick={() => load(page.previous.at(-1), page.previous.slice(0, -1), true)}>Précédent</button>
-          <span className="muted">Page {page.previous.length + 1}</span>
-          <button type="button" className="btn" disabled={!page.nextCursor}
-            onClick={() => load(page.nextCursor, [...page.previous, page.cursor], true)}>Suivant</button>
+      {!loading && !sourcesLoading && !sourcesError && !err && totalCount !== null && (
+        <nav className="formactions" aria-label="Pagination de la bibliothèque" aria-busy={more.loading}>
+          <span className="muted" aria-live="polite">
+            {visibleItems.length.toLocaleString(getActiveUiLanguage())} releases affichées
+            {!filterApplicationType && ` sur ${totalCount.toLocaleString(getActiveUiLanguage())}`}
+          </span>
+          {filters.limit === "all" ? (
+            page.nextCursor && <button type="button" className="btn" disabled={more.loading}
+              onClick={() => load(page.nextCursor, [], true, true)}>
+              {more.loading ? "Chargement…" : "Charger plus"}
+            </button>
+          ) : (
+            <>
+              <button type="button" className="btn" disabled={!page.previous.length}
+                onClick={() => load(page.previous.at(-1), page.previous.slice(0, -1), true)}>Précédent</button>
+              <span className="muted">Page {page.previous.length + 1}</span>
+              <button type="button" className="btn" disabled={!page.nextCursor}
+                onClick={() => load(page.nextCursor, [...page.previous, page.cursor], true)}>Suivant</button>
+            </>
+          )}
+          {more.error && <span className="muted" role="alert">{more.error}</span>}
         </nav>
       )}
 

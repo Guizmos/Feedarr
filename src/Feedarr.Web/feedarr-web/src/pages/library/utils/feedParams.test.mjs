@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildFeedParams, loadLibraryPage } from "./feedParams.js";
+import { buildFeedParams, loadLibraryPage, appendLibraryItems } from "./feedParams.js";
 
 const catalog = Array.from({ length: 2405 }, (_, id) => ({ id: id + 1, sourceId: id % 2 + 1 }));
 function server(calls) {
@@ -10,7 +10,7 @@ function server(calls) {
     const offset = Number(p.get("cursor") || 0), limit = Number(p.get("limit"));
     const items = catalog.slice(offset, offset + limit);
     const end = offset + items.length;
-    return { items, pagination: { hasMore: end < catalog.length, nextCursor: String(end) }, facets: offset ? null : { categories: ["films"], qualities: ["1080p"] } };
+    return { items, totalCount: catalog.length, pagination: { hasMore: end < catalog.length, nextCursor: String(end) }, facets: offset ? null : { categories: ["films"], qualities: ["1080p"] } };
   };
 }
 
@@ -56,4 +56,14 @@ test("failed, nonadvancing and cancelled requests never present a truncated succ
   await assert.rejects(loadLibraryPage(new URLSearchParams(), { cursor: "same", fetchFeed: async () => ({ items: [], pagination: { hasMore: true, nextCursor: "same" } }) }), /Invalid/);
   const controller = new AbortController(); controller.abort();
   await assert.rejects(loadLibraryPage(new URLSearchParams(), { signal: controller.signal, fetchFeed: () => assert.fail("must not fetch") }), { name: "AbortError" });
+});
+
+test("progressive windows retain the SQL total and deduplicate only rendered IDs", async () => {
+  const calls = [];
+  const first = await loadLibraryPage(new URLSearchParams(), { limit: 100, fetchFeed: server(calls) });
+  const next = await loadLibraryPage(new URLSearchParams(), { cursor: first.nextCursor, limit: 100, fetchFeed: server(calls) });
+  assert.equal(first.totalCount, 2405);
+  assert.equal(next.totalCount, 2405);
+  assert.equal(calls.length, 2);
+  assert.equal(appendLibraryItems(first.items, [first.items[99], ...next.items]).length, 200);
 });

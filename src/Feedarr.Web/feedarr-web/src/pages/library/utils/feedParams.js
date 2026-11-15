@@ -21,6 +21,7 @@ export function buildFeedParams(filters, now = Date.now()) {
 export async function loadLibraryPage(params, { cursor = null, limit = 200, signal, fetchFeed, selectItems }) {
   const items = [];
   let facets = null;
+  let totalCount = null;
   let nextCursor = cursor;
   do {
     signal?.throwIfAborted();
@@ -33,6 +34,7 @@ export async function loadLibraryPage(params, { cursor = null, limit = 200, sign
         (data.pagination.hasMore && (!data.pagination.nextCursor || data.pagination.nextCursor === nextCursor)))
       throw new Error("Invalid paged feed response");
     facets ??= data.facets;
+    if (totalCount === null && Number.isSafeInteger(data.totalCount) && data.totalCount >= 0) totalCount = data.totalCount;
     const selected = selectItems ? await selectItems(data.items, signal) : data.items;
     const remaining = limit - items.length;
     if (selected.length > remaining) {
@@ -49,5 +51,10 @@ export async function loadLibraryPage(params, { cursor = null, limit = 200, sign
     items.push(...selected.slice(0, remaining));
     nextCursor = data.pagination.hasMore ? data.pagination.nextCursor : null;
   } while (nextCursor && items.length < limit);
-  return { items, facets, nextCursor };
+  return { items, facets, nextCursor, totalCount };
+}
+
+// Preserve server order while protecting incremental rendering from duplicate IDs.
+export function appendLibraryItems(previous, incoming) {
+  return [...new Map([...previous, ...incoming].map(item => [item.id, item])).values()];
 }
