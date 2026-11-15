@@ -159,4 +159,26 @@ public sealed class ProviderResponseCacheTests
         Assert.Equal(3, rig.TvmazeMatchingRequests);
     }
 
+    [Fact]
+    public async Task LastConsumerWaitsForOutstandingTransportCleanup()
+    {
+        using var cache = new ProviderResponseCache();
+        using var stop = new CancellationTokenSource();
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cleanup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int active = 0;
+        var request = cache.GetAsync<string>("slow", async token => {
+            Interlocked.Increment(ref active);
+            try { await Task.Delay(Timeout.Infinite, token); return "unused"; }
+            finally { cancelled.TrySetResult(); await cleanup.Task; Interlocked.Decrement(ref active); }
+        }, _ => true, stop.Token);
+        stop.Cancel();
+        await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.False(request.IsCompleted);
+        Assert.Equal(1, active);
+        cleanup.SetResult();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
+        Assert.Equal(0, active);
+    }
+
 }

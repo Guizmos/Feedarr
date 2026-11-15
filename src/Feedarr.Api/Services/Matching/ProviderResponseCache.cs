@@ -45,13 +45,22 @@ internal sealed class ProviderResponseCache : IDisposable
         try { return (T?)await flight.Result.Task.WaitAsync(ct).ConfigureAwait(false); }
         finally
         {
+            var cancelledLastWaiter = false;
             lock (_gate)
             {
                 if (--flight.Waiters == 0 && !flight.Result.Task.IsCompleted)
                 {
                     _flights.Remove(key);
                     flight.Cancellation.Cancel();
+                    cancelledLastWaiter = true;
                 }
+            }
+            if (cancelledLastWaiter)
+            {
+                // Cancellation is a request, not completion. Drain cooperative HTTP cleanup
+                // before the last consumer returns, without waiting indefinitely on a bad transport.
+                try { await flight.Result.Task.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
+                catch (Exception) { /* Preserve the caller's cancellation/error. */ }
             }
         }
     }
