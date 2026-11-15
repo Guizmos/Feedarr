@@ -72,6 +72,10 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
     private PosterFetchService _posters;
     private readonly Func<AppOptions, PosterFetchService> _createPosters;
     private readonly TmdbHandler _tmdbHandler;
+    private readonly TvMazeHandler _tvmazeHandler;
+    internal TmdbClient Tmdb { get; }
+    internal TvMazeClient Tvmaze { get; }
+    internal int TvmazeMatchingRequests => _tvmazeHandler.MatchingRequests;
     private readonly IgdbHandler _igdbHandler;
     private readonly IgdbClient _igdbDetails;
     private readonly RawgContractHandler _rawgHandler;
@@ -126,14 +130,15 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         _tmdbHandler = new TmdbHandler(scenario);
         HttpMessageHandler tmdbTransport = completeTmdbMetadata ? new CompleteSearchMetadataHandler(_tmdbHandler, tmdbTotalPages, localizedMovieTitle) : _tmdbHandler;
         if (tmdbResponse is not null) tmdbTransport = new OverrideTmdbHandler(tmdbTransport, tmdbResponse);
-        var tmdb = new TmdbClient(new HttpClient(tmdbTransport), settings, stats, resolver);
+        var tmdb = Tmdb = new TmdbClient(new HttpClient(tmdbTransport), settings, stats, resolver);
         var fanart = new FanartClient(new HttpClient(new FanartHandler(scenario)), stats, resolver, settings);
         _igdbHandler = new IgdbHandler(scenario);
         HttpMessageHandler igdbTransport = _igdbHandler;
         if (igdbResponse is not null) igdbTransport = new OverrideTmdbHandler(igdbTransport, igdbResponse);
         var igdb = new IgdbClient(new HttpClient(igdbTransport), stats, resolver);
         _igdbDetails = igdb;
-        var tvmaze = new TvMazeClient(new HttpClient(new TvMazeHandler(scenario)), stats, resolver);
+        _tvmazeHandler = new TvMazeHandler(scenario);
+        var tvmaze = Tvmaze = new TvMazeClient(new HttpClient(_tvmazeHandler), stats, resolver);
         HttpMessageHandler jikanTransport = new JikanHandler(scenario);
         if (jikanResponse is not null) jikanTransport = new OverrideTmdbHandler(jikanTransport, jikanResponse);
         var jikan = new JikanClient(new HttpClient(jikanTransport), resolver, stats);
@@ -497,6 +502,8 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
 
     public void Dispose()
     {
+        Tmdb.Dispose();
+        Tvmaze.Dispose();
         _workspace.Dispose();
     }
 
@@ -857,6 +864,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
 
     private sealed class TvMazeHandler : HttpMessageHandler
     {
+        internal int MatchingRequests;
         private readonly PosterContractScenario _scenario;
 
         public TvMazeHandler(PosterContractScenario scenario)
@@ -867,6 +875,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var uri = request.RequestUri ?? new Uri("https://api.tvmaze.com/");
+            if (uri.Host == "api.tvmaze.com") Interlocked.Increment(ref MatchingRequests);
             var path = uri.AbsolutePath.ToLowerInvariant();
             var query = Uri.UnescapeDataString(uri.Query);
 

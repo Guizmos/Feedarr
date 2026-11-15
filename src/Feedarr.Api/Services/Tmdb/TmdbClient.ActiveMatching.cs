@@ -11,6 +11,13 @@ public sealed partial class TmdbClient
     // Full pages only: historical list helpers deliberately truncate and cannot prove coverage.
     internal async Task<VideoMatchingPage?> SearchVideoMatchingPageAsync(string title, string language, int page, string type, CancellationToken ct)
     {
+        var key = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(GetApiKeyOrThrow())));
+        return await _matchingResponses.GetAsync($"search:{key}:{type}:{language}:{page}:{title}",
+            token => SearchVideoMatchingPageCoreAsync(title, language, page, type, token), _ => true, ct).ConfigureAwait(false);
+    }
+
+    private async Task<VideoMatchingPage?> SearchVideoMatchingPageCoreAsync(string title, string language, int page, string type, CancellationToken ct)
+    {
         if (type is not ("movie" or "tv")) throw new ArgumentException(nameof(type));
         if (string.IsNullOrWhiteSpace(title) || title.Length > 200) return null;
         var key = GetApiKeyOrThrow();

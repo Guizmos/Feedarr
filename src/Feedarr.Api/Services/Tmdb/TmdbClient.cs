@@ -8,7 +8,7 @@ using Feedarr.Api.Services;
 
 namespace Feedarr.Api.Services.Tmdb;
 
-public sealed partial class TmdbClient
+public sealed partial class TmdbClient : IDisposable
 {
     public sealed record SearchResult(int TmdbId, string Title, string? OriginalTitle, string? PosterPath, string MediaType, int? Year, string? OriginalLanguage);
     public sealed record DetailsResult(
@@ -23,6 +23,9 @@ public sealed partial class TmdbClient
         string? Directors,
         string? Writers,
         string? Cast);
+
+    private readonly Feedarr.Api.Services.Matching.ProviderResponseCache _matchingResponses = new();
+    public void Dispose() => _matchingResponses.Dispose();
 
     private readonly HttpClient _http;
     private readonly SettingsRepository _settings;

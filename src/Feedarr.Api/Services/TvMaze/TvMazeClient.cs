@@ -6,7 +6,7 @@ using Feedarr.Api.Services;
 
 namespace Feedarr.Api.Services.TvMaze;
 
-public sealed class TvMazeClient
+public sealed class TvMazeClient : IDisposable
 {
     public sealed record ShowResult(
         int Id,
@@ -16,6 +16,9 @@ public sealed class TvMazeClient
         int? TvdbId,
         string? ImageMedium,
         string? ImageOriginal);
+
+    private readonly Feedarr.Api.Services.Matching.ProviderResponseCache _matchingResponses = new();
+    public void Dispose() => _matchingResponses.Dispose();
 
     private readonly HttpClient _http;
     private readonly ProviderStatsService _stats;
@@ -43,6 +46,15 @@ public sealed class TvMazeClient
         if (!IsEnabled()) return null;
         if (!path.StartsWith("shows/", StringComparison.Ordinal) && !path.StartsWith("search/shows?", StringComparison.Ordinal))
             throw new ArgumentException(nameof(path));
+        var cached = await _matchingResponses.GetAsync(path, async token => {
+            var value = await GetMatchingEvidenceCoreAsync(path, token).ConfigureAwait(false);
+            return value is { } json ? new Feedarr.Api.Services.Matching.VideoEvidenceResponse(json) : null;
+        }, value => Feedarr.Api.Services.Matching.VideoEvidenceResponse.Complete("tvmaze", path, value.Value), ct).ConfigureAwait(false);
+        return cached?.Value;
+    }
+
+    private async Task<JsonElement?> GetMatchingEvidenceCoreAsync(string path, CancellationToken ct)
+    {
         using var response = await GetAsyncRecorded(path, ct).ConfigureAwait(false);
         if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
         response.EnsureSuccessStatusCode();
