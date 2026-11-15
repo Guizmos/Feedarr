@@ -13,28 +13,29 @@ internal static class OfficialCompoundTitle
             t.Identity.MediaType == candidate.Identity.MediaType && t.Identity.Id == candidate.Identity.Id &&
             !string.IsNullOrWhiteSpace(t.Title) && SearchCandidateRanker.ValidTitleSource(t)).ToArray();
 
-    internal static CompoundTitleEvidence? Match(string normalized, ProviderSearchCandidate candidate)
+    internal static CompoundTitleEvidence? Match(string normalized, ProviderSearchCandidate candidate, bool omitApostrophes = false)
     {
         if (!string.Equals(candidate.Identity.Provider, "tmdb", StringComparison.OrdinalIgnoreCase) ||
             candidate.Identity.MediaType is not (SearchMediaType.Movie or SearchMediaType.Series)) return null;
+        string Normalize(string title) => omitApostrophes ? TitleNormalizer.NormalizeApostropheOmissions(title) : TitleNormalizer.NormalizeTitleStrict(title);
         var titles = Verified(candidate);
         var localized = titles.Where(t => t.Kind == ProviderTitleKind.Localized && !string.IsNullOrWhiteSpace(t.Language))
-            .GroupBy(t => TitleNormalizer.NormalizeTitleStrict(t.Title), StringComparer.Ordinal)
+            .GroupBy(t => Normalize(t.Title), StringComparer.Ordinal)
             .Where(g => g.Key.Length > 0).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
         foreach (var original in titles.Where(t => t.Kind == ProviderTitleKind.Original))
         {
-            var first = TitleNormalizer.NormalizeTitleStrict(original.Title);
+            var first = Normalize(original.Title);
             if (first.Length == 0) continue;
-            if (normalized.StartsWith(first + " ", StringComparison.Ordinal) && localized.TryGetValue(normalized[(first.Length + 1)..], out var tail) && IndependentNames(first, tail))
+            if (normalized.StartsWith(first + " ", StringComparison.Ordinal) && localized.TryGetValue(normalized[(first.Length + 1)..], out var tail) && IndependentNames(first, tail, omitApostrophes))
                 return new(original, tail);
-            if (normalized.EndsWith(" " + first, StringComparison.Ordinal) && localized.TryGetValue(normalized[..^(first.Length + 1)], out var head) && IndependentNames(first, head))
+            if (normalized.EndsWith(" " + first, StringComparison.Ordinal) && localized.TryGetValue(normalized[..^(first.Length + 1)], out var head) && IndependentNames(first, head, omitApostrophes))
                 return new(head, original);
         }
         return null;
     }
-    private static bool IndependentNames(string original, OfficialProviderTitle localized)
+    private static bool IndependentNames(string original, OfficialProviderTitle localized, bool omitApostrophes)
     {
-        var other = TitleNormalizer.NormalizeTitleStrict(localized.Title);
+        var other = omitApostrophes ? TitleNormalizer.NormalizeApostropheOmissions(localized.Title) : TitleNormalizer.NormalizeTitleStrict(localized.Title);
         // Identical/contained names cannot justify adding a duplicate title or an arbitrary suffix.
         return !(" " + original + " ").Contains(" " + other + " ", StringComparison.Ordinal) &&
             !(" " + other + " ").Contains(" " + original + " ", StringComparison.Ordinal);

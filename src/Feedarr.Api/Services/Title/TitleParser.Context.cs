@@ -56,6 +56,7 @@ public sealed partial class TitleParser
         if (candidate is null) return null;
         if (category is UnifiedCategory.Book or UnifiedCategory.Comic or UnifiedCategory.Audio) return null;
         var tail = raw[(candidate.Index + candidate.Length)..technical].Trim(' ', '.', '_', '-', ')', ']');
+        if (suffix.Rich) tail = Regex.Replace(tail, @"(?:^|[\s._-])AD(?=$|[\s._-])", " ").Trim();
         if (tail.Length > 0 && !IsMetadataWords(tail)) return null;
         if ((category is UnifiedCategory.Serie or UnifiedCategory.Anime) && firstSeries is not null &&
             matches.Count == 1 && tail.Length == 0) return null; // A show's own numeric title is ambiguous.
@@ -102,6 +103,15 @@ public sealed partial class TitleParser
             { boundary = years[0].Index; parsed.Year = null; }
         }
         var title = PrepareTitle(raw, boundary);
+        // A repeated edition flag on both sides of an explicit release year is
+        // distribution metadata. A lone significant title word remains untouched.
+        if (year is not null && suffix.Rich)
+        {
+            var flag = Regex.Match(title, @"(?i)\s+(?<tag>extended|remastered|restored|repack)$");
+            if (flag.Success && Regex.IsMatch(raw[(year.Index + year.Length)..],
+                @"(?i)^[\s._-]*" + Regex.Escape(flag.Groups["tag"].Value) + @"\b"))
+                title = title[..flag.Index];
+        }
         title = TrimVideoSuffix(title, category, boundary < raw.Length, hasPackRange,
             suffix.Rich);
         return FinishTitle(title);

@@ -139,6 +139,11 @@ internal static class SearchCandidateRanker
         var tvSupport = tv is not null && ((context.Season.HasValue && tv.SeasonExists == true && candidate.Season == context.Season &&
             (!context.Episode.HasValue || tv.EpisodeExists == true && candidate.Episode == context.Episode)) ||
             context.AirDate is not null && tv.AirDate == context.AirDate);
+        // A verified cross-catalogue ID link is independent identity evidence, not
+        // another vote for a repeated search hit. Explicit episode/date checks still apply.
+        var corroboratedTv = tv?.CorroboratingIdentity is { } other && other.MediaType == SearchMediaType.Series &&
+            !string.Equals(other.Provider, identity.Provider, StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(other.Id) && (candidate.KnownExternalIdentities ?? Array.Empty<SearchIdentity>()).Contains(other);
         if (context.AirDate is not null)
         {
             if (tv?.AirDate is null) { sufficient = false; Contradict("air-date-unavailable", false); }
@@ -237,10 +242,12 @@ internal static class SearchCandidateRanker
                 .Select(t => (Title: t.Title, Alternate: true, Official: (OfficialProviderTitle?)t)))
             .Where(t => !string.IsNullOrWhiteSpace(t.Title))
             .Select(t => (Title: TitleNormalizer.NormalizeTitleStrict(t.Title), RawTitle: t.Title, t.Alternate, t.Official));
-        var best = titles.Select(t => (t.Title, t.RawTitle, t.Alternate, t.Official, Score: Similarity(normalizedQuery, t.Title)))
+        var best = titles.Select(t => (t.Title, t.RawTitle, t.Alternate, t.Official, Score: Math.Max(Similarity(normalizedQuery, t.Title),
+                Similarity(TitleNormalizer.NormalizeApostropheOmissions(query.Title), TitleNormalizer.NormalizeApostropheOmissions(t.RawTitle)))))
             .OrderByDescending(t => t.Score).ThenBy(t => t.Official is null).ThenBy(t => t.Alternate).ThenBy(t => t.Title, StringComparer.Ordinal)
             .DefaultIfEmpty(("", "", false, null, 0d)).First();
-        var compound = best.Score == 1 ? null : OfficialCompoundTitle.Match(normalizedQuery, candidate);
+        var compound = best.Score == 1 ? null : OfficialCompoundTitle.Match(normalizedQuery, candidate) ??
+            OfficialCompoundTitle.Match(TitleNormalizer.NormalizeApostropheOmissions(query.Title), candidate, omitApostrophes: true);
         int? trailingYearHypothesis = null;
         if (compound is not null)
             best = (normalizedQuery, compound.First.Title + " " + compound.Second.Title, true, null, 1d);
@@ -291,7 +298,8 @@ internal static class SearchCandidateRanker
         // Weights are evidence classes, not a promise of statistical precision:
         // title .80, media .10, independent year/identity support up to .10.
         var confidence = .80 * best.Score + (identity.MediaType == context.ExpectedMediaType && identity.MediaType != SearchMediaType.Unknown ? .10 : 0);
-        if (trusted || tvSupport || animeSupport || gameSupport || audioSupport || printSupport) confidence += .10;
+        if (trusted || tvSupport || corroboratedTv || animeSupport || gameSupport || audioSupport || printSupport) confidence += .10;
+        if (corroboratedTv) positive.Add("verified-cross-provider-tv-identity");
         if (animeSupport) positive.Add("verified-anime-structure");
         if (tvSupport) positive.Add("verified-tv-structure");
         if (query.Year is <= 0 or > 9999 || context.ConfirmedYear is <= 0 or > 9999 ||

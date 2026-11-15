@@ -68,6 +68,11 @@ public static class TitleNormalizer
         return result;
     }
 
+    // Comparison variant only: preserve canonical keys and the existing spaced form
+    // (l.ecluse / l'écluse) while also supporting omissions (Handmaids / Handmaid's).
+    internal static string NormalizeApostropheOmissions(string input) => NormalizeTitleStrict(
+        Regex.Replace(input, @"(?<=\p{L})['’ʼ](?=\p{L})", ""));
+
     /// <summary>
     /// Retourne des variantes utiles pour le matching (stricte + agressive).
     /// </summary>

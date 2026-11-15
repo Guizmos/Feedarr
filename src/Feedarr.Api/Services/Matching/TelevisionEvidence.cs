@@ -7,7 +7,7 @@ namespace Feedarr.Api.Services.Matching;
 
 // Evidence is scoped to one provider identity, never inferred from the query.
 internal sealed record TelevisionEvidence(SearchIdentity Identity, bool? SeasonExists, bool? EpisodeExists,
-    string? AirDate = null);
+    string? AirDate = null, SearchIdentity? CorroboratingIdentity = null);
 
 internal static class TelevisionCandidates
 {
@@ -127,7 +127,9 @@ internal static class TelevisionCandidates
                     Season = canonical.Season ?? enrichedMaze.Season, Episode = canonical.Episode ?? enrichedMaze.Episode,
                     Television = canonical.Television is { } proof && enrichedMaze.Television is { } mazeProof
                         ? proof with { AirDate = proof.AirDate ?? mazeProof.AirDate,
-                            SeasonExists = proof.SeasonExists ?? mazeProof.SeasonExists, EpisodeExists = proof.EpisodeExists ?? mazeProof.EpisodeExists } : canonical.Television,
+                            SeasonExists = proof.SeasonExists ?? mazeProof.SeasonExists, EpisodeExists = proof.EpisodeExists ?? mazeProof.EpisodeExists,
+                            CorroboratingIdentity = tmdb.Year.HasValue && enrichedMaze.Year.HasValue &&
+                                Math.Abs((long)tmdb.Year.Value - enrichedMaze.Year.Value) <= new CandidateRankingPolicy().ParsedYearTolerance ? maze.Identity : null } : canonical.Television,
                     KnownExternalIdentities = (canonical.KnownExternalIdentities ?? Array.Empty<SearchIdentity>()).Append(maze.Identity).ToArray() };
                 rows.RemoveAll(r => r.Identity == maze.Identity);
             }
