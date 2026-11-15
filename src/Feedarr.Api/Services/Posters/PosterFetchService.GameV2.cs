@@ -84,10 +84,10 @@ public sealed partial class PosterFetchService
                 PosterAudit.UpdateAttemptSuccess(_releases, releaseId, identity.Provider, identity.Id, null, "original", ComputeSha256Hex(bytes));
             }
             catch (ReleaseRepository.StaleMatchException) { throw; }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (OperationCanceledException) { pending = true; }
             catch (Exception) { _logger.LogWarning("Matching V2 derived game poster publication pending releaseId={ReleaseId}", releaseId); }
             return new(true, 200, new { ok = true, provider = identity.Provider, providerId = identity.Id, posterFile = file,
-                posterUrl = $"/api/posters/release/{releaseId}", storePending = pending }, sourceId);
+                posterUrl = $"/api/posters/release/{releaseId}", storePending = pending }, sourceId) { PublicationCommitted = true };
         }
         catch (ReleaseRepository.StaleMatchException) { throw; }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }

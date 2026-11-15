@@ -24,7 +24,10 @@ using Microsoft.Extensions.Options;
 
 namespace Feedarr.Api.Services.Posters;
 
-public sealed record PosterFetchResult(bool Ok, int StatusCode, object? Body, long? SourceId);
+public sealed record PosterFetchResult(bool Ok, int StatusCode, object? Body, long? SourceId)
+{
+    internal bool PublicationCommitted { get; init; }
+}
 
 public sealed partial class PosterFetchService
 {
@@ -1092,14 +1095,13 @@ public sealed partial class PosterFetchService
         if (r.ManualMatchProvider is not null ||
             (r.MatchRevision is null && r.PosterFile?.Contains("-manual", StringComparison.OrdinalIgnoreCase) == true))
         {
-            return await RefreshManualMatchAsync(r, ct).ConfigureAwait(false);
+            return await RefreshEstablishedMatchAsync(r, ct, skipIfExists).ConfigureAwait(false);
         }
 
         UnifiedCategoryMappings.TryParse(r.UnifiedCategory, out var initialCategory);
         if (initialCategory is (UnifiedCategory.Film or UnifiedCategory.Animation or UnifiedCategory.Spectacle or UnifiedCategory.Serie or UnifiedCategory.Emission or UnifiedCategory.Anime or UnifiedCategory.JeuWindows or UnifiedCategory.Autre) && MatchingShadowState.From(r).Protected)
         {
-            _releases.ValidateMatching(id);
-            return new(true, 200, new { ok = true, preserved = true, reason = "matching_v2_existing_identity_preserved" }, r.SourceId);
+            return await RefreshEstablishedMatchAsync(r, ct, skipIfExists).ConfigureAwait(false);
         }
 
         if (initialCategory is UnifiedCategory.Book or UnifiedCategory.Comic)

@@ -285,7 +285,9 @@ public sealed partial class ReleaseRepository
             var rows = conn.Query<RssIdentityRow>(
                 """
                 SELECT r.id Id,r.guid Guid,r.title Title,COALESCE(r.title_clean,r.title) TitleClean,r.year Year,r.media_type MediaType,
-                    r.title_manual_override ManualTitleOverride,me.manual_match_provider ManualMatchProvider
+                    r.title_manual_override ManualTitleOverride,me.manual_match_provider ManualMatchProvider,
+                    r.unified_category UnifiedCategory,r.category_id CategoryId,r.std_category_id StdCategoryId,
+                    r.spec_category_id SpecCategoryId,r.category_ids CategoryIds,r.season Season,r.episode Episode
                 FROM releases r LEFT JOIN media_entities me ON me.id=r.entity_id
                 WHERE r.source_id=@sid AND r.guid IN @guids
                 """,
@@ -423,6 +425,9 @@ public sealed partial class ReleaseRepository
                 reset.ExecuteNonQuery();
             }
             cmd.ExecuteNonQuery();
+            if (row.RoutingChanged)
+                conn.Execute("UPDATE media_entities SET match_revision=lower(hex(randomblob(16))) WHERE id=(SELECT entity_id FROM releases WHERE source_id=@sid AND guid=@guid)",
+                    new { sid = row.sourceId, guid = row.Guid }, tx);
         }
     }
 
@@ -441,6 +446,7 @@ public sealed partial class ReleaseRepository
     private sealed class UpsertRow
     {
         public bool IdentityChanged { get; set; }
+        public bool RoutingChanged { get; set; }
         public bool PreserveIdentity { get; set; }
         public long sourceId { get; init; }
         public string Guid { get; init; } = "";

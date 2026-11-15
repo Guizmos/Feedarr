@@ -8,7 +8,7 @@ namespace Feedarr.Api.Services.Posters;
 public sealed partial class PosterFetchService
 {
     private async Task<PosterFetchResult> PublishVideoV2Async(PosterFetchRoutingContext context,
-        TmdbClient.SearchResult selected, CancellationToken ct)
+        TmdbClient.SearchResult selected, CancellationToken ct, bool refreshExisting = false)
     {
         var id = context.ReleaseId;
         var type = selected.MediaType == "tv" ? "tv" : "movie";
@@ -64,7 +64,7 @@ public sealed partial class PosterFetchService
         {
             await WriteAtomicAsync(full, bytes, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
-            _releases.PublishAcceptedVideo(id, "tmdb", selected.TmdbId.ToString(CultureInfo.InvariantCulture), selected.TmdbId, type, posterPath, file, details);
+            _releases.PublishAcceptedVideo(id, "tmdb", selected.TmdbId.ToString(CultureInfo.InvariantCulture), selected.TmdbId, type, posterPath, file, details, refreshExisting: refreshExisting);
             committed = true;
         }
         finally
@@ -90,12 +90,12 @@ public sealed partial class PosterFetchService
                 null, posterProvider == "tmdb" ? "w500" : null, ComputeSha256Hex(bytes));
         }
         catch (ReleaseRepository.StaleMatchException) { throw; }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException) { storePending = true; }
         catch (Exception)
         {
             _logger.LogWarning("Matching V2 derived poster publication pending releaseId={ReleaseId}", id);
         }
         return new(true, 200, new { ok = true, tmdbId = selected.TmdbId, posterFile = file,
-            posterUrl = $"/api/posters/release/{id}", storePending }, context.SourceId);
+            posterUrl = $"/api/posters/release/{id}", storePending }, context.SourceId) { PublicationCommitted = true };
     }
 }

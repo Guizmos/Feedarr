@@ -11,22 +11,32 @@ public sealed partial class ReleaseRepository
     // Shared matching publication boundary, using the historical writers' exact SQL/helpers.
     // The complete image already exists; no network or filesystem IO inside this transaction.
     internal void PublishAcceptedVideo(long id, string provider, string providerId, int? tmdbId, string? type,
-        string posterPath, string posterFile, TmdbClient.DetailsResult details, AnimeEvidence? anime = null)
+        string posterPath, string posterFile, TmdbClient.DetailsResult details, AnimeEvidence? anime = null, bool refreshExisting = false)
     {
         if (provider is "jikan" or "igdb" or "rawg" or "theaudiodb" or "musicbrainz" or "googlebooks" or "openlibrary" or "comicvine" ? type is not null || tmdbId.HasValue : type is not ("movie" or "tv") || provider is not ("tmdb" or "tvmaze")) throw new ArgumentException(nameof(type));
         using var conn = _db.Open();
         using var tx = conn.BeginTransaction(deferred: false);
         ValidateMatching(conn, tx, id, tmdbId, provider: provider, providerId: providerId, tmdbType: type);
+        if (refreshExisting)
+        {
+            var known = GetForPublicationIdentity(conn, tx, id);
+            var manual = known.ManualMatchProvider == provider && known.ManualMatchId == providerId;
+            var automatic = known.ExtProvider == provider && known.ExtProviderId == providerId;
+            var tmdb = provider == "tmdb" && known.TmdbId == tmdbId && known.TmdbMediaType == type &&
+                (known.ExtProvider is null || known.ExtProvider == "tmdb" && known.ExtProviderId == providerId);
+            if (!manual && (known.TmdbId is > 0 && provider != "tmdb" || known.TvdbId is > 0 && provider is not ("tmdb" or "tvmaze"))) throw new StaleMatchException();
+            if (!(manual || automatic || tmdb) || (provider == "tmdb" && known.TmdbMediaType != type)) throw new StaleMatchException();
+        }
         if (conn.ExecuteScalar<int>("""
             SELECT COUNT(*) FROM releases r LEFT JOIN media_entities me ON me.id=r.entity_id
-            WHERE r.id=@id AND (COALESCE(me.tmdb_id,r.tmdb_id,0)>0 OR COALESCE(me.tvdb_id,r.tvdb_id,0)>0
+            WHERE r.id=@id AND NOT @refreshExisting AND (COALESCE(me.tmdb_id,r.tmdb_id,0)>0 OR COALESCE(me.tvdb_id,r.tvdb_id,0)>0
               OR COALESCE(me.manual_match_provider,'')<>'' OR r.title_manual_override=1
               OR (COALESCE(me.ext_provider_id,r.ext_provider_id,'')<>'' AND NOT (
                 @refreshable AND COALESCE(me.ext_provider,r.ext_provider,'')=@provider
                 AND COALESCE(me.ext_provider_id,r.ext_provider_id,'')=@providerId)))
-            """, new { id, provider, providerId, refreshable = provider is "theaudiodb" or "musicbrainz" or "googlebooks" or "openlibrary" or "comicvine" }, tx) != 0) throw new StaleMatchException();
-        if (provider == "jikan") ValidateJikanEntityScope(conn, tx, id, providerId, anime);
-        if (provider is "igdb" or "rawg")
+            """, new { id, provider, providerId, refreshExisting, refreshable = provider is "theaudiodb" or "musicbrainz" or "googlebooks" or "openlibrary" or "comicvine" }, tx) != 0) throw new StaleMatchException();
+        if (provider == "jikan" && !refreshExisting) ValidateJikanEntityScope(conn, tx, id, providerId, anime);
+        if (!refreshExisting && provider is ("igdb" or "rawg"))
         {
             // Game editions must not leak through a shared entity to another release scope.
             var rows = conn.Query<JikanScopeRow>("""
@@ -41,7 +51,7 @@ public sealed partial class ReleaseRepository
                         .SequenceEqual(context.Queries.Select(q => q with { Title = TitleNormalizer.NormalizeTitleStrict(q.Title) })))))
                 throw new InvalidDataException("game_shared_entity_scope_unverified");
         }
-        if (provider is "theaudiodb" or "musicbrainz")
+        if (!refreshExisting && provider is ("theaudiodb" or "musicbrainz"))
         {
             var rows = conn.Query<JikanScopeRow>("""
                 SELECT id Id,title Title,unified_category Category,COALESCE(title_manual_override,0) ManualTitle
@@ -52,7 +62,7 @@ public sealed partial class ReleaseRepository
                 !UnifiedCategoryMappings.TryParse(row.Category, out var category) || category != UnifiedCategory.Audio ||
                 AudioCandidateAdapter.Scope(row.Title ?? "") != scope)) throw new InvalidDataException("audio_shared_entity_scope_unverified");
         }
-        if (provider is "googlebooks" or "openlibrary" or "comicvine")
+        if (!refreshExisting && provider is ("googlebooks" or "openlibrary" or "comicvine"))
         {
             var category = provider == "comicvine" ? UnifiedCategory.Comic : UnifiedCategory.Book;
             var rows = conn.Query<JikanScopeRow>("""
@@ -72,6 +82,14 @@ public sealed partial class ReleaseRepository
         AdvanceMatchingSnapshot(conn, tx, id);
         tx.Commit();
     }
+
+    private static ReleaseForPoster GetForPublicationIdentity(System.Data.IDbConnection conn, System.Data.IDbTransaction tx, long id) =>
+        conn.QuerySingle<ReleaseForPoster>("""
+            SELECT me.manual_match_provider ManualMatchProvider,me.manual_match_id ManualMatchId,
+                COALESCE(me.ext_provider,r.ext_provider) ExtProvider,COALESCE(me.ext_provider_id,r.ext_provider_id) ExtProviderId,
+                COALESCE(me.tmdb_id,r.tmdb_id) TmdbId,COALESCE(me.tvdb_id,r.tvdb_id) TvdbId,COALESCE(me.tmdb_media_type,r.tmdb_media_type) TmdbMediaType
+            FROM releases r LEFT JOIN media_entities me ON me.id=r.entity_id WHERE r.id=@id
+            """, new { id }, tx);
 
     private static void ValidateJikanEntityScope(System.Data.IDbConnection conn, System.Data.IDbTransaction tx,
         long id, string providerId, AnimeEvidence? evidence)

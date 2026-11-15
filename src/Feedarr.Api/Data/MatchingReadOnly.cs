@@ -20,7 +20,8 @@ internal static class MatchingReadOnly
         connection.QueryFirstOrDefault<MatchingShadowState>("""
             SELECT r.id Id, r.entity_id EntityId, me.match_revision Revision,
                    r.title RawTitle, r.title_clean TitleClean, r.year Year, r.unified_category Category,
-                   r.season Season, r.episode Episode,
+                   r.season Season, r.episode Episode, r.media_type MediaType,
+                   r.category_id CategoryId,r.std_category_id StdCategoryId,r.spec_category_id SpecCategoryId,r.category_ids CategoryIds,
                    COALESCE(me.tmdb_id,r.tmdb_id) TmdbId,
                    COALESCE(me.tmdb_media_type,r.tmdb_media_type) TmdbType,
                    COALESCE(me.tvdb_id,r.tvdb_id) TvdbId,

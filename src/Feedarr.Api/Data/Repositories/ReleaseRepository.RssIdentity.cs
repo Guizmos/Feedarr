@@ -15,6 +15,13 @@ public sealed partial class ReleaseRepository
         public string? TitleClean { get; set; }
         public int? Year { get; set; }
         public string? MediaType { get; set; }
+        public string? UnifiedCategory { get; set; }
+        public int? CategoryId { get; set; }
+        public int? StdCategoryId { get; set; }
+        public int? SpecCategoryId { get; set; }
+        public string? CategoryIds { get; set; }
+        public int? Season { get; set; }
+        public int? Episode { get; set; }
         public bool ManualTitleOverride { get; set; }
         public string? ManualMatchProvider { get; set; }
     }
@@ -46,9 +53,14 @@ public sealed partial class ReleaseRepository
                 if (changed) _logger.LogWarning("rss_identity_conflict sourceId={SourceId} releaseId={ReleaseId}: RSS work changed; explicit manual association preserved", row.sourceId, old.Id);
                 continue;
             }
+            row.RoutingChanged = old.CategoryId != row.CategoryId || old.StdCategoryId != row.StdCategoryId ||
+                old.SpecCategoryId != row.SpecCategoryId || old.CategoryIds != row.CategoryIds ||
+                old.UnifiedCategory != row.UnifiedCategory || old.MediaType != row.MediaType || old.Season != row.Season || old.Episode != row.Episode;
             row.IdentityChanged = changed;
             if (changed && old.Id > 0) resetIds.Add(old.Id);
             // Track sequential duplicates too, matching the prepared upsert's last-write order.
+            old.CategoryId = row.CategoryId; old.StdCategoryId = row.StdCategoryId; old.SpecCategoryId = row.SpecCategoryId;
+            old.CategoryIds = row.CategoryIds; old.UnifiedCategory = row.UnifiedCategory; old.Season = row.Season; old.Episode = row.Episode;
             old.Title = row.Title;
             old.TitleClean = row.TitleClean ?? old.TitleClean;
             old.Year = changed ? row.Year : row.Year ?? old.Year;

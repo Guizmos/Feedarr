@@ -69,13 +69,13 @@ public sealed partial class ComicVineClient
             return null;
 
         var best = payload.Results
-            .Where(item => item.Id > 0 && !string.IsNullOrWhiteSpace(item.Name))
+            .Where(item => item.Id > 0 && !string.IsNullOrWhiteSpace(item.Name) && item.ResourceType is "issue" or "volume")
             .OrderByDescending(item => MatchScore(query, year, item))
             .FirstOrDefault();
         if (best is null)
             return null;
 
-        var providerId = best.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var providerId = best.ResourceType + ":" + best.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
         return new ComicResult(
             providerId,
             best.Name!.Trim(),
@@ -215,6 +215,9 @@ public sealed partial class ComicVineClient
 
     private sealed class ComicVineResult
     {
+        [JsonPropertyName("resource_type")]
+        public string? ResourceType { get; set; }
+
         [JsonPropertyName("id")]
         public int Id { get; set; }
 

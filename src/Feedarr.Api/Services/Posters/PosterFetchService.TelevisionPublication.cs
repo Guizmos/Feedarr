@@ -7,7 +7,7 @@ namespace Feedarr.Api.Services.Posters;
 
 public sealed partial class PosterFetchService
 {
-    private async Task<PosterFetchResult> PublishTvMazeV2Async(PosterFetchRoutingContext context, int showId, CancellationToken ct)
+    private async Task<PosterFetchResult> PublishTvMazeV2Async(PosterFetchRoutingContext context, int showId, CancellationToken ct, bool refreshExisting = false)
     {
         var raw = await RunTvMazeAsync(token => _tvmaze.GetMatchingEvidenceAsync($"shows/{showId}", token), ct).ConfigureAwait(false);
         if (raw is not { } show || TelevisionCandidates.Number(show, "id") != showId)
@@ -31,7 +31,7 @@ public sealed partial class PosterFetchService
         {
             await WriteAtomicAsync(full, bytes, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
-            _releases.PublishAcceptedVideo(context.ReleaseId, "tvmaze", showId.ToString(CultureInfo.InvariantCulture), null, "tv", image, file, details);
+            _releases.PublishAcceptedVideo(context.ReleaseId, "tvmaze", showId.ToString(CultureInfo.InvariantCulture), null, "tv", image, file, details, refreshExisting: refreshExisting);
             committed = true;
         }
         finally
@@ -50,8 +50,8 @@ public sealed partial class PosterFetchService
             PosterAudit.UpdateAttemptSuccess(_releases, context.ReleaseId, "tvmaze", showId.ToString(CultureInfo.InvariantCulture), null, "original", ComputeSha256Hex(bytes));
         }
         catch (Feedarr.Api.Data.Repositories.ReleaseRepository.StaleMatchException) { throw; }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException) { pending = true; }
         catch (Exception) { _logger.LogWarning("Matching V2 derived poster publication pending releaseId={ReleaseId}", context.ReleaseId); }
-        return new(true, 200, new { ok = true, tvmazeId = showId, storePending = pending, posterFile = file, posterUrl = $"/api/posters/release/{context.ReleaseId}" }, context.SourceId);
+        return new(true, 200, new { ok = true, tvmazeId = showId, storePending = pending, posterFile = file, posterUrl = $"/api/posters/release/{context.ReleaseId}" }, context.SourceId) { PublicationCommitted = true };
     }
 }

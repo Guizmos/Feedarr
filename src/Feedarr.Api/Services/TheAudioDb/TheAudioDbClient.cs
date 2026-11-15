@@ -282,7 +282,7 @@ public sealed partial class TheAudioDbClient
     private static AudioResult MapTrack(AudioTrackItem item)
     {
         return new AudioResult(
-            item.IdTrack!.Trim(),
+            "track:" + item.IdTrack!.Trim(),
             (item.StrTrack ?? item.StrAlbum ?? "").Trim(),
             item.StrArtist?.Trim(),
             item.StrDescriptionEN?.Trim(),
@@ -295,7 +295,7 @@ public sealed partial class TheAudioDbClient
     private static AudioResult MapAlbum(AudioAlbumItem item)
     {
         return new AudioResult(
-            item.IdAlbum!.Trim(),
+            "album:" + item.IdAlbum!.Trim(),
             (item.StrAlbum ?? "").Trim(),
             item.StrArtist?.Trim(),
             item.StrDescriptionEN?.Trim(),

@@ -92,7 +92,7 @@ public sealed class PosterFetchJobProcessor : IPosterFetchJobProcessor
                     linkedCts.Token,
                     logSingle: false,
                     skipIfExists: !job.ForceRefresh).ConfigureAwait(false);
-                linkedCts.Token.ThrowIfCancellationRequested();
+                if (!res.PublicationCommitted) linkedCts.Token.ThrowIfCancellationRequested();
 
                 if (res.Ok)
                 {

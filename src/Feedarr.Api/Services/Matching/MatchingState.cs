@@ -15,6 +15,11 @@ internal sealed record MatchingShadowState
     public string? Category { get; init; }
     public int? Season { get; init; }
     public int? Episode { get; init; }
+    public int? CategoryId { get; init; }
+    public int? StdCategoryId { get; init; }
+    public int? SpecCategoryId { get; init; }
+    public string? CategoryIds { get; init; }
+    public string? MediaType { get; init; }
     public int? TmdbId { get; init; }
     public string? TmdbType { get; init; }
     public int? TvdbId { get; init; }
@@ -30,6 +35,8 @@ internal sealed record MatchingShadowState
     {
         Id = s.Id, EntityId = s.EntityId, Revision = s.MatchRevision, RawTitle = s.Title,
         TitleClean = s.TitleClean, Year = s.Year, Category = s.UnifiedCategory, Season = s.Season, Episode = s.Episode,
+        CategoryId = s.CategoryId, StdCategoryId = s.StdCategoryId, SpecCategoryId = s.SpecCategoryId,
+        CategoryIds = s.CategoryIds, MediaType = s.MediaType,
         TmdbId = s.TmdbId, TmdbType = s.TmdbMediaType, TvdbId = s.TvdbId, ExternalProvider = s.ExtProvider,
         ExternalId = s.ExtProviderId, ManualProvider = s.ManualMatchProvider,
         LegacyManualPoster = s.MatchRevision is null && s.PosterFile?.Contains("-manual", StringComparison.OrdinalIgnoreCase) == true

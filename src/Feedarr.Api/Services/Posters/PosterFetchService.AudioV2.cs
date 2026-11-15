@@ -47,8 +47,9 @@ public sealed partial class PosterFetchService
                 var ranked = SearchCandidateRanker.Rank(context, rows.Select(r => r.Candidate).ToArray());
                 if (ranked.Decision != CandidateDecision.Accept || ranked.SelectedIdentity is not { } accepted)
                     return Abstain(ranked.Decision.ToString().ToLowerInvariant());
+                if (rows.Count(row => row.Candidate.Identity == accepted) != 1) return Abstain("audio_conflicting_provider_records");
                 identity = accepted;
-                selected = rows.First(r => r.Candidate.Identity == identity);
+                selected = rows.Single(r => r.Candidate.Identity == identity);
             }
             if (_releases.ReadMatchingShadowState(releaseId) != state) throw new ReleaseRepository.StaleMatchException();
             _releases.ValidateMatching(releaseId);
@@ -89,10 +90,10 @@ public sealed partial class PosterFetchService
                 PosterAudit.UpdateAttemptSuccess(_releases, releaseId, identity.Provider, identity.Id, null, "original", ComputeSha256Hex(bytes));
             }
             catch (ReleaseRepository.StaleMatchException) { throw; }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (OperationCanceledException) { pending = true; }
             catch (Exception) { _logger.LogWarning("Matching V2 derived audio poster publication pending releaseId={ReleaseId}", releaseId); }
             return new(true, 200, new { ok = true, provider = identity.Provider, providerId = identity.Id, posterFile = file,
-                posterUrl = $"/api/posters/release/{releaseId}", storePending = pending }, sourceId);
+                posterUrl = $"/api/posters/release/{releaseId}", storePending = pending }, sourceId) { PublicationCommitted = true };
         }
         catch (ReleaseRepository.StaleMatchException) { throw; }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }

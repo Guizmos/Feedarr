@@ -25,6 +25,8 @@ public sealed partial class ReleaseRepository
     {
         var current = conn.QueryFirstOrDefault<ReleaseForPoster>("""
             SELECT r.entity_id EntityId, me.match_revision MatchRevision,
+                   r.title Title,r.unified_category UnifiedCategory,r.media_type MediaType,r.season Season,r.episode Episode,
+                   r.category_id CategoryId,r.std_category_id StdCategoryId,r.spec_category_id SpecCategoryId,r.category_ids CategoryIds,
                    me.manual_match_provider ManualMatchProvider, me.manual_match_id ManualMatchId,
                    me.manual_match_type ManualMatchType,
                    COALESCE(me.tmdb_id,r.tmdb_id) TmdbId, COALESCE(me.tmdb_media_type,r.tmdb_media_type) TmdbMediaType,
@@ -34,6 +36,9 @@ public sealed partial class ReleaseRepository
         var expected = _matchingSnapshot.Value;
         if (current is null || (expected is not null &&
             (current.EntityId != expected.EntityId || current.MatchRevision != expected.MatchRevision ||
+             current.Title != expected.Title || current.UnifiedCategory != expected.UnifiedCategory || current.MediaType != expected.MediaType ||
+             current.Season != expected.Season || current.Episode != expected.Episode || current.CategoryId != expected.CategoryId ||
+             current.StdCategoryId != expected.StdCategoryId || current.SpecCategoryId != expected.SpecCategoryId || current.CategoryIds != expected.CategoryIds ||
              current.TmdbId != expected.TmdbId || current.TmdbMediaType != expected.TmdbMediaType ||
              current.ExtProvider != expected.ExtProvider || current.ExtProviderId != expected.ExtProviderId)))
             throw new StaleMatchException();

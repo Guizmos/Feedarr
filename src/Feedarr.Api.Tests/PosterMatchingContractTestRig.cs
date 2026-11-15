@@ -140,12 +140,14 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         HttpMessageHandler audioTransport = new TheAudioDbHandler(scenario);
         if (audioResponse is not null) audioTransport = new OverrideTmdbHandler(audioTransport, audioResponse);
         var theAudioDb = new TheAudioDbClient(new HttpClient(audioTransport), resolver, stats);
+        AudioClient = theAudioDb;
         HttpMessageHandler booksTransport = new GoogleBooksHandler(scenario);
         if (booksResponse is not null) booksTransport = new OverrideTmdbHandler(booksTransport, booksResponse);
         var googleBooks = new GoogleBooksClient(new HttpClient(booksTransport), resolver, stats);
         HttpMessageHandler comicTransport = new ComicVineHandler(scenario);
         if (comicResponse is not null) comicTransport = new OverrideTmdbHandler(comicTransport, comicResponse);
         var comicVine = new ComicVineClient(new HttpClient(comicTransport), resolver, stats);
+        ComicClient = comicVine;
 
         _releases = new ReleaseRepository(_db, new TitleParser(), new UnifiedCategoryResolver());
         var activity = new ActivityRepository(_db, new BadgeSignal());
@@ -310,6 +312,8 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
     internal Feedarr.Api.Services.Matching.Replay.MatchingReplayReader ReplayReader => new(_db, new DeterministicProtectionService());
     internal PosterFetchService Posters => _posters;
     internal string DatabasePath => _db.DbPath;
+    internal TheAudioDbClient AudioClient { get; }
+    internal ComicVineClient ComicClient { get; }
     public ReleaseRepository Repository => _releases;
     public IReadOnlyList<Uri> TmdbSearchRequests => _tmdbHandler.SearchRequests;
     public IReadOnlyList<string> IgdbSearchRequests => _igdbHandler.SearchRequests;
