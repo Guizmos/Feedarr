@@ -265,7 +265,7 @@ public sealed partial class RetentionServiceTests
         context.CreatePosterFile(row.PosterFile!);
         File.WriteAllBytes(Path.Combine(context.Posters.PostersDirPath, row.PosterFile!), PosterTestImage.Create());
         using (var conn = context.Db.Open())
-            conn.Execute("UPDATE releases SET poster_provider='rawg',poster_provider_id=@providerId WHERE id=@id", new { id, providerId });
+            conn.Execute("UPDATE releases SET unified_category='JeuWindows',media_type='game',poster_provider='rawg',poster_provider_id=@providerId WHERE id=@id", new { id, providerId });
         var result = await context.Posters.FetchPosterAsync(id, default, logSingle: false);
         Assert.True(result.Ok);
     }

@@ -13,7 +13,7 @@ public sealed partial class PosterFetchStoreMaterializationTests
     public async Task Matching_HighScoreWrongYear_DoesNotAssociateOrDownloadPoster()
     {
         using var c = new PosterStoreContext(ImagePayloadMode.ValidImage);
-        var id = c.CreateRelease("The Matrix", "The Matrix", 2012);
+        var id = c.CreateAutomaticMovie("The Matrix", 2012);
         var result = await c.Posters.FetchPosterAsync(id, default, true, false);
         Assert.False(result.Ok);
         Assert.Null(c.Releases.GetForPoster(id)!.TmdbId);
@@ -25,7 +25,7 @@ public sealed partial class PosterFetchStoreMaterializationTests
     public async Task Matching_RejectsFirstCandidateAndSelectsConsistentAlternative()
     {
         using var c = new PosterStoreContext(ImagePayloadMode.ValidImage);
-        var id = c.CreateRelease("The Matrix", "The Matrix", 2012);
+        var id = c.CreateAutomaticMovie("The Matrix", 2012);
         c.TmdbHandler.MovieSearchJson = """{"results":[{"id":999,"title":"The Matrix","poster_path":"/wrong.jpg","release_date":"1990-01-01"},{"id":100,"title":"The Matrix","poster_path":"/correct.jpg","release_date":"2012-01-01"}]}""";
         var result = await c.Posters.FetchPosterAsync(id, default, true, false);
         Assert.True(result.Ok, JsonSerializer.Serialize(result.Body));
@@ -33,15 +33,18 @@ public sealed partial class PosterFetchStoreMaterializationTests
     }
 
     [Fact]
-    public async Task Matching_IdsFollowSelectedPosterRatherThanDifferentCandidateWithoutImage()
+    public async Task Matching_PosterAvailabilityCannotDisambiguateCompetingIdentities()
     {
         using var c = new PosterStoreContext(ImagePayloadMode.ValidImage);
-        var id = c.CreateRelease("The Matrix", "The Matrix", 1999);
+        var id = c.CreateAutomaticMovie("The Matrix", 1999);
         c.TmdbHandler.MovieSearchJson = """{"results":[{"id":999,"title":"The Matrix","poster_path":null,"release_date":"1999-01-01"},{"id":100,"title":"The Matrix","poster_path":"/correct.jpg","release_date":"1999-01-01"}]}""";
-        Assert.True((await c.Posters.FetchPosterAsync(id, default, false, false)).Ok);
+        var result = await c.Posters.FetchPosterAsync(id, default, false, false);
+        Assert.False(result.Ok);
+        Assert.Contains("ambiguous", JsonSerializer.Serialize(result.Body));
         var row = c.Releases.GetForPoster(id)!;
-        Assert.Equal(100, row.TmdbId); Assert.Equal("100", row.ExtProviderId);
-        Assert.Equal("tmdb:movie:100", row.PosterKey);
+        Assert.Null(row.TmdbId); Assert.Null(row.ExtProviderId);
+        Assert.Null(row.PosterKey); Assert.Null(row.PosterFile);
+        Assert.Equal(0, c.TmdbHandler.MovieDetailsCalls);
     }
 
     [Theory]
@@ -101,7 +104,7 @@ public sealed partial class PosterFetchStoreMaterializationTests
     public async Task Metadata_InFlightResultCannotOverwriteReplacementIdentity(bool manual)
     {
         using var c = new PosterStoreContext(ImagePayloadMode.ValidImage);
-        var id = c.CreateRelease("The Matrix", "The Matrix", 1999);
+        var id = c.CreateAutomaticMovie("The Matrix", 1999);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         c.TmdbHandler.BeforeMovieDetails = async () => { entered.SetResult(); await resume.Task; };
@@ -162,14 +165,26 @@ public sealed partial class PosterFetchStoreMaterializationTests
     }
 
     [Fact]
-    public async Task Matching_AdjacentInternationalReleaseAndUnknownYearStillMatch()
+    public async Task Matching_AdjacentInternationalReleaseMatchesButUnknownYearAbstains()
     {
         foreach (var year in new int?[] { 1998, 2000, null })
         {
             using var c = new PosterStoreContext(ImagePayloadMode.ValidImage);
-            var id = c.CreateRelease("The Matrix", "The Matrix", year);
-            Assert.True((await c.Posters.FetchPosterAsync(id, default, false, false)).Ok);
-            Assert.Equal(100, c.Releases.GetForPoster(id)!.TmdbId);
+            var id = c.CreateAutomaticMovie("The Matrix", year);
+            var result = await c.Posters.FetchPosterAsync(id, default, false, false);
+            if (year.HasValue)
+            {
+                Assert.True(result.Ok, JsonSerializer.Serialize(result.Body));
+                Assert.Equal(100, c.Releases.GetForPoster(id)!.TmdbId);
+            }
+            else
+            {
+                Assert.False(result.Ok);
+                Assert.Contains("ambiguous", JsonSerializer.Serialize(result.Body));
+                Assert.Null(c.Releases.GetForPoster(id)!.TmdbId);
+                Assert.Null(c.Releases.GetForPoster(id)!.PosterFile);
+                Assert.Equal(0, c.TmdbHandler.MovieDetailsCalls);
+            }
         }
     }
 
@@ -208,7 +223,7 @@ public sealed partial class PosterFetchStoreMaterializationTests
     public async Task Matching_LegacyPolicyCacheCannotReintroduceAnUnverifiedAssociation()
     {
         using var c = new PosterStoreContext(ImagePayloadMode.ValidImage);
-        var id = c.CreateRelease("The Matrix", "The Matrix", null);
+        var id = c.CreateAutomaticMovie("The Matrix", 1999);
         c.WriteLegacyPoster("tmdb-movie-999-w500.jpg", PosterStoreContext.CreateValidImageBytes());
         c.SeedPosterMatch("movie", "The Matrix", 1999, "tmdb-movie-999-w500.jpg", 999, "tmdb", "tmdb", "movie:999");
         var oldKey = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(

@@ -1132,7 +1132,10 @@ public sealed partial class PosterFetchService
         UnifiedCategoryMappings.TryParse(r.UnifiedCategory, out var initialCategory);
         var activeMovieV2 = UseMovieV2(r, initialCategory);
         if (initialCategory is (UnifiedCategory.Film or UnifiedCategory.Animation or UnifiedCategory.Spectacle) && MatchingShadowState.From(r).Protected)
+        {
+            _releases.ValidateMatching(id);
             return new(true, 200, new { ok = true, preserved = true, reason = "matching_v2_existing_identity_preserved" }, r.SourceId);
+        }
 
         string? existingFile = (string?)r.PosterFile;
         long? sourceId = (long?)r.SourceId;

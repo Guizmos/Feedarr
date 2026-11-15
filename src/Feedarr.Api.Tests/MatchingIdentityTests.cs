@@ -108,9 +108,11 @@ public sealed partial class PosterFetchStoreMaterializationTests
     public async Task InFlightAutomaticWorker_CannotPublishAfterManualCorrection()
     {
         using var c = new PosterStoreContext(ImagePayloadMode.ValidImage);
-        var id = c.CreateRelease("The Matrix", "The Matrix", 1999);
-        c.Releases.SetManualMatch(id, "tmdb", "movie", "100");
-        c.Releases.ClearManualMatch(id); // Same entity, different revision: exercise more than a rebind check.
+        var id = c.CreateAutomaticMovie("The Matrix", 1999);
+        var initial = c.Releases.GetForPoster(id)!;
+        using (var db = c.Db.Open())
+            db.Execute("UPDATE media_entities SET match_revision='pending-revision' WHERE id=@entity", new { entity = initial.EntityId });
+        // Keep the entity pending: clearing a manual lock intentionally preserves its identity.
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         c.TmdbHandler.BeforeMovieSearch = async () => { entered.SetResult(); await resume.Task; };
@@ -118,6 +120,7 @@ public sealed partial class PosterFetchStoreMaterializationTests
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await c.Posters.SaveTmdbPosterAsync(id, 200, "/correct.jpg", default);
         var corrected = c.Releases.GetForPoster(id)!;
+        Assert.Equal(initial.EntityId, corrected.EntityId);
         resume.SetResult();
         var result = await worker;
         Assert.Equal(409, result.StatusCode);
@@ -152,7 +155,7 @@ public sealed partial class PosterFetchStoreMaterializationTests
     public async Task ManualChangeAndExplicitClear_InvalidatePreviouslyCapturedWorkerRevision()
     {
         using var c = new PosterStoreContext(ImagePayloadMode.ValidImage);
-        var id = c.CreateRelease("The Matrix", "The Matrix", 1999);
+        var id = c.CreateAutomaticMovie("The Matrix", 1999);
         await c.Posters.SaveTmdbPosterAsync(id, 200, "/first.jpg", default);
         var old = c.Releases.GetForPoster(id)!;
         await c.Posters.SaveTmdbPosterAsync(id, 300, "/second.jpg", default);
@@ -160,9 +163,14 @@ public sealed partial class PosterFetchStoreMaterializationTests
         Assert.True(c.Releases.ClearManualMatch(id));
         using (c.Releases.BeginMatching(old))
             Assert.Throws<ReleaseRepository.StaleMatchException>(() => c.Releases.SaveTmdbId(id, 200));
-        Assert.Null(c.Releases.GetForPoster(id)!.ManualMatchProvider);
+        var unlocked = c.Releases.GetForPoster(id)!;
+        Assert.Null(unlocked.ManualMatchProvider);
         Assert.True((await c.Posters.FetchPosterAsync(id, default, false, false)).Ok);
-        Assert.Equal(100, c.Releases.GetForPoster(id)!.TmdbId);
+        var preserved = c.Releases.GetForPoster(id)!;
+        Assert.Equal(300, preserved.TmdbId);
+        Assert.Equal(unlocked.PosterFile, preserved.PosterFile);
+        Assert.Equal(unlocked.MatchRevision, preserved.MatchRevision);
+        Assert.Equal(0, c.TmdbHandler.MovieSearchCalls);
     }
 
     [Fact]
@@ -207,8 +215,14 @@ public sealed partial class PosterFetchStoreMaterializationTests
             Assert.Throws<ReleaseRepository.StaleMatchException>(() => c.Releases.SavePoster(id, 200, "/wrong.jpg", "wrong.jpg"));
         Assert.Null(c.Releases.GetForPoster(id)!.TmdbId);
         Assert.Null(c.Releases.GetForPoster(id)!.PosterFile);
-        Assert.True((await c.Posters.FetchPosterAsync(id, default, false, false)).Ok);
-        Assert.Equal(100, c.Releases.GetForPoster(id)!.TmdbId);
+        var result = await c.Posters.FetchPosterAsync(id, default, false, false);
+        Assert.False(result.Ok);
+        Assert.Equal(409, result.StatusCode);
+        Assert.Null(c.Releases.GetForPoster(id)!.TmdbId);
+        Assert.Null(c.Releases.GetForPoster(id)!.PosterFile);
+        using var db = c.Db.Open();
+        Assert.Equal(1, db.ExecuteScalar<int>("SELECT title_manual_override FROM releases WHERE id=@id", new { id }));
+        Assert.Equal(0, c.TmdbHandler.MovieSearchCalls);
     }
 
     [Fact]
