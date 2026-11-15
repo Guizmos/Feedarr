@@ -17,13 +17,13 @@ internal sealed record ProviderSearchCandidate(
     IReadOnlyList<string>? AlternativeTitles = null, UnifiedCategory? Category = null,
     int? Season = null, int? Episode = null,
     IReadOnlyList<SearchIdentity>? KnownExternalIdentities = null,
-    IReadOnlyList<OfficialProviderTitle>? OfficialTitles = null, TelevisionEvidence? Television = null, AnimeEvidence? Anime = null, GameEvidence? Game = null);
+    IReadOnlyList<OfficialProviderTitle>? OfficialTitles = null, TelevisionEvidence? Television = null, AnimeEvidence? Anime = null, GameEvidence? Game = null, AudioEvidence? Audio = null);
 
 internal sealed record CandidateRankingContext(
     IReadOnlyList<SearchCandidate> Queries, UnifiedCategory Category, SearchMediaType ExpectedMediaType,
     int? ConfirmedYear = null, int? Season = null, int? Episode = null,
     SearchIdentity? TrustedIdentityHint = null, SearchIdentity? EstablishedIdentity = null,
-    bool IsLocked = false, bool HasManualCorrection = false, string? AirDate = null, string? AnimeFormat = null, string? GameEdition = null);
+    bool IsLocked = false, bool HasManualCorrection = false, string? AirDate = null, string? AnimeFormat = null, string? GameEdition = null, string? AudioArtist = null, string? AudioKind = null, string? AudioEdition = null);
 
 internal sealed record CandidateRankingPolicy(
     double MinimumTitleSimilarity = 0.90, double AcceptConfidence = 0.92,
@@ -173,6 +173,18 @@ internal static class SearchCandidateRanker
             if (game?.RelatedIdentities.Count > 0 && context.GameEdition is null && context.ConfirmedYear is null && query.Year is null)
             { sufficient = false; Contradict("game-related-editions-unresolved", false); }
         }
+        var audio = context.Category == UnifiedCategory.Audio && identity.MediaType == SearchMediaType.Audio && candidate.Audio?.Identity == identity ? candidate.Audio : null;
+        var audioSupport = false;
+        if (context.ExpectedMediaType == SearchMediaType.Audio)
+        {
+            if (string.IsNullOrWhiteSpace(context.AudioArtist) || string.IsNullOrWhiteSpace(audio?.Artist))
+            { sufficient = false; Contradict("audio-artist-unavailable", false); }
+            else if (TitleNormalizer.NormalizeTitleStrict(context.AudioArtist) != TitleNormalizer.NormalizeTitleStrict(audio.Artist)) Contradict("audio-artist-mismatch");
+            else { audioSupport = true; positive.Add("audio-artist-agrees"); }
+            if (audio?.Kind is not ("album" or "track" or "single" or "ep")) { sufficient = false; Contradict("audio-release-type-unverified", false); }
+            if (context.AudioKind is not null && context.AudioKind != audio?.Kind) Contradict("audio-release-type-mismatch");
+            if (context.AudioEdition != audio?.Edition) Contradict("audio-edition-mismatch");
+        }
         var trusted = false;
         if (context.TrustedIdentityHint is { } hint)
         {
@@ -248,7 +260,7 @@ internal static class SearchCandidateRanker
         // Weights are evidence classes, not a promise of statistical precision:
         // title .80, media .10, independent year/identity support up to .10.
         var confidence = .80 * best.Score + (identity.MediaType == context.ExpectedMediaType && identity.MediaType != SearchMediaType.Unknown ? .10 : 0);
-        if (trusted || tvSupport || animeSupport || gameSupport) confidence += .10;
+        if (trusted || tvSupport || animeSupport || gameSupport || audioSupport) confidence += .10;
         if (animeSupport) positive.Add("verified-anime-structure");
         if (tvSupport) positive.Add("verified-tv-structure");
         if (query.Year is <= 0 or > 9999 || context.ConfirmedYear is <= 0 or > 9999 ||

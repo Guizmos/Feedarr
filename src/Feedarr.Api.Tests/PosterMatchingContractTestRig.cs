@@ -81,7 +81,9 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? tmdbResponse = null,
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? jikanResponse = null,
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? igdbResponse = null,
-        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? rawgResponse = null)
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? rawgResponse = null,
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? audioResponse = null,
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? musicBrainzResponse = null)
     {
         _workspace = new TestWorkspace();
 
@@ -110,6 +112,9 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             externalInstances.Create(new ExternalProviderCreateDto { ProviderKey = ExternalProviderKeys.Rawg, Enabled = true,
                 Auth = new Dictionary<string, string?> { ["apiKey"] = "rawg-test-key" } });
 
+        if (musicBrainzResponse is not null)
+            externalInstances.Create(new ExternalProviderCreateDto { ProviderKey = ExternalProviderKeys.MusicBrainz, Enabled = true });
+
         var resolver = new ActiveExternalProviderConfigResolver(
             externalInstances,
             registry,
@@ -129,7 +134,9 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         HttpMessageHandler jikanTransport = new JikanHandler(scenario);
         if (jikanResponse is not null) jikanTransport = new OverrideTmdbHandler(jikanTransport, jikanResponse);
         var jikan = new JikanClient(new HttpClient(jikanTransport), resolver, stats);
-        var theAudioDb = new TheAudioDbClient(new HttpClient(new TheAudioDbHandler(scenario)), resolver, stats);
+        HttpMessageHandler audioTransport = new TheAudioDbHandler(scenario);
+        if (audioResponse is not null) audioTransport = new OverrideTmdbHandler(audioTransport, audioResponse);
+        var theAudioDb = new TheAudioDbClient(new HttpClient(audioTransport), resolver, stats);
         var googleBooks = new GoogleBooksClient(new HttpClient(new GoogleBooksHandler(scenario)), resolver, stats);
         var comicVine = new ComicVineClient(new HttpClient(new ComicVineHandler(scenario)), resolver, stats);
 
@@ -148,7 +155,9 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         HttpMessageHandler rawgTransport = scenario == PosterContractScenario.GameRawgHit ? _rawgHandler : new NullHttpHandler();
         if (rawgResponse is not null) rawgTransport = new OverrideTmdbHandler(rawgTransport, rawgResponse);
         var rawg = new RawgClient(new HttpClient(rawgTransport), stats, resolver);
-        var musicBrainz = new MusicBrainzClient(new HttpClient(new NullHttpHandler()), resolver, stats);
+        HttpMessageHandler musicTransport = new NullHttpHandler();
+        if (musicBrainzResponse is not null) musicTransport = new OverrideTmdbHandler(musicTransport, musicBrainzResponse);
+        var musicBrainz = new MusicBrainzClient(new HttpClient(musicTransport), resolver, stats);
 
         var posterOptions = new AppOptions { DataDir = _workspace.DataDir, DbFileName = "feedarr.db" };
         configure?.Invoke(posterOptions);

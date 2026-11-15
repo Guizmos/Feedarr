@@ -8,7 +8,7 @@ using Feedarr.Api.Services;
 
 namespace Feedarr.Api.Services.TheAudioDb;
 
-public sealed class TheAudioDbClient
+public sealed partial class TheAudioDbClient
 {
     public sealed record AudioResult(
         string ProviderId,
@@ -48,99 +48,6 @@ public sealed class TheAudioDbClient
 
         var endpoint = BuildEndpoint(apiKey, "searchalbum.php?s=Daft%20Punk&a=Random%20Access%20Memories");
         using var resp = await GetTrackedAsync(endpoint, ct).ConfigureAwait(false);        return resp.IsSuccessStatusCode;
-    }
-
-    public async Task<AudioResult?> SearchAudioAsync(string title, string? artist, int? year, CancellationToken ct)
-    {
-        var apiKey = ResolveCreds();
-        if (string.IsNullOrWhiteSpace(apiKey))
-            return null;
-
-        var safeTitle = CleanTitle((title ?? "").Trim());
-        var safeArtist = (artist ?? "").Trim();
-        if (string.IsNullOrWhiteSpace(safeTitle) && string.IsNullOrWhiteSpace(safeArtist))
-            return null;
-
-        // When artist is known: track search first (requires both s= and t= — free API)
-        if (!string.IsNullOrWhiteSpace(safeArtist) && !string.IsNullOrWhiteSpace(safeTitle))
-        {
-            var trackEndpoint = BuildEndpoint(apiKey, $"searchtrack.php?s={Uri.EscapeDataString(safeArtist)}&t={Uri.EscapeDataString(safeTitle)}");
-            using var trackResp = await GetTrackedAsync(trackEndpoint, ct).ConfigureAwait(false);            if (trackResp.IsSuccessStatusCode)
-            {
-                var trackPayload = await DeserializePayloadAsync<TrackSearchResponse>(trackResp, ct).ConfigureAwait(false);                var bestTrack = trackPayload?.Track?
-                    .Where(t => !string.IsNullOrWhiteSpace(t.IdTrack))
-                    .OrderByDescending(t => MatchScore(safeTitle, safeArtist, year, t.StrTrack, t.StrArtist, t.IntYearReleased))
-                    .FirstOrDefault();
-                if (bestTrack is not null)
-                    return MapTrack(bestTrack);
-            }
-        }
-
-        // When artist is known: album search (requires both s= and a= — free API)
-        if (!string.IsNullOrWhiteSpace(safeArtist))
-        {
-            var albumEndpoint = BuildEndpoint(apiKey, $"searchalbum.php?s={Uri.EscapeDataString(safeArtist)}&a={Uri.EscapeDataString(safeTitle)}");
-            using var albumResp = await GetTrackedAsync(albumEndpoint, ct).ConfigureAwait(false);            if (albumResp.IsSuccessStatusCode)
-            {
-                var albumPayload = await DeserializePayloadAsync<AlbumSearchResponse>(albumResp, ct).ConfigureAwait(false);                var best = albumPayload?.Album?
-                    .Where(a => !string.IsNullOrWhiteSpace(a.IdAlbum))
-                    .OrderByDescending(a => MatchScore(safeTitle, safeArtist, year, a.StrAlbum, a.StrArtist, a.IntYearReleased))
-                    .FirstOrDefault();
-                if (best is not null)
-                    return MapAlbum(best);
-            }
-        }
-
-        // No artist: try progressive split (N first words = artist, rest = album).
-        // Handles scene-style titles like "ACDC Back In Black" or "The Cure Greatest Hits".
-        // Note: searchtrack/searchalbum without s= are premium-only and intentionally NOT called here.
-        if (string.IsNullOrWhiteSpace(safeArtist) && !string.IsNullOrWhiteSpace(safeTitle))
-        {
-            var words = safeTitle.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            AudioAlbumItem? splitBest = null;
-            int splitBestScore = -1;
-
-            for (int n = 1; n <= Math.Min(4, words.Length - 1); n++)
-            {
-                var tryArtist = string.Join(" ", words[..n]);
-                var tryAlbum = string.Join(" ", words[n..]);
-                if (string.IsNullOrWhiteSpace(tryAlbum)) continue;
-
-                var endpoint = BuildEndpoint(apiKey, $"searchalbum.php?s={Uri.EscapeDataString(tryArtist)}&a={Uri.EscapeDataString(tryAlbum)}");
-                using var resp = await GetTrackedAsync(endpoint, ct).ConfigureAwait(false);                if (!resp.IsSuccessStatusCode) continue;
-
-                var payload = await DeserializePayloadAsync<AlbumSearchResponse>(resp, ct).ConfigureAwait(false);                if (payload?.Album is null) continue;
-
-                var candidate = payload.Album
-                    .Where(a => !string.IsNullOrWhiteSpace(a.IdAlbum))
-                    .OrderByDescending(a => MatchScore(tryAlbum, tryArtist, year, a.StrAlbum, a.StrArtist, a.IntYearReleased))
-                    .FirstOrDefault();
-                if (candidate is null) continue;
-
-                var score = MatchScore(tryAlbum, tryArtist, year, candidate.StrAlbum, candidate.StrArtist, candidate.IntYearReleased);
-                if (score > splitBestScore)
-                {
-                    splitBestScore = score;
-                    splitBest = candidate;
-                }
-            }
-
-            if (splitBest is not null)
-                return MapAlbum(splitBest);
-
-            // Final fallback: treat entire query as artist name (e.g., typing "Genesis" to find all albums)
-            var artistEndpoint = BuildEndpoint(apiKey, $"searchalbum.php?s={Uri.EscapeDataString(safeTitle)}");
-            using var artistResp = await GetTrackedAsync(artistEndpoint, ct).ConfigureAwait(false);            if (artistResp.IsSuccessStatusCode)
-            {
-                var artistPayload = await DeserializePayloadAsync<AlbumSearchResponse>(artistResp, ct).ConfigureAwait(false);                return artistPayload?.Album?
-                    .Where(a => !string.IsNullOrWhiteSpace(a.IdAlbum))
-                    .OrderByDescending(a => !string.IsNullOrWhiteSpace(a.StrAlbumThumb) ? 1 : 0)
-                    .Select(MapAlbum)
-                    .FirstOrDefault();
-            }
-        }
-
-        return null;
     }
 
     // Returns all matching audio results (tracks + albums) for manual poster search

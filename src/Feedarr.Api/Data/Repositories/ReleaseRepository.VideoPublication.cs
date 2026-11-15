@@ -13,7 +13,7 @@ public sealed partial class ReleaseRepository
     internal void PublishAcceptedVideo(long id, string provider, string providerId, int? tmdbId, string? type,
         string posterPath, string posterFile, TmdbClient.DetailsResult details, AnimeEvidence? anime = null)
     {
-        if (provider is "jikan" or "igdb" or "rawg" ? type is not null || tmdbId.HasValue : type is not ("movie" or "tv") || provider is not ("tmdb" or "tvmaze")) throw new ArgumentException(nameof(type));
+        if (provider is "jikan" or "igdb" or "rawg" or "theaudiodb" or "musicbrainz" ? type is not null || tmdbId.HasValue : type is not ("movie" or "tv") || provider is not ("tmdb" or "tvmaze")) throw new ArgumentException(nameof(type));
         using var conn = _db.Open();
         using var tx = conn.BeginTransaction(deferred: false);
         ValidateMatching(conn, tx, id, tmdbId, provider: provider, providerId: providerId, tmdbType: type);
@@ -21,8 +21,10 @@ public sealed partial class ReleaseRepository
             SELECT COUNT(*) FROM releases r LEFT JOIN media_entities me ON me.id=r.entity_id
             WHERE r.id=@id AND (COALESCE(me.tmdb_id,r.tmdb_id,0)>0 OR COALESCE(me.tvdb_id,r.tvdb_id,0)>0
               OR COALESCE(me.manual_match_provider,'')<>'' OR r.title_manual_override=1
-              OR COALESCE(me.ext_provider_id,r.ext_provider_id,'')<>'')
-            """, new { id }, tx) != 0) throw new StaleMatchException();
+              OR (COALESCE(me.ext_provider_id,r.ext_provider_id,'')<>'' AND NOT (
+                @audio AND COALESCE(me.ext_provider,r.ext_provider,'')=@provider
+                AND COALESCE(me.ext_provider_id,r.ext_provider_id,'')=@providerId)))
+            """, new { id, provider, providerId, audio = provider is "theaudiodb" or "musicbrainz" }, tx) != 0) throw new StaleMatchException();
         if (provider == "jikan") ValidateJikanEntityScope(conn, tx, id, providerId, anime);
         if (provider is "igdb" or "rawg")
         {
@@ -38,6 +40,17 @@ public sealed partial class ReleaseRepository
                     !other.Queries.Select(q => q with { Title = TitleNormalizer.NormalizeTitleStrict(q.Title) })
                         .SequenceEqual(context.Queries.Select(q => q with { Title = TitleNormalizer.NormalizeTitleStrict(q.Title) })))))
                 throw new InvalidDataException("game_shared_entity_scope_unverified");
+        }
+        if (provider is "theaudiodb" or "musicbrainz")
+        {
+            var rows = conn.Query<JikanScopeRow>("""
+                SELECT id Id,title Title,unified_category Category,COALESCE(title_manual_override,0) ManualTitle
+                FROM releases WHERE id=@id OR entity_id=(SELECT entity_id FROM releases WHERE id=@id) ORDER BY id LIMIT 101
+                """, new { id }, tx).ToArray();
+            var scope = AudioCandidateAdapter.Scope(rows.Single(r => r.Id == id).Title ?? "");
+            if (rows.Length > 100 || rows.Any(row => row.ManualTitle ||
+                !UnifiedCategoryMappings.TryParse(row.Category, out var category) || category != UnifiedCategory.Audio ||
+                AudioCandidateAdapter.Scope(row.Title ?? "") != scope)) throw new InvalidDataException("audio_shared_entity_scope_unverified");
         }
         SavePosterCore(conn, tx, id, tmdbId, posterPath, posterFile, type, provider, providerId);
         // Lock is held and identity just validated/written by this transaction; avoid treating our own write as a stale worker.

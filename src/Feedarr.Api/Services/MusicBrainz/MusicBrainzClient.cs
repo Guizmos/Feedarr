@@ -6,7 +6,7 @@ using Feedarr.Api.Services.ExternalProviders;
 
 namespace Feedarr.Api.Services.MusicBrainz;
 
-public sealed class MusicBrainzClient
+public sealed partial class MusicBrainzClient
 {
     public sealed record MusicResult(
         string Mbid,
@@ -68,39 +68,6 @@ public sealed class MusicBrainzClient
             _stats.RecordExternal(ExternalProviderKeys.MusicBrainz, false, sw.ElapsedMilliseconds);
             return false;
         }
-    }
-
-    /// <summary>
-    /// Find the best single match (for automatic poster matching).
-    /// Returns null if nothing found or no cover art available.
-    /// </summary>
-    public async Task<MusicResult?> SearchReleaseAsync(string title, string? artist, int? year, CancellationToken ct)
-    {
-        var safeTitle = (title ?? "").Trim();
-        if (string.IsNullOrWhiteSpace(safeTitle))
-            return null;
-
-        var candidates = await SearchReleasesAsync(safeTitle, artist, 5, ct).ConfigureAwait(false);        if (candidates.Count == 0)
-            return null;
-
-        // Score candidates and pick best
-        MusicResult? best = null;
-        int bestScore = -1;
-
-        foreach (var c in candidates)
-        {
-            if (string.IsNullOrWhiteSpace(c.CoverUrl))
-                continue;
-
-            var score = ScoreCandidate(c, safeTitle, artist, year);
-            if (score > bestScore)
-            {
-                bestScore = score;
-                best = c;
-            }
-        }
-
-        return best;
     }
 
     /// <summary>
@@ -233,40 +200,6 @@ public sealed class MusicBrainzClient
     {
         // Escape Lucene special characters inside quoted strings (just the double quote)
         return input.Replace("\"", "\\\"", StringComparison.Ordinal);
-    }
-
-    private static int ScoreCandidate(MusicResult c, string queryTitle, string? queryArtist, int? queryYear)
-    {
-        var score = 0;
-        var cTitle = (c.Title ?? "").Trim().ToLowerInvariant();
-        var qTitle = queryTitle.ToLowerInvariant();
-
-        if (string.Equals(cTitle, qTitle, StringComparison.OrdinalIgnoreCase))
-            score += 5;
-        else if (cTitle.Contains(qTitle, StringComparison.OrdinalIgnoreCase)
-              || qTitle.Contains(cTitle, StringComparison.OrdinalIgnoreCase))
-            score += 2;
-
-        if (!string.IsNullOrWhiteSpace(queryArtist) && !string.IsNullOrWhiteSpace(c.Artist))
-        {
-            var cArtist = c.Artist.Trim().ToLowerInvariant();
-            var qArtist = queryArtist.Trim().ToLowerInvariant();
-            if (string.Equals(cArtist, qArtist, StringComparison.OrdinalIgnoreCase))
-                score += 4;
-            else if (cArtist.Contains(qArtist, StringComparison.OrdinalIgnoreCase)
-                  || qArtist.Contains(cArtist, StringComparison.OrdinalIgnoreCase))
-                score += 2;
-        }
-
-        if (queryYear.HasValue && !string.IsNullOrWhiteSpace(c.Released)
-            && c.Released.Length >= 4
-            && int.TryParse(c.Released[..4], out var releaseYear)
-            && releaseYear == queryYear.Value)
-        {
-            score += 2;
-        }
-
-        return score;
     }
 
     private static void EnsureUserAgent(HttpClient http)

@@ -21,7 +21,7 @@ public sealed class AdditionalMatchingStrategyTests
     public async Task Audio_AudioDbHit_ReturnsPoster()
     {
         using var rig = new PosterMatchingContractTestRig(PosterContractScenario.AudioAudioDbHit);
-        var releaseId = rig.CreateRelease("Daft Punk - Around the World", "Daft Punk - Around the World", 1997, UnifiedCategory.Audio, "audio");
+        var releaseId = rig.CreateRelease("Daft Punk - Around the World [Track]", "Daft Punk - Around the World", 1997, UnifiedCategory.Audio, "audio");
 
         var actual = await rig.FetchSnapshotAsync(releaseId);
 
