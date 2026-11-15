@@ -6,7 +6,7 @@ using System.Diagnostics;
 
 namespace Feedarr.Api.Services.GoogleBooks;
 
-public sealed class GoogleBooksClient
+public sealed partial class GoogleBooksClient
 {
     public sealed record BookResult(
         string VolumeId,

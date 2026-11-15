@@ -83,7 +83,10 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? igdbResponse = null,
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? rawgResponse = null,
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? audioResponse = null,
-        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? musicBrainzResponse = null)
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? musicBrainzResponse = null,
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? booksResponse = null,
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? openLibraryResponse = null,
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? comicResponse = null)
     {
         _workspace = new TestWorkspace();
 
@@ -137,8 +140,12 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         HttpMessageHandler audioTransport = new TheAudioDbHandler(scenario);
         if (audioResponse is not null) audioTransport = new OverrideTmdbHandler(audioTransport, audioResponse);
         var theAudioDb = new TheAudioDbClient(new HttpClient(audioTransport), resolver, stats);
-        var googleBooks = new GoogleBooksClient(new HttpClient(new GoogleBooksHandler(scenario)), resolver, stats);
-        var comicVine = new ComicVineClient(new HttpClient(new ComicVineHandler(scenario)), resolver, stats);
+        HttpMessageHandler booksTransport = new GoogleBooksHandler(scenario);
+        if (booksResponse is not null) booksTransport = new OverrideTmdbHandler(booksTransport, booksResponse);
+        var googleBooks = new GoogleBooksClient(new HttpClient(booksTransport), resolver, stats);
+        HttpMessageHandler comicTransport = new ComicVineHandler(scenario);
+        if (comicResponse is not null) comicTransport = new OverrideTmdbHandler(comicTransport, comicResponse);
+        var comicVine = new ComicVineClient(new HttpClient(comicTransport), resolver, stats);
 
         _releases = new ReleaseRepository(_db, new TitleParser(), new UnifiedCategoryResolver());
         var activity = new ActivityRepository(_db, new BadgeSignal());
@@ -150,7 +157,9 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             new AudioMatchingStrategy(),
             new GenericMatchingStrategy());
 
-        var openLibrary = new OpenLibraryClient(new HttpClient(new NullHttpHandler()), stats);
+        HttpMessageHandler libraryTransport = new NullHttpHandler();
+        if (openLibraryResponse is not null) libraryTransport = new OverrideTmdbHandler(libraryTransport, openLibraryResponse);
+        var openLibrary = new OpenLibraryClient(new HttpClient(libraryTransport), stats);
         _rawgHandler = new RawgContractHandler();
         HttpMessageHandler rawgTransport = scenario == PosterContractScenario.GameRawgHit ? _rawgHandler : new NullHttpHandler();
         if (rawgResponse is not null) rawgTransport = new OverrideTmdbHandler(rawgTransport, rawgResponse);
@@ -1006,8 +1015,8 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             if (path.Contains("/volumes"))
             {
                 if (_scenario == PosterContractScenario.BookGoogleBooksHit)
-                    return Task.FromResult(JsonResponse("{\"items\":[{\"id\":\"book-900\",\"volumeInfo\":{\"title\":\"Clean Architecture\",\"description\":\"Mock book description\",\"publishedDate\":\"2017-09-20\",\"categories\":[\"Software Engineering\"],\"averageRating\":4.2,\"ratingsCount\":200,\"imageLinks\":{\"thumbnail\":\"https://books.google.com/mock-book.jpg\"},\"industryIdentifiers\":[{\"identifier\":\"9780134494166\"}]}}]}"));
-                return Task.FromResult(JsonResponse("{\"items\":[]}"));
+                    return Task.FromResult(JsonResponse("{\"totalItems\":1,\"items\":[{\"id\":\"book-900\",\"volumeInfo\":{\"title\":\"Clean Architecture\",\"description\":\"Mock book description\",\"publishedDate\":\"2017-09-20\",\"categories\":[\"Software Engineering\"],\"averageRating\":4.2,\"ratingsCount\":200,\"imageLinks\":{\"thumbnail\":\"https://books.google.com/mock-book.jpg\"},\"industryIdentifiers\":[{\"type\":\"ISBN_13\",\"identifier\":\"9780134494166\"}]}}]}"));
+                return Task.FromResult(JsonResponse("{\"totalItems\":0,\"items\":[]}"));
             }
 
             if (uri.Host.Contains("books.google.com", StringComparison.OrdinalIgnoreCase))
@@ -1045,7 +1054,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             if (path.Contains("/search"))
             {
                 if (_scenario == PosterContractScenario.ComicComicVineHit)
-                    return Task.FromResult(JsonResponse("{\"results\":[{\"id\":9900,\"name\":\"Batman #1\",\"deck\":\"Mock comic deck\",\"description\":\"<p>Mock comic description</p>\",\"cover_date\":\"2020-10-01\",\"site_detail_url\":\"https://comicvine.gamespot.com/batman-1\",\"image\":{\"original_url\":\"https://comicvine.gamespot.com/mock-comic.jpg\"}}]}"));
+                    return Task.FromResult(JsonResponse("{\"status_code\":1,\"number_of_total_results\":1,\"results\":[{\"resource_type\":\"issue\",\"issue_number\":\"1\",\"volume\":{\"name\":\"Batman\",\"id\":100},\"id\":9900,\"name\":\"Batman #1\",\"deck\":\"Mock comic deck\",\"description\":\"<p>Mock comic description</p>\",\"cover_date\":\"2020-10-01\",\"site_detail_url\":\"https://comicvine.gamespot.com/batman-1\",\"image\":{\"original_url\":\"https://comicvine.gamespot.com/mock-comic.jpg\"}}]}"));
                 return Task.FromResult(JsonResponse("{\"results\":[]}"));
             }
 

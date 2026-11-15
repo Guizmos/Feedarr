@@ -17,13 +17,13 @@ internal sealed record ProviderSearchCandidate(
     IReadOnlyList<string>? AlternativeTitles = null, UnifiedCategory? Category = null,
     int? Season = null, int? Episode = null,
     IReadOnlyList<SearchIdentity>? KnownExternalIdentities = null,
-    IReadOnlyList<OfficialProviderTitle>? OfficialTitles = null, TelevisionEvidence? Television = null, AnimeEvidence? Anime = null, GameEvidence? Game = null, AudioEvidence? Audio = null);
+    IReadOnlyList<OfficialProviderTitle>? OfficialTitles = null, TelevisionEvidence? Television = null, AnimeEvidence? Anime = null, GameEvidence? Game = null, AudioEvidence? Audio = null, PrintEvidence? Print = null);
 
 internal sealed record CandidateRankingContext(
     IReadOnlyList<SearchCandidate> Queries, UnifiedCategory Category, SearchMediaType ExpectedMediaType,
     int? ConfirmedYear = null, int? Season = null, int? Episode = null,
     SearchIdentity? TrustedIdentityHint = null, SearchIdentity? EstablishedIdentity = null,
-    bool IsLocked = false, bool HasManualCorrection = false, string? AirDate = null, string? AnimeFormat = null, string? GameEdition = null, string? AudioArtist = null, string? AudioKind = null, string? AudioEdition = null);
+    bool IsLocked = false, bool HasManualCorrection = false, string? AirDate = null, string? AnimeFormat = null, string? GameEdition = null, string? AudioArtist = null, string? AudioKind = null, string? AudioEdition = null, string? PrintAuthor = null, string? PrintIsbn = null, string? PrintScope = null, string? PrintNumber = null, string? PrintLanguage = null, string? PrintEdition = null);
 
 internal sealed record CandidateRankingPolicy(
     double MinimumTitleSimilarity = 0.90, double AcceptConfidence = 0.92,
@@ -185,6 +185,37 @@ internal static class SearchCandidateRanker
             if (context.AudioKind is not null && context.AudioKind != audio?.Kind) Contradict("audio-release-type-mismatch");
             if (context.AudioEdition != audio?.Edition) Contradict("audio-edition-mismatch");
         }
+        var print = context.Category is UnifiedCategory.Book or UnifiedCategory.Comic && candidate.Print?.Identity == identity ? candidate.Print : null;
+        var printSupport = false;
+        if (context.ExpectedMediaType is SearchMediaType.Book or SearchMediaType.Comic)
+        {
+            if (print is null || print.Scope == "unknown") { sufficient = false; Contradict("print-scope-unavailable", false); }
+            if (context.PrintScope is not null && context.PrintScope != print?.Scope) Contradict("print-scope-mismatch");
+            if (context.PrintIsbn is not null)
+            {
+                if (print?.Scope != "edition") Contradict("isbn-requires-edition-identity");
+                if (print?.Isbns.Contains(context.PrintIsbn) == true) { printSupport = true; positive.Add("edition-isbn-agrees"); }
+                else { sufficient = false; Contradict("edition-isbn-unverified", false); }
+            }
+            if (context.PrintAuthor is not null)
+            {
+                if (print?.Authors.Count is not > 0) { sufficient &= printSupport; Contradict("author-unavailable", false); }
+                else if (!print.Authors.Any(a => TitleNormalizer.NormalizeTitleStrict(a) == TitleNormalizer.NormalizeTitleStrict(context.PrintAuthor))) Contradict("author-mismatch");
+                else { printSupport = true; positive.Add("author-agrees"); }
+            }
+            if (context.PrintNumber is not null)
+            {
+                if (print?.Number is null) { sufficient = false; Contradict("print-number-unavailable", false); }
+                else if (context.PrintNumber != (print.Number.TrimStart('0') is { Length: > 0 } printedNumber ? printedNumber : "0")) Contradict("print-number-mismatch");
+                else { printSupport = true; positive.Add("print-number-agrees"); }
+            }
+            else if (print?.Scope == "issue") { sufficient = false; Contradict("issue-context-unavailable", false); }
+            if (context.PrintLanguage is not null && print?.Scope == "work")
+            { sufficient = false; Contradict("language-requires-edition-evidence", false); }
+            if (context.PrintLanguage is not null && context.PrintLanguage != print?.Language)
+            { sufficient = false; Contradict("print-language-unverified", print?.Language is not null); }
+            if (context.PrintEdition != print?.Edition) Contradict("print-edition-mismatch");
+        }
         var trusted = false;
         if (context.TrustedIdentityHint is { } hint)
         {
@@ -260,7 +291,7 @@ internal static class SearchCandidateRanker
         // Weights are evidence classes, not a promise of statistical precision:
         // title .80, media .10, independent year/identity support up to .10.
         var confidence = .80 * best.Score + (identity.MediaType == context.ExpectedMediaType && identity.MediaType != SearchMediaType.Unknown ? .10 : 0);
-        if (trusted || tvSupport || animeSupport || gameSupport || audioSupport) confidence += .10;
+        if (trusted || tvSupport || animeSupport || gameSupport || audioSupport || printSupport) confidence += .10;
         if (animeSupport) positive.Add("verified-anime-structure");
         if (tvSupport) positive.Add("verified-tv-structure");
         if (query.Year is <= 0 or > 9999 || context.ConfirmedYear is <= 0 or > 9999 ||

@@ -6,7 +6,7 @@ using System.Diagnostics;
 
 namespace Feedarr.Api.Services.ComicVine;
 
-public sealed class ComicVineClient
+public sealed partial class ComicVineClient
 {
     private const string UserAgent = "Feedarr/1.0";
 

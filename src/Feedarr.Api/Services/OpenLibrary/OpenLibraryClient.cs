@@ -5,7 +5,7 @@ using Feedarr.Api.Services.ExternalProviders;
 
 namespace Feedarr.Api.Services.OpenLibrary;
 
-public sealed class OpenLibraryClient
+public sealed partial class OpenLibraryClient
 {
     public sealed record BookResult(
         string WorkId,
@@ -48,16 +48,6 @@ public sealed class OpenLibraryClient
             _stats.RecordExternal(ExternalProviderKeys.OpenLibrary, false, sw.ElapsedMilliseconds);
             return false;
         }
-    }
-
-    /// <summary>
-    /// Returns the best single match (for automatic poster matching).
-    /// Prefers results that have cover art.
-    /// </summary>
-    public async Task<BookResult?> SearchBookAsync(string title, string? isbn, CancellationToken ct)
-    {
-        var results = await SearchBooksAsync(title, isbn, 5, ct).ConfigureAwait(false);        return results.FirstOrDefault(r => !string.IsNullOrWhiteSpace(r.CoverUrl))
-            ?? results.FirstOrDefault();
     }
 
     /// <summary>
