@@ -9,7 +9,7 @@ public sealed partial class PosterFetchService
 {
     private async Task<PosterFetchResult> PublishTvMazeV2Async(PosterFetchRoutingContext context, int showId, CancellationToken ct, bool refreshExisting = false, TmdbClient.DetailsResult? preservedDetails = null)
     {
-        var raw = await RunTvMazeAsync(token => _tvmaze.GetMatchingEvidenceAsync($"shows/{showId}", token), ct).ConfigureAwait(false);
+        var raw = await RunTvMazeAsync(token => _tvmaze.GetMatchingEvidenceAsync($"shows/{showId}", token, refreshExisting || context.ForceRefresh), ct).ConfigureAwait(false);
         if (raw is not { } show || TelevisionCandidates.Number(show, "id") != showId)
             throw new InvalidDataException("tvmaze_publication_identity_unavailable");
         var name = TelevisionCandidates.Text(show, "name");
@@ -17,13 +17,15 @@ public sealed partial class PosterFetchService
         var image = show.TryGetProperty("image", out var images) ? TelevisionCandidates.Text(images, "original") ?? TelevisionCandidates.Text(images, "medium") : null;
         if (string.IsNullOrWhiteSpace(image))
             return new(false, 422, new { error = "matching_v2_abstained", reason = "selected_identity_poster_unavailable" }, context.SourceId);
-        var bytes = await RunTvMazeAsync(token => _tvmaze.DownloadImageAsync(image, token), ct).ConfigureAwait(false);
-        if (bytes is not { Length: > 0 }) throw new InvalidDataException("tvmaze_poster_unavailable");
         var summary = TelevisionCandidates.Text(show, "summary");
         var details = preservedDetails ?? new TmdbClient.DetailsResult(name, summary is null ? null : System.Net.WebUtility.HtmlDecode(Regex.Replace(summary, "<[^>]+>", "")),
             null, show.TryGetProperty("genres", out var genres) && genres.ValueKind == System.Text.Json.JsonValueKind.Array ?
                 string.Join(", ", genres.EnumerateArray().Where(g => g.ValueKind == System.Text.Json.JsonValueKind.String).Select(g => g.GetString())) : null,
             TelevisionCandidates.Text(show, "premiered"), TelevisionCandidates.Number(show, "runtime"), null, null, null, null, null);
+        if (!refreshExisting && await TryPublishSharedVideoPosterAsync(context, "tvmaze", showId.ToString(CultureInfo.InvariantCulture),
+            null, "tv", details, ct).ConfigureAwait(false) is { } reused) return reused;
+        var bytes = await RunTvMazeAsync(token => _tvmaze.DownloadImageAsync(image, token), ct).ConfigureAwait(false);
+        if (bytes is not { Length: > 0 }) throw new InvalidDataException("tvmaze_poster_unavailable");
         var file = $"tvmaze-tv-{showId}-v2-{Guid.NewGuid():N}.jpg";
         var full = Path.Combine(PostersDirAbs, file);
         var committed = false;

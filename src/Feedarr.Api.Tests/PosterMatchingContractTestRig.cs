@@ -76,6 +76,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
     internal TmdbClient Tmdb { get; }
     internal TvMazeClient Tvmaze { get; }
     internal int TvmazeMatchingRequests => _tvmazeHandler.MatchingRequests;
+    internal int TvmazeImageRequests => _tvmazeHandler.ImageRequests;
     private readonly IgdbHandler _igdbHandler;
     private readonly IgdbClient _igdbDetails;
     private readonly RawgContractHandler _rawgHandler;
@@ -865,6 +866,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
     private sealed class TvMazeHandler : HttpMessageHandler
     {
         internal int MatchingRequests;
+        internal int ImageRequests;
         private readonly PosterContractScenario _scenario;
 
         public TvMazeHandler(PosterContractScenario scenario)
@@ -876,6 +878,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         {
             var uri = request.RequestUri ?? new Uri("https://api.tvmaze.com/");
             if (uri.Host == "api.tvmaze.com") Interlocked.Increment(ref MatchingRequests);
+            if (uri.Host == "static.tvmaze.com") Interlocked.Increment(ref ImageRequests);
             var path = uri.AbsolutePath.ToLowerInvariant();
             var query = Uri.UnescapeDataString(uri.Query);
 

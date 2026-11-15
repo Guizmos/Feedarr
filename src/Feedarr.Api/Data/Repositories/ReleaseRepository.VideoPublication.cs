@@ -11,7 +11,7 @@ public sealed partial class ReleaseRepository
     // Shared matching publication boundary, using the historical writers' exact SQL/helpers.
     // The complete image already exists; no network or filesystem IO inside this transaction.
     internal void PublishAcceptedVideo(long id, string provider, string providerId, int? tmdbId, string? type,
-        string posterPath, string posterFile, TmdbClient.DetailsResult details, AnimeEvidence? anime = null, bool refreshExisting = false)
+        string posterPath, string posterFile, TmdbClient.DetailsResult details, AnimeEvidence? anime = null, bool refreshExisting = false, ReleaseForPoster? sharedPoster = null)
     {
         if (provider is "jikan" or "igdb" or "rawg" or "theaudiodb" or "musicbrainz" or "googlebooks" or "openlibrary" or "comicvine" ? type is not null || tmdbId.HasValue : type is not ("movie" or "tv") || provider is not ("tmdb" or "tvmaze")) throw new ArgumentException(nameof(type));
         using var conn = _db.Open();
@@ -79,8 +79,33 @@ public sealed partial class ReleaseRepository
         UpdateExternalDetailsCore(conn, tx, id, provider, providerId,
             details.Title, details.Overview, details.Tagline, details.Genres, details.ReleaseDate, details.RuntimeMinutes,
             details.Rating, details.Votes, details.Directors, details.Writers, details.Cast, type, validate: false);
+        if (sharedPoster is not null)
+        {
+            if (sharedPoster.ExtSnapshotVersion != 1 || sharedPoster.ExtProvider != provider || sharedPoster.ExtProviderId != providerId ||
+                sharedPoster.PosterProvider != provider || sharedPoster.PosterProviderId != providerId ||
+                (provider == "tmdb" && (sharedPoster.TmdbId != tmdbId || sharedPoster.TmdbMediaType != type)) ||
+                string.IsNullOrWhiteSpace(sharedPoster.PosterStoreDir) || string.IsNullOrWhiteSpace(sharedPoster.PosterHash))
+                throw new StaleMatchException();
+            // Identity, metadata, poster and GC reference become visible in one commit.
+            conn.Execute("""
+                UPDATE media_entities SET poster_key=@key,poster_store_dir=@store
+                WHERE id=(SELECT entity_id FROM releases WHERE id=@id);
+                UPDATE releases SET poster_key=@key,poster_store_dir=@store,poster_hash=@hash,
+                    poster_provider=@provider,poster_provider_id=@providerId,poster_lang=@lang,poster_size=@size,
+                    poster_last_attempt_ts=@now,poster_last_error=NULL WHERE id=@id;
+                DELETE FROM poster_store_refs WHERE release_id=@id AND store_dir<>@store;
+                INSERT OR IGNORE INTO poster_store_refs(store_dir,release_id,created_at_ts) VALUES(@store,@id,@now);
+                """, new { id, key=sharedPoster.PosterKey, store=sharedPoster.PosterStoreDir, hash=sharedPoster.PosterHash,
+                    provider, providerId, lang=sharedPoster.PosterLang, size=sharedPoster.PosterSize, now=DateTimeOffset.UtcNow.ToUnixTimeSeconds() }, tx);
+        }
         AdvanceMatchingSnapshot(conn, tx, id);
         tx.Commit();
+    }
+
+    internal IReadOnlyList<long> GetPosterStoreDonors(string storeDir)
+    {
+        using var conn = _db.Open();
+        return conn.Query<long>("SELECT release_id FROM poster_store_refs WHERE store_dir=@storeDir ORDER BY created_at_ts DESC LIMIT 8", new { storeDir }).ToArray();
     }
 
     private static ReleaseForPoster GetForPublicationIdentity(System.Data.IDbConnection conn, System.Data.IDbTransaction tx, long id) =>

@@ -357,8 +357,8 @@ public sealed partial class TmdbClient : IDisposable
     public Task<DetailsResult?> GetMovieDetailsAsync(int tmdbId, CancellationToken ct)
         => GetMovieDetailsCoreAsync(tmdbId, ct, false);
 
-    internal Task<DetailsResult?> GetMoviePublicationDetailsAsync(int tmdbId, CancellationToken ct)
-        => GetMovieDetailsCoreAsync(tmdbId, ct, true);
+    internal Task<DetailsResult?> GetMoviePublicationDetailsAsync(int tmdbId, CancellationToken ct, bool forceRefresh = false)
+        => GetPublicationDetailsAsync(tmdbId, "movie", ct, forceRefresh);
 
     private async Task<DetailsResult?> GetMovieDetailsCoreAsync(int tmdbId, CancellationToken ct, bool verifyIdentity)
     {
@@ -401,8 +401,19 @@ public sealed partial class TmdbClient : IDisposable
     public Task<DetailsResult?> GetTvDetailsAsync(int tmdbId, CancellationToken ct)
         => GetTvDetailsCoreAsync(tmdbId, ct, false);
 
-    internal Task<DetailsResult?> GetTvPublicationDetailsAsync(int tmdbId, CancellationToken ct)
-        => GetTvDetailsCoreAsync(tmdbId, ct, true);
+    internal Task<DetailsResult?> GetTvPublicationDetailsAsync(int tmdbId, CancellationToken ct, bool forceRefresh = false)
+        => GetPublicationDetailsAsync(tmdbId, "tv", ct, forceRefresh);
+
+    private Task<DetailsResult?> GetPublicationDetailsAsync(int id, string type, CancellationToken ct, bool forceRefresh)
+    {
+        Task<DetailsResult?> Fetch(CancellationToken token) => type == "tv"
+            ? GetTvDetailsCoreAsync(id, token, true) : GetMovieDetailsCoreAsync(id, token, true);
+        if (forceRefresh) return Fetch(ct);
+        var credential = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(GetApiKeyOrThrow())));
+        // Localized details + credits have already passed their identity checks. Never
+        // substitute the unlocalized/incomplete TV search evidence for this snapshot.
+        return _matchingResponses.GetAsync($"publication:{credential}:{type}:{id}:{GetMediaInfoLanguage()}", Fetch, details => !string.IsNullOrWhiteSpace(details.Title), ct);
+    }
 
     private async Task<DetailsResult?> GetTvDetailsCoreAsync(int tmdbId, CancellationToken ct, bool verifyIdentity)
     {

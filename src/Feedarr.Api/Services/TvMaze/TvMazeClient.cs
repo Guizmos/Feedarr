@@ -41,11 +41,12 @@ public sealed class TvMazeClient : IDisposable
         _http.Timeout = TimeSpan.FromSeconds(20);
     }
 
-    internal async Task<JsonElement?> GetMatchingEvidenceAsync(string path, CancellationToken ct)
+    internal async Task<JsonElement?> GetMatchingEvidenceAsync(string path, CancellationToken ct, bool forceRefresh = false)
     {
         if (!IsEnabled()) return null;
         if (!path.StartsWith("shows/", StringComparison.Ordinal) && !path.StartsWith("search/shows?", StringComparison.Ordinal))
             throw new ArgumentException(nameof(path));
+        if (forceRefresh) return await GetMatchingEvidenceCoreAsync(path, ct).ConfigureAwait(false);
         var cached = await _matchingResponses.GetAsync(path, async token => {
             var value = await GetMatchingEvidenceCoreAsync(path, token).ConfigureAwait(false);
             return value is { } json ? new Feedarr.Api.Services.Matching.VideoEvidenceResponse(json) : null;
