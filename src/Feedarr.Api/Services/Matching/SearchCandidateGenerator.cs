@@ -26,7 +26,7 @@ internal sealed record SearchCandidate(
     SearchCandidateOrigin Origin);
 
 /// <summary>
-/// The future caller must supply identity/manual-lock state from trusted persisted
+/// The caller supplies identity/manual-lock state from trusted persisted
 /// data. IDs themselves are deliberately not query material for this component.
 /// </summary>
 internal sealed record SearchCandidateInput(
@@ -36,8 +36,8 @@ internal sealed record SearchCandidateInput(
     bool HasManualCorrection = false);
 
 /// <summary>
-/// Pure, bounded query proposal generation. Not registered in DI or called by the
-/// production matching pipeline. No scoring, identity choice, persistence or IO.
+/// Pure, bounded query proposal generation shared by publication and replay.
+/// No scoring, identity choice, persistence or IO.
 /// </summary>
 internal static class SearchCandidateGenerator
 {
@@ -61,11 +61,11 @@ internal static class SearchCandidateGenerator
             parsed.Year.HasValue ? CandidateYearEvidence.Parsed : CandidateYearEvidence.None,
             SearchCandidateOrigin.Primary);
 
-        // First specialization: movie title-number ambiguity with resolution evidence.
-        // Games, annual editions, episodes and undated bare titles keep only primary.
+        // Movie title-number ambiguity needs resolution evidence. Episodic TV can
+        // also propose a season-year hypothesis; other media keep the primary query.
         // A parsed year already separates title number + release year (2049 / 2017).
-        if (input.Category != UnifiedCategory.Film || parsed.Year.HasValue ||
-            parsed.Resolution is null || parsed.Source is not null || parsed.Codec is not null)
+        if (parsed.Year.HasValue || !(input.Category is UnifiedCategory.Serie or UnifiedCategory.Emission && parsed.Season.HasValue) &&
+            (input.Category != UnifiedCategory.Film || parsed.Resolution is null || parsed.Source is not null || parsed.Codec is not null))
             return Array.AsReadOnly(new[] { primary });
 
         var number = TrailingYearNumber.Match(parsed.TitleClean);

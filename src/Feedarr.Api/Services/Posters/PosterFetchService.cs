@@ -34,8 +34,6 @@ public sealed partial class PosterFetchService
     private const float HighConfidenceThreshold = 0.80f;
     private const float TmdbCommonTitleThreshold = 0.75f;
     private const float TvMazeScoreThreshold = 0.55f;
-    private const float TvMazeAmbiguousThreshold = 0.65f;
-    private const float TvMazeEmissionThreshold = 0.65f;
     private const int MinTokensForYearlessSeriesReuse = 4;
 
     private readonly ReleaseRepository _releases;
@@ -1130,8 +1128,8 @@ public sealed partial class PosterFetchService
         }
 
         UnifiedCategoryMappings.TryParse(r.UnifiedCategory, out var initialCategory);
-        var activeMovieV2 = UseMovieV2(r, initialCategory);
-        if (initialCategory is (UnifiedCategory.Film or UnifiedCategory.Animation or UnifiedCategory.Spectacle) && MatchingShadowState.From(r).Protected)
+        var activeVideoV2 = UseVideoV2(r, initialCategory);
+        if (initialCategory is (UnifiedCategory.Film or UnifiedCategory.Animation or UnifiedCategory.Spectacle or UnifiedCategory.Serie or UnifiedCategory.Emission) && MatchingShadowState.From(r).Protected)
         {
             _releases.ValidateMatching(id);
             return new(true, 200, new { ok = true, preserved = true, reason = "matching_v2_existing_identity_preserved" }, r.SourceId);
@@ -1144,7 +1142,7 @@ public sealed partial class PosterFetchService
         int? tvdbIdStored = (int?)r.TvdbId;
         if (tvdbIdStored <= 0) tvdbIdStored = null;
 
-        if (!activeMovieV2 && skipIfExists && !string.IsNullOrWhiteSpace(existingFile))
+        if (!activeVideoV2 && skipIfExists && !string.IsNullOrWhiteSpace(existingFile))
         {
             var path = Path.Combine(PostersDirAbs, existingFile);
             if (System.IO.File.Exists(path))
@@ -1231,12 +1229,12 @@ public sealed partial class PosterFetchService
         var knownIds = new PosterMatchIds(tmdbIdStored, tvdbIdStored, null, null, null, r.TmdbMediaType ?? mediaType);
         var tvmazeEnabled = IsTvmazeEnabled();
 
-        if (UseMovieV2(r, unifiedCategory))
+        if (UseVideoV2(r, unifiedCategory))
         {
             var v2Context = new PosterFetchRoutingContext(id, title, year, categoryName, unifiedCategory,
                 mediaType, tmdbIdStored, tvdbIdStored, normalizedTitle, season, episode, ambiguity,
                 titleKey, fingerprint, knownIds, tvmazeEnabled, forceRefresh, logSingle, sourceId)
-                { UseMovieV2 = true };
+                { UseVideoV2 = true };
             return await _matchingOrchestrator.FetchPosterAsync(this, v2Context, ct).ConfigureAwait(false);
         }
 
@@ -1461,7 +1459,6 @@ public sealed partial class PosterFetchService
         var titleKey = context.TitleKey;
         var fingerprint = context.Fingerprint;
         var knownIds = context.KnownIds;
-        var tvmazeEnabled = context.TvmazeEnabled;
         var forceRefresh = context.ForceRefresh;
         var logSingle = context.LogSingle;
         var sourceId = context.SourceId;
@@ -1552,38 +1549,6 @@ public sealed partial class PosterFetchService
             return new PosterFetchResult(false, 404, new { error = "no rawg match", title, year }, sourceId);
         }
 
-        var shouldTryTvmaze = tvmazeEnabled && mediaType == "series" &&
-                              (unifiedCategory == UnifiedCategory.Emission || PosterProviderSelector.ShouldUseTvMaze(ambiguity, unifiedCategory));
-        var tvmazeHadCandidates = false;
-
-        if (shouldTryTvmaze)
-        {
-            LogProviderAttempted(sourceId, logSingle, "tvmaze", new { releaseId = id, query = title, year, mediaType });
-            var tvmazeAttempt = await TryFetchFromTvMazeAsync(
-                id,
-                title,
-                year,
-                unifiedCategory,
-                ambiguity,
-                knownIds,
-                titleKey,
-                fingerprint,
-                forceRefresh,
-                ct,
-                logSingle,
-                sourceId);
-
-            tvmazeHadCandidates = tvmazeAttempt.HadCandidates;
-            if (tvmazeAttempt.Result is not null)
-                return tvmazeAttempt.Result;
-
-            LogFallbackUsed(sourceId, logSingle, "tvmaze", "tmdb", new
-            {
-                releaseId = id,
-                reason = tvmazeHadCandidates ? "no_match" : "no_results"
-            });
-        }
-
         var tmdbTvOnly = unifiedCategory == UnifiedCategory.Emission;
         LogProviderAttempted(sourceId, logSingle, "tmdb", new { releaseId = id, query = title, year, mediaType, tvOnly = tmdbTvOnly });
         var tmdbCandidates = await GetTmdbCandidatesAsync(title, year, mediaType, ct, tmdbTvOnly).ConfigureAwait(false);
@@ -1661,7 +1626,7 @@ public sealed partial class PosterFetchService
             string? posterFileFinal = null;
             if (bytesTmdb is not null && bytesTmdb.Length > 0)
             {
-                if (context.UseMovieV2) _releases.ValidateMatching(id);
+                if (context.UseVideoV2) _releases.ValidateMatching(id);
                 var file = $"tmdb-{identity.MediaType}-{identity.Id}-w500.jpg";
                 var full = Path.Combine(PostersDirAbs, file);
                 await PosterImageWriter.WriteAsync(full, bytesTmdb, ct).ConfigureAwait(false);
@@ -1849,7 +1814,7 @@ public sealed partial class PosterFetchService
         var fanartFile = $"fanart-{fanartType}-{tmdbIdForFanart.Value}{ext}";
         var fanartFull = Path.Combine(PostersDirAbs, fanartFile);
 
-        if (context.UseMovieV2) _releases.ValidateMatching(id);
+        if (context.UseVideoV2) _releases.ValidateMatching(id);
         await PosterImageWriter.WriteAsync(fanartFull, fanartBytes, ct).ConfigureAwait(false);
         _releases.SavePoster(id, tmdbIdForFanart.Value, fanartUrl, fanartFile, fanartType);
         if (tvdbIdForFanart.HasValue) _releases.SaveTvdbId(id, tvdbIdForFanart.Value);
@@ -2791,145 +2756,6 @@ public sealed partial class PosterFetchService
         }
 
         return null;
-    }
-
-    private sealed record TvMazeAttempt(PosterFetchResult? Result, bool HadCandidates);
-
-    private async Task<TvMazeAttempt> TryFetchFromTvMazeAsync(
-        long id,
-        string title,
-        int? year,
-        UnifiedCategory category,
-        TitleAmbiguityResult ambiguity,
-        PosterMatchIds knownIds,
-        PosterTitleKey titleKey,
-        string fingerprint,
-        bool forceRefresh,
-        CancellationToken ct,
-        bool logSingle,
-        long? sourceId)
-    {
-        if (category != UnifiedCategory.Emission && ambiguity.SignificantTokenCount < 2)
-            return new TvMazeAttempt(null, false);
-        if (category != UnifiedCategory.Emission && ambiguity.IsCommonTitle && !year.HasValue)
-            return new TvMazeAttempt(null, false);
-
-        var candidates = await RunTvMazeAsync(innerCt => _tvmaze.SearchShowsAsync(title, innerCt, TmdbCandidateLimit), ct).ConfigureAwait(false);
-        if (candidates.Count == 0) return new TvMazeAttempt(null, false);
-
-        var scored = candidates
-            .Select(c => (Candidate: c, Score: TvMazeScorer.ScoreCandidate(title, year, category, c, knownIds)))
-            .OrderByDescending(x => x.Score)
-            .ThenByDescending(x => x.Candidate.PremieredYear.HasValue && year.HasValue && x.Candidate.PremieredYear == year)
-            .ToList();
-
-        var best = scored.First();
-        var threshold = PosterProviderSelector.GetTvMazeThreshold(ambiguity, category);
-        if (ambiguity.IsAmbiguous)
-            threshold = Math.Max(threshold, TvMazeAmbiguousThreshold);
-        if (category == UnifiedCategory.Emission)
-            threshold = Math.Max(threshold, TvMazeEmissionThreshold);
-
-        if (best.Score < threshold) return new TvMazeAttempt(null, true);
-
-        if (ambiguity.IsCommonTitle)
-        {
-            if (!year.HasValue || !best.Candidate.PremieredYear.HasValue || best.Candidate.PremieredYear != year)
-                return new TvMazeAttempt(null, true);
-            if (best.Score < TmdbCommonTitleThreshold)
-                return new TvMazeAttempt(null, true);
-        }
-
-        var imageUrl = best.Candidate.ImageOriginal ?? best.Candidate.ImageMedium;
-        if (string.IsNullOrWhiteSpace(imageUrl)) return new TvMazeAttempt(null, true);
-
-        var bytes = await RunTvMazeAsync(innerCt => _tvmaze.DownloadImageAsync(imageUrl, innerCt), ct).ConfigureAwait(false);
-        if (bytes is null || bytes.Length == 0) return new TvMazeAttempt(null, true);
-
-        var size = best.Candidate.ImageOriginal == imageUrl ? "original" : "medium";
-        var ext = Path.GetExtension(new Uri(imageUrl).AbsolutePath);
-        if (string.IsNullOrWhiteSpace(ext)) ext = ".jpg";
-        var file = $"tvmaze-{best.Candidate.Id}-{size}{ext}";
-        var full = Path.Combine(PostersDirAbs, file);
-        await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
-        int? tmdbIdResolved = null;
-        if (best.Candidate.TvdbId.HasValue)
-            tmdbIdResolved = await TryResolveTmdbFromTvdbAsync(best.Candidate.TvdbId.Value, ct).ConfigureAwait(false);
-        if (tmdbIdResolved.HasValue)
-            _releases.SaveTmdbId(id, tmdbIdResolved.Value, "series");
-
-        _releases.SavePoster(id, tmdbIdResolved, imageUrl, file, "tv", "tvmaze", best.Candidate.Id.ToString(CultureInfo.InvariantCulture));
-        if (best.Candidate.TvdbId.HasValue) _releases.SaveTvdbId(id, best.Candidate.TvdbId.Value);
-        var tvmazeStoreResult = await TryMaterializeStoreForReleaseAsync(
-            id,
-            "tvmaze",
-            best.Candidate.Id.ToString(CultureInfo.InvariantCulture),
-            file,
-            bytes,
-            legacyPosterPath: full,
-            forceRefresh,
-            tmdbIdResolved,
-            imageUrl,
-            preferredOriginalExtension: ext,
-            existingPosterKey: null,
-            ct).ConfigureAwait(false);
-        LogStoreOutcome("download", id, file, tvmazeStoreResult);
-
-        var hash = ComputeSha256Hex(bytes);
-        PosterAudit.UpdateAttemptSuccess(_releases, id, "tvmaze", best.Candidate.Id.ToString(CultureInfo.InvariantCulture), null, size, hash);
-
-        var ids = new PosterMatchIds(tmdbIdResolved, best.Candidate.TvdbId, best.Candidate.Id, null, best.Candidate.ImdbId);
-        var confidence = AdjustConfidence(best.Score, ambiguity, category == UnifiedCategory.Emission);
-        _matchCache.Upsert(new PosterMatch(
-            fingerprint,
-            titleKey.MediaType,
-            titleKey.NormalizedTitle,
-            titleKey.Year,
-            titleKey.Season,
-            titleKey.Episode,
-            PosterMatchCacheService.SerializeIds(ids),
-            confidence,
-            "tvmaze",
-            file,
-            "tvmaze",
-            best.Candidate.Id.ToString(CultureInfo.InvariantCulture),
-            null,
-            size,
-            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            null,
-            null));
-
-        if (logSingle)
-        {
-            LogActivity(sourceId, "info", "poster_fetch", "Poster fetched (TVmaze)", new
-            {
-                releaseId = id,
-                title,
-                year,
-                tvmazeId = best.Candidate.Id,
-                posterFile = file,
-                score = best.Score
-            });
-        }
-
-        var effectiveTmdbId = tmdbIdResolved;
-        await EnsureTmdbMetadataIfMissingAsync(
-            id,
-            effectiveTmdbId,
-            titleKey.MediaType,
-            snapshot: null,
-            ct).ConfigureAwait(false);
-
-        var result = new PosterFetchResult(true, 200, new
-        {
-            ok = true,
-            tmdbId = tmdbIdResolved,
-            tvmazeId = best.Candidate.Id,
-            posterFile = file,
-            posterUrl = $"/api/posters/release/{id}"
-        }, sourceId);
-        return new TvMazeAttempt(result, true);
     }
 
     private async Task<int?> TryResolveTmdbFromTvdbAsync(int tvdbId, CancellationToken ct)

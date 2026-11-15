@@ -202,14 +202,14 @@ public sealed class MatchingReplayService(MatchingReplayReader reader, IHttpClie
             try
             {
                 foreach (var query in queries)
-                foreach (var language in new string?[] { null, access.Language })
+                foreach (var language in (type == "tv" ? new string?[] { access.Language, "en-US" }.Distinct() : new string?[] { null, access.Language }))
                 {
                     int? expectedPages = null, expectedTotal = null;
                     var found = new HashSet<int>();
                     for (var page = 1; ; page++)
                     {
                         ct.ThrowIfCancellationRequested();
-                        var response = await TmdbClient.SearchReplayPageAsync(http, access, query.Title, query.Year, type, language, page, queryBudget, ct).ConfigureAwait(false);
+                        var response = await TmdbClient.SearchReplayPageAsync(http, access, query.Title, type == "tv" ? null : query.Year, type, language, page, queryBudget, ct).ConfigureAwait(false);
                         ct.ThrowIfCancellationRequested();
                         if (response.Error == "provider_rate_limited") _retryAfterUtc = response.RetryAfterUtc ?? DateTimeOffset.UtcNow.AddSeconds(60);
                         if (response.Error is not null) return NotEvaluable(response.Error, true);
@@ -237,9 +237,30 @@ public sealed class MatchingReplayService(MatchingReplayReader reader, IHttpClie
             catch (HttpRequestException) { return NotEvaluable("provider_network_error", true); }
             catch (JsonException) { return NotEvaluable("provider_response_invalid", true); }
             candidates = TmdbShadowCandidateAdapter.Project(observed);
+            if (type == "tv")
+            {
+                try
+                {
+                    candidates = await TelevisionCandidates.EnrichAsync(queries, category, expected.RawTitle ?? "", candidates,
+                        async (provider, path, token) => {
+                            var url = provider == "tmdb" ? "https://api.themoviedb.org/3/" + path + (path.Contains('?') ? "&" : "?") + "api_key=" + Uri.EscapeDataString(access.Key) : "https://api.tvmaze.com/" + path;
+                            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+                            request.Options.Set(ReplayHttpBudget.Option, queryBudget);
+                            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
+                            return await TelevisionCandidates.ReadAsync(response, token).ConfigureAwait(false);
+                        }, reader.TvmazeEnabled(), ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (ReplayCategoryBudgetExceededException) { return NotEvaluable("category_http_budget_exhausted"); }
+                catch (ReplayBudgetExceededException) { return NotEvaluable("http_budget_exhausted"); }
+                catch (InvalidDataException ex) when (ex.Message.StartsWith("tv_", StringComparison.Ordinal) || ex.Message.StartsWith("tvmaze_", StringComparison.Ordinal)) { return NotEvaluable(ex.Message, true); }
+                catch (Exception ex) { return NotEvaluable("tv_evidence_" + ex.GetType().Name, true); }
+            }
         }
         var ranked = SearchCandidateRanker.Rank(new(queries, category, type == "movie" ? SearchMediaType.Movie : SearchMediaType.Series,
-            Season: expected.Season, Episode: expected.Episode), candidates);
+            Season: new Feedarr.Api.Services.Titles.TitleParser().Parse(expected.RawTitle ?? "", category).Season,
+            Episode: new Feedarr.Api.Services.Titles.TitleParser().Parse(expected.RawTitle ?? "", category).Episode,
+            AirDate: type == "tv" ? new Feedarr.Api.Services.Titles.TitleParser().Parse(expected.RawTitle ?? "", category).AirDate : null), candidates);
         ct.ThrowIfCancellationRequested();
         if (reader.Read(expected.Id) != expected) return NotEvaluable("persisted_state_changed_during_evaluation");
         return new(new(expected.Id, "evaluated", historical, ranked with { PreserveExisting = expected.Protected }, Array.Empty<string>(), expected.Protected)

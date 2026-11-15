@@ -24,5 +24,5 @@ public sealed record PosterFetchRoutingContext(
     bool LogSingle,
     long? SourceId)
 {
-    internal bool UseMovieV2 { get; init; }
+    internal bool UseVideoV2 { get; init; }
 }

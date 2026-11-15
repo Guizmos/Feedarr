@@ -395,7 +395,13 @@ public sealed partial class TmdbClient
         );
     }
 
-    public async Task<DetailsResult?> GetTvDetailsAsync(int tmdbId, CancellationToken ct)
+    public Task<DetailsResult?> GetTvDetailsAsync(int tmdbId, CancellationToken ct)
+        => GetTvDetailsCoreAsync(tmdbId, ct, false);
+
+    internal Task<DetailsResult?> GetTvPublicationDetailsAsync(int tmdbId, CancellationToken ct)
+        => GetTvDetailsCoreAsync(tmdbId, ct, true);
+
+    private async Task<DetailsResult?> GetTvDetailsCoreAsync(int tmdbId, CancellationToken ct, bool verifyIdentity)
     {
         var key = TryGetApiKey();
         if (string.IsNullOrWhiteSpace(key)) return null;
@@ -413,7 +419,9 @@ public sealed partial class TmdbClient
             return null;
         }
         if (r is null) return null;
-        var credits = await GetTvCreditsAsync(tmdbId, mediaInfoLanguage, ct).ConfigureAwait(false);
+        if (verifyIdentity && !MatchesResponseIdentity(r.Id, tmdbId)) throw new InvalidDataException("tmdb_details_identity_mismatch");
+        var credits = await GetTvCreditsAsync(tmdbId, mediaInfoLanguage, ct, verifyIdentity).ConfigureAwait(false);
+        if (verifyIdentity && credits is null) throw new InvalidDataException("tmdb_credits_unavailable");
         var runtime = r.EpisodeRunTime?.FirstOrDefault(x => x > 0);
         return new DetailsResult(
             r.Name?.Trim(),
@@ -554,6 +562,7 @@ public sealed partial class TmdbClient
 
     private sealed class TvDetailsResponse
     {
+        [JsonPropertyName("id")] public JsonElement? Id { get; set; }
         [JsonPropertyName("name")]
         public string? Name { get; set; }
 
@@ -686,7 +695,7 @@ public sealed partial class TmdbClient
         );
     }
 
-    private async Task<CreditsResult?> GetTvCreditsAsync(int tmdbId, string mediaInfoLanguage, CancellationToken ct)
+    private async Task<CreditsResult?> GetTvCreditsAsync(int tmdbId, string mediaInfoLanguage, CancellationToken ct, bool verifyIdentity = false)
     {
         var key = TryGetApiKey();
         if (string.IsNullOrWhiteSpace(key)) return null;
@@ -703,6 +712,8 @@ public sealed partial class TmdbClient
             return null;
         }
         if (r is null) return null;
+
+        if (verifyIdentity && !MatchesResponseIdentity(r.Id, tmdbId)) throw new InvalidDataException("tmdb_credits_identity_mismatch");
 
         var directors = r.Crew?
             .Where(x => string.Equals(x.Job, "Creator", StringComparison.OrdinalIgnoreCase)

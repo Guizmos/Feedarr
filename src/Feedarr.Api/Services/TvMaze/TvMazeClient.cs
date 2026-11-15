@@ -38,6 +38,17 @@ public sealed class TvMazeClient
         _http.Timeout = TimeSpan.FromSeconds(20);
     }
 
+    internal async Task<JsonElement?> GetMatchingEvidenceAsync(string path, CancellationToken ct)
+    {
+        if (!IsEnabled()) return null;
+        if (!path.StartsWith("shows/", StringComparison.Ordinal) && !path.StartsWith("search/shows?", StringComparison.Ordinal))
+            throw new ArgumentException(nameof(path));
+        using var response = await GetAsyncRecorded(path, ct).ConfigureAwait(false);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await Feedarr.Api.Services.Matching.TelevisionCandidates.ReadAsync(response, ct).ConfigureAwait(false);
+    }
+
     public async Task<List<ShowResult>> SearchShowsAsync(string query, CancellationToken ct, int limit = 10)
     {
         if (!IsEnabled())

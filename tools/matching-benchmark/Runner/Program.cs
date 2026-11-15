@@ -96,7 +96,7 @@ sealed class Captures(Request request, JsonSerializerOptions options)
         var uri = message.RequestUri!;
         var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
         var fields = new SortedDictionary<string,string>(StringComparer.Ordinal);
-        foreach (var key in new[] { "query", "language", "year", "first_air_date_year", "include_adult", "page" })
+        foreach (var key in new[] { "query", "language", "year", "first_air_date_year", "include_adult", "page", "q", "date", "append_to_response" })
             if (query.TryGetValue(key, out var value)) fields[key] = value.ToString();
         // Never serialize the request URL, API key, headers or private credentials.
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { path = uri.AbsolutePath, fields })))).ToLowerInvariant();
@@ -127,24 +127,7 @@ sealed class Captures(Request request, JsonSerializerOptions options)
                     if (buffer.Length + n > 1048576) throw Problem("provider_response_too_large"); buffer.Write(bytes,0,n);
                 }
                 using var document = JsonDocument.Parse(buffer.ToArray()); var root = document.RootElement;
-                var result = new Dictionary<string,object?>();
-                foreach (var key in new[] { "page", "total_pages", "total_results" })
-                    if (root.TryGetProperty(key, out var value)) result[key] = value.Clone();
-                var items = new List<Dictionary<string,object?>>();
-                if (!root.TryGetProperty("results", out var array) || array.ValueKind != JsonValueKind.Array || array.GetArrayLength()>20)
-                    throw Problem("provider_response_invalid");
-                foreach (var row in array.EnumerateArray())
-                {
-                    var item = new Dictionary<string,object?>();
-                    foreach (var key in new[] { "id", "title", "name", "original_title", "original_name", "release_date", "first_air_date", "original_language" })
-                        if (row.TryGetProperty(key, out var value)) {
-                            if (value.ValueKind == JsonValueKind.String && MatchingDiagnosticProjection.RedactionReason(value.GetString()) is not null)
-                                throw Problem("sensitive_provider_title_not_recorded");
-                            item[key] = value.Clone();
-                        }
-                    items.Add(item);
-                }
-                result["results"] = items; body = JsonSerializer.Serialize(result);
+                body = JsonSerializer.Serialize(Project(root));
             }
             capture = new((int)response.StatusCode, body, response.Headers.RetryAfter?.ToString());
             var serialized = JsonSerializer.Serialize(capture, options);
@@ -157,6 +140,35 @@ sealed class Captures(Request request, JsonSerializerOptions options)
         var cached = new HttpResponseMessage((HttpStatusCode)capture.Status) { Content = new StringContent(capture.Body, Encoding.UTF8, "application/json") };
         if (capture.RetryAfter is not null) cached.Headers.TryAddWithoutValidation("Retry-After",capture.RetryAfter);
         return cached;
+    }
+    private static object? Project(JsonElement value, int depth = 0)
+    {
+        if (depth > 8) throw new IOException("capture_depth_limit");
+        if (value.ValueKind == JsonValueKind.Array)
+        {
+            if (value.GetArrayLength() > 2000) throw new IOException("capture_array_limit");
+            return value.EnumerateArray().Select(v => Project(v, depth + 1)).ToArray();
+        }
+        if (value.ValueKind == JsonValueKind.Object)
+        {
+            var allowed = new HashSet<string>(new[] { "id", "title", "name", "original_title", "original_name", "release_date", "first_air_date", "original_language",
+                "page", "total_pages", "total_results", "results", "show", "premiered", "externals", "thetvdb", "imdb", "external_ids", "tvdb_id", "imdb_id",
+                "seasons", "season_number", "episode_number", "episode_count", "show_id", "number", "season", "air_date", "airdate", "alternative_titles", "iso_3166_1", "_links", "href" }, StringComparer.Ordinal);
+            // Episode names are not matching evidence. Do not capture them (they may contain
+            // words like "secret" which correctly redact series-title evidence).
+            var episode = value.TryGetProperty("episode_number", out _) || value.TryGetProperty("number", out _) && value.TryGetProperty("season", out _);
+            return value.EnumerateObject().Where(p => allowed.Contains(p.Name) && !(episode && p.Name is "name" or "title" or "original_name")).ToDictionary(p => p.Name, p => {
+                if (p.Name == "href")
+                {
+                    var link = p.Value.ValueKind == JsonValueKind.String ? p.Value.GetString() : null;
+                    return System.Text.RegularExpressions.Regex.IsMatch(link ?? "", @"^https://api\.tvmaze\.com/shows/[1-9][0-9]*$") ? (object?)link : null;
+                }
+                return Project(p.Value, depth + 1);
+            });
+        }
+        if (value.ValueKind == JsonValueKind.String && (value.GetString()!.Length > 2048 || MatchingDiagnosticProjection.RedactionReason(value.GetString()) is not null))
+            throw new IOException("sensitive_provider_field_not_recorded");
+        return value.Clone();
     }
     private IOException Problem(string code) { LastProblem = code; return new IOException(code); }
 }

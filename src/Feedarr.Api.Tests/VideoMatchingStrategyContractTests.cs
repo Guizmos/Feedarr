@@ -5,63 +5,63 @@ namespace Feedarr.Api.Tests;
 
 public sealed class VideoMatchingStrategyContractTests
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
     [Fact]
-    public async Task Series_TvmazeHit_TakesPriority_GoldenContract()
+    public async Task TvmazeOnlyCandidatePublishesItsVerifiedSeriesAtomically()
     {
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.SeriesTvmazeHit);
-        var releaseId = rig.CreateRelease("Show Tvmaze Hit", "Show Tvmaze Hit", 2015, UnifiedCategory.Serie, "series");
-
-        var actual = await rig.FetchSnapshotAsync(releaseId);
-        AssertSnapshot("series_tvmaze_hit", actual);
-    }
-
-    [Fact]
-    public async Task Series_TvmazeMiss_FallsBackToTmdb_GoldenContract()
-    {
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.SeriesTvmazeMissTmdb);
-        var releaseId = rig.CreateRelease("Show Tmdb Hit", "Show Tmdb Hit", 2018, UnifiedCategory.Serie, "series");
-
-        var actual = await rig.FetchSnapshotAsync(releaseId);
-        AssertSnapshot("series_tvmaze_miss_tmdb", actual);
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.SeriesTvmazeHit, completeTmdbMetadata: true);
+        var id = rig.IngestRelease("Show.Tvmaze.Hit.S01E02.1080p.WEB.x264-GRP", UnifiedCategory.Serie);
+        var result = await rig.FetchAsync(id);
+        Assert.True(result.Ok, JsonSerializer.Serialize(result.Body));
+        var row = rig.GetReleaseForPoster(id)!;
+        Assert.Equal("tvmaze", row.ExtProvider); Assert.Equal("3001", row.ExtProviderId);
+        Assert.Null(row.TmdbId); // No unverified /find mapping after acceptance.
+        Assert.Contains("tvmaze-tv-3001-v2-", row.PosterFile!);
+        Assert.Equal("Show Tvmaze Hit", row.ExtTitle);
+        var searches = rig.TmdbSearchRequests.Count;
+        Assert.True((await rig.FetchAsync(id)).Ok);
+        Assert.Equal(searches, rig.TmdbSearchRequests.Count);
+        Assert.Equal(row.PosterFile, rig.GetReleaseForPoster(id)!.PosterFile);
     }
 
     [Fact]
-    public async Task Series_TmdbWithoutPoster_FallsBackToFanart_GoldenContract()
+    public async Task TmdbSeriesPublishesLocalizedMetadataWithTypedIdentity()
     {
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.SeriesTmdbFallbackFanart);
-        var releaseId = rig.CreateRelease("Show Fanart", "Show Fanart", 2019, UnifiedCategory.Serie, "series");
-
-        var actual = await rig.FetchSnapshotAsync(releaseId);
-        AssertSnapshot("series_tmdb_fallback_fanart", actual);
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.SeriesTvmazeMissTmdb, completeTmdbMetadata: true,
+            tmdbResponse: (request, _) => {
+                Assert.DoesNotContain("/movie/", request.RequestUri!.AbsolutePath);
+                return Task.FromResult<System.Net.Http.HttpResponseMessage?>(null);
+            });
+        var id = rig.IngestRelease("Show.Tmdb.Hit.S01.1080p.WEB.x264-GRP", UnifiedCategory.Serie);
+        var result = await rig.FetchAsync(id);
+        Assert.True(result.Ok, JsonSerializer.Serialize(result.Body));
+        var row = rig.GetReleaseForPoster(id)!;
+        Assert.Equal(600, row.TmdbId); Assert.Equal("tv", row.TmdbMediaType);
+        Assert.Equal("600", row.ExtProviderId); Assert.Equal("Mock", row.ExtOverview);
+        Assert.Contains("tmdb-tv-600-v2-", row.PosterFile!);
+        Assert.All(rig.TmdbSearchRequests, r => Assert.DoesNotContain("first_air_date_year", r.Query));
     }
 
     [Fact]
-    public async Task Emission_Ambiguous_TvmazeCandidateBelowThreshold_FallsBackToTmdb_GoldenContract()
+    public async Task FanartOnlyEnrichesTheAcceptedVerifiedSeries()
     {
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.EmissionAmbiguousTmdbFallback);
-        var releaseId = rig.CreateRelease("TF1", "TF1", 2024, UnifiedCategory.Emission, "series");
-
-        var actual = await rig.FetchSnapshotAsync(releaseId);
-        AssertSnapshot("emission_ambiguous_tmdb", actual);
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.SeriesTmdbFallbackFanart, completeTmdbMetadata: true);
+        var id = rig.IngestRelease("Show.Fanart.S01.1080p.WEB.x264-GRP", UnifiedCategory.Serie);
+        var result = await rig.FetchAsync(id);
+        Assert.True(result.Ok, JsonSerializer.Serialize(result.Body));
+        var row = rig.GetReleaseForPoster(id)!;
+        Assert.Equal(700, row.TmdbId); Assert.Equal("tv", row.TmdbMediaType);
+        Assert.Equal("fanart", row.PosterProvider); Assert.Equal("700", row.ExtProviderId);
+        Assert.Contains("fanart-tv-700-v2-", row.PosterFile!);
     }
 
-    private static void AssertSnapshot(string key, PosterContractSnapshot actual)
+    [Fact]
+    public async Task UnrelatedEmissionCandidatesAbstainWithoutPublishing()
     {
-        var expectedMap = LoadExpected();
-        Assert.True(expectedMap.TryGetValue(key, out var expected), $"Missing expected snapshot key: {key}");
-        Assert.Equal(expected, actual);
-    }
-
-    private static Dictionary<string, PosterContractSnapshot> LoadExpected()
-    {
-        var path = Path.Combine(AppContext.BaseDirectory, "Golden", "video-contract-expected.json");
-        var json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<Dictionary<string, PosterContractSnapshot>>(json, JsonOpts)
-            ?? new Dictionary<string, PosterContractSnapshot>(StringComparer.OrdinalIgnoreCase);
+        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.EmissionAmbiguousTmdbFallback, completeTmdbMetadata: true);
+        var id = rig.IngestRelease("TF1.2024.1080p.WEB.x264-GRP", UnifiedCategory.Emission);
+        var result = await rig.FetchAsync(id);
+        Assert.False(result.Ok); Assert.Equal(422, result.StatusCode);
+        var row = rig.GetReleaseForPoster(id)!;
+        Assert.Null(row.TmdbId); Assert.Null(row.ExtProviderId); Assert.Null(row.PosterFile);
     }
 }

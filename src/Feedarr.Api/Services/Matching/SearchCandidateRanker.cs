@@ -17,13 +17,13 @@ internal sealed record ProviderSearchCandidate(
     IReadOnlyList<string>? AlternativeTitles = null, UnifiedCategory? Category = null,
     int? Season = null, int? Episode = null,
     IReadOnlyList<SearchIdentity>? KnownExternalIdentities = null,
-    IReadOnlyList<OfficialProviderTitle>? OfficialTitles = null);
+    IReadOnlyList<OfficialProviderTitle>? OfficialTitles = null, TelevisionEvidence? Television = null);
 
 internal sealed record CandidateRankingContext(
     IReadOnlyList<SearchCandidate> Queries, UnifiedCategory Category, SearchMediaType ExpectedMediaType,
     int? ConfirmedYear = null, int? Season = null, int? Episode = null,
     SearchIdentity? TrustedIdentityHint = null, SearchIdentity? EstablishedIdentity = null,
-    bool IsLocked = false, bool HasManualCorrection = false);
+    bool IsLocked = false, bool HasManualCorrection = false, string? AirDate = null);
 
 internal sealed record CandidateRankingPolicy(
     double MinimumTitleSimilarity = 0.90, double AcceptConfidence = 0.92,
@@ -51,8 +51,8 @@ internal sealed record CandidateRankingResult(
     IReadOnlyList<string> Reasons, IReadOnlyList<RankedSearchCandidate> Candidates);
 
 /// <summary>
-/// Offline proposal evaluation only. Confidence is an explainable heuristic, not a
-/// calibrated probability. No DI registration, provider access, persisted-state read or write.
+/// Shared, side-effect-free candidate evaluation. Confidence is an explainable heuristic, not a
+/// calibrated probability. No provider access, persisted-state read or write.
 /// </summary>
 internal static class SearchCandidateRanker
 {
@@ -135,6 +135,16 @@ internal static class SearchCandidateRanker
         if (identity.MediaType != SearchMediaType.Series && (candidate.Season.HasValue || candidate.Episode.HasValue))
             Contradict("provider-episode-type-mismatch");
 
+        var tv = identity.MediaType == SearchMediaType.Series && candidate.Television?.Identity == identity ? candidate.Television : null;
+        var tvSupport = tv is not null && ((context.Season.HasValue && tv.SeasonExists == true && candidate.Season == context.Season &&
+            (!context.Episode.HasValue || tv.EpisodeExists == true && candidate.Episode == context.Episode)) ||
+            context.AirDate is not null && tv.AirDate == context.AirDate);
+        if (context.AirDate is not null)
+        {
+            if (tv?.AirDate is null) { sufficient = false; Contradict("air-date-unavailable", false); }
+            else if (tv.AirDate != context.AirDate) Contradict("air-date-mismatch");
+            else positive.Add("air-date-agrees");
+        }
         var trusted = false;
         if (context.TrustedIdentityHint is { } hint)
         {
@@ -180,8 +190,7 @@ internal static class SearchCandidateRanker
                     compound = pair;
                     best = (prefix, single?.Title ?? pair!.First.Title + " " + pair.Second.Title, true, single, 1d);
                     trailingYearHypothesis = possibleYear;
-                    sufficient = false;
-                    Contradict("trailing-year-needs-independent-evidence", false);
+                    if (!tvSupport) { sufficient = false; Contradict("trailing-year-needs-independent-evidence", false); }
                     positive.Add("official-title-with-trailing-year-hypothesis");
                 }
             }
@@ -211,11 +220,13 @@ internal static class SearchCandidateRanker
         // Weights are evidence classes, not a promise of statistical precision:
         // title .80, media .10, independent year/identity support up to .10.
         var confidence = .80 * best.Score + (identity.MediaType == context.ExpectedMediaType && identity.MediaType != SearchMediaType.Unknown ? .10 : 0);
-        if (trusted) confidence += .10;
+        if (trusted || tvSupport) confidence += .10;
+        if (tvSupport) positive.Add("verified-tv-structure");
         if (query.Year is <= 0 or > 9999 || context.ConfirmedYear is <= 0 or > 9999 ||
             (query.Year is null && query.YearEvidence != CandidateYearEvidence.None)) Contradict("invalid-query-year");
         if (candidate.Year is <= 0 or > 9999) Contradict("invalid-provider-year");
-        var year = context.ConfirmedYear ?? query.Year;
+        // Broadcast dates date the episode, not the series premiere.
+        var year = context.ConfirmedYear ?? (context.AirDate is null ? query.Year : null);
         var hypothesis = context.ConfirmedYear is null && query.YearEvidence == CandidateYearEvidence.Hypothesis;
         if (query.Year.HasValue && query.YearEvidence == CandidateYearEvidence.None) Contradict("query-year-evidence-missing");
         if (year.HasValue && candidate.Year.HasValue)
@@ -232,7 +243,7 @@ internal static class SearchCandidateRanker
             else { confidence += distance == 0 ? .10 : .06; positive.Add(distance == 0 ? "year-agrees" : "parsed-year-nearby"); }
         }
         else if (year.HasValue) { Contradict("provider-year-unavailable", false); sufficient &= trusted; }
-        if (hypothesis && !trusted) { Contradict("hypothesis-needs-independent-evidence", false); sufficient = false; }
+        if (hypothesis && !trusted && !tvSupport) { Contradict("hypothesis-needs-independent-evidence", false); sufficient = false; }
         CheckEpisode(context.Season, candidate.Season, "season");
         CheckEpisode(context.Episode, candidate.Episode, "episode");
         void CheckEpisode(int? expected, int? actual, string field)

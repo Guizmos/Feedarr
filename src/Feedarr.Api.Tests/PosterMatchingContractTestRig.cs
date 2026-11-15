@@ -634,6 +634,8 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             if (path.Contains("/movie/") || path.Contains("/tv/"))
             {
                 DetailsCalls++;
+                if (path.Contains("/tv/") && request.RequestUri!.Query.Contains("append_to_response"))
+                    return Task.FromResult(JsonResponse(WithIdentity("{\"external_ids\":{\"tvdb_id\":8700},\"seasons\":[{\"season_number\":1,\"episode_count\":10}]}", path)));
                 return Task.FromResult(JsonResponse(WithIdentity("{\"title\":\"Mock\",\"name\":\"Mock\",\"overview\":\"Mock\",\"genres\":[],\"vote_average\":0,\"vote_count\":0}", path)));
             }
 
@@ -851,6 +853,8 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
                     return Task.FromResult(JsonResponse("[]"));
             }
 
+            if (path.Contains("/shows/3001/episodes"))
+                return Task.FromResult(JsonResponse("[{\"id\":30011,\"season\":1,\"number\":2,\"_links\":{\"show\":{\"href\":\"https://api.tvmaze.com/shows/3001\"}}}]"));
             if (path.Contains("/shows/3001"))
                 return Task.FromResult(JsonResponse("{\"id\":3001,\"name\":\"Show Tvmaze Hit\",\"premiered\":\"2015-01-01\",\"externals\":{\"imdb\":\"tt03001\",\"thetvdb\":3001},\"image\":{\"medium\":\"https://static.tvmaze.com/medium-3001.jpg\",\"original\":\"https://static.tvmaze.com/original-3001.jpg\"}}"));
 

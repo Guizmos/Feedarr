@@ -14,20 +14,20 @@ public sealed class ConfirmedMovieCategoryTests
     public void RoutingNeedsMovieEvidenceAndRejectsEpisodicContradictions(UnifiedCategory category)
     {
         var release = new ReleaseForPoster { Title = "The.Matrix.1999.1080p.BluRay.x264-GRP", MediaType = "movie" };
-        Assert.False(PosterFetchService.UseMovieV2(release, category)); // Derived movie default is insufficient.
+        Assert.False(PosterFetchService.UseVideoV2(release, category)); // Derived movie default is insufficient.
         release.CategoryIds = "2040,100007";
-        Assert.True(PosterFetchService.UseMovieV2(release, category));
+        Assert.True(PosterFetchService.UseVideoV2(release, category));
         release.CategoryIds = "2040,5040";
-        Assert.False(PosterFetchService.UseMovieV2(release, category));
+        Assert.False(PosterFetchService.UseVideoV2(release, category));
         release.CategoryIds = "2040";
         release.Title = "A.Show.S01E02.2024.1080p.WEB.x264-GRP";
-        Assert.False(PosterFetchService.UseMovieV2(release, category));
+        Assert.False(PosterFetchService.UseVideoV2(release, category));
         release.Title = "A.Show.2024.02.01.1080p.WEB.x264-GRP";
-        Assert.False(PosterFetchService.UseMovieV2(release, category));
+        Assert.False(PosterFetchService.UseVideoV2(release, category));
         release.Title = "The.Matrix.1999.1080p.BluRay.x264-GRP";
         release.MediaType = "series";
-        Assert.False(PosterFetchService.UseMovieV2(release, category));
-        Assert.False(PosterFetchService.UseMovieV2(release, UnifiedCategory.Serie));
+        Assert.False(PosterFetchService.UseVideoV2(release, category));
+        Assert.True(PosterFetchService.UseVideoV2(release, UnifiedCategory.Serie));
     }
 
     [Theory]

@@ -26,8 +26,8 @@ Stockage par défaut : `~/Documents/Projets/Feedarr-benchmarks/REFERENCE/`.
   Il peut contenir configuration/URLs privées et credentials chiffrés : ne pas le partager.
 - `manifest.json` : IDs, titres et parsing stockés, catégories et identités existantes.
   Les textes manifestement sensibles sont masqués dans cet export, pas altérés dans la base.
-- `captures/` : réponses de recherche réduites à pagination, IDs, titres, années et langues.
-  Aucune clé, en-tête d’authentification, URL de requête, image ou payload brut conservé.
+- `captures/` : réponses réduites à pagination, IDs, titres officiels, années et langues, ainsi que preuves TV (saisons, épisodes, dates et identifiants externes).
+  Aucune clé, en-tête d’authentification, URL de requête, image ou payload brut conservé. Seuls les liens publics TVMaze de rattachement épisode/série sont conservés. Les titres d’épisodes, inutilisés pour décider, sont exclus.
   Les fichiers sont nommés par empreinte du plan public, excluant `api_key`.
 - `runs/` : décisions, candidats, scores, contradictions, identité proposée, couverture,
   empreintes des preuves/plans, durées, requêtes du replay et **vrais appels réseau séparés**.
@@ -94,3 +94,16 @@ Validation légère de l’outil :
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/matching-benchmark -p test_compare.py -v
 ```
+
+### Séries et émissions
+
+Le replay et la publication partagent le même enrichissement et ranker TV. Les candidats
+TMDB TV et TVMaze restent concurrents tant qu’un identifiant externe vérifié ne les
+relie pas. Les preuves sont bornées à six candidats plausibles et au budget HTTP du
+replay (30 appels par release dans le runner). Une saison absente, un épisode non
+référencé ou une réponse non capturée restent inconnus, jamais des preuves positives.
+Une date de diffusion ne remplace pas l’année de création de la série.
+
+Le fichier privé `labels.json` contient une revue progressive, pas une vérité déduite
+des identités historiques. Distinguer les nouvelles propositions des associations
+réellement publiées : le replay ne modifie aucune association.

@@ -17,7 +17,7 @@ internal static class ReplayEvidence
         var rows = candidates.Select(c => JsonSerializer.Serialize(new
         {
             provider = c.Identity.Provider, type = c.Identity.MediaType.ToString(), id = c.Identity.Id,
-            title = MatchingDiagnosticProjection.SafeText(c.Title), c.Year, c.Season, c.Episode,
+            title = MatchingDiagnosticProjection.SafeText(c.Title), c.Year, c.Season, c.Episode, c.Television, c.KnownExternalIdentities,
             titles = (c.OfficialTitles ?? Array.Empty<OfficialProviderTitle>()).Select(t => JsonSerializer.Serialize(new
             { title = MatchingDiagnosticProjection.SafeText(t.Title), kind = t.Kind.ToString(), source = t.Source.ToString(), language = MatchingDiagnosticProjection.SafeText(t.Language) }))
                 .Distinct().Order(StringComparer.Ordinal).ToArray()

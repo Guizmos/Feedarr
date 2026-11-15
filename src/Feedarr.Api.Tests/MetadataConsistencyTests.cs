@@ -207,7 +207,7 @@ public sealed partial class PosterFetchStoreMaterializationTests
     }
 
     [Fact]
-    public async Task Metadata_VerifiedTmdbSnapshotSurvivesMappedTvMazePosterRefresh()
+    public async Task Metadata_VerifiedTvIdentityAndSnapshotArePreservedWithoutAnotherProviderDecision()
     {
         using var rig = new PosterMatchingContractTestRig(PosterContractScenario.SeriesTvmazeHit);
         var id = rig.CreateRelease("Show Tvmaze Hit", "Show Tvmaze Hit", 2015, UnifiedCategory.Serie, "series", tmdbId: 501);
@@ -215,7 +215,8 @@ public sealed partial class PosterFetchStoreMaterializationTests
         Assert.True((await rig.FetchAsync(id)).Ok);
         var row = rig.GetReleaseForPoster(id)!;
         Assert.Equal("Verified overview", row.ExtOverview);
-        Assert.Equal(501, row.TmdbId); Assert.Equal("tvmaze", row.PosterProvider);
+        Assert.Equal(501, row.TmdbId); Assert.Null(row.PosterProvider);
+        Assert.Null(row.PosterFile); Assert.Empty(rig.TmdbSearchRequests);
         Assert.Equal(0, rig.TmdbDetailsCalls);
     }
 

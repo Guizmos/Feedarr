@@ -139,7 +139,8 @@ public sealed partial class MatchingReplayTests
         Assert.Equal(6, report.RequestsUsed); Assert.Equal(6, fixture.Factory.Calls);
         Assert.All(report.CategoryBudgets!, q => { Assert.Equal(2, q.Limit); Assert.Equal(2, q.Used); });
         Assert.Contains(report.Entries, e => e.Coverage == "category_http_budget_insufficient");
-        Assert.Equal(3, report.Entries.Count(e => e.ProviderEvidenceComplete));
+        Assert.Equal(2, report.Entries.Count(e => e.ProviderEvidenceComplete));
+        Assert.Contains(report.Entries, e => e.Category == "series" && e.Coverage == "category_http_budget_exhausted" && !e.ProviderEvidenceComplete);
     }
 
     [Fact]
@@ -157,17 +158,19 @@ public sealed partial class MatchingReplayTests
     {
         using var fixture = new Fixture((request, _) =>
         {
+            if (request.RequestUri!.Host == "api.tvmaze.com") return Task.FromResult(Json("[]"));
+            if (request.RequestUri.AbsolutePath == "/3/tv/1") return Task.FromResult(Json("{\"id\":1,\"first_air_date\":\"2024-01-01\",\"seasons\":[]}"));
             var query = QueryHelpers.ParseQuery(request.RequestUri!.Query); var page = int.Parse(query["page"]!);
             var isSeries = request.RequestUri.AbsolutePath.EndsWith("tv");
-            return Task.FromResult(Json(JsonSerializer.Serialize(new { page, total_pages = isSeries ? 1 : 2, total_results = isSeries ? 1 : 2,
-                results = new[] { new { id = page, title = "Le Robot sauvage", original_title = "The Wild Robot", release_date = "2024-01-01", first_air_date = "2024-01-01" } } })));
+            return Task.FromResult(Json(JsonSerializer.Serialize(new { page, total_pages = isSeries ? 1 : 3, total_results = isSeries ? 1 : 3,
+                results = new[] { new { id = page, name = "Le Robot sauvage", title = "Le Robot sauvage", original_title = "The Wild Robot", release_date = "2024-01-01", first_air_date = "2024-01-01" } } })));
         });
         fixture.Seed(); fixture.Seed(category: UnifiedCategory.Serie);
-        fixture.Replay.Start(Request(fixture, Selection(fair: true), "tmdb", 4)); var report = await fixture.Done();
-        Assert.Equal(4, report.RequestsUsed);
+        fixture.Replay.Start(Request(fixture, Selection(fair: true), "tmdb", 8)); var report = await fixture.Done();
+        Assert.Equal(8, report.RequestsUsed);
         Assert.Contains(report.Entries, e => e.Category == "films" && e.Coverage == "category_http_budget_exhausted" && !e.ProviderEvidenceComplete);
         Assert.Contains(report.Entries, e => e.Category == "series" && e.Detail.Decision == "accept" && e.ProviderEvidenceComplete);
-        Assert.All(report.CategoryBudgets!, q => Assert.Equal(2, q.Used));
+        Assert.All(report.CategoryBudgets!, q => Assert.Equal(4, q.Used));
     }
 
     [Fact]

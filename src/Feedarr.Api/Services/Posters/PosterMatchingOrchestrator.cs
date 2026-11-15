@@ -29,8 +29,8 @@ public sealed class PosterMatchingOrchestrator
         PosterFetchRoutingContext context,
         CancellationToken ct)
     {
-        if (context.UseMovieV2 && context.UnifiedCategory is (UnifiedCategory.Film or UnifiedCategory.Animation or UnifiedCategory.Spectacle))
-            return core.FetchMovieV2Async(context, ct);
+        if (context.UnifiedCategory is UnifiedCategory.Serie or UnifiedCategory.Emission || context.UseVideoV2)
+            return core.FetchVideoV2Async(context, ct);
         return context.UnifiedCategory switch
         {
             UnifiedCategory.JeuWindows => _gameMatchingStrategy.FetchPosterAsync(core, context, ct),
@@ -39,8 +39,6 @@ public sealed class PosterMatchingOrchestrator
             UnifiedCategory.Book => _genericMatchingStrategy.FetchPosterAsync(core, context, ct),
             UnifiedCategory.Comic => _genericMatchingStrategy.FetchPosterAsync(core, context, ct),
             UnifiedCategory.Film => _videoMatchingStrategy.FetchPosterAsync(core, context, ct),
-            UnifiedCategory.Serie => _videoMatchingStrategy.FetchPosterAsync(core, context, ct),
-            UnifiedCategory.Emission => _videoMatchingStrategy.FetchPosterAsync(core, context, ct),
             UnifiedCategory.Spectacle => _videoMatchingStrategy.FetchPosterAsync(core, context, ct),
             UnifiedCategory.Animation => _videoMatchingStrategy.FetchPosterAsync(core, context, ct),
             _ => _videoMatchingStrategy.FetchPosterAsync(core, context, ct)

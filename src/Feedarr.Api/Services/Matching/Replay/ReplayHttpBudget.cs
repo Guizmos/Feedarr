@@ -42,12 +42,18 @@ internal sealed class ReplayHttpBudget(int maximum, TimeSpan? spacing = null, Re
 
 internal sealed class ReplayBudgetHandler : DelegatingHandler
 {
+    private static bool Allowed(Uri uri) =>
+        uri.Host == "api.themoviedb.org" && (uri.AbsolutePath is "/3/search/movie" or "/3/search/tv" ||
+            System.Text.RegularExpressions.Regex.IsMatch(uri.AbsolutePath, @"^/3/tv/[1-9][0-9]*(/season/[0-9]+/episode/[0-9]+)?$")) ||
+        uri.Host == "api.tvmaze.com" && (uri.AbsolutePath == "/search/shows" ||
+            System.Text.RegularExpressions.Regex.IsMatch(uri.AbsolutePath, @"^/shows/[1-9][0-9]*(/episodes|/episodesbydate)?$"));
+
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
         var uri = request.RequestUri;
         if (!request.Options.TryGetValue(ReplayHttpBudget.Option, out var budget) || uri is null ||
-            uri.Scheme != "https" || uri.Host != "api.themoviedb.org" || uri.Port != 443 ||
-            (uri.AbsolutePath != "/3/search/movie" && uri.AbsolutePath != "/3/search/tv"))
+            uri.Scheme != "https" || uri.Port != 443 || request.Method != HttpMethod.Get ||
+            !Allowed(uri))
             throw new InvalidOperationException("replay_destination_denied");
         await budget.BeforeSendAsync(ct).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
