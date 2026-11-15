@@ -5,7 +5,7 @@ using Feedarr.Api.Services.ExternalProviders;
 
 namespace Feedarr.Api.Services.Rawg;
 
-public sealed class RawgClient
+public sealed partial class RawgClient
 {
     private readonly HttpClient _http;
     private readonly ProviderStatsService _stats;
@@ -61,23 +61,6 @@ public sealed class RawgClient
             _stats.RecordExternal(ExternalProviderKeys.Rawg, false, sw.ElapsedMilliseconds);
             return false;
         }
-    }
-
-    public async Task<(int rawgId, string title, int? year, string coverUrl)?> SearchGameAsync(
-        string title, int? year, CancellationToken ct)
-    {
-        var results = await SearchRawAsync(title, 5, ct).ConfigureAwait(false);        if (results is null || results.Count == 0) return null;
-
-        // If year provided, prefer an exact year match
-        if (year.HasValue)
-        {
-            var yearMatch = results.FirstOrDefault(r => ParseYear(r.Released) == year.Value);
-            if (yearMatch is not null && !string.IsNullOrWhiteSpace(yearMatch.BackgroundImage))
-                return ToTuple(yearMatch);
-        }
-
-        var best = results.FirstOrDefault(r => !string.IsNullOrWhiteSpace(r.BackgroundImage));
-        return best is null ? null : ToTuple(best);
     }
 
     public async Task<List<(int rawgId, string title, int? year, string coverUrl)>> SearchGameListAsync(

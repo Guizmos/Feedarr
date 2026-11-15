@@ -17,13 +17,13 @@ internal sealed record ProviderSearchCandidate(
     IReadOnlyList<string>? AlternativeTitles = null, UnifiedCategory? Category = null,
     int? Season = null, int? Episode = null,
     IReadOnlyList<SearchIdentity>? KnownExternalIdentities = null,
-    IReadOnlyList<OfficialProviderTitle>? OfficialTitles = null, TelevisionEvidence? Television = null, AnimeEvidence? Anime = null);
+    IReadOnlyList<OfficialProviderTitle>? OfficialTitles = null, TelevisionEvidence? Television = null, AnimeEvidence? Anime = null, GameEvidence? Game = null);
 
 internal sealed record CandidateRankingContext(
     IReadOnlyList<SearchCandidate> Queries, UnifiedCategory Category, SearchMediaType ExpectedMediaType,
     int? ConfirmedYear = null, int? Season = null, int? Episode = null,
     SearchIdentity? TrustedIdentityHint = null, SearchIdentity? EstablishedIdentity = null,
-    bool IsLocked = false, bool HasManualCorrection = false, string? AirDate = null, string? AnimeFormat = null);
+    bool IsLocked = false, bool HasManualCorrection = false, string? AirDate = null, string? AnimeFormat = null, string? GameEdition = null);
 
 internal sealed record CandidateRankingPolicy(
     double MinimumTitleSimilarity = 0.90, double AcceptConfidence = 0.92,
@@ -160,6 +160,19 @@ internal static class SearchCandidateRanker
                 animeSupport = (context.Season.HasValue ? anime.SeasonOrdinal == context.Season : context.Episode.HasValue) && (!context.Episode.HasValue || anime.EpisodeVerified && candidate.Episode == context.Episode);
             }
         }
+        var game = context.Category == UnifiedCategory.JeuWindows && identity.MediaType == SearchMediaType.Game && candidate.Game?.Identity == identity ? candidate.Game : null;
+        var gameSupport = game?.Pc == true;
+        if (context.ExpectedMediaType == SearchMediaType.Game)
+        {
+            if (game?.Pc is null) { sufficient = false; Contradict("pc-platform-unavailable", false); }
+            else if (game.Pc == false) Contradict("pc-platform-mismatch");
+            else positive.Add("verified-pc-platform");
+            if (context.GameEdition != game?.Edition && !(context.GameEdition is null && game?.Edition is "remake" or "remaster" &&
+                (context.ConfirmedYear ?? query.Year) is { } gameYear && candidate.Year == gameYear)) Contradict("game-edition-mismatch");
+            // Related remakes/editions omitted by provider search remain competitors, not votes.
+            if (game?.RelatedIdentities.Count > 0 && context.GameEdition is null && context.ConfirmedYear is null && query.Year is null)
+            { sufficient = false; Contradict("game-related-editions-unresolved", false); }
+        }
         var trusted = false;
         if (context.TrustedIdentityHint is { } hint)
         {
@@ -235,7 +248,7 @@ internal static class SearchCandidateRanker
         // Weights are evidence classes, not a promise of statistical precision:
         // title .80, media .10, independent year/identity support up to .10.
         var confidence = .80 * best.Score + (identity.MediaType == context.ExpectedMediaType && identity.MediaType != SearchMediaType.Unknown ? .10 : 0);
-        if (trusted || tvSupport || animeSupport) confidence += .10;
+        if (trusted || tvSupport || animeSupport || gameSupport) confidence += .10;
         if (animeSupport) positive.Add("verified-anime-structure");
         if (tvSupport) positive.Add("verified-tv-structure");
         if (query.Year is <= 0 or > 9999 || context.ConfirmedYear is <= 0 or > 9999 ||
@@ -277,7 +290,7 @@ internal static class SearchCandidateRanker
     }
 
     internal static bool ValidTitleSource(OfficialProviderTitle title) =>
-        title.Source == ProviderTitleSource.ProviderTitles && title.Identity.Provider == "jikan" || title.Kind switch
+        title.Source == ProviderTitleSource.ProviderTitles && title.Identity.Provider is ("jikan" or "igdb" or "rawg") || title.Kind switch
     {
         ProviderTitleKind.ResponseTitle or ProviderTitleKind.Localized => title.Source == ProviderTitleSource.SearchTitle,
         ProviderTitleKind.Original => title.Source == ProviderTitleSource.SearchOriginalTitle,

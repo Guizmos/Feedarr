@@ -79,7 +79,9 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
     public PosterMatchingContractTestRig(PosterContractScenario scenario, bool completeTmdbMetadata = false, int tmdbTotalPages = 1, string? localizedMovieTitle = null,
         Action<AppOptions>? configure = null,
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? tmdbResponse = null,
-        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? jikanResponse = null)
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? jikanResponse = null,
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? igdbResponse = null,
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? rawgResponse = null)
     {
         _workspace = new TestWorkspace();
 
@@ -119,7 +121,9 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         var tmdb = new TmdbClient(new HttpClient(tmdbTransport), settings, stats, resolver);
         var fanart = new FanartClient(new HttpClient(new FanartHandler(scenario)), stats, resolver, settings);
         _igdbHandler = new IgdbHandler(scenario);
-        var igdb = new IgdbClient(new HttpClient(_igdbHandler), stats, resolver);
+        HttpMessageHandler igdbTransport = _igdbHandler;
+        if (igdbResponse is not null) igdbTransport = new OverrideTmdbHandler(igdbTransport, igdbResponse);
+        var igdb = new IgdbClient(new HttpClient(igdbTransport), stats, resolver);
         _igdbDetails = igdb;
         var tvmaze = new TvMazeClient(new HttpClient(new TvMazeHandler(scenario)), stats, resolver);
         HttpMessageHandler jikanTransport = new JikanHandler(scenario);
@@ -141,7 +145,9 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
 
         var openLibrary = new OpenLibraryClient(new HttpClient(new NullHttpHandler()), stats);
         _rawgHandler = new RawgContractHandler();
-        var rawg = new RawgClient(new HttpClient(scenario == PosterContractScenario.GameRawgHit ? _rawgHandler : new NullHttpHandler()), stats, resolver);
+        HttpMessageHandler rawgTransport = scenario == PosterContractScenario.GameRawgHit ? _rawgHandler : new NullHttpHandler();
+        if (rawgResponse is not null) rawgTransport = new OverrideTmdbHandler(rawgTransport, rawgResponse);
+        var rawg = new RawgClient(new HttpClient(rawgTransport), stats, resolver);
         var musicBrainz = new MusicBrainzClient(new HttpClient(new NullHttpHandler()), resolver, stats);
 
         var posterOptions = new AppOptions { DataDir = _workspace.DataDir, DbFileName = "feedarr.db" };
@@ -565,7 +571,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             {
                 SearchRequests.Add(request.RequestUri);
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(
-                    """{"results":[{"id":123,"name":"Game Hit","released":"2022-01-01","background_image":"https://rawg.test/cover.jpg"}]}""", Encoding.UTF8, "application/json") });
+                    """{"count":1,"next":null,"results":[{"id":123,"name":"Game Hit","platforms":[{"platform":{"id":4}}],"released":"2022-01-01","background_image":"https://rawg.test/cover.jpg"}]}""", Encoding.UTF8, "application/json") });
             }
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(PosterTestImage.Create()) });
         }
@@ -798,7 +804,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
                 if (_scenario == PosterContractScenario.GameIgdbHit)
                 {
                     SearchRequests.Add(body);
-                    return JsonResponse("[{\"id\":901,\"name\":\"Game Hit\",\"first_release_date\":1640995200,\"cover\":{\"url\":\"//images.igdb.com/igdb/upload/t_thumb/game901.jpg\"}}]");
+                    return JsonResponse("[{\"id\":901,\"name\":\"Game Hit\",\"first_release_date\":1640995200,\"platforms\":[6],\"cover\":{\"url\":\"//images.igdb.com/igdb/upload/t_thumb/game901.jpg\"}}]");
                 }
 
                 if (_scenario == PosterContractScenario.GameIgdbMiss)

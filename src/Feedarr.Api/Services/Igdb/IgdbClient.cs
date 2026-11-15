@@ -8,7 +8,7 @@ using Feedarr.Api.Services;
 
 namespace Feedarr.Api.Services.Igdb;
 
-public sealed class IgdbClient
+public sealed partial class IgdbClient
 {
     public sealed record DetailsResult(
         string? Title,

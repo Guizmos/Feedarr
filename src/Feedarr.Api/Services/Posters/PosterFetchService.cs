@@ -1129,11 +1129,14 @@ public sealed partial class PosterFetchService
 
         UnifiedCategoryMappings.TryParse(r.UnifiedCategory, out var initialCategory);
         var activeVideoV2 = UseVideoV2(r, initialCategory);
-        if (initialCategory is (UnifiedCategory.Film or UnifiedCategory.Animation or UnifiedCategory.Spectacle or UnifiedCategory.Serie or UnifiedCategory.Emission or UnifiedCategory.Anime) && MatchingShadowState.From(r).Protected)
+        if (initialCategory is (UnifiedCategory.Film or UnifiedCategory.Animation or UnifiedCategory.Spectacle or UnifiedCategory.Serie or UnifiedCategory.Emission or UnifiedCategory.Anime or UnifiedCategory.JeuWindows) && MatchingShadowState.From(r).Protected)
         {
             _releases.ValidateMatching(id);
             return new(true, 200, new { ok = true, preserved = true, reason = "matching_v2_existing_identity_preserved" }, r.SourceId);
         }
+
+        if (initialCategory == UnifiedCategory.JeuWindows)
+            return await FetchGameV2Async(id, r.SourceId, ct).ConfigureAwait(false);
 
         if (initialCategory == UnifiedCategory.Anime)
             return await FetchAnimeV2Async(id, r.SourceId, ct).ConfigureAwait(false);
@@ -1428,10 +1431,10 @@ public sealed partial class PosterFetchService
         return await _matchingOrchestrator.FetchPosterAsync(this, routingContext, ct).ConfigureAwait(false);    }
 
     internal Task<PosterFetchResult> FetchGameBranchAsync(PosterFetchRoutingContext context, CancellationToken ct)
-        => FetchLegacyCategoryBranchAsync(context, ct, forceGameBranch: true);
+        => FetchGameV2Async(context.ReleaseId, context.SourceId, ct);
 
     internal Task<PosterFetchResult> FetchVideoBranchAsync(PosterFetchRoutingContext context, CancellationToken ct)
-        => FetchLegacyCategoryBranchAsync(context, ct, forceGameBranch: false);
+        => FetchLegacyCategoryBranchAsync(context, ct);
 
     internal Task<PosterFetchResult> FetchAnimeBranchAsync(PosterFetchRoutingContext context, CancellationToken ct)
         => FetchAnimeV2Async(context.ReleaseId, context.SourceId, ct);
@@ -1444,8 +1447,7 @@ public sealed partial class PosterFetchService
 
     private async Task<PosterFetchResult> FetchLegacyCategoryBranchAsync(
         PosterFetchRoutingContext context,
-        CancellationToken ct,
-        bool forceGameBranch)
+        CancellationToken ct)
     {
         var id = context.ReleaseId;
         var title = context.Title;
@@ -1465,93 +1467,6 @@ public sealed partial class PosterFetchService
         var forceRefresh = context.ForceRefresh;
         var logSingle = context.LogSingle;
         var sourceId = context.SourceId;
-        // Utilise la catégorie + le mediaType parsé + indices dans le titre brut
-        var isGame = forceGameBranch || unifiedCategory == UnifiedCategory.JeuWindows;
-
-        if (isGame)
-        {
-            var igdbQuery = QuerySanitizeGame(title);
-            var igdbEnabled = _activeConfigResolver.GetActiveEnabled(ExternalProviderKeys.Igdb);
-            var rawgEnabled = _rawg.IsConfigured();
-
-            if (!igdbEnabled && !rawgEnabled)
-            {
-                if (logSingle)
-                    LogActivity(sourceId, "warn", "poster_fetch", "Poster fetch failed: no game provider configured", new { releaseId = id, title, year, categoryName });
-                return new PosterFetchResult(false, 404, new { error = "no game provider configured", title, year }, sourceId);
-            }
-
-            // ── IGDB (primary) ────────────────────────────────────────────
-            if (igdbEnabled)
-            {
-                LogProviderAttempted(sourceId, logSingle, "igdb", new { releaseId = id, query = igdbQuery, title, year });
-                var igdbMatch = await RunIgdbAsync(innerCt => _igdb.SearchGameCoverAsync(igdbQuery, year, innerCt), ct).ConfigureAwait(false);
-                if (igdbMatch is not null)
-                {
-                    var bytes = await RunIgdbAsync(innerCt => _igdb.DownloadCoverAsync(igdbMatch.Value.coverUrl, innerCt), ct).ConfigureAwait(false);
-                    if (bytes is not null && bytes.Length > 0)
-                    {
-                        var file = $"igdb-{igdbMatch.Value.igdbId}-cover.jpg";
-                        var full = Path.Combine(PostersDirAbs, file);
-                        await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
-                        _releases.SavePoster(id, null, igdbMatch.Value.coverUrl, file, identityProvider: "igdb", identityProviderId: igdbMatch.Value.igdbId.ToString(CultureInfo.InvariantCulture));
-                        var igdbStoreResult = await TryMaterializeStoreForReleaseAsync(
-                            id,
-                            "igdb",
-                            igdbMatch.Value.igdbId.ToString(CultureInfo.InvariantCulture),
-                            file,
-                            bytes,
-                            legacyPosterPath: full,
-                            forceRefresh,
-                            tmdbId: null,
-                            posterPath: igdbMatch.Value.coverUrl,
-                            preferredOriginalExtension: ".jpg",
-                            existingPosterKey: null,
-                            ct).ConfigureAwait(false);
-                        LogStoreOutcome("download", id, file, igdbStoreResult);
-                        await UpdateExternalDetailsFromIgdbAsync(id, igdbMatch.Value.igdbId, ct).ConfigureAwait(false);
-                        var hash = ComputeSha256Hex(bytes);
-                        var size = InferIgdbSize(igdbMatch.Value.coverUrl);
-                        PosterAudit.UpdateAttemptSuccess(_releases, id, "igdb", igdbMatch.Value.igdbId.ToString(CultureInfo.InvariantCulture), null, size, hash);
-                        var igdbIds = new PosterMatchIds(null, null, null, igdbMatch.Value.igdbId, null);
-                        _matchCache.Upsert(new PosterMatch(
-                            fingerprint, mediaType, normalizedTitle, year, season, episode,
-                            PosterMatchCacheService.SerializeIds(igdbIds), 0.85, "igdb", file,
-                            "igdb", igdbMatch.Value.igdbId.ToString(CultureInfo.InvariantCulture),
-                            null, size,
-                            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                            null, null));
-                        if (logSingle)
-                            LogActivity(sourceId, "info", "poster_fetch", "Poster fetched (IGDB)", new { releaseId = id, title, year, igdbId = igdbMatch.Value.igdbId, posterFile = file });
-                        return new PosterFetchResult(true, 200, new { ok = true, igdbId = igdbMatch.Value.igdbId, posterFile = file, posterUrl = $"/api/posters/release/{id}" }, sourceId);
-                    }
-                    PosterAudit.UpdateAttemptFailure(_releases, id, "igdb", igdbMatch.Value.igdbId.ToString(CultureInfo.InvariantCulture), null, null, "igdb cover download failed");
-                }
-                else
-                {
-                    PosterAudit.UpdateAttemptFailure(_releases, id, "igdb", null, null, null, "no igdb match");
-                }
-
-                if (!rawgEnabled)
-                {
-                    if (logSingle)
-                        LogActivity(sourceId, "warn", "poster_fetch", "Poster fetch failed: no IGDB match", new { releaseId = id, title, year, categoryName });
-                    return new PosterFetchResult(false, 404, new { error = "no igdb match", title, year }, sourceId);
-                }
-                if (logSingle)
-                    LogActivity(sourceId, "info", "poster_fetch", "IGDB failed, falling back to RAWG", new { releaseId = id, title, year });
-            }
-
-            // ── RAWG (fallback or primary) ────────────────────────────────
-            var rawgResult = await TryFetchFromRawgAsync(id, igdbQuery, year, fingerprint, mediaType, normalizedTitle, season, episode, sourceId, logSingle, forceRefresh, ct).ConfigureAwait(false);
-            if (rawgResult is not null) return rawgResult;
-
-            if (logSingle)
-                LogActivity(sourceId, "warn", "poster_fetch", "Poster fetch failed: no RAWG match", new { releaseId = id, title, year, categoryName });
-            return new PosterFetchResult(false, 404, new { error = "no rawg match", title, year }, sourceId);
-        }
-
         var tmdbTvOnly = unifiedCategory == UnifiedCategory.Emission;
         LogProviderAttempted(sourceId, logSingle, "tmdb", new { releaseId = id, query = title, year, mediaType, tvOnly = tmdbTvOnly });
         var tmdbCandidates = await GetTmdbCandidatesAsync(title, year, mediaType, ct, tmdbTvOnly).ConfigureAwait(false);
@@ -2264,83 +2179,6 @@ public sealed partial class PosterFetchService
             posterFile = olFile,
             posterUrl = $"/api/posters/release/{context.ReleaseId}"
         }, context.SourceId);
-    }
-
-    private async Task<PosterFetchResult?> TryFetchFromRawgAsync(
-        long id,
-        string query,
-        int? year,
-        string fingerprint,
-        string mediaType,
-        string normalizedTitle,
-        int? season,
-        int? episode,
-        long? sourceId,
-        bool logSingle,
-        bool forceRefresh,
-        CancellationToken ct)
-    {
-        LogProviderAttempted(sourceId, logSingle, ExternalProviderKeys.Rawg, new { releaseId = id, query, year });
-        var rawgMatch = await RunOthersAsync(innerCt => _rawg.SearchGameAsync(query, year, innerCt), ct).ConfigureAwait(false);
-        if (rawgMatch is null || string.IsNullOrWhiteSpace(rawgMatch.Value.coverUrl))
-        {
-            PosterAudit.UpdateAttemptFailure(_releases, id, "rawg", null, null, null, "no rawg match");
-            return null;
-        }
-
-        var bytes = await RunOthersAsync(innerCt => _rawg.DownloadCoverAsync(rawgMatch.Value.coverUrl, innerCt), ct).ConfigureAwait(false);
-        if (bytes is null || bytes.Length == 0)
-        {
-            PosterAudit.UpdateAttemptFailure(_releases, id, "rawg", rawgMatch.Value.rawgId.ToString(CultureInfo.InvariantCulture), null, null, "rawg cover download failed");
-            return null;
-        }
-
-        var file = $"rawg-{rawgMatch.Value.rawgId}-cover.jpg";
-        var full = Path.Combine(PostersDirAbs, file);
-        await PosterImageWriter.WriteAsync(full, bytes, ct).ConfigureAwait(false);
-        _releases.SavePoster(id, null, rawgMatch.Value.coverUrl, file, identityProvider: "rawg", identityProviderId: rawgMatch.Value.rawgId.ToString(CultureInfo.InvariantCulture));
-        var rawgStoreResult = await TryMaterializeStoreForReleaseAsync(
-            id,
-            ExternalProviderKeys.Rawg,
-            rawgMatch.Value.rawgId.ToString(CultureInfo.InvariantCulture),
-            file,
-            bytes,
-            legacyPosterPath: full,
-            forceRefresh,
-            tmdbId: null,
-            posterPath: rawgMatch.Value.coverUrl,
-            preferredOriginalExtension: ".jpg",
-            existingPosterKey: null,
-            ct).ConfigureAwait(false);
-        LogStoreOutcome("download", id, file, rawgStoreResult);
-        _releases.UpdateExternalDetails(id, ExternalProviderKeys.Rawg,
-            rawgMatch.Value.rawgId.ToString(CultureInfo.InvariantCulture),
-            rawgMatch.Value.title, null, null, null,
-            rawgMatch.Value.year?.ToString(CultureInfo.InvariantCulture),
-            null, null, null, null, null, null);
-
-        var hash = ComputeSha256Hex(bytes);
-        PosterAudit.UpdateAttemptSuccess(_releases, id, "rawg", rawgMatch.Value.rawgId.ToString(CultureInfo.InvariantCulture), null, "cover", hash);
-
-        _matchCache.Upsert(new PosterMatch(
-            fingerprint, mediaType, normalizedTitle, year, season, episode,
-            null, 0.80, ExternalProviderKeys.Rawg, file,
-            ExternalProviderKeys.Rawg, rawgMatch.Value.rawgId.ToString(CultureInfo.InvariantCulture),
-            null, "cover",
-            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            null, null));
-
-        if (logSingle)
-            LogActivity(sourceId, "info", "poster_fetch", "Poster fetched (RAWG)", new { releaseId = id, query, year, rawgId = rawgMatch.Value.rawgId, posterFile = file });
-
-        return new PosterFetchResult(true, 200, new
-        {
-            ok = true,
-            rawgId = rawgMatch.Value.rawgId,
-            posterFile = file,
-            posterUrl = $"/api/posters/release/{id}"
-        }, sourceId);
     }
 
     private async Task<PosterFetchResult> FetchComicBranchAsync(
@@ -3152,21 +2990,7 @@ public sealed partial class PosterFetchService
         return null;
     }
 
-    private static string QuerySanitizeGame(string titleClean)
-    {
-        if (string.IsNullOrWhiteSpace(titleClean)) return titleClean;
 
-        var sb = new System.Text.StringBuilder(titleClean.Length);
-        foreach (var ch in titleClean)
-        {
-            sb.Append(char.IsLetterOrDigit(ch) ? ch : ' ');
-        }
-
-        // titleClean already passed the contextual parser. Filtering words or numbers here
-        // would undo its protections (annual editions, sequels and legitimate title words).
-        return string.Join(" ", sb.ToString()
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
-    }
 
 }
 
