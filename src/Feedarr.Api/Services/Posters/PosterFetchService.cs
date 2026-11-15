@@ -1129,11 +1129,14 @@ public sealed partial class PosterFetchService
 
         UnifiedCategoryMappings.TryParse(r.UnifiedCategory, out var initialCategory);
         var activeVideoV2 = UseVideoV2(r, initialCategory);
-        if (initialCategory is (UnifiedCategory.Film or UnifiedCategory.Animation or UnifiedCategory.Spectacle or UnifiedCategory.Serie or UnifiedCategory.Emission) && MatchingShadowState.From(r).Protected)
+        if (initialCategory is (UnifiedCategory.Film or UnifiedCategory.Animation or UnifiedCategory.Spectacle or UnifiedCategory.Serie or UnifiedCategory.Emission or UnifiedCategory.Anime) && MatchingShadowState.From(r).Protected)
         {
             _releases.ValidateMatching(id);
             return new(true, 200, new { ok = true, preserved = true, reason = "matching_v2_existing_identity_preserved" }, r.SourceId);
         }
+
+        if (initialCategory == UnifiedCategory.Anime)
+            return await FetchAnimeV2Async(id, r.SourceId, ct).ConfigureAwait(false);
 
         string? existingFile = (string?)r.PosterFile;
         long? sourceId = (long?)r.SourceId;
@@ -1431,7 +1434,7 @@ public sealed partial class PosterFetchService
         => FetchLegacyCategoryBranchAsync(context, ct, forceGameBranch: false);
 
     internal Task<PosterFetchResult> FetchAnimeBranchAsync(PosterFetchRoutingContext context, CancellationToken ct)
-        => FetchAnimeCategoryBranchAsync(context, ct);
+        => FetchAnimeV2Async(context.ReleaseId, context.SourceId, ct);
 
     internal Task<PosterFetchResult> FetchAudioBranchAsync(PosterFetchRoutingContext context, CancellationToken ct)
         => FetchAudioCategoryBranchAsync(context, ct);
@@ -1882,119 +1885,6 @@ public sealed partial class PosterFetchService
             tmdbId = tmdbIdForFanart.Value,
             posterPath = fanartUrl,
             posterFile = fanartFile,
-            posterUrl = $"/api/posters/release/{id}"
-        }, sourceId);
-    }
-
-    private async Task<PosterFetchResult> FetchAnimeCategoryBranchAsync(
-        PosterFetchRoutingContext context,
-        CancellationToken ct)
-    {
-        var id = context.ReleaseId;
-        var title = context.Title;
-        var year = context.Year;
-        var sourceId = context.SourceId;
-        var logSingle = context.LogSingle;
-
-        LogProviderAttempted(sourceId, logSingle, ExternalProviderKeys.Jikan, new { releaseId = id, query = title, year });
-        var match = await RunOthersAsync(innerCt => _jikan.SearchAnimeAsync(title, year, innerCt), ct).ConfigureAwait(false);
-        if (match is null)
-        {
-            if (logSingle)
-                LogActivity(sourceId, "warn", "poster_fetch", "Poster fetch failed: no Jikan match", new { releaseId = id, title, year });
-
-            PosterAudit.UpdateAttemptFailure(_releases, id, ExternalProviderKeys.Jikan, null, null, null, "no jikan match");
-            return new PosterFetchResult(false, 404, new { error = "no jikan match", title, year }, sourceId);
-        }
-
-        if (string.IsNullOrWhiteSpace(match.ImageUrl))
-        {
-            PosterAudit.UpdateAttemptFailure(_releases, id, ExternalProviderKeys.Jikan, match.MalId.ToString(CultureInfo.InvariantCulture), null, null, "missing jikan image");
-            return new PosterFetchResult(false, 404, new { error = "missing jikan image", title, year }, sourceId);
-        }
-
-        var bytes = await RunOthersAsync(innerCt => _jikan.DownloadImageAsync(match.ImageUrl, innerCt), ct).ConfigureAwait(false);
-        if (bytes is null || bytes.Length == 0)
-        {
-            PosterAudit.UpdateAttemptFailure(_releases, id, ExternalProviderKeys.Jikan, match.MalId.ToString(CultureInfo.InvariantCulture), null, null, "jikan image download failed");
-            return new PosterFetchResult(false, 502, new { error = "jikan image download failed" }, sourceId);
-        }
-
-        var ext = InferFileExtensionFromUrl(match.ImageUrl, ".jpg");
-        var file = $"jikan-{match.MalId}{ext}";
-        await SavePosterFileAsync(file, bytes, ct).ConfigureAwait(false);
-        _releases.SavePoster(id, null, match.ImageUrl, file, identityProvider: "jikan", identityProviderId: match.MalId.ToString(CultureInfo.InvariantCulture));
-        var jikanStoreResult = await TryMaterializeStoreForReleaseAsync(
-            id,
-            ExternalProviderKeys.Jikan,
-            match.MalId.ToString(CultureInfo.InvariantCulture),
-            file,
-            bytes,
-            legacyPosterPath: Path.Combine(PostersDirAbs, file),
-            forceRefresh: context.ForceRefresh,
-            tmdbId: null,
-            posterPath: match.ImageUrl,
-            preferredOriginalExtension: ext,
-            existingPosterKey: null,
-            ct).ConfigureAwait(false);
-        LogStoreOutcome("download", id, file, jikanStoreResult);
-        _releases.UpdateExternalDetails(
-            id,
-            ExternalProviderKeys.Jikan,
-            match.MalId.ToString(CultureInfo.InvariantCulture),
-            match.Title,
-            match.Synopsis,
-            null,
-            match.Genres,
-            match.Year.HasValue ? $"{match.Year.Value:0000}-01-01" : null,
-            null,
-            match.Rating,
-            null,
-            null,
-            null,
-            null);
-
-        var hash = ComputeSha256Hex(bytes);
-        PosterAudit.UpdateAttemptSuccess(_releases, id, ExternalProviderKeys.Jikan, match.MalId.ToString(CultureInfo.InvariantCulture), null, "original", hash);
-
-        _matchCache.Upsert(new PosterMatch(
-            context.Fingerprint,
-            context.MediaType,
-            context.NormalizedTitle,
-            context.Year,
-            context.Season,
-            context.Episode,
-            PosterMatchCacheService.SerializeIds(new PosterMatchIds(null, null, null, null, null)),
-            0.70,
-            ExternalProviderKeys.Jikan,
-            file,
-            ExternalProviderKeys.Jikan,
-            match.MalId.ToString(CultureInfo.InvariantCulture),
-            null,
-            "original",
-            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            null,
-            null));
-
-        if (logSingle)
-        {
-            LogActivity(sourceId, "info", "poster_fetch", "Poster fetched (Jikan)", new
-            {
-                releaseId = id,
-                title,
-                year,
-                malId = match.MalId,
-                posterFile = file
-            });
-        }
-
-        return new PosterFetchResult(true, 200, new
-        {
-            ok = true,
-            provider = ExternalProviderKeys.Jikan,
-            providerId = match.MalId,
-            posterFile = file,
             posterUrl = $"/api/posters/release/{id}"
         }, sourceId);
     }

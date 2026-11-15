@@ -96,7 +96,7 @@ sealed class Captures(Request request, JsonSerializerOptions options)
         var uri = message.RequestUri!;
         var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
         var fields = new SortedDictionary<string,string>(StringComparer.Ordinal);
-        foreach (var key in new[] { "query", "language", "year", "first_air_date_year", "include_adult", "page", "q", "date", "append_to_response" })
+        foreach (var key in new[] { "query", "language", "year", "first_air_date_year", "include_adult", "page", "q", "date", "append_to_response", "limit" })
             if (query.TryGetValue(key, out var value)) fields[key] = value.ToString();
         // Never serialize the request URL, API key, headers or private credentials.
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { path = uri.AbsolutePath, fields })))).ToLowerInvariant();
@@ -153,7 +153,8 @@ sealed class Captures(Request request, JsonSerializerOptions options)
         {
             var allowed = new HashSet<string>(new[] { "id", "title", "name", "original_title", "original_name", "release_date", "first_air_date", "original_language",
                 "page", "total_pages", "total_results", "results", "show", "premiered", "externals", "thetvdb", "imdb", "external_ids", "tvdb_id", "imdb_id",
-                "seasons", "season_number", "episode_number", "episode_count", "show_id", "number", "season", "air_date", "airdate", "alternative_titles", "iso_3166_1", "_links", "href" }, StringComparer.Ordinal);
+                "seasons", "season_number", "episode_number", "episode_count", "show_id", "number", "season", "air_date", "airdate", "alternative_titles", "iso_3166_1", "_links", "href", "data", "pagination", "current_page", "last_visible_page", "has_next_page", "items", "total", "count", "per_page",
+                "mal_id", "title_english", "title_japanese", "title_synonyms", "titles", "type", "episodes", "status", "year", "aired", "from", "to", "relations", "relation", "entry" }, StringComparer.Ordinal);
             // Episode names are not matching evidence. Do not capture them (they may contain
             // words like "secret" which correctly redact series-title evidence).
             var episode = value.TryGetProperty("episode_number", out _) || value.TryGetProperty("number", out _) && value.TryGetProperty("season", out _);

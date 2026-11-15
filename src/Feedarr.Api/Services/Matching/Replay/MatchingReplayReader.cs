@@ -99,6 +99,11 @@ public sealed class MatchingReplayReader(Db db, IApiKeyProtectionService protect
         public bool HasPoster { get; init; }
         public bool HasIdentity { get; init; }
     }
+    internal bool JikanEnabled()
+    {
+        using var connection = MatchingReadOnly.Open(db);
+        return connection.ExecuteScalar<int>("SELECT COUNT(*) FROM external_provider_instances WHERE lower(provider_key)='jikan' AND enabled=1") > 0;
+    }
     internal bool TvmazeEnabled()
     {
         using var connection = MatchingReadOnly.Open(db);

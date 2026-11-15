@@ -2,13 +2,13 @@ using Feedarr.Api.Models;
 
 namespace Feedarr.Api.Services.Matching;
 
-internal enum SearchMediaType { Unknown, Movie, Series, Game, Audio, Book, Comic }
+internal enum SearchMediaType { Unknown, Movie, Series, Game, Audio, Book, Comic, Anime }
 internal enum CandidateDecision { Accept, Ambiguous, Reject }
 
 // Identity is always scoped by provider AND media type; numeric IDs alone are never compared.
 internal sealed record SearchIdentity(string Provider, SearchMediaType MediaType, string Id);
 internal enum ProviderTitleKind { ResponseTitle, Localized, Original, Alternative }
-internal enum ProviderTitleSource { SearchTitle, SearchOriginalTitle, AlternativeTitlesEndpoint }
+internal enum ProviderTitleSource { SearchTitle, SearchOriginalTitle, AlternativeTitlesEndpoint, ProviderTitles }
 // Constructed only from provider-owned fields, never from the release or a guessed translation.
 internal sealed record OfficialProviderTitle(string Title, SearchIdentity Identity, ProviderTitleKind Kind,
     ProviderTitleSource Source, string? Language = null);
@@ -17,13 +17,13 @@ internal sealed record ProviderSearchCandidate(
     IReadOnlyList<string>? AlternativeTitles = null, UnifiedCategory? Category = null,
     int? Season = null, int? Episode = null,
     IReadOnlyList<SearchIdentity>? KnownExternalIdentities = null,
-    IReadOnlyList<OfficialProviderTitle>? OfficialTitles = null, TelevisionEvidence? Television = null);
+    IReadOnlyList<OfficialProviderTitle>? OfficialTitles = null, TelevisionEvidence? Television = null, AnimeEvidence? Anime = null);
 
 internal sealed record CandidateRankingContext(
     IReadOnlyList<SearchCandidate> Queries, UnifiedCategory Category, SearchMediaType ExpectedMediaType,
     int? ConfirmedYear = null, int? Season = null, int? Episode = null,
     SearchIdentity? TrustedIdentityHint = null, SearchIdentity? EstablishedIdentity = null,
-    bool IsLocked = false, bool HasManualCorrection = false, string? AirDate = null);
+    bool IsLocked = false, bool HasManualCorrection = false, string? AirDate = null, string? AnimeFormat = null);
 
 internal sealed record CandidateRankingPolicy(
     double MinimumTitleSimilarity = 0.90, double AcceptConfidence = 0.92,
@@ -130,9 +130,9 @@ internal static class SearchCandidateRanker
 
         if (context.Season is < 0 || context.Episode is < 0 || candidate.Season is < 0 || candidate.Episode is < 0)
             Contradict("invalid-episode-metadata");
-        if (context.ExpectedMediaType != SearchMediaType.Series && (context.Season.HasValue || context.Episode.HasValue))
+        if (context.ExpectedMediaType is not (SearchMediaType.Series or SearchMediaType.Anime) && (context.Season.HasValue || context.Episode.HasValue))
             Contradict("episode-context-type-mismatch");
-        if (identity.MediaType != SearchMediaType.Series && (candidate.Season.HasValue || candidate.Episode.HasValue))
+        if (identity.MediaType is not (SearchMediaType.Series or SearchMediaType.Anime) && (candidate.Season.HasValue || candidate.Episode.HasValue))
             Contradict("provider-episode-type-mismatch");
 
         var tv = identity.MediaType == SearchMediaType.Series && candidate.Television?.Identity == identity ? candidate.Television : null;
@@ -144,6 +144,21 @@ internal static class SearchCandidateRanker
             if (tv?.AirDate is null) { sufficient = false; Contradict("air-date-unavailable", false); }
             else if (tv.AirDate != context.AirDate) Contradict("air-date-mismatch");
             else positive.Add("air-date-agrees");
+        }
+        var anime = context.Category == UnifiedCategory.Anime && identity.MediaType == SearchMediaType.Anime && candidate.Anime?.Identity == identity ? candidate.Anime : null;
+        var animeSupport = false;
+        if (context.ExpectedMediaType == SearchMediaType.Anime)
+        {
+            if (anime?.Format is null) { sufficient = false; Contradict("anime-format-unavailable", false); }
+            else
+            {
+                if (!JikanCandidateAdapter.SupportsFormat(anime.Format)) Contradict("anime-format-unsupported");
+                if (anime.AlternativeIdentityUnverified) { sufficient = false; Contradict("anime-alternative-identity-unverified", false); }
+                if (context.AnimeFormat is not null && !context.AnimeFormat.Equals(anime.Format, StringComparison.OrdinalIgnoreCase)) Contradict("anime-format-mismatch");
+                if ((context.Season.HasValue || context.Episode.HasValue) && anime.Format == "Movie") Contradict("anime-episodic-format-mismatch");
+                if (context.Episode.HasValue && anime.Episodes.HasValue && context.Episode > anime.Episodes) Contradict("anime-episode-out-of-range");
+                animeSupport = (context.Season.HasValue ? anime.SeasonOrdinal == context.Season : context.Episode.HasValue) && (!context.Episode.HasValue || anime.EpisodeVerified && candidate.Episode == context.Episode);
+            }
         }
         var trusted = false;
         if (context.TrustedIdentityHint is { } hint)
@@ -220,7 +235,8 @@ internal static class SearchCandidateRanker
         // Weights are evidence classes, not a promise of statistical precision:
         // title .80, media .10, independent year/identity support up to .10.
         var confidence = .80 * best.Score + (identity.MediaType == context.ExpectedMediaType && identity.MediaType != SearchMediaType.Unknown ? .10 : 0);
-        if (trusted || tvSupport) confidence += .10;
+        if (trusted || tvSupport || animeSupport) confidence += .10;
+        if (animeSupport) positive.Add("verified-anime-structure");
         if (tvSupport) positive.Add("verified-tv-structure");
         if (query.Year is <= 0 or > 9999 || context.ConfirmedYear is <= 0 or > 9999 ||
             (query.Year is null && query.YearEvidence != CandidateYearEvidence.None)) Contradict("invalid-query-year");
@@ -243,7 +259,7 @@ internal static class SearchCandidateRanker
             else { confidence += distance == 0 ? .10 : .06; positive.Add(distance == 0 ? "year-agrees" : "parsed-year-nearby"); }
         }
         else if (year.HasValue) { Contradict("provider-year-unavailable", false); sufficient &= trusted; }
-        if (hypothesis && !trusted && !tvSupport) { Contradict("hypothesis-needs-independent-evidence", false); sufficient = false; }
+        if (hypothesis && !trusted && !tvSupport && !animeSupport) { Contradict("hypothesis-needs-independent-evidence", false); sufficient = false; }
         CheckEpisode(context.Season, candidate.Season, "season");
         CheckEpisode(context.Episode, candidate.Episode, "episode");
         void CheckEpisode(int? expected, int? actual, string field)
@@ -260,7 +276,8 @@ internal static class SearchCandidateRanker
         return new(new SearchIdentity(canonical.Provider, canonical.Type, canonical.Id), queryIndex, confidence, Array.AsReadOnly(positive.ToArray()), Array.AsReadOnly(contradictions.ToArray()), decision, compound, trailingYearHypothesis);
     }
 
-    internal static bool ValidTitleSource(OfficialProviderTitle title) => title.Kind switch
+    internal static bool ValidTitleSource(OfficialProviderTitle title) =>
+        title.Source == ProviderTitleSource.ProviderTitles && title.Identity.Provider == "jikan" || title.Kind switch
     {
         ProviderTitleKind.ResponseTitle or ProviderTitleKind.Localized => title.Source == ProviderTitleSource.SearchTitle,
         ProviderTitleKind.Original => title.Source == ProviderTitleSource.SearchOriginalTitle,

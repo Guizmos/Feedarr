@@ -17,7 +17,7 @@ public sealed record ReplaySnapshot(Guid? SessionId, long Generation, string Sta
     ReplaySelection? Selection = null, IReadOnlyList<long>? SelectedIds = null, IReadOnlyList<long>? ProcessedIds = null,
     IReadOnlyList<ReplayCategoryBudget>? CategoryBudgets = null, int ReportVersion = 2);
 
-public sealed class MatchingReplayService(MatchingReplayReader reader, IHttpClientFactory clients,
+public sealed partial class MatchingReplayService(MatchingReplayReader reader, IHttpClientFactory clients,
     IHostApplicationLifetime lifetime) : IDisposable
 {
     private readonly object _gate = new();
@@ -175,6 +175,11 @@ public sealed class MatchingReplayService(MatchingReplayReader reader, IHttpClie
         if (reader.Read(expected.Id) != expected) return NotEvaluable("persisted_state_changed");
         if (!(UnifiedCategoryMappings.TryParse(expected.Category, out var category) || UnifiedCategoryMappings.TryParseKey(expected.Category, out category)))
             return NotEvaluable("category_unsupported");
+        if (category == Feedarr.Api.Models.UnifiedCategory.Anime)
+        {
+            if (halted is not null) return NotEvaluable(halted);
+            return await EvaluateAnimeAsync(expected, session, http, ct).ConfigureAwait(false);
+        }
         var type = TmdbIdentity.NormalizeType(UnifiedCategoryMappings.ToMediaType(category));
         if (type is null) return NotEvaluable("media_type_unsupported");
         if (http is not null && SensitiveQuery(expected.RawTitle))

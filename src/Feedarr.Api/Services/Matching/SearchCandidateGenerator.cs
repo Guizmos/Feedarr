@@ -64,7 +64,7 @@ internal static class SearchCandidateGenerator
         // Movie title-number ambiguity needs resolution evidence. Episodic TV can
         // also propose a season-year hypothesis; other media keep the primary query.
         // A parsed year already separates title number + release year (2049 / 2017).
-        if (parsed.Year.HasValue || !(input.Category is UnifiedCategory.Serie or UnifiedCategory.Emission && parsed.Season.HasValue) &&
+        if (parsed.Year.HasValue || !(input.Category is UnifiedCategory.Serie or UnifiedCategory.Emission or UnifiedCategory.Anime && parsed.Season.HasValue) &&
             (input.Category != UnifiedCategory.Film || parsed.Resolution is null || parsed.Source is not null || parsed.Codec is not null))
             return Array.AsReadOnly(new[] { primary });
 

@@ -9,7 +9,7 @@ public sealed record ReplayPreview(long Generation, ReplaySelection Selection, I
 
 internal static class ReplaySelectionRules
 {
-    internal static readonly string[] Categories = ["animation", "emissions", "films", "series", "spectacle"];
+    internal static readonly string[] Categories = ["animation", "anime", "emissions", "films", "series", "spectacle"];
     internal static ReplayRequest Normalize(ReplayRequest request)
     {
         if (request.Count is not (10 or 25 or 50 or 100 or 200) || request.Mode is not ("offline" or "tmdb") || request.Budget is < 1 or > 30 || request.Generation < 0)
@@ -20,7 +20,7 @@ internal static class ReplaySelectionRules
         var categories = (s.Categories ?? Categories).ToArray();
         var ids = (s.ReleaseIds ?? Array.Empty<long>()).ToArray();
         if (s.Method is not ("sample" or "ids") || s.Filter is not ("all" or "without_poster" or "without_identity" or "with_identity") ||
-            categories.Length is < 1 or > 5 || categories.Any(c => !Categories.Contains(c, StringComparer.Ordinal)) || categories.Distinct().Count() != categories.Length ||
+            (categories.Length < 1 || categories.Length > Categories.Length) || categories.Any(c => !Categories.Contains(c, StringComparer.Ordinal)) || categories.Distinct().Count() != categories.Length ||
             ids.Length > 200 || ids.Any(id => id is < 1 or > 9007199254740991) || ids.Distinct().Count() != ids.Length ||
             (s.Method == "ids" ? ids.Length == 0 : ids.Length != 0)) throw new ArgumentException("replay_selection_invalid");
         return request with { ExpectedIds = request.ExpectedIds is null ? null : Array.AsReadOnly(request.ExpectedIds.ToArray()), Selection = s with { Categories = Array.AsReadOnly(categories.Order(StringComparer.Ordinal).ToArray()), ReleaseIds = Array.AsReadOnly(ids) } };

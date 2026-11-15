@@ -107,3 +107,14 @@ Une date de diffusion ne remplace pas l’année de création de la série.
 Le fichier privé `labels.json` contient une revue progressive, pas une vérité déduite
 des identités historiques. Distinguer les nouvelles propositions des associations
 réellement publiées : le replay ne modifie aucune association.
+
+### Anime / Jikan
+
+La catégorie `anime` du replay utilise l’adaptateur Jikan et le ranker commun, avec
+pagination, preuves MAL/format/épisodes/relations, captures bornées et transport public.
+Le nom historique du mode HTTP reste `tmdb` ; aucun mode ou réglage expérimental ajouté.
+Les champs de preuve Jikan sont conservés, sans images ni URLs de requêtes.
+Le complément local `anime-c-diagnostic` est un **contexte de test explicite sur copie**,
+car la référence de 305 releases ne contient aucun classement `Anime`. Ne pas interpréter
+ces résultats comme une modification des catégories ou identités de l’instance réelle.
+Voir `docs/matching-anime-v2-validation.md` pour les limites et commandes de reprise.

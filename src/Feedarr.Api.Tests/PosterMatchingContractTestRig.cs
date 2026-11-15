@@ -78,7 +78,8 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
 
     public PosterMatchingContractTestRig(PosterContractScenario scenario, bool completeTmdbMetadata = false, int tmdbTotalPages = 1, string? localizedMovieTitle = null,
         Action<AppOptions>? configure = null,
-        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? tmdbResponse = null)
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? tmdbResponse = null,
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? jikanResponse = null)
     {
         _workspace = new TestWorkspace();
 
@@ -121,7 +122,9 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         var igdb = new IgdbClient(new HttpClient(_igdbHandler), stats, resolver);
         _igdbDetails = igdb;
         var tvmaze = new TvMazeClient(new HttpClient(new TvMazeHandler(scenario)), stats, resolver);
-        var jikan = new JikanClient(new HttpClient(new JikanHandler(scenario)), resolver, stats);
+        HttpMessageHandler jikanTransport = new JikanHandler(scenario);
+        if (jikanResponse is not null) jikanTransport = new OverrideTmdbHandler(jikanTransport, jikanResponse);
+        var jikan = new JikanClient(new HttpClient(jikanTransport), resolver, stats);
         var theAudioDb = new TheAudioDbClient(new HttpClient(new TheAudioDbHandler(scenario)), resolver, stats);
         var googleBooks = new GoogleBooksClient(new HttpClient(new GoogleBooksHandler(scenario)), resolver, stats);
         var comicVine = new ComicVineClient(new HttpClient(new ComicVineHandler(scenario)), resolver, stats);
@@ -268,8 +271,8 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             Error: TryGetString(root, "error"));
     }
 
-    public async Task<PosterFetchResult> FetchAsync(long releaseId)
-        => await _posters.FetchPosterAsync(releaseId, CancellationToken.None, logSingle: true, skipIfExists: true);
+    public async Task<PosterFetchResult> FetchAsync(long releaseId, CancellationToken ct = default)
+        => await _posters.FetchPosterAsync(releaseId, ct, logSingle: true, skipIfExists: true);
 
     public ReleaseForPoster? GetReleaseForPoster(long releaseId)
         => _releases.GetForPoster(releaseId);
@@ -897,7 +900,12 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             {
                 if (_scenario == PosterContractScenario.AnimeJikanHit)
                 {
-                    return Task.FromResult(JsonResponse("{\"data\":[{\"mal_id\":1500,\"title\":\"Naruto\",\"title_english\":\"Naruto\",\"year\":2002,\"synopsis\":\"Mock anime synopsis\",\"score\":8.5,\"scored_by\":1000,\"url\":\"https://myanimelist.net/anime/1500\",\"images\":{\"jpg\":{\"large_image_url\":\"https://cdn.jikan.moe/images/anime/naruto.jpg\"}},\"genres\":[{\"name\":\"Action\"},{\"name\":\"Adventure\"}]}]}"));
+                    var item = new { mal_id = 1500, title = "Naruto", title_english = "Naruto", title_japanese = "ナルト", year = 2002, type = "TV", episodes = 220,
+                        status = "Finished Airing", relations = Array.Empty<object>(), synopsis = "Mock anime synopsis", score = 8.5,
+                        images = new { jpg = new { large_image_url = "https://cdn.jikan.moe/images/anime/naruto.jpg" } }, genres = new[] { new { name = "Action" } } };
+                    var payload = path.EndsWith("/full") ? JsonSerializer.Serialize(new { data = item }) :
+                        JsonSerializer.Serialize(new { data = new[] { item }, pagination = new { current_page = 1, has_next_page = false, items = new { total = 1 } } });
+                    return Task.FromResult(JsonResponse(payload));
                 }
                 return Task.FromResult(JsonResponse("{\"data\":[]}"));
             }

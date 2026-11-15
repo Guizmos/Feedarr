@@ -45,6 +45,8 @@ internal sealed class ReplayBudgetHandler : DelegatingHandler
     private static bool Allowed(Uri uri) =>
         uri.Host == "api.themoviedb.org" && (uri.AbsolutePath is "/3/search/movie" or "/3/search/tv" ||
             System.Text.RegularExpressions.Regex.IsMatch(uri.AbsolutePath, @"^/3/tv/[1-9][0-9]*(/season/[0-9]+/episode/[0-9]+)?$")) ||
+        uri.Host == "api.jikan.moe" && (uri.AbsolutePath == "/v4/anime" ||
+            System.Text.RegularExpressions.Regex.IsMatch(uri.AbsolutePath, @"^/v4/anime/[1-9][0-9]*(/full|/episodes/[1-9][0-9]*)$")) ||
         uri.Host == "api.tvmaze.com" && (uri.AbsolutePath == "/search/shows" ||
             System.Text.RegularExpressions.Regex.IsMatch(uri.AbsolutePath, @"^/shows/[1-9][0-9]*(/episodes|/episodesbydate)?$"));
 

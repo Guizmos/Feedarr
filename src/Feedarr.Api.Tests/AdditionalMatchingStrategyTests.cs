@@ -8,7 +8,7 @@ public sealed class AdditionalMatchingStrategyTests
     public async Task Anime_JikanHit_ReturnsPoster()
     {
         using var rig = new PosterMatchingContractTestRig(PosterContractScenario.AnimeJikanHit);
-        var releaseId = rig.CreateRelease("Naruto", "Naruto", 2002, UnifiedCategory.Anime, "anime");
+        var releaseId = rig.IngestRelease("Naruto.2002.1080p.BluRay.x264-GRP", UnifiedCategory.Anime);
 
         var actual = await rig.FetchSnapshotAsync(releaseId);
 
