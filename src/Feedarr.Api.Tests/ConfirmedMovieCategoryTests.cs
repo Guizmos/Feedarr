@@ -72,17 +72,18 @@ public sealed class ConfirmedMovieCategoryTests
     [Theory]
     [InlineData(UnifiedCategory.Animation)]
     [InlineData(UnifiedCategory.Spectacle)]
-    public async Task UncertainTypeKeepsTheExistingVideoPath(UnifiedCategory category)
+    public async Task UncertainTypeAbstainsWithoutProviderCallsOrPublication(UnifiedCategory category)
     {
         using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit);
         var id = rig.IngestRelease("The.Matrix.1999.1080p.BluRay.x264-GRP", category);
         using (var db = rig.Database.Open())
             db.Execute("UPDATE releases SET category_id=NULL,std_category_id=NULL,spec_category_id=NULL,category_ids=NULL WHERE id=@id", new { id });
         var result = await rig.FetchAsync(id);
-        Assert.True(result.Ok, JsonSerializer.Serialize(result.Body));
-        Assert.DoesNotContain("-v2-", rig.GetReleaseForPoster(id)!.PosterFile!);
-        Assert.NotEmpty(rig.TmdbSearchRequests);
-        Assert.All(rig.TmdbSearchRequests, request => Assert.DoesNotContain("page=", request.Query));
+        Assert.False(result.Ok);
+        Assert.Equal(422, result.StatusCode);
+        Assert.Null(rig.GetReleaseForPoster(id)!.PosterFile);
+        Assert.Null(rig.GetReleaseForPoster(id)!.ExtProviderId);
+        Assert.Empty(rig.TmdbSearchRequests);
     }
 
     [Theory]

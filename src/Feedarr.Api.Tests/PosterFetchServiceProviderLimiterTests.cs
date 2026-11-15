@@ -126,7 +126,6 @@ public sealed class PosterFetchServiceProviderLimiterTests
                 null!,
                 null!,
                 null!,
-                new PosterMatchCacheService(Db),
                 options,
                 _env,
                 new PosterMatchingOrchestrator(

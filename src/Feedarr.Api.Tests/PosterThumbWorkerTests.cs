@@ -88,7 +88,6 @@ public sealed class PosterThumbWorkerTests
                 new ReleaseRepository(Db, new TitleParser(), new UnifiedCategoryResolver()),
                 new ActivityRepository(Db, new BadgeSignal()),
                 null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!,
-                new PosterMatchCacheService(Db),
                 options,
                 _env,
                 new PosterMatchingOrchestrator(

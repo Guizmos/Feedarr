@@ -281,7 +281,6 @@ public sealed partial class PosterFetchStoreMaterializationTests
                 null!,
                 null!,
                 null!,
-                new PosterMatchCacheService(Db),
                 options,
                 _env,
                 new PosterMatchingOrchestrator(

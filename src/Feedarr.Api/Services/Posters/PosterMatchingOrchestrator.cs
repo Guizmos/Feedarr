@@ -29,7 +29,7 @@ public sealed class PosterMatchingOrchestrator
         PosterFetchRoutingContext context,
         CancellationToken ct)
     {
-        if (context.UnifiedCategory is UnifiedCategory.Serie or UnifiedCategory.Emission || context.UseVideoV2)
+        if (context.VideoType is "movie" or "tv")
             return core.FetchVideoV2Async(context, ct);
         return context.UnifiedCategory switch
         {
@@ -41,7 +41,7 @@ public sealed class PosterMatchingOrchestrator
             UnifiedCategory.Film => _videoMatchingStrategy.FetchPosterAsync(core, context, ct),
             UnifiedCategory.Spectacle => _videoMatchingStrategy.FetchPosterAsync(core, context, ct),
             UnifiedCategory.Animation => _videoMatchingStrategy.FetchPosterAsync(core, context, ct),
-            _ => _videoMatchingStrategy.FetchPosterAsync(core, context, ct)
+            _ => Task.FromResult(new PosterFetchResult(false, 422, new { error = "matching_v2_abstained", reason = "video_type_unproven_or_conflicting" }, context.SourceId))
         };
     }
 }

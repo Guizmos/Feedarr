@@ -211,7 +211,6 @@ public sealed class MaintenancePosterRepairTests
                 null!,
                 null!,
                 null!,
-                new PosterMatchCacheService(Db),
                 Options,
                 _environment,
                 new PosterMatchingOrchestrator(

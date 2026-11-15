@@ -223,7 +223,6 @@ public sealed partial class RetentionServiceTests
                 null!,
                 null!,
                 null!,
-                new PosterMatchCacheService(Db),
                 _options,
                 _environment,
                 new PosterMatchingOrchestrator(

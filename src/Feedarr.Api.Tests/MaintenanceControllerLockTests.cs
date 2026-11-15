@@ -123,7 +123,6 @@ public sealed class MaintenanceControllerLockTests
                 null!,
                 null!,
                 null!,
-                new PosterMatchCacheService(Db),
                 Options,
                 _environment,
                 new PosterMatchingOrchestrator(

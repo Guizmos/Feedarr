@@ -184,7 +184,6 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             rawg,
             comicVine,
             musicBrainz,
-            matchCache,
             OptionsFactory.Create(options),
             new TestWebHostEnvironment(_workspace.RootDir),
             orchestrator,

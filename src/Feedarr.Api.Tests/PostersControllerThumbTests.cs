@@ -208,7 +208,6 @@ public sealed class PostersControllerThumbTests
             PosterFetch = new PosterFetchService(
                 Releases, activity,
                 null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!,
-                new PosterMatchCacheService(Db),
                 Options, _env,
                 new PosterMatchingOrchestrator(
                     new VideoMatchingStrategy(),

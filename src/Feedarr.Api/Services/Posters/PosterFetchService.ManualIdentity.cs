@@ -6,11 +6,6 @@ namespace Feedarr.Api.Services.Posters;
 
 public sealed partial class PosterFetchService
 {
-    private static bool IsTypedVideoPoster(string? file, string mediaType) =>
-        TmdbIdentity.NormalizeType(mediaType) is { } type &&
-        (file?.StartsWith($"tmdb-{type}-", StringComparison.OrdinalIgnoreCase) == true ||
-         file?.StartsWith($"fanart-{type}-", StringComparison.OrdinalIgnoreCase) == true);
-
     private async Task<PosterFetchResult> RefreshManualMatchAsync(ReleaseForPoster snapshot, CancellationToken ct)
     {
         var id = snapshot.Id;

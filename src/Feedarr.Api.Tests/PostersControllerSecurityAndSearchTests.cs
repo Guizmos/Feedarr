@@ -362,7 +362,6 @@ public sealed class PostersControllerSecurityAndSearchTests
                 null!,
                 null!,
                 null!,
-                new PosterMatchCacheService(Db),
                 Options,
                 _environment,
                 new PosterMatchingOrchestrator(
