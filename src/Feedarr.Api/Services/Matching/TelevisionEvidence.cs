@@ -5,9 +5,13 @@ using Feedarr.Api.Services.Titles;
 
 namespace Feedarr.Api.Services.Matching;
 
+internal sealed record ProviderEpisodeIdentity(SearchIdentity Series, int Id, int Season, int Number);
+internal sealed record EpisodeAirDate(SearchIdentity Series, string Date);
+
 // Evidence is scoped to one provider identity, never inferred from the query.
 internal sealed record TelevisionEvidence(SearchIdentity Identity, bool? SeasonExists, bool? EpisodeExists,
-    string? AirDate = null, SearchIdentity? CorroboratingIdentity = null);
+    string? AirDate = null, SearchIdentity? CorroboratingIdentity = null,
+    ProviderEpisodeIdentity? EpisodeIdentity = null, IReadOnlyList<EpisodeAirDate>? AirDates = null, IReadOnlyList<ProviderEpisodeIdentity>? EpisodeIdentities = null);
 
 internal static class TelevisionCandidates
 {
@@ -58,6 +62,7 @@ internal static class TelevisionCandidates
             var row = rows[i];
             if (!verified.TryGetValue(row.Identity, out var details)) continue;
             bool? seasonExists = null, episodeExists = null; string? airDate = null;
+            ProviderEpisodeIdentity? episodeIdentity = null;
             var titles = (row.OfficialTitles ?? Array.Empty<OfficialProviderTitle>()).ToList();
             if (row.Identity.Provider == "tmdb")
             {
@@ -79,6 +84,9 @@ internal static class TelevisionCandidates
                         if (Number(e, "show_id") is > 0 && Number(e, "show_id")?.ToString(CultureInfo.InvariantCulture) != row.Identity.Id)
                             throw new InvalidDataException("tv_episode_identity_conflict");
                         seasonExists = true; episodeExists = true; airDate = Text(e, "air_date");
+                        // A requested URL alone is not independent proof of the parent series.
+                        if (Number(e, "show_id")?.ToString(CultureInfo.InvariantCulture) == row.Identity.Id)
+                            episodeIdentity = new(row.Identity, Number(e, "id")!.Value, parsed.Season.Value, parsed.Episode.Value);
                     }
                     // 404 remains unknown; providers may not yet list a real episode.
                 }
@@ -96,10 +104,13 @@ internal static class TelevisionCandidates
                     if (matches.Length > 0)
                     { seasonExists = parsed.Season.HasValue ? true : null; episodeExists = parsed.Episode.HasValue ? true : null;
                         airDate = matches.Select(e => Text(e, "airdate")).FirstOrDefault(d => d == parsed.AirDate) ?? (matches.Length == 1 ? Text(matches[0], "airdate") : null); }
+                    if (matches.Length == 1 && parsed.Season.HasValue && parsed.Episode.HasValue)
+                        episodeIdentity = new(row.Identity, Number(matches[0], "id")!.Value, parsed.Season.Value, parsed.Episode.Value);
                 }
             }
             rows[i] = row with { OfficialTitles = titles, Season = seasonExists == true ? parsed.Season : null,
-                Episode = episodeExists == true ? parsed.Episode : null, Television = new(row.Identity, seasonExists, episodeExists, airDate) };
+                Episode = episodeExists == true ? parsed.Episode : null, Television = new(row.Identity, seasonExists, episodeExists, airDate, EpisodeIdentity: episodeIdentity,
+                    AirDates: airDate is null ? Array.Empty<EpisodeAirDate>() : new[] { new EpisodeAirDate(row.Identity, airDate) }) };
         }
         // Cross-provider merging requires a verified external ID, never a similar name.
         foreach (var tmdb in plausible.Where(r => r.Identity.Provider == "tmdb"))
@@ -120,13 +131,23 @@ internal static class TelevisionCandidates
                 var canonical = rows[index];
                 var enrichedMaze = rows.FirstOrDefault(r => r.Identity == maze.Identity)
                     ?? throw new InvalidDataException("tv_multiple_canonical_identities");
-                if (canonical.Television?.AirDate is { } date && enrichedMaze.Television?.AirDate is { } otherDate && date != otherDate)
+                var dates = (canonical.Television?.AirDates ?? Array.Empty<EpisodeAirDate>())
+                    .Concat(enrichedMaze.Television?.AirDates ?? Array.Empty<EpisodeAirDate>()).Distinct().ToArray();
+                var calendarConflict = dates.Select(d => d.Date).Distinct(StringComparer.Ordinal).Skip(1).Any();
+                // Series external IDs do not map episode IDs. Both providers must independently
+                // verify the requested numbered episode and its parent before tolerating dates.
+                var episode = canonical.Television?.EpisodeIdentity;
+                var otherEpisode = enrichedMaze.Television?.EpisodeIdentity;
+                if (calendarConflict && (parsed.Season is null || parsed.Episode is null ||
+                    episode is null || otherEpisode is null || episode.Series != canonical.Identity ||
+                    otherEpisode.Series != enrichedMaze.Identity || episode.Season != otherEpisode.Season || episode.Number != otherEpisode.Number))
                     throw new InvalidDataException("tv_episode_date_conflict");
                 rows[index] = canonical with { OfficialTitles = (canonical.OfficialTitles ?? Array.Empty<OfficialProviderTitle>())
                     .Append(new(Text(show, "name")!, tmdb.Identity, ProviderTitleKind.Alternative, ProviderTitleSource.AlternativeTitlesEndpoint)).ToArray(),
                     Season = canonical.Season ?? enrichedMaze.Season, Episode = canonical.Episode ?? enrichedMaze.Episode,
                     Television = canonical.Television is { } proof && enrichedMaze.Television is { } mazeProof
-                        ? proof with { AirDate = proof.AirDate ?? mazeProof.AirDate,
+                        ? proof with { AirDate = calendarConflict ? null : proof.AirDate ?? mazeProof.AirDate, AirDates = dates,
+                            EpisodeIdentities = new[] { episode, otherEpisode }.Where(e => e is not null).Cast<ProviderEpisodeIdentity>().ToArray(),
                             SeasonExists = proof.SeasonExists ?? mazeProof.SeasonExists, EpisodeExists = proof.EpisodeExists ?? mazeProof.EpisodeExists,
                             CorroboratingIdentity = tmdb.Year.HasValue && enrichedMaze.Year.HasValue &&
                                 Math.Abs((long)tmdb.Year.Value - enrichedMaze.Year.Value) <= new CandidateRankingPolicy().ParsedYearTolerance ? maze.Identity : null } : canonical.Television,
