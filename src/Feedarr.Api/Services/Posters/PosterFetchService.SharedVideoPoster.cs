@@ -6,7 +6,7 @@ public sealed partial class PosterFetchService
 {
     // Called only after this release's own V2 acceptance, inside its publication lease.
     private async Task<PosterFetchResult?> TryPublishSharedVideoPosterAsync(PosterFetchRoutingContext context,
-        string provider, string providerId, int? tmdbId, string type, TmdbClient.DetailsResult details, CancellationToken ct)
+        string provider, string providerId, int? tmdbId, string type, TmdbClient.DetailsResult details, CancellationToken ct, Action<string, string?>? diagnosticStage = null)
     {
         if (context.ForceRefresh) return null;
         var key = provider == "tmdb" ? $"tmdb:{type}:{providerId}" : $"{provider}:{providerId}";
@@ -37,6 +37,7 @@ public sealed partial class PosterFetchService
                 _releases.ValidateMatching(context.ReleaseId);
                 ct.ThrowIfCancellationRequested();
                 displaced = _releases.GetForPoster(context.ReleaseId)?.PosterStoreDir;
+                diagnosticStage?.Invoke("publication", null);
                 _releases.PublishAcceptedVideo(context.ReleaseId, provider, providerId, tmdbId, type,
                     donor.PosterPath, donor.PosterFile, details, sharedPoster: donor);
                 return new(true, 200, new { ok=true, reused=true, posterFile=donor.PosterFile, storePending=false,

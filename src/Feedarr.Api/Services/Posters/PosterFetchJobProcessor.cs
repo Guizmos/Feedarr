@@ -44,10 +44,9 @@ public sealed class PosterFetchJobProcessor : IPosterFetchJobProcessor
         var jobToken = budgetCts.Token;
 
         _log.LogInformation(
-            "Poster worker {WorkerId} job start {ItemId} title={Title} year={Year} category={Category} force={Force} attempt={Attempt}",
+            "Poster worker {WorkerId} job start {ItemId} year={Year} category={Category} force={Force} attempt={Attempt}",
             workerId,
             job.ItemId,
-            job.Title,
             job.Year,
             job.Category,
             job.ForceRefresh,
@@ -132,8 +131,8 @@ public sealed class PosterFetchJobProcessor : IPosterFetchJobProcessor
             }
             catch (Exception ex)
             {
-                _log.LogError(ex, "Poster worker {WorkerId} job error {ItemId} attempt={Attempt}", workerId, job.ItemId, attempt);
-                var error = $"exception: {ex.GetType().Name}: {ex.Message}";
+                _log.LogError("Poster worker {WorkerId} job error {ItemId} attempt={Attempt} exceptionType={ExceptionType}", workerId, job.ItemId, attempt, ex.GetType().Name);
+                var error = $"exception: {ex.GetType().Name}";
                 if (error.Length > 200)
                     error = error[..200];
                 PosterAudit.UpdateAttemptFailure(_releases, job.ItemId, null, null, null, null, error);
