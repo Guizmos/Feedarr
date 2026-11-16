@@ -140,7 +140,7 @@ public sealed partial class PosterFetchService
         catch (Exception error)
         {
             var failure = VideoMatchingFailure.Classify(error, stage);
-            Record(failure.Category, failure.Category, error.GetType().Name);
+            Record(failure.Invariant ?? failure.Category, failure.Category, error.GetType().Name);
             return new(false, failure.Status, new { error = "matching_v2_abstained", reason = "not_evaluable_provider_or_publication_error" }, context.SourceId);
         }
     }
