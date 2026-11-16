@@ -3,7 +3,7 @@ using System.Threading.Channels;
 
 namespace Feedarr.Api.Services.Posters;
 
-public sealed class PosterFetchQueue : IPosterFetchQueue
+public sealed partial class PosterFetchQueue : IPosterFetchQueue
 {
     private const int Capacity = 2000;
     public static readonly TimeSpan DefaultEnqueueTimeout = TimeSpan.FromSeconds(1);
@@ -259,6 +259,7 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
                 return followUp;
             }
 
+            FinishTrackedEntry(entry, result.Succeeded ? "succeeded" : "failed");
             _entries.TryRemove(job.ItemId, out _);
             _currentJob = null;
             DecrementInFlightCount();
@@ -272,7 +273,8 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
         lock (_gate)
         {
             cleared = _normal.Count + _background.Count;
-            foreach (var itemId in _normal.Concat(_background)) _entries.TryRemove(itemId, out _);
+            foreach (var itemId in _normal.Concat(_background))
+                if (_entries.TryRemove(itemId, out var removed)) FinishTrackedEntry(removed, "cancelled");
             _normal.Clear();
             _background.Clear();
             _normalBurst = 0;
@@ -366,7 +368,10 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
     private PosterFetchEnqueueStatus TryEnqueueLocked(PosterFetchJob job)
     {
         if (TryCoalesceLocked(job, out var coalesced))
+        {
+            AttachTrackedEntry(job.ItemId, _entries[job.ItemId]);
             return coalesced.Status;
+        }
 
         if (_channel.Writer.TryWrite(0))
         {
@@ -375,6 +380,7 @@ public sealed class PosterFetchQueue : IPosterFetchQueue
                 Pending = true,
                 PendingNode = (job.Priority == PosterFetchPriority.Background ? _background : _normal).AddLast(job.ItemId)
             };
+            AttachTrackedEntry(job.ItemId, _entries[job.ItemId]);
             Interlocked.Increment(ref _jobsEnqueued);
             return PosterFetchEnqueueStatus.Enqueued;
         }

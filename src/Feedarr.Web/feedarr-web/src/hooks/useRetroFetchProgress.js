@@ -105,11 +105,12 @@ export function useRetroFetchProgress() {
         let updatedTask = { ...retroTask };
 
         if (ids.length > 0) {
-          const res = await apiPost("/api/posters/retro-fetch/progress", { ids, startedAtTs });
+          const res = await apiPost("/api/posters/retro-fetch/progress", { ids, startedAtTs, batchId: retroTask.batchId });
+          if (loadRetroTask()?.startedAt !== retroTask.startedAt) return;
           const total = Number(res?.total ?? ids.length);
           const done = Number(res?.done ?? 0);
           
-          if (total > 0 && done >= total) {
+          if (res?.terminal === true || total > 0 && done >= total) {
             saveRetroTask(null);
             return;
           }
@@ -164,6 +165,7 @@ export function useRetroFetchProgress() {
             enqueued,
             total: Number(res?.total ?? enqueued),
             ids,
+            batchId: res?.batchId ?? null,
             startedAtTs,
             currentMissing: startMissing,
             percent: 0,

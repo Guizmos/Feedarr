@@ -8,6 +8,10 @@ public interface IPosterFetchQueue
     void RecordRetry();
     PosterFetchJob? Complete(PosterFetchJob job, PosterFetchProcessResult result);
     int ClearPending();
+    Guid? BeginBatch(IReadOnlyList<long> ids) => null;
+    void SealBatch(Guid? id) { }
+    PosterBatchProgress? GetBatchProgress(Guid id) => null;
+    int CountOutstanding(IReadOnlyList<long> ids) => ids.Count;
     int Count { get; }
     PosterFetchQueueSnapshot GetSnapshot();
 }

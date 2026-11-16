@@ -671,6 +671,7 @@ public sealed class PostersController : ControllerBase
     {
         public List<long> Ids { get; set; } = new();
         public long? StartedAtTs { get; set; }
+        public Guid? BatchId { get; set; }
     }
 
     [HttpPost("releases/fetch")]
@@ -746,15 +747,22 @@ public sealed class PostersController : ControllerBase
             logFile = null;
         }
 
-        var (result, enqueued, coalesced, missing, timedOut, total) = await EnqueueBulkInternal(
-            ids,
-            forceRefresh: false,
-            ct,
-            total: ids.Count,
-            retroLogFile: logFile).ConfigureAwait(false);
-        _activity.Add(null, "info", "poster_fetch", "Retro fetch enqueued",
-            dataJson: $"{{\"total\":{total},\"enqueued\":{enqueued},\"coalesced\":{coalesced},\"missing\":{missing},\"timedOut\":{timedOut},\"failed\":{timedOut},\"logFile\":\"{logFile ?? ""}\"}}");
-        return Accepted(new { ok = true, total, enqueued, coalesced, missing, timedOut, failed = timedOut, ids, startedAtTs, logFile });
+        Guid? batchId;
+        try { batchId = _queue.BeginBatch(ids); }
+        catch (InvalidOperationException) { return Conflict(new { error = "too_many_retro_batches" }); }
+        try
+        {
+            var (result, enqueued, coalesced, missing, timedOut, total) = await EnqueueBulkInternal(
+                ids,
+                forceRefresh: false,
+                ct,
+                total: ids.Count,
+                retroLogFile: logFile).ConfigureAwait(false);
+            _activity.Add(null, "info", "poster_fetch", "Retro fetch enqueued",
+                dataJson: $"{{\"total\":{total},\"enqueued\":{enqueued},\"coalesced\":{coalesced},\"missing\":{missing},\"timedOut\":{timedOut},\"failed\":{timedOut},\"logFile\":\"{logFile ?? ""}\"}}");
+            return Accepted(new { ok = true, total, enqueued, coalesced, missing, timedOut, failed = timedOut, ids, startedAtTs, logFile, batchId });
+        }
+        finally { _queue.SealBatch(batchId); }
     }
 
     // POST /api/posters/retro-fetch/progress
@@ -765,9 +773,16 @@ public sealed class PostersController : ControllerBase
         if (ids.Count > MaxBulkIds)
             return StatusCode(StatusCodes.Status413PayloadTooLarge, new { error = "too many ids", maxIds = MaxBulkIds });
 
-        var startedAtTs = dto?.StartedAtTs ?? 0;
-        var (total, done, pending) = _releases.GetPosterProgressByIds(ids, startedAtTs);
-        return Ok(new { total, done, pending });
+        if (dto?.BatchId is { } batchId)
+        {
+            var progress = _queue.GetBatchProgress(batchId);
+            if (progress is not null) return Ok(progress);
+            return Ok(new { total = ids.Distinct().Count(), done = ids.Distinct().Count(), pending = 0, terminal = true, state = "expired" });
+        }
+        // Legacy browser state: timestamps cannot tell whether failed jobs completed.
+        var total = ids.Distinct().Count();
+        var pending = _queue.CountOutstanding(ids);
+        return Ok(new { total, done = total - pending, pending, terminal = pending == 0, state = "legacy" });
     }
 
     // POST /api/posters/retro-fetch/stop
