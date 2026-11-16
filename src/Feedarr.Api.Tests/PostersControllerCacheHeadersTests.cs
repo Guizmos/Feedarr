@@ -1,3 +1,7 @@
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.DependencyInjection;
+using System.Net;
 using System.Text;
 using Dapper;
 using Feedarr.Api.Data;
@@ -25,6 +29,49 @@ namespace Feedarr.Api.Tests;
 /// </summary>
 public sealed class PostersControllerCacheHeadersTests
 {
+    [Fact]
+    public async Task SessionImagesRevalidateAndInvalidateEvenWithSameTimestampAndLength()
+    {
+        using var ctx = new CacheHeaderContext();
+        var id = ctx.CreateRelease("conditional.webp"); ctx.CreatePosterFile("conditional.webp");
+        var path = Path.Combine(ctx.PostersDir, "conditional.webp");
+        var beforeTime = File.GetLastWriteTimeUtc(path);
+        var controller = ctx.CreateController();
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseKestrel().UseUrls("http://127.0.0.1:0");
+        builder.Services.AddControllers();
+        await using var app = builder.Build();
+        app.Run(async http => {
+                WebSessionSecurity.DisableCaching(http);
+                if (http.Request.Path == "/api/settings/ui") { await http.Response.WriteAsync("sensitive"); return; }
+                controller.ControllerContext = new ControllerContext { HttpContext = http };
+                await controller.GetPoster(id).ExecuteResultAsync(controller.ControllerContext);
+            });
+        await app.StartAsync();
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        var first = await client.GetAsync("/api/posters/release/1");
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.True(first.Headers.CacheControl!.Private);
+        Assert.True(first.Headers.CacheControl.NoCache);
+        Assert.False(first.Headers.CacheControl.NoStore);
+        Assert.NotNull(first.Headers.ETag);
+        using var unchanged = new HttpRequestMessage(HttpMethod.Get, "/api/posters/release/1");
+        unchanged.Headers.IfNoneMatch.Add(first.Headers.ETag!);
+        var second = await client.SendAsync(unchanged);
+        Assert.Equal(HttpStatusCode.NotModified, second.StatusCode);
+        Assert.Empty(await second.Content.ReadAsByteArrayAsync());
+        var bytes = await File.ReadAllBytesAsync(path); bytes[0] ^= 1;
+        await File.WriteAllBytesAsync(path, bytes); File.SetLastWriteTimeUtc(path, beforeTime);
+        using var changed = new HttpRequestMessage(HttpMethod.Get, "/api/posters/release/1");
+        changed.Headers.IfNoneMatch.Add(first.Headers.ETag!);
+        var replacement = await client.SendAsync(changed);
+        Assert.Equal(HttpStatusCode.OK, replacement.StatusCode);
+        Assert.NotEqual(first.Headers.ETag, replacement.Headers.ETag);
+        Assert.Equal(bytes, await replacement.Content.ReadAsByteArrayAsync());
+        var sensitive = await client.GetAsync("/api/settings/ui");
+        Assert.Equal("no-store", sensitive.Headers.CacheControl!.ToString());
+    }
+
     // ── release / entity : immutable long-lived ─────────────────────────────
 
     [Fact]
@@ -37,7 +84,7 @@ public sealed class PostersControllerCacheHeadersTests
 
         controller.GetPoster(id);
 
-        Assert.Equal("public, max-age=31536000, immutable",
+        Assert.Equal("private, no-cache",
             controller.Response.Headers.CacheControl.ToString());
         Assert.Equal("Accept-Encoding",
             controller.Response.Headers.Vary.ToString());
@@ -53,7 +100,7 @@ public sealed class PostersControllerCacheHeadersTests
 
         controller.GetEntityPoster(entityId);
 
-        Assert.Equal("public, max-age=31536000, immutable",
+        Assert.Equal("private, no-cache",
             controller.Response.Headers.CacheControl.ToString());
         Assert.Equal("Accept-Encoding",
             controller.Response.Headers.Vary.ToString());
@@ -96,7 +143,7 @@ public sealed class PostersControllerCacheHeadersTests
 
         await controller.GetBanner(id, CancellationToken.None);
 
-        Assert.Equal("public, max-age=3600",
+        Assert.Equal("private, no-cache",
             controller.Response.Headers.CacheControl.ToString());
         Assert.Equal("Accept-Encoding",
             controller.Response.Headers.Vary.ToString());

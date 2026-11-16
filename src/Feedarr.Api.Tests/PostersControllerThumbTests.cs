@@ -42,7 +42,7 @@ public sealed class PostersControllerThumbTests
 
         // Should serve the flat file (PhysicalFileResult) with immutable cache header
         Assert.IsType<PhysicalFileResult>(result);
-        Assert.Equal("public, max-age=31536000, immutable",
+        Assert.Equal("private, no-cache",
             controller.Response.Headers.CacheControl.ToString());
     }
 
@@ -83,7 +83,7 @@ public sealed class PostersControllerThumbTests
 
         var physical = Assert.IsType<PhysicalFileResult>(result);
         Assert.Equal("image/webp", physical.ContentType);
-        Assert.Equal("public, max-age=31536000, immutable",
+        Assert.Equal("private, no-cache",
             controller.Response.Headers.CacheControl.ToString());
         Assert.False(controller.Response.Headers.ContainsKey("X-Thumb-Fallback"));
     }
@@ -120,7 +120,7 @@ public sealed class PostersControllerThumbTests
         Assert.Equal(PosterThumbJobReason.MissingThumb, thumbQueue.LastEnqueuedJob.Reason);
         Assert.Contains(500, thumbQueue.LastEnqueuedJob.Widths ?? []);
         Assert.False(File.Exists(Path.Combine(ctx.StoreDir, "tmdb-550", "w500.webp")));
-        Assert.Equal("public, max-age=5", controller.Response.Headers.CacheControl.ToString());
+        Assert.Equal("private, no-cache", controller.Response.Headers.CacheControl.ToString());
         Assert.Equal("1", controller.Response.Headers["X-Thumb-Fallback"].ToString());
     }
 
@@ -157,7 +157,7 @@ public sealed class PostersControllerThumbTests
         var result = await controller.GetEntityPosterThumb(entityId, 500, CancellationToken.None);
 
         Assert.IsType<PhysicalFileResult>(result);
-        Assert.Equal("public, max-age=31536000, immutable",
+        Assert.Equal("private, no-cache",
             controller.Response.Headers.CacheControl.ToString());
     }
 

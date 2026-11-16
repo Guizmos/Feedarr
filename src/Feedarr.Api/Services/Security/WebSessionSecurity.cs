@@ -34,12 +34,16 @@ internal static class WebSessionSecurity
             request.Headers["Sec-Fetch-Mode"] == "navigate" ||
             (request.Headers["Sec-Fetch-Site"] == "same-origin" && request.Headers["Sec-Fetch-Dest"] == "image"));
 
+    internal const string PosterCacheKey = "feedarr.poster-cache-response";
+
     internal static void DisableCaching(HttpContext context)
     {
         context.Response.Headers.CacheControl = "no-store";
         context.Response.OnStarting(() =>
         {
-            // Controllers (e.g. posters) can otherwise replace this with public caching.
+            // Only a successful, explicitly marked image result may override session no-store.
+            if (context.Items.ContainsKey(PosterCacheKey) && context.Response.StatusCode is 200 or 304 &&
+                (HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method))) return Task.CompletedTask;
             context.Response.Headers.CacheControl = "no-store";
             return Task.CompletedTask;
         });

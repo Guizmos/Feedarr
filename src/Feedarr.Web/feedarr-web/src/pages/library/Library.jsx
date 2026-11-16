@@ -979,6 +979,7 @@ export default function Library() {
         payload = { provider: "tmdb", tmdbId: result.tmdbId, mediaType: result.mediaType, posterPath: result.posterPath };
       }
       const res = await apiPost(`/api/posters/release/${manualTarget.id}/manual`, payload);
+      const posterRevision = crypto.randomUUID();
       const responseEntityId = Number(res?.entityId || manualTarget.entityId || 0) || null;
       const posterUpdatedAtTs = Number(res?.posterUpdatedAtTs || 0) || null;
       const posterFile = res?.posterFile || null;
@@ -1008,7 +1009,7 @@ export default function Library() {
           entityId: responseEntityId || row.entityId,
           posterFile: posterFile || row.posterFile,
           posterUpdatedAtTs: updatedTs,
-          posterUrl,
+          posterUrl: `${posterUrl}${posterUrl.includes("?") ? "&" : "?"}revision=${posterRevision}`,
           posterLastError: null,
         };
       };

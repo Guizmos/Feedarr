@@ -1,3 +1,4 @@
+import { posterKeepAliveProxy } from "./tools/posterProxy.mjs";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
@@ -7,7 +8,7 @@ const srcDir = fileURLToPath(new URL("./src", import.meta.url));
 
 export default defineConfig({
   define: { __FEEDARR_BUILD__: JSON.stringify(Date.now().toString(36)) },
-  plugins: [react(), {
+  plugins: [react(), posterKeepAliveProxy(), {
     name: "feedarr-public-pwa-assets",
     generateBundle(_options, bundle) {
       const assets = Object.keys(bundle).filter((name) => /^assets\/.*\.(js|css|woff2?|png|svg)$/.test(name));

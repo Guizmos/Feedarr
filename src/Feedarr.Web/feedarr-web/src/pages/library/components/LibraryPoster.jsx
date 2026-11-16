@@ -1,3 +1,4 @@
+import { posterThumbUrls } from "../../../utils/posterUrls.js";
 import React, { useMemo } from "react";
 import { CheckCircle, Image, ImageOff } from "lucide-react";
 import { useVirtualGrid } from "../hooks/useVirtualGrid.js";
@@ -27,10 +28,7 @@ function PosterViewCard({
     [item.titleClean, item.title]
   );
 
-  const thumbBase = item.id ? `/api/posters/release/${item.id}/thumb` : "";
-  const basePosterUrl = item.posterUrl
-    ? thumbBase ? `${thumbBase}/500` : item.posterUrl
-    : thumbBase ? `${thumbBase}/500` : "";
+  const { src: basePosterUrl, srcSet: thumbSrcset } = posterThumbUrls(item);
   const {
     posterSrc,
     imgError,
@@ -38,9 +36,6 @@ function PosterViewCard({
     handleImageLoad,
   } = usePosterRetryOn404(item.id, basePosterUrl);
 
-  const thumbSrcset = thumbBase
-    ? `${thumbBase}/342 342w, ${thumbBase}/500 500w, ${thumbBase}/780 780w`
-    : undefined;
 
   const indexer = String(indexerLabel || "").trim();
   const showIndexer = showIndexerPill && indexer;

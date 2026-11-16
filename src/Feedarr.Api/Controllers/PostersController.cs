@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using Microsoft.Net.Http.Headers;
+using Feedarr.Api.Services.Security;
 using Microsoft.AspNetCore.Mvc;
 using System.Linq;
 using Feedarr.Api.Data.Repositories;
@@ -26,8 +29,8 @@ public sealed class PostersController : ControllerBase
 {
     private const int MaxBulkIds = 1000;
     private static readonly TimeSpan PosterStatsCacheDuration = TimeSpan.FromSeconds(5);
-    private const string ImmutableCacheControl = "public, max-age=31536000, immutable";
-    private const string ThumbFallbackCacheControl = "public, max-age=5";
+    private const string ValidatedPosterCacheControl = "private, no-cache";
+    private const string ThumbFallbackCacheControl = "private, no-cache";
     private static readonly MemoryCache PosterStatsCache = new(new MemoryCacheOptions());
 
     private readonly ReleaseRepository _releases;
@@ -162,7 +165,7 @@ public sealed class PostersController : ControllerBase
             return NotFound();
 
         if (System.IO.File.Exists(full))
-            return BuildPosterFileResult(file, $"banner-cache:{id}", "public, max-age=3600");
+            return BuildPosterFileResult(file, $"banner-cache:{id}", ValidatedPosterCacheControl);
 
         try
         {
@@ -217,7 +220,7 @@ public sealed class PostersController : ControllerBase
             var posterFile = (string?)r.PosterFile;
             if (!string.IsNullOrWhiteSpace(posterFile))
             {
-                var fallbackResult = BuildPosterFileResult(posterFile, $"banner-fallback:{id}", "public, max-age=3600");
+                var fallbackResult = BuildPosterFileResult(posterFile, $"banner-fallback:{id}", ValidatedPosterCacheControl);
                 if (fallbackResult is PhysicalFileResult or ObjectResult)
                     return fallbackResult;
             }
@@ -239,9 +242,7 @@ public sealed class PostersController : ControllerBase
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "poster file unavailable" });
         }
 
-        Response.Headers.CacheControl = "public, max-age=3600";
-        Response.Headers.Vary = "Accept-Encoding";
-        return PhysicalFile(full, "image/jpeg");
+        return BuildAbsolutePosterFileResult(full, $"banner:{id}");
     }
 
     // POST /api/posters/release/{id}/fetch
@@ -1096,7 +1097,7 @@ public sealed class PostersController : ControllerBase
     /// 2. store/{storeDir}/original.* (full-size original from store — enqueue thumb warmup, serve original immediately with short cache)
     /// 3. legacy flat poster_file
     /// 4. 404
-    /// Store thumb hits and legacy flat files use immutable cache headers.
+    /// Mutable image URLs use private conditional caching with content validators.
     /// </summary>
     private async Task<IActionResult> BuildThumbResultAsync(
         string? storeDir, string? posterFile, int w, string logContext, CancellationToken ct)
@@ -1109,9 +1110,7 @@ public sealed class PostersController : ControllerBase
             _posterFetch.TryResolveStoreThumbPath(storeDir, effectiveWidth, out var thumbFull) &&
             System.IO.File.Exists(thumbFull))
         {
-            Response.Headers.CacheControl = ImmutableCacheControl;
-            Response.Headers.Vary = "Accept-Encoding";
-            return PhysicalFile(thumbFull, "image/webp");
+            return BuildAbsolutePosterFileResult(thumbFull, logContext);
         }
 
         if (!string.IsNullOrWhiteSpace(storeDir) &&
@@ -1140,7 +1139,7 @@ public sealed class PostersController : ControllerBase
         return resolved;
     }
 
-    private IActionResult BuildPosterFileResult(string storedFile, string logContext, string cacheControl = ImmutableCacheControl)
+    private IActionResult BuildPosterFileResult(string storedFile, string logContext, string cacheControl = ValidatedPosterCacheControl)
     {
         if (!TryResolveStoredPosterPath(storedFile, out var fullPath))
             return NotFound();
@@ -1172,7 +1171,7 @@ public sealed class PostersController : ControllerBase
     private IActionResult BuildAbsolutePosterFileResult(
         string fullPath,
         string logContext,
-        string cacheControl = ImmutableCacheControl,
+        string cacheControl = ValidatedPosterCacheControl,
         string? logFile = null)
     {
         try
@@ -1200,9 +1199,22 @@ public sealed class PostersController : ControllerBase
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "poster file unavailable" });
         }
 
-        Response.Headers.CacheControl = cacheControl;
+        string fingerprint;
+        try
+        {
+            using var stream = System.IO.File.OpenRead(fullPath);
+            fingerprint = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+        }
+        catch (IOException) { return StatusCode(503); }
+        catch (UnauthorizedAccessException) { return StatusCode(503); }
+        HttpContext.Items[WebSessionSecurity.PosterCacheKey] = true;
+        // Numeric timestamp URLs are not immutable: two replacements may share a second.
+        Response.Headers.CacheControl = Request.Query["v"].ToString() == fingerprint
+            ? "private, max-age=31536000, immutable" : cacheControl;
         Response.Headers.Vary = "Accept-Encoding";
-        return PhysicalFile(fullPath, GetContentTypeForPoster(fullPath));
+        return PhysicalFile(fullPath, GetContentTypeForPoster(fullPath),
+            lastModified: System.IO.File.GetLastWriteTimeUtc(fullPath),
+            entityTag: new EntityTagHeaderValue("\"" + fingerprint + "\""));
     }
 
     private static TimeSpan ResolveThumbEnqueueTimeout(AppOptions? appOptions)
