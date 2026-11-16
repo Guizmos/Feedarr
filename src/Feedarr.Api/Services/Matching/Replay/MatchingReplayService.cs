@@ -5,11 +5,11 @@ using Feedarr.Api.Services.Tmdb;
 
 namespace Feedarr.Api.Services.Matching.Replay;
 
-public sealed record ReplayRequest(int Count = 10, string Mode = "offline", int Budget = 30, long Generation = 0, ReplaySelection? Selection = null, IReadOnlyList<long>? ExpectedIds = null);
+public sealed record ReplayRequest(int Count = 10, string Mode = "offline", int Budget = 30, long Generation = 0, ReplaySelection? Selection = null, IReadOnlyList<long>? ExpectedIds = null, bool CaptureRankingInput = false);
 public sealed record ReplayDistribution(string Category, int Count, int WithoutPoster, int WithoutIdentity, int Protected);
 public sealed record ReplayEntry(string Category, bool HasPoster, bool Protected, string IdentityVerified,
     bool? DecisionDifference, bool? IdentityDifference, int? ParsedYear, int? Season, int? Episode, string Coverage, int Requests, bool Error, ShadowEntry Detail, string? ProviderEvidenceFingerprint = null,
-    bool ProviderEvidenceComplete = false, string? QueryPlanFingerprint = null, string? SearchLocale = null, int? ProviderEvidenceVersion = null);
+    bool ProviderEvidenceComplete = false, string? QueryPlanFingerprint = null, string? SearchLocale = null, int? ProviderEvidenceVersion = null, System.Text.Json.JsonElement? RankingInput = null);
 public sealed record ReplaySummary(int Accept, int Ambiguous, int Reject, int NotEvaluable, int Divergences, double AverageDurationMs);
 public sealed record ReplaySnapshot(Guid? SessionId, long Generation, string Status, string Mode, int Requested, int Total,
     int Processed, int Errors, int RequestsUsed, int RequestBudget, bool Running, string? SessionError,
@@ -122,6 +122,7 @@ public sealed partial class MatchingReplayService(MatchingReplayReader reader, I
             ct.ThrowIfCancellationRequested();
             var releases = session.Releases;
             lock (_gate) { if (!Current(session)) return; session.Status = "running"; }
+            if (session.Request.CaptureRankingInput) session.Cancellation.CancelAfter(TimeSpan.FromSeconds(60));
             using var http = session.Request.Mode == "tmdb" ? clients.CreateClient("tmdb-matching-replay") : null;
             string? providerHalted = null;
             foreach (var release in releases)
@@ -143,7 +144,7 @@ public sealed partial class MatchingReplayService(MatchingReplayReader reader, I
                     detail = detail with { Divergence = decisionDifference == true || identityDifference == true };
                     entry = new(MatchingReplayReader.CanonicalCategory(release.State.Category), release.HasPoster, release.State.Protected,
                         "unknown", decisionDifference, identityDifference, release.State.Year, release.State.Season, release.State.Episode, result.Reason ?? "complete",
-                        session.Budget.Used - requestsBefore, result.Error, detail, result.Fingerprint, result.Complete, result.QueryPlan, result.Locale, result.Fingerprint is null ? null : 1);
+                        session.Budget.Used - requestsBefore, result.Error, detail, result.Fingerprint, result.Complete, result.QueryPlan, result.Locale, result.Fingerprint is null ? null : 1, session.Request.CaptureRankingInput ? RankingCorpus.Create(result.Observation) : null);
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
                 catch (Exception)
@@ -169,6 +170,7 @@ public sealed partial class MatchingReplayService(MatchingReplayReader reader, I
     {
         IReadOnlyList<SearchCandidate> queries = Array.Empty<SearchCandidate>();
         var observed = new List<TmdbClient.ObservedSearchResult>();
+        var collectedPages = new List<CollectedSearchPage>();
         string? planFingerprint = null, locale = null;
         Evaluation NotEvaluable(string reason, bool error = false) => new(Missing(expected, reason) with { Queries = queries }, reason, error,
             observed.Count == 0 ? null : ReplayEvidence.Provider(TmdbShadowCandidateAdapter.Project(observed)), false, planFingerprint, locale);
@@ -220,6 +222,7 @@ public sealed partial class MatchingReplayService(MatchingReplayReader reader, I
                         if (response.Error is not null) return NotEvaluable(response.Error, true);
                         if ((expectedPages.HasValue && expectedPages != response.TotalPages) || (expectedTotal.HasValue && expectedTotal != response.TotalResults))
                             return NotEvaluable("provider_pagination_inconsistent");
+                        collectedPages.Add(new("tmdb", query.Title, language, page, response.TotalPages, response.Results.Count));
                         expectedPages = response.TotalPages; expectedTotal = response.TotalResults;
                         foreach (var row in response.Results)
                         {
@@ -262,14 +265,15 @@ public sealed partial class MatchingReplayService(MatchingReplayReader reader, I
                 catch (Exception ex) { return NotEvaluable("tv_evidence_" + ex.GetType().Name, true); }
             }
         }
-        var ranked = SearchCandidateRanker.Rank(new(queries, category, type == "movie" ? SearchMediaType.Movie : SearchMediaType.Series,
+        var rankingContext = new CandidateRankingContext(queries, category, type == "movie" ? SearchMediaType.Movie : SearchMediaType.Series,
             Season: new Feedarr.Api.Services.Titles.TitleParser().Parse(expected.RawTitle ?? "", category).Season,
             Episode: new Feedarr.Api.Services.Titles.TitleParser().Parse(expected.RawTitle ?? "", category).Episode,
-            AirDate: type == "tv" ? new Feedarr.Api.Services.Titles.TitleParser().Parse(expected.RawTitle ?? "", category).AirDate : null), candidates);
+            AirDate: type == "tv" ? new Feedarr.Api.Services.Titles.TitleParser().Parse(expected.RawTitle ?? "", category).AirDate : null);
+        var ranked = SearchCandidateRanker.Rank(rankingContext, candidates);
         ct.ThrowIfCancellationRequested();
         if (reader.Read(expected.Id) != expected) return NotEvaluable("persisted_state_changed_during_evaluation");
         return new(new(expected.Id, "evaluated", historical, ranked with { PreserveExisting = expected.Protected }, Array.Empty<string>(), expected.Protected)
-            { Queries = queries, ProviderCandidates = candidates, InputState = expected }, http is null ? "offline_shadow_snapshot_complete" : null, Fingerprint: ReplayEvidence.Provider(candidates), Complete: true, QueryPlan: planFingerprint, Locale: locale);
+            { Queries = queries, ProviderCandidates = candidates, InputState = expected, RankingContext = rankingContext, CollectedPages = collectedPages }, http is null ? "offline_shadow_snapshot_complete" : null, Fingerprint: ReplayEvidence.Provider(candidates), Complete: true, QueryPlan: planFingerprint, Locale: locale);
     }
     private static bool HasIdentity(MatchingShadowState state) => state.TmdbId is > 0 || state.TvdbId is > 0 || !string.IsNullOrWhiteSpace(state.ExternalId);
     private static HistoricalShadowDecision Historical(MatchingShadowState state)

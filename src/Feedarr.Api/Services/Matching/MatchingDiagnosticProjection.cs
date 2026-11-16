@@ -11,7 +11,11 @@ public sealed record ShadowCandidate(ShadowIdentity Identity, string Title, int?
 public sealed record ShadowEntry(long ReleaseId, string RawTitle, string HistoricalDecision, ShadowIdentity? HistoricalIdentity,
     double? HistoricalScore, string Decision, ShadowIdentity? SelectedIdentity, bool Divergence,
     double DurationMs, bool PreserveExisting, IReadOnlyList<string> Reasons,
-    IReadOnlyList<ShadowQuery> Queries, IReadOnlyList<ShadowCandidate> Candidates, string? RawTitleMaskReason = null);
+    IReadOnlyList<ShadowQuery> Queries, IReadOnlyList<ShadowCandidate> Candidates, string? RawTitleMaskReason = null)
+{
+    public string Outcome => Decision == "reject" ? Candidates.Count == 0 && Reasons.Contains("no-provider-results") ? "no_candidates" : "candidates_rejected"
+        : Decision == "not_evaluable" ? "coverage_incomplete" : Decision;
+}
 internal static class MatchingDiagnosticProjection
 {
     internal static ShadowEntry Project(MatchingShadowObservation observation, string? rawTitle,

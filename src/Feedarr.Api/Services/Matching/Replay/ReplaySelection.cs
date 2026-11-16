@@ -23,6 +23,7 @@ internal static class ReplaySelectionRules
             (categories.Length < 1 || categories.Length > Categories.Length) || categories.Any(c => !Categories.Contains(c, StringComparer.Ordinal)) || categories.Distinct().Count() != categories.Length ||
             ids.Length > 200 || ids.Any(id => id is < 1 or > 9007199254740991) || ids.Distinct().Count() != ids.Length ||
             (s.Method == "ids" ? ids.Length == 0 : ids.Length != 0)) throw new ArgumentException("replay_selection_invalid");
+        if (request.CaptureRankingInput && (s.Method != "ids" || ids.Length > 20)) throw new ArgumentException("corpus_requires_bounded_ids");
         return request with { ExpectedIds = request.ExpectedIds is null ? null : Array.AsReadOnly(request.ExpectedIds.ToArray()), Selection = s with { Categories = Array.AsReadOnly(categories.Order(StringComparer.Ordinal).ToArray()), ReleaseIds = Array.AsReadOnly(ids) } };
     }
     internal static IReadOnlyList<ReplayCategoryBudget> Allocate(IReadOnlyList<ReplayDistribution> distribution,

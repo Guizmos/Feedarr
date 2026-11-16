@@ -50,9 +50,9 @@ public sealed partial class PosterFetchService
             catch (ReleaseRepository.StaleMatchException) { throw; }
             catch { _logger.LogWarning("Matching V2 diagnostic persistence failed releaseId={ReleaseId}", context.ReleaseId); }
         }
-        PosterFetchResult Abstain(string reason, int status = 422)
+        PosterFetchResult Abstain(string reason, int status = 422, string? diagnosticReason = null)
         {
-            Record(reason, reason.StartsWith("not_evaluable", StringComparison.Ordinal) ? "coverage_insufficient" : "business_abstention");
+            Record(diagnosticReason ?? reason, reason.StartsWith("not_evaluable", StringComparison.Ordinal) ? "coverage_insufficient" : "business_abstention");
             _logger.LogInformation("Matching V2 video abstained releaseId={ReleaseId} reason={Reason}", context.ReleaseId, reason);
             return new(false, status, new { error = "matching_v2_abstained", reason }, context.SourceId);
         }
@@ -122,7 +122,7 @@ public sealed partial class PosterFetchService
             var ranked = SearchCandidateRanker.Rank(new(queries, parsingCategory, type == "movie" ? SearchMediaType.Movie : SearchMediaType.Series,
                 Season: parsed.Season, Episode: parsed.Episode, AirDate: type == "tv" ? parsed.AirDate : null), projected);
             if (ranked.Decision != CandidateDecision.Accept || ranked.SelectedIdentity is not { } identity)
-                return Abstain(ranked.Decision.ToString().ToLowerInvariant());
+                return Abstain(ranked.Decision.ToString().ToLowerInvariant(), diagnosticReason: ranked.Decision == CandidateDecision.Reject ? ranked.Candidates.Count == 0 ? "no_candidates" : "candidates_rejected" : "ambiguous");
             if (_releases.ReadMatchingShadowState(context.ReleaseId) != current) return Abstain("identity_changed", 409);
             _releases.ValidateMatching(context.ReleaseId);
             Enter("preparation", identity.Provider);

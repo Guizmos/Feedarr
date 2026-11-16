@@ -48,7 +48,11 @@ internal sealed record MatchingShadowObservation(long ReleaseId, string Status,
     HistoricalShadowDecision Historical, CandidateRankingResult? V2, IReadOnlyList<string> MissingInformation,
     bool PreserveExisting)
 {
+    internal IReadOnlyList<CollectedSearchPage> CollectedPages { get; init; } = Array.Empty<CollectedSearchPage>();
+    internal CandidateRankingContext? RankingContext { get; init; }
     internal MatchingShadowState? InputState { get; init; }
     internal IReadOnlyList<ProviderSearchCandidate> ProviderCandidates { get; init; } = Array.Empty<ProviderSearchCandidate>();
     internal IReadOnlyList<SearchCandidate> Queries { get; init; } = Array.Empty<SearchCandidate>();
 }
+
+internal sealed record CollectedSearchPage(string Provider, string Query, string? Language, int Page, int TotalPages, int CandidateCount);
