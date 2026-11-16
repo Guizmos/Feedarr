@@ -57,6 +57,10 @@ public sealed partial class TitleParser
         if (category is UnifiedCategory.Book or UnifiedCategory.Comic or UnifiedCategory.Audio) return null;
         var tail = raw[(candidate.Index + candidate.Length)..technical].Trim(' ', '.', '_', '-', ')', ']');
         if (suffix.Rich) tail = Regex.Replace(tail, @"(?:^|[\s._-])AD(?=$|[\s._-])", " ").Trim();
+        // Silent-language metadata is only evidence after a candidate year and
+        // before an established rich technical suffix. Never strip it from a title.
+        if (suffix.Rich)
+            tail = Regex.Replace(tail, @"(?:^|[\s._-])MUET(?=$|[\s._-])", " ").Trim(' ', '.', '_', '-');
         if (tail.Length > 0 && !IsMetadataWords(tail)) return null;
         if ((category is UnifiedCategory.Serie or UnifiedCategory.Anime) && firstSeries is not null &&
             matches.Count == 1 && tail.Length == 0) return null; // A show's own numeric title is ambiguous.
