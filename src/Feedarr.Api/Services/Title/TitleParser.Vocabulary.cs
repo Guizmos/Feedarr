@@ -5,9 +5,9 @@ namespace Feedarr.Api.Services.Titles;
 
 public sealed partial class TitleParser
 {
-    private static readonly Regex RxSeasonEpisode = new(@"(?i)\bS(?<s>\d{1,2})E(?<e>\d{1,4})(?:v\d+)?(?:E(?<e2>\d{1,4})(?:v\d+)?|-(?<e2>\d{1,4})(?:v\d+)?)?\b", RegexOptions.Compiled);
+    private static readonly Regex RxSeasonEpisode = new(@"(?i)\bS(?<s>(?:19|20)\d{2}|\d{1,2})E(?<e>\d{1,4})(?:v\d+)?(?:E(?<e2>\d{1,4})(?:v\d+)?|-(?<e2>\d{1,4})(?:v\d+)?)?\b", RegexOptions.Compiled);
     private static readonly Regex RxAltSeasonEpisode = new(@"(?i)\b(?<s>\d{1,2})x(?<e>\d{1,4})(?:v\d+)?(?:-(?<e2>\d{1,4})(?:v\d+)?)?\b", RegexOptions.Compiled);
-    private static readonly Regex RxSeasonOnly = new(@"(?i)\bS(?<s>\d{1,2})(?!E\d)", RegexOptions.Compiled);
+    private static readonly Regex RxSeasonOnly = new(@"(?i)\bS(?<s>\d{1,2})(?!\d|E\d)", RegexOptions.Compiled);
     private static readonly Regex RxSeasonWord = new(@"(?i)\b(season|saison)[\s._-]*(?<s>\d{1,2})\b", RegexOptions.Compiled);
     private static readonly Regex RxSeasonDisc = new(@"(?i)\bS(?<s>\d{1,2})D(?<d>\d{1,2})\b", RegexOptions.Compiled);
     private static readonly Regex RxEpisodeOnly = new(@"(?i)\bE(?<e>\d{1,4})\b", RegexOptions.Compiled);
