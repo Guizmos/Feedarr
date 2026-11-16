@@ -91,7 +91,13 @@ public sealed partial class PosterFetchService
                         return Abstain("not_evaluable_provider_changed_during_pagination");
                     total = response.TotalResults;
                     pages = response.TotalPages;
-                    if (pages > 3) return Abstain("not_evaluable_page_budget");
+                    // A per-query three-page cutoff rejected complete searches that fit both
+                    // existing limits. Keep the full competitor set and bound work by the
+                    // actual request allowance and ranking capacity instead.
+                    if (response.TotalResults > new CandidateRankingPolicy().MaximumResults)
+                        return Abstain("not_evaluable_result_budget");
+                    if (pages - page > 12 - used)
+                        return Abstain("not_evaluable_search_budget");
                     foreach (var result in response.Results)
                     {
                         if (!ids.Add(result.TmdbId)) return Abstain("not_evaluable_duplicate_page_identity");
