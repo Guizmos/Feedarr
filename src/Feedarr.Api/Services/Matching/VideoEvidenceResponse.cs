@@ -18,8 +18,8 @@ internal sealed record VideoEvidenceResponse(JsonElement Value)
                 ? Has(value, "name", "first_air_date", "seasons", "external_ids") && (!path.Contains("alternative_titles") || Has(value, "alternative_titles"))
                 : Has(value, "name", "premiered", "externals"));
         if (provider == "tmdb" && parts.Length == 6 && int.TryParse(parts[3], out var season) && int.TryParse(parts[5], out var episode))
-            return Has(value, "id", "show_id", "season_number", "episode_number", "air_date") &&
-                TelevisionCandidates.Number(value, "id") is > 0 && IdShow(value, parts[1]) &&
+            return Has(value, "id", "season_number", "episode_number", "air_date") &&
+                TelevisionCandidates.Number(value, "id") is > 0 && (!value.TryGetProperty("show_id", out _) || IdShow(value, parts[1])) &&
                 TelevisionCandidates.Number(value, "season_number") == season && TelevisionCandidates.Number(value, "episode_number") == episode;
         return provider == "tvmaze" && parts[2] is "episodes" or "episodesbydate" && value.ValueKind == JsonValueKind.Array &&
             value.EnumerateArray().All(e => Has(e, "id", "season", "number", "airdate") && TelevisionCandidates.Number(e, "id") is > 0 &&

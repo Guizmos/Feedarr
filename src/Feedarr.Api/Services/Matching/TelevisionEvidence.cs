@@ -81,12 +81,14 @@ internal static class TelevisionCandidates
                     var episode = await get("tmdb", $"tv/{row.Identity.Id}/season/{parsed.Season}/episode/{parsed.Episode}", ct).ConfigureAwait(false);
                     if (episode is { } e && Number(e, "id") is > 0 && Number(e, "season_number") == parsed.Season && Number(e, "episode_number") == parsed.Episode)
                     {
-                        if (Number(e, "show_id") is > 0 && Number(e, "show_id")?.ToString(CultureInfo.InvariantCulture) != row.Identity.Id)
+                        if (e.TryGetProperty("show_id", out _) && Number(e, "show_id")?.ToString(CultureInfo.InvariantCulture) != row.Identity.Id)
                             throw new InvalidDataException("tv_episode_identity_conflict");
                         seasonExists = true; episodeExists = true; airDate = Text(e, "air_date");
-                        // A requested URL alone is not independent proof of the parent series.
-                        if (Number(e, "show_id")?.ToString(CultureInfo.InvariantCulture) == row.Identity.Id)
-                            episodeIdentity = new(row.Identity, Number(e, "id")!.Value, parsed.Season.Value, parsed.Episode.Value);
+                        // The documented endpoint scopes the episode by series/season/number.
+                        // The parent details above have already verified this exact series ID;
+                        // the response must independently agree on both episode coordinates.
+                        // show_id is optional, but an explicit conflicting parent still fails above.
+                        episodeIdentity = new(row.Identity, Number(e, "id")!.Value, parsed.Season.Value, parsed.Episode.Value);
                     }
                     // 404 remains unknown; providers may not yet list a real episode.
                 }
