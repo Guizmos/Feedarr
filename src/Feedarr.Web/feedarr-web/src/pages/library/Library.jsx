@@ -460,7 +460,7 @@ export default function Library() {
     }
   }, [filters.sourceId, enabledSources, filters.limit, filters.q, filters.seen,
     filters.categoryId, filters.quality, filters.maxAgeDays, filters.viewMode,
-    filters.sortBy, filters.listSortBy, filters.listSortDir, filterApplicationType, scrollRef, setErr, setLoading]);
+    filters.sortBy, filters.listSortBy, filters.listSortDir, filterApplicationType, setErr, setLoading]);
 
   // Lock synchronously: a second click can arrive before React disables the buttons.
   const navigatePage = (direction) => {
