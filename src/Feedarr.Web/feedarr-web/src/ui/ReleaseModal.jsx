@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, Plus, Loader2, FileText } from "lucide-react";
+import { Download, Plus, Loader2 } from "lucide-react";
 import { apiPost, resolveApiUrl } from "../api/client.js";
 import Modal from "./Modal.jsx";
 import { buildIndexerPillStyle } from "../utils/sourceColors.js";
@@ -207,7 +207,6 @@ export default function ReleaseModal({
   arrStatus = null, // { inSonarr, inRadarr, inOverseerr, inJellyseerr, inSeer, sonarrUrl, radarrUrl, overseerrUrl, jellyseerrUrl, seerUrl }
   onArrStatusChange,
 }) {
-  const [page, setPage] = useState("main");
   const [arrAdding, setArrAdding] = useState(false);
   const [arrError, setArrError] = useState("");
   const [arrResult, setArrResult] = useState(null); // { status, openUrl, appName }
@@ -270,7 +269,6 @@ export default function ReleaseModal({
 
   useEffect(() => {
     if (!open) return;
-    setPage("main");
     setArrAdding(false);
     setArrError("");
     setArrResult(null);
@@ -441,7 +439,7 @@ export default function ReleaseModal({
       open={open}
       onClose={onClose}
       title={title}
-      width={920}
+      width={1240}
       modalClassName="modal--details"
       modalStyle={
         artworkAccent.key === posterSrc && artworkAccent.value
@@ -452,86 +450,113 @@ export default function ReleaseModal({
       {!item ? null : (
         <div className="releaseModal">
           <div className="releaseModal__grid">
-            <div className="releaseModal__poster">
-              {posterSrc ? (
-                <img
-                  src={posterSrc}
-                  alt={title}
-                  loading="lazy"
-                  onLoad={handlePosterLoad}
-                  onError={handlePosterError}
-                />
-              ) : (
-                <div className="releaseModal__posterFallback">??</div>
-              )}
-              {externalUrl && (
-                <a
-                  href={externalUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="releaseModal__externalLink"
-                  title="Voir sur TMDB / IGDB"
-                >
-                  i
-                </a>
-              )}
+            <div className="releaseModal__left">
+              <div className="releaseModal__poster" tabIndex={0} role="group" aria-label="Poster et informations torrent">
+                {posterSrc ? (
+                  <img
+                    src={posterSrc}
+                    alt={title}
+                    loading="lazy"
+                    onLoad={handlePosterLoad}
+                    onError={handlePosterError}
+                  />
+                ) : (
+                  <div className="releaseModal__posterFallback">??</div>
+                )}
+                {externalUrl && (
+                  <a
+                    href={externalUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="releaseModal__externalLink"
+                    title="Voir sur TMDB / IGDB"
+                  >
+                    i
+                  </a>
+                )}
+              <div className="posterViewOverlay releaseModal__torrentOverlay">
+                <div className="releaseModal__footer">
+                <div className="releaseModal__footerItem">
+                  <span className="releaseModal__footerLabel">Seeders</span>
+                  <span className="releaseModal__footerValue">{item.seeders ?? "-"}</span>
+                </div>
+                <div className="releaseModal__footerItem">
+                  <span className="releaseModal__footerLabel">Leechers</span>
+                  <span className="releaseModal__footerValue">{item.leechers ?? "-"}</span>
+                </div>
+                <div className="releaseModal__footerItem releaseModal__footerItem--center">
+                  <span className="releaseModal__footerLabel">Taille</span>
+                  <span className="releaseModal__footerValue">{item.size || "-"}</span>
+                </div>
+                <div className="releaseModal__footerItem releaseModal__footerItem--right">
+                  <span className="releaseModal__footerLabel">Publie</span>
+                  <span className="releaseModal__footerValue">{item.date || "-"}</span>
+                </div>
+              </div>
+              </div>
+              </div>
+
+
             </div>
 
             <div className="releaseModal__meta">
               <div className="releaseModal__content">
-                {page === "main" ? (
-                  <>
-                    {(pills.length > 0 || indexer) && (
-                      <div className="releaseModal__pills">
-                        <div className="releaseModal__pillsLeft">
-                          {pills.map((p, idx) => (
-                            <span
-                              key={`${p}-${idx}`}
-                              className={
-                                p === seasonEpisode
-                                  ? "banner-pill banner-pill--episode"
-                                  : p === resolution
-                                    ? resolutionClass
-                                    : p === languageLabel
-                                      ? getLanguagePillClass(languageLabel)
-                                      : "banner-pill"
-                              }
-                            >
-                              {p}
-                            </span>
-                          ))}
-                        </div>
-                        {indexer ? (
-                          <div className="releaseModal__pillsRight">
-                            <span
-                              className={`banner-pill banner-pill--indexer${indexerClass ? ` ${indexerClass}` : ""}`}
-                              style={indexerStyle || undefined}
-                            >
-                              {indexer}
-                            </span>
-                          </div>
-                        ) : null}
-                      </div>
-                    )}
-
-                    <div className="releaseModal__overview">
-                      {infoRows.length > 0 && (
-                        <div className="releaseModal__info">
-                          {infoRows.map((row) => (
-                            <div key={row.label} className="releaseModal__infoRow">
-                              <span className="releaseModal__infoLabel">{row.label}</span>
-                              <span className="releaseModal__infoValue">{row.value}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      <div className="releaseModal__overviewLabel">Synopsis</div>
-                      <div className="releaseModal__overviewText">
-                        {overview || "Aucune description disponible."}
-                      </div>
+                {(pills.length > 0 || indexer) && (
+                  <div className="releaseModal__pills">
+                    <div className="releaseModal__pillsLeft">
+                      {pills.map((p, idx) => (
+                        <span
+                          key={`${p}-${idx}`}
+                          className={
+                            p === mediaTypeLabel
+                              ? `cat-bubble cat-bubble--${normalizeCategoryGroupKey(item.mediaType || item.unifiedCategoryKey) || "unknown"}`
+                              : p === seasonEpisode
+                              ? "banner-pill banner-pill--episode"
+                              : p === resolution
+                                ? resolutionClass
+                                : p === languageLabel
+                                  ? getLanguagePillClass(languageLabel)
+                                  : "banner-pill"
+                          }
+                        >
+                          {p}
+                        </span>
+                      ))}
                     </div>
-                  </>
-                ) : (
+                    {indexer ? (
+                      <div className="releaseModal__pillsRight">
+                        <span
+                          className={`banner-pill banner-pill--indexer${indexerClass ? ` ${indexerClass}` : ""}`}
+                          style={indexerStyle || undefined}
+                        >
+                          {indexer}
+                        </span>
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+
+                <div className="releaseModal__overview">
+                  <div className="releaseModal__overviewLabel">Synopsis</div>
+                  <div className="releaseModal__overviewText">
+                    {overview || "Aucune description disponible."}
+                  </div>
+                </div>
+                {infoRows.length > 0 && (
+                  <div className="releaseModal__detailsCard">
+                    <div className="releaseModal__overviewLabel">Détails</div>
+                    <div className="releaseModal__info">
+                      {infoRows.map((row) => (
+                        <div key={row.label} className="releaseModal__infoRow">
+                          <span className="releaseModal__infoLabel">{row.label}</span>
+                          <span className="releaseModal__infoValue">{row.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <details className="releaseModal__additional" key={item.id}>
+                  <summary>Infos complémentaires</summary>
                   <div className="releaseModal__rows">
                     <div className="releaseModal__row">
                       <span className="releaseModal__label">Titre clean</span>
@@ -578,28 +603,10 @@ export default function ReleaseModal({
                       <span className="releaseModal__value">{item.id ?? "-"}</span>
                     </div>
                   </div>
-                )}
+                </details>
               </div>
 
               <div className="releaseModal__bottom">
-                <div className="releaseModal__footer">
-                  <div className="releaseModal__footerItem">
-                    <span className="releaseModal__footerLabel">Seeders</span>
-                    <span className="releaseModal__footerValue">{item.seeders ?? "-"}</span>
-                    <span className="releaseModal__footerSep">•</span>
-                    <span className="releaseModal__footerLabel">Leechers</span>
-                    <span className="releaseModal__footerValue">{item.leechers ?? "-"}</span>
-                  </div>
-                  <div className="releaseModal__footerItem releaseModal__footerItem--center">
-                    <span className="releaseModal__footerLabel">Taille</span>
-                    <span className="releaseModal__footerValue">{item.size || "-"}</span>
-                  </div>
-                  <div className="releaseModal__footerItem releaseModal__footerItem--right">
-                    <span className="releaseModal__footerLabel">Publie</span>
-                    <span className="releaseModal__footerValue">{item.date || "-"}</span>
-                  </div>
-                </div>
-
                 {/* Arr status/error message */}
                 {arrError && (
                   <div className="releaseModal__arrError">{arrError}</div>
@@ -617,19 +624,6 @@ export default function ReleaseModal({
                       <Download size={18} strokeWidth={2.5} />
                       <span className="releaseModal__expandBtnLabel">Télécharger</span>
                     </button>
-                    {page === "main" ? (
-                      <button
-                        className="btn-icon btn-icon--details releaseModal__expandBtn releaseModal__expandBtn--details"
-                        type="button"
-                        onClick={() => setPage("details")}
-                        aria-label="Afficher les détails"
-                        title="Détails"
-                      >
-                        <FileText size={18} strokeWidth={2.5} />
-                        <span className="releaseModal__expandBtnLabel">Détails</span>
-                      </button>
-                    ) : null}
-
                     {/* Integration action button */}
                     {(showSonarrBtn || showRadarrBtn || showRequestBtn) && (
                       isAlreadyInTarget ? (
@@ -695,15 +689,9 @@ export default function ReleaseModal({
                     )}
 
                   </div>
-                  {page !== "main" ? (
-                    <button className="btn-soft" type="button" onClick={() => setPage("main")}>
-                      Retour
-                    </button>
-                  ) : (
-                    <button className="btn-soft" type="button" onClick={onClose}>
-                      Fermer
-                    </button>
-                  )}
+                  <button className="btn-soft" type="button" onClick={onClose}>
+                    Fermer
+                  </button>
                 </div>
               </div>
             </div>

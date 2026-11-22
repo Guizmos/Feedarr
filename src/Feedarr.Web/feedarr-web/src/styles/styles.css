@@ -2451,6 +2451,7 @@ html.display-mode-standalone body {
 .modal--details{
   --release-artwork-accent: var(--accent, #2493b5);
   --release-card-radius: 20px;
+  --release-card-shadow: 0 4px 10px rgba(15,23,42,.08), inset 0 1px 0 var(--release-reflection);
   --release-surface: var(--panel, #fff);
   --release-surface-translucent: rgba(255,255,255,.88);
   --release-surface-soft: rgba(255,255,255,.64);
@@ -2471,14 +2472,19 @@ html.display-mode-standalone body {
     ),
     var(--release-surface);
   border-color: var(--release-border-luminous);
-  border-radius: 15px;
+  border-radius: 20px;
   box-shadow:
     0 24px 64px rgba(15,23,42,.26),
     0 8px 24px rgba(15,23,42,.14),
     inset 0 1px 0 var(--release-reflection);
-  height: min(560px, calc(100dvh - 32px));
+  height: auto;
+  max-height: min(756px, calc(100dvh - 32px - var(--safe-top, 0px) - var(--safe-bottom, 0px)));
+  max-width: 100%;
 }
 .modal--details .modal-head{
+  padding: 18px 22px;
+  gap: 16px;
+  flex-shrink: 0;
   background: var(--release-surface-soft);
   border-bottom-color: var(--release-divider);
   box-shadow: inset 0 1px 0 var(--release-reflection);
@@ -2487,7 +2493,7 @@ html.display-mode-standalone body {
   background: var(--release-surface-soft);
 }
 :root[data-theme="dark"] .modal--details{
-  --release-surface: var(--panel, #2a2a2a);
+  --release-card-shadow: 0 4px 10px rgba(0,0,0,.22), inset 0 1px 0 var(--release-reflection);  --release-surface: var(--panel, #2a2a2a);
   --release-surface-translucent: rgba(42,42,42,.90);
   --release-surface-soft: rgba(42,42,42,.68);
   --release-surface-card: rgba(255,255,255,.055);
@@ -2554,9 +2560,20 @@ html.display-mode-standalone body {
       var(--release-surface-translucent);
   }
 }
+.modal--details .modal-title{
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+.modal--details .modal-head .iconbtn{
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--release-surface-card);
+}
 .modal--details .modal-body{
+  padding: 20px;
   display: flex;
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 0;
   overflow: hidden;
 }
@@ -2676,24 +2693,28 @@ body.modal-open .content{
   padding: 4px 2px 2px;
   margin-bottom: 0;
   width: 100%;
-  height: 100%;
+  height: auto;
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-height: 0;
 }
 .releaseModal__grid{
   display:grid;
-  grid-template-columns: 280px 1fr;
-  gap: 16px;
-  flex: 1 1 auto;
-  height: 100%;
+  grid-template-columns: minmax(0, 378px) minmax(0, 1fr);
+  gap: 24px;
+  flex: 0 1 auto;
+  height: auto;
+  max-height: 100%;
   min-height: 0;
 }
 .releaseModal__meta{
+  min-width: 0;
   display:grid;
   grid-template-rows: minmax(0, 1fr) auto;
-  height: 100%;
+  /* Let the unchanged poster size the shared row; stretch the footer to its bottom. */
+  contain: size;
+  align-self: stretch;
   min-height: 0;
 }
 .releaseModal__content{
@@ -2701,36 +2722,57 @@ body.modal-open .content{
   display: flex;
   flex-direction: column;
   overflow: auto;
+  gap: 12px;
+  /* Reserve paint space inside the scrollport for the card shadows. */
+  margin: -12px -14px 0;
+  padding: 12px 14px 12px;
+  scrollbar-width: thin;
 }
 .releaseModal__bottom{
+  padding: 0;
   margin-top: 0;
-  background: var(--release-surface);
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
-@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)){
-  .releaseModal__bottom{
-    background: var(--release-surface-soft);
-  }
+.releaseModal__left{
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
 }
 .releaseModal__poster{
-  background: #e6e9f2;
-  border-radius: 18px;
+  background: var(--release-surface-card);
+  border-radius: var(--release-card-radius);
+  /* Clip the image to its corners, without stretching the frame around it. */
   overflow: hidden;
-  align-self: start;
-  margin-top: 36px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
+  align-self: center;
+  flex: 0 1 auto;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 0;
+  border: 1px solid var(--release-border-luminous);
+  box-shadow: var(--release-card-shadow);
+  display: flex;
   position: relative;
 }
 .releaseModal__poster img{
-  width:100%;
+  display: block;
+  width: auto;
   height: auto;
+  max-width: 100%;
+  max-height: min(568px, calc(100dvh - 280px));
   object-fit: contain;
-  display:block;
 }
 .releaseModal__posterFallback{
+  width: 240px;
+  max-width: 100%;
+  aspect-ratio: 2 / 3;
+  display: grid;
+  place-items: center;
   font-size: 40px;
-  opacity: .55;
+  color: var(--muted);
 }
 .releaseModal__externalLink{
   position: absolute;
@@ -2765,68 +2807,102 @@ body.modal-open .content{
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 10px;
+  margin-bottom: 0;
+  flex-wrap: wrap;
+  flex-shrink: 0;
 }
 .releaseModal__pillsLeft{
+  min-width: 0;
   display:flex;
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
 }
 .releaseModal__pillsRight{
+  min-width: 0;
+  max-width: 100%;
   margin-left: auto;
   display:flex;
   align-items: center;
 }
 .releaseModal__pillsRight .banner-pill{
-  white-space: nowrap;
+  white-space: normal;
 }
-.releaseModal__pills .banner-pill{
-  padding: 2px 6px;
-  font-size: 10px;
+.releaseModal__pills .banner-pill,
+.releaseModal__pills .cat-bubble{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: 28px;
+  height: auto;
+  padding: 6px 10px;
+  line-height: 14px;
+  font-weight: 700;
+  vertical-align: middle;
+  gap: 0;
+  text-align: center;
+  font-size: 11px;
+  border-radius: 999px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
-.releaseModal__overview{
+.releaseModal__overview,
+.releaseModal__detailsCard,
+.releaseModal__additional{
   border: 1px solid var(--release-border-luminous, var(--panel-border));
   background: var(--release-surface, var(--panel, #fff));
   border-radius: var(--release-card-radius);
-  box-shadow:
-    0 8px 22px rgba(15,23,42,.08),
-    inset 0 1px 0 var(--release-reflection, rgba(255,255,255,.4));
-  padding: 10px 12px;
-  margin-bottom: 10px;
-  font-size: 12px;
-  line-height: 1.5;
-  flex: 1 1 auto;
-  overflow: auto;
-  max-height: none;
+  box-shadow: var(--release-card-shadow);
+  padding: 18px 20px;
+  font-size: 14px;
+  line-height: 1.65;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)){
-  .releaseModal__overview{
+  .releaseModal__overview,
+  .releaseModal__detailsCard,
+  .releaseModal__additional{
     background:
       linear-gradient(145deg, var(--release-reflection), transparent 38%),
       var(--release-surface-card);
   }
 }
-:root[data-theme="dark"] .releaseModal__overview{
-  box-shadow:
-    0 10px 26px rgba(0,0,0,.22),
-    inset 0 1px 0 var(--release-reflection);
+.releaseModal__overview{
+  flex: 1 0 158px;
+  display: flex;
+  flex-direction: column;
+  max-height: 300px;
+  min-height: 0;
 }
-.releaseModal__overview .releaseModal__info{
-  margin-bottom: 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px dashed var(--release-divider, rgba(0,0,0,.12));
+.releaseModal__overviewText{
+  overflow-y: auto;
+  min-height: 0;
+  scrollbar-width: thin;
+  overscroll-behavior: contain;
+}
+.releaseModal__detailsCard .releaseModal__overviewLabel{ margin-bottom: 5px; }
+.releaseModal__detailsCard{
+  padding: 10px 14px;
+  line-height: 1.35;
+  flex-shrink: 0;
 }
 .releaseModal__info{
   display: grid;
-  grid-template-columns: 120px 1fr;
-  gap: 6px 12px;
-  margin-bottom: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px 14px;
   font-size: 12px;
 }
 .releaseModal__infoRow{
-  display: contents;
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  min-width: 0;
 }
+.releaseModal__infoRow:nth-child(n + 5){ grid-column: span 2; }
 .releaseModal__infoLabel{
   color: var(--muted);
   font-weight: 700;
@@ -2840,46 +2916,94 @@ body.modal-open .content{
   letter-spacing: .4px;
   color: var(--muted);
   text-transform: uppercase;
-  margin-bottom: 4px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
 }
 .releaseModal__overviewText{
   color: var(--text);
 }
-.releaseModal__footer{
-  margin-top: 0;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--release-divider, rgba(0,0,0,.12));
-  display:flex;
-  align-items:center;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: 12px;
+.releaseModal__poster:hover .releaseModal__torrentOverlay,
+.releaseModal__poster:focus-within .releaseModal__torrentOverlay{
+  opacity: 1;
 }
-.releaseModal__footerItem{
-  display:flex;
-  align-items:center;
-  gap: 6px;
-  color: var(--muted);
+.releaseModal__poster:focus-visible{
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
 }
-.releaseModal__footerItem--center{
-  flex: 1;
+.releaseModal__torrentOverlay{
+  background: linear-gradient(0deg, rgba(0,0,0,.9) 0%, rgba(0,0,0,.56) 40%, transparent 70%);
+}
+.releaseModal__torrentOverlay .releaseModal__footer{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 25px 10px;
+  font-size: 14px;
+  line-height: 1.35;
+}
+.releaseModal__torrentOverlay .releaseModal__footerItem{
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.releaseModal__torrentOverlay .releaseModal__footerItem:not(.releaseModal__footerItem--right){
+  align-items: center;
+  text-align: center;
+}
+.releaseModal__torrentOverlay .releaseModal__footerItem--right{
+  grid-column: 1 / -1;
+  grid-row: 1;
   justify-content: center;
+  text-align: center;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
 }
-.releaseModal__footerItem--right{
-  min-width: 140px;
-  justify-content: flex-end;
-  text-align: right;
-}
-.releaseModal__footerLabel{
+.releaseModal__torrentOverlay .releaseModal__footerLabel{
   font-weight: 700;
-  color: var(--muted);
+  color: rgba(255,255,255,.95);
 }
-.releaseModal__footerValue{
+.releaseModal__torrentOverlay .releaseModal__footerValue{
   font-weight: 800;
+  color: #fff;
+}
+/* Touch devices expose the information without requiring a hover gesture. */
+@media (hover: none), (pointer: coarse){
+  .releaseModal__torrentOverlay{ opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce){
+  .releaseModal__torrentOverlay{ transition: none; }
+}
+.releaseModal__additional{
+  flex-shrink: 0;
+  min-width: 0;
+  padding: 12px 16px;
   color: var(--text);
 }
-.releaseModal__footerSep{
-  opacity: .5;
+.releaseModal__additional summary{
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.releaseModal__additional summary:focus-visible{
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+.releaseModal__additional[open] summary{ margin-bottom: 12px; }
+.releaseModal__additional .releaseModal__rows{
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 16px;
+  overflow: visible;
+}
+.releaseModal__additional .releaseModal__row{
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 .releaseModal__rows{
   display:grid;
@@ -2905,6 +3029,8 @@ body.modal-open .content{
   word-break: break-word;
 }
 .releaseModal__actions{
+  flex-wrap: wrap;
+  align-items: center;
   display:flex;
   gap: 10px;
   margin-top: 6px;
@@ -3000,114 +3126,58 @@ body.modal-open .content{
 .releaseModal__arrSpin{
   animation: icon-spin 1s linear infinite;
 }
-.releaseModal__expandBtn{
-  --expand-width: 170px;
-  --expand-delay: 0s;
+.modal--details .releaseModal__actions :is(button, .releaseModal__arrBadge){
   box-sizing: border-box;
-  width: 32px;
-  min-width: 32px;
-  max-width: var(--expand-width);
-  padding: 0;
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
-  gap: 0;
+  gap: 7px;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  min-height: 38px;
+  padding: 8px 14px;
   border-radius: 999px;
-  overflow: hidden;
-  white-space: nowrap;
-  transition:
-    width 0.22s ease var(--expand-delay),
-    padding 0.22s ease var(--expand-delay),
-    gap 0.22s ease var(--expand-delay),
-    background 0.15s ease,
-    border-color 0.15s ease,
-    color 0.15s ease;
-}
-.releaseModal__expandBtn svg{
-  flex-shrink: 0;
-}
-.releaseModal__expandBtn:hover:not(:disabled),
-.releaseModal__expandBtn:focus-visible:not(:disabled),
-.releaseModal__expandBtn--loading,
-.releaseModal__expandBtn:disabled{
-  width: var(--expand-width);
-  padding: 0 7px;
-  justify-content: flex-start;
-  gap: 6px;
-}
-.releaseModal__expandBtn:hover:not(:disabled),
-.releaseModal__expandBtn:focus-visible:not(:disabled){
-  --expand-delay: 0.07s;
-}
-.releaseModal__expandBtnLabel{
-  display: inline-block;
-  opacity: 0;
-  max-width: 0;
-  overflow: hidden;
-  transform: translateX(-3px);
+  border: 1px solid var(--release-divider);
+  background: var(--release-surface-card);
+  color: var(--text);
+  box-shadow: inset 0 1px 0 var(--release-reflection), 0 2px 4px rgba(0,0,0,.04);
   font-size: 13px;
   font-weight: 700;
-  transition:
-    max-width 0.22s ease var(--expand-delay),
-    opacity 0.18s ease var(--expand-delay),
-    transform 0.22s ease var(--expand-delay);
+  line-height: 20px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  transform: none;
+  animation: none;
+  transition: background-color .15s ease, border-color .15s ease;
 }
-.releaseModal__expandBtn:hover:not(:disabled) .releaseModal__expandBtnLabel,
-.releaseModal__expandBtn:focus-visible:not(:disabled) .releaseModal__expandBtnLabel,
-.releaseModal__expandBtn--loading .releaseModal__expandBtnLabel,
-.releaseModal__expandBtn:disabled .releaseModal__expandBtnLabel{
-  opacity: 1;
-  max-width: 160px;
-  transform: translateX(0);
+.modal--details .releaseModal__actions :is(button, a.releaseModal__arrBadge):hover:not(:disabled){
+  background: color-mix(in srgb, var(--release-surface-card), var(--text) 5%);
+  border-color: color-mix(in srgb, var(--release-divider), var(--text) 15%);
+  transform: none;
 }
-.releaseModal__expandBtn--download{
-  --expand-width: 124px;
+.modal--details .releaseModal__actions :is(button, a.releaseModal__arrBadge):focus-visible{
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
-.releaseModal__expandBtn--details{
-  --expand-width: 98px;
+.modal--details .releaseModal__actions button:disabled{
+  opacity: .55;
+  cursor: not-allowed;
 }
-.btn-icon.releaseModal__expandBtn--add{
-  width: auto;
-  min-width: 0;
-  max-width: none;
-  padding: 0 10px;
-  justify-content: flex-start;
-  gap: 6px;
-  transition: none;
+.modal--details .releaseModal__actions .releaseModal__expandBtn--download{
+  background: color-mix(in srgb, var(--accent) 14%, var(--release-surface));
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--release-divider));
 }
-.btn-icon.releaseModal__expandBtn--add:hover:not(:disabled),
-.btn-icon.releaseModal__expandBtn--add:focus-visible:not(:disabled),
-.btn-icon.releaseModal__expandBtn--add.releaseModal__expandBtn--loading,
-.btn-icon.releaseModal__expandBtn--add:disabled{
-  width: auto;
-  min-width: 0;
-  max-width: none;
-  padding: 0 10px;
-  justify-content: flex-start;
-  gap: 6px;
+.modal--details .releaseModal__actions .releaseModal__expandBtn--download:hover{
+  background: color-mix(in srgb, var(--accent) 20%, var(--release-surface));
 }
-.releaseModal__expandBtn--add .releaseModal__expandBtnLabel{
+.releaseModal__expandBtn svg{ flex-shrink: 0; }
+.releaseModal__expandBtnLabel{
   opacity: 1;
   max-width: none;
-  transform: translateX(0);
+  transform: none;
   transition: none;
-}
-.releaseModal__expandBtn--add.btn-soft--sonarr{
-  background: rgba(59,130,246,0.25);
-}
-.releaseModal__expandBtn--add.btn-soft--radarr{
-  background: rgba(34,197,94,0.25);
-}
-.releaseModal__expandBtn--add.btn-soft--overseerr{
-  background: rgba(245,158,11,0.25);
-}
-.releaseModal__expandBtn--add.btn-soft--jellyseerr{
-  background: rgba(20,184,166,0.25);
-}
-.releaseModal__expandBtn--add.btn-soft--seer{
-  background: rgba(244,63,94,0.25);
-}
-.releaseModal__expandBtn--add:hover:not(:disabled),
-.releaseModal__expandBtn--add:focus-visible:not(:disabled){
-  box-shadow: 0 0 0 1px rgba(255,255,255,0.45), 0 0 10px rgba(255,255,255,0.2);
 }
 .btn-soft--sonarr{
   background: rgba(59,130,246,0.15);
@@ -3155,76 +3225,47 @@ body.modal-open .content{
   font-size: 12px;
 }
 
+/* Keep all content reachable on narrow or short viewports. */
+@media (max-width: 1100px){
+  .releaseModal__info, .releaseModal__additional .releaseModal__rows{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .releaseModal__infoRow:nth-child(n + 5){ grid-column: auto; }
+}
+@media (max-width: 1000px){
+  .releaseModal__grid{ grid-template-columns: minmax(0, 30%) minmax(0, 1fr); gap: 18px; }
+}
+@media (max-width: 720px), (max-height: 560px){
+  .modal--details .modal-body{ overflow-y: auto; }
+  .releaseModal, .releaseModal__grid{ height: auto; flex: 0 0 auto; }
+  .releaseModal__meta{ height: auto; contain: none; }
+  .releaseModal__content{ overflow: visible; }
+  .releaseModal__left{ overflow: visible; }
+  .releaseModal__poster{ flex: 0 0 auto; max-height: none; }
+  .releaseModal__poster img{ height: auto; max-height: 320px; }
+  .releaseModal__overview{ flex: 0 0 auto; }
+  .releaseModal__overviewText{ max-height: 240px; }
+  .releaseModal__rows{ overflow: visible; }
+}
 @media (max-width: 720px){
-  .modal--details{ height: calc(100dvh - 24px); }
-  .modal--details .modal-head{ padding: 8px 12px; }
-  .modal--details .modal-title{ font-size: 14px; }
-  .modal--details .modal-body{
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  .releaseModal__grid{
-    grid-template-columns: 1fr;
-    gap: 10px;
-  }
-  .releaseModal__poster{
-    max-height: none;
-    width: 100%;
-    height: 180px;
-    aspect-ratio: auto;
-    margin: -12px -12px 0 -12px;
-    width: calc(100% + 24px);
-    border-radius: 0;
-    flex-shrink: 0;
-    overflow: hidden;
-    position: relative;
-    margin-top: -12px;
-  }
-  .releaseModal__poster::after{
-    content: "";
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 80px;
-    background: linear-gradient(to top, var(--panel, #fff) 0%, transparent 100%);
-    pointer-events: none;
-  }
-  .releaseModal__poster img{
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    object-position: center 20%;
-  }
-  .releaseModal__content{
-    overflow: visible;
-  }
-  .releaseModal__overview{
-    flex: 1 1 auto;
-    min-height: 120px;
-    font-size: 13px;
-  }
-  .releaseModal__row{ grid-template-columns: 120px 1fr; }
-  .releaseModal__meta{ min-height: 0; height: auto; }
-  .releaseModal__actions{
-    justify-content: space-between;
-    gap: 8px;
-  }
-  .releaseModal__actionsLeft{ gap: 8px; }
-  .releaseModal__info{ grid-template-columns: 100px 1fr; }
-  .releaseModal__footer{
-    align-items: flex-start;
-    flex-direction: column;
-  }
-  .releaseModal__footerItem--center,
-  .releaseModal__footerItem--right{
-    justify-content: flex-start;
-    text-align: left;
-  }
-  .releaseModal__footerItem--right{ min-width: auto; }
-  :root[data-theme="dark"] .releaseModal__poster::after{
-    background: linear-gradient(to top, var(--panel, #1e293b) 0%, transparent 100%);
-  }
+  .modal--details .modal-head{ padding: 14px 16px; }
+  .modal--details .modal-title{ font-size: 16px; }
+  .modal--details .modal-body{ padding: 16px; }
+  .releaseModal__grid{ grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .releaseModal__poster{ max-width: min(100%, 240px); align-self: center; }
+  .releaseModal__posterFallback{ width: 100%; aspect-ratio: 2 / 3; display: grid; place-items: center; }
+  .releaseModal__overview{ padding: 16px; }
+  .releaseModal__row{ grid-template-columns: minmax(0, 100px) minmax(0, 1fr); }
+  .releaseModal__actionsLeft{ gap: 8px; min-width: 0; }
+  .releaseModal__arrBadge{ white-space: normal; overflow-wrap: anywhere; }
+}
+@media (max-width: 420px){
+  .releaseModal__info, .releaseModal__additional .releaseModal__rows{ grid-template-columns: minmax(0, 1fr); }
+}
+.modal--details .releaseModal__actions .btn-soft,
+.modal--details .releaseModal__expandBtn,
+.modal--details .releaseModal__arrBadge{
+  min-height: 36px;
+  border-radius: 999px;
+  max-width: 100%;
 }
 
 .btn-soft{

@@ -264,6 +264,7 @@ export default function TopReleases() {
   const [categorySections, setCategorySections] = useState([]);
   const [sourceId, setSourceId] = useState("");
   const [sources, setSources] = useState([]);
+  const [uiReady, setUiReady] = useState(false);
   const [viewMode, setViewMode] = useState("grid");
   const [showDedupeControl, setShowDedupeControl] = useState(false);
   const [sortMode, setSortModeState] = useState(() => normalizeTopSort(searchParams.get("sort") || readTopStorage(TOP_SORT_STORAGE_KEY)));
@@ -594,19 +595,29 @@ export default function TopReleases() {
 
   useEffect(() => {
     let cancelled = false;
+
     apiGet("/api/settings/ui")
       .then((ui) => {
         if (cancelled) return;
+
         setShowDedupeControl(!!ui?.showTop24DedupeControl);
+
         const def = String(ui?.defaultView || "grid").toLowerCase();
         const normalized = def === "cards" ? "grid" : def;
+
         if (viewOptions.some((opt) => opt.value === normalized)) {
           setViewMode(normalized);
         }
       })
       .catch((error) => {
-        console.error("Failed to load UI default view for TopReleases", error);
+        if (!cancelled) {
+          console.error("Failed to load UI default view for TopReleases", error);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setUiReady(true);
       });
+
     return () => {
       cancelled = true;
     };
@@ -657,8 +668,8 @@ export default function TopReleases() {
     [sortLabel, sinceLabel, totalItems, categorySections.length]
   );
 
-  if (loading) return <Loader />;
   if (err) return <div className="error">{err}</div>;
+  if (loading || !uiReady) return <Loader />;
 
   const globalTitle = `🏆 Top ${takeUsed} Global${selectedSourceName ? ` • ${selectedSourceName}` : ""}`;
   return (
