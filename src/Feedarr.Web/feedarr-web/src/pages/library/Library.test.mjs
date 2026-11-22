@@ -4,6 +4,11 @@ import { act } from "react";
 import { fixture } from "../../test/authDomFixture.mjs";
 const json = value => Promise.resolve(Response.json(value));
 const nav = () => document.querySelector('nav[aria-label="Pagination de la bibliothèque"]');
+async function clickPage(label) {
+  const button = nav().querySelector(`button[aria-label="${label}"]`);
+  assert.ok(button && !button.disabled, label);
+  await act(async () => button.click());
+}
 async function select(label, value) {
   const input = document.querySelector(`select[aria-label="${label}"]`); assert.ok(input, label);
   await act(async () => { input.value = value; input.dispatchEvent(new window.Event("change", { bubbles: true })); });
@@ -22,7 +27,7 @@ test("Library loads beyond 200, displays the SQL total, reaches the end and rese
       calls.push(new URLSearchParams(p));
       const totalCount = p.get("quality") ? 25 : 305;
       const start = Number(p.get("cursor") || 0), end = Math.min(totalCount, start + Number(p.get("limit")));
-      const response = { totalCount, items: Array.from({ length: end - start }, (_, i) => ({ id: start + i + 1, sourceId: i % 2 + 1, title: "Amélie", unifiedCategoryKey: "films", resolution: "1080p", publishedAt: 100 })), pagination: { hasMore: end < totalCount, nextCursor: String(end) }, facets: start ? null : { categories: ["films", "series"], qualities: ["1080p", "720p"] } };
+      const response = { totalCount, items: Array.from({ length: end - start }, (_, i) => ({ id: start + i + 1, sourceId: i % 2 + 1, title: `Release ${start + i + 1}`, unifiedCategoryKey: "films", resolution: "1080p", publishedAt: 100 })), pagination: { hasMore: end < totalCount, nextCursor: String(end) }, facets: start ? null : { categories: ["films", "series"], qualities: ["1080p", "720p"] } };
       if (holdNext && start > 0) {
         holdNext = false;
         return new Promise(resolve => { resolveOldPage = () => resolve(Response.json(response)); });
@@ -32,6 +37,15 @@ test("Library loads beyond 200, displays the SQL total, reaches the end and rese
     assert.ok(!/^\/api\/feed\/\d/.test(path), "no legacy per-source window");
     return json({});
   }, "/library?q=Amelie");
+  const content = document.querySelector(".content");
+  Object.defineProperties(content, { offsetWidth: { value: 1000 }, offsetHeight: { value: 800 } });
+  const originalRect = window.HTMLElement.prototype.getBoundingClientRect;
+  window.HTMLElement.prototype.getBoundingClientRect = function () {
+    const rect = originalRect.call(this);
+    return this.classList.contains("library-tbody-virtual") ? { ...rect.toJSON(), top: 96 } : rect;
+  };
+  const scrolls = [];
+  content.scrollTo = options => { scrolls.push(options); };
   try {
     await f.waitFor(() => document.body.textContent.includes("Résultats : 305"));
     assert.equal(nav(), null);
@@ -44,22 +58,32 @@ test("Library loads beyond 200, displays the SQL total, reaches the end and rese
     await select("Limit", "all");
     await f.waitFor(() => nav()?.textContent.includes("Page 1 sur 4"));
     assert.ok(nav().querySelector("button").disabled);
-    await f.click("Suivant");
+    await clickPage("Page suivante");
     await f.waitFor(() => nav()?.textContent.includes("Page 2 sur 4"));
     assert.equal(calls.at(-1).get("cursor"), "100");
+    assert.ok(document.body.textContent.includes("Release 101"));
+    assert.equal(document.querySelector(".library-tbody-virtual").style.height, "3900px",
+      "the virtual container must reserve all 100 rows without subtracting the 96px offset again");
+    assert.equal(scrolls.at(-1)?.top, 0);
     const count = calls.length;
-    await f.click("Précédent");
+    await clickPage("Page précédente");
     await f.waitFor(() => nav()?.textContent.includes("Page 1 sur 4"));
     assert.equal(calls.length, count);
-    await f.click("Suivant");
+    assert.ok(document.body.textContent.includes("Release 1"));
+    assert.ok(!document.body.textContent.includes("Release 101"));
+    await clickPage("Page suivante");
     await f.waitFor(() => nav()?.textContent.includes("Page 2 sur 4"));
     assert.equal(calls.length, count);
-    await f.click("Suivant");
+    await clickPage("Page suivante");
     await f.waitFor(() => nav()?.textContent.includes("Page 3 sur 4"));
-    await f.click("Suivant");
+    assert.equal(calls.at(-1).get("cursor"), "200");
+    assert.ok(document.body.textContent.includes("Release 201"));
+    await clickPage("Page suivante");
     await f.waitFor(() => nav()?.textContent.includes("Page 4 sur 4"));
+    assert.equal(calls.at(-1).get("cursor"), "300");
+    assert.ok(document.body.textContent.includes("Release 301"));
     assert.ok(nav().querySelectorAll("button")[1].disabled);
-    assert.equal(nav().style.justifyContent, "center");
+
     await f.click("Filtre"); await select("Qualité", "720p");
     await f.waitFor(() => document.body.textContent.includes("Résultats : 25") && nav()?.textContent.includes("Page 1 sur 1"));
     assert.equal(calls.at(-1).get("cursor"), null);
@@ -69,11 +93,11 @@ test("Library loads beyond 200, displays the SQL total, reaches the end and rese
     await select("Qualité", "");
     await f.waitFor(() => nav()?.textContent.includes("Page 1 sur 4"));
     holdNext = true;
-    await f.click("Suivant");
+    await clickPage("Page suivante");
     await f.waitFor(() => resolveOldPage);
     await select("Qualité", "1080p");
     await f.waitFor(() => document.body.textContent.includes("Résultats : 25") && nav()?.textContent.includes("Page 1 sur 1"));
     await act(async () => resolveOldPage());
     assert.ok(nav().textContent.includes("Page 1 sur 1"));
-  } finally { await f.close(); }
+  } finally { window.HTMLElement.prototype.getBoundingClientRect = originalRect; await f.close(); }
 });

@@ -232,7 +232,7 @@ function LibraryPoster({
     [cardSize],
   );
 
-  const totalHeight = Math.max(0, virtualizer.getTotalSize() - scrollMargin);
+  const totalHeight = Math.max(0, virtualizer.getTotalSize());
 
   return (
     <div

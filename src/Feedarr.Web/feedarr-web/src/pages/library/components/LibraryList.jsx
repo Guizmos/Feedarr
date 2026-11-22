@@ -151,7 +151,7 @@ function LibraryList({
       <div
         ref={tbodyRef}
         className="library-tbody-virtual"
-        style={{ height: `${virtualizer.getTotalSize() - scrollMargin}px`, position: "relative" }}
+        style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}
       >
         {virtualizer.getVirtualItems().map((virtualItem) => {
           const it = items[virtualItem.index];

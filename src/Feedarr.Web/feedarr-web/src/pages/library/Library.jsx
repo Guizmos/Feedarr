@@ -1,5 +1,5 @@
 import LibraryWelcome from "./components/LibraryWelcome.jsx";
-import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { apiGet, apiPost } from "@api/client.js";
 import Loader from "@ui/Loader.jsx";
 import ErrorBoundary from "@ui/ErrorBoundary.jsx";
@@ -11,7 +11,7 @@ import { useSubbarSetter } from "@layout/useSubbar.js";
 import useArrApps from "@hooks/useArrApps.js";
 import { triggerPosterPolling } from "@hooks/usePosterPollingService.js";
 import { normalizeRequestMode } from "@utils/appTypes.js";
-import { LayoutGrid } from "lucide-react";
+import { ChevronLeft, ChevronRight, LayoutGrid } from "lucide-react";
 import { getActiveUiLanguage } from "../../app/locale.js";
 import { normalizeCategoryGroupKey } from "../../domain/categories/index.js";
 import { useScrollContainer } from "../../context/ScrollContainerContext.js";
@@ -277,6 +277,7 @@ export default function Library() {
   const arrRequestIdRef = useRef(0);
   const loadAbortRef = useRef(null);
   const loadRequestIdRef = useRef(0);
+  const loadInFlightRef = useRef(false);
   const manualSearchAbortRef = useRef(null);
   const manualSearchRequestIdRef = useRef(0);
 
@@ -393,6 +394,7 @@ export default function Library() {
     const abortController = new AbortController();
     loadAbortRef.current = abortController;
     const requestId = ++loadRequestIdRef.current;
+    loadInFlightRef.current = true;
     const isLatestRequest = () =>
       loadRequestIdRef.current === requestId && !abortController.signal.aborted;
 
@@ -447,18 +449,34 @@ export default function Library() {
       if (result.facets) setFacets(result.facets);
       setArrStatusMap(Object.fromEntries(result.items.filter(it => it.libraryArrStatus).map(it => [it.id, it.libraryArrStatus])));
       setPage({ cursor, nextCursor: result.nextCursor, previous });
-      scrollRef?.current?.scrollTo({ top: 0, behavior: "instant" });
     } catch (e) {
       if (!isLatestRequest()) return;
       setErr("Impossible de charger les releases. Réessayez."); setItems([]);
     } finally {
       if (isLatestRequest()) {
+        loadInFlightRef.current = false;
         setLoading(false);
       }
     }
   }, [filters.sourceId, enabledSources, filters.limit, filters.q, filters.seen,
     filters.categoryId, filters.quality, filters.maxAgeDays, filters.viewMode,
     filters.sortBy, filters.listSortBy, filters.listSortDir, filterApplicationType, scrollRef, setErr, setLoading]);
+
+  // Lock synchronously: a second click can arrive before React disables the buttons.
+  const navigatePage = (direction) => {
+    if (loading || loadInFlightRef.current) return;
+    if (direction === "previous") {
+      if (!page.previous.length) return;
+      void load(page.previous.at(-1), page.previous.slice(0, -1), true);
+    } else if (page.nextCursor) {
+      void load(page.nextCursor, [...page.previous, page.cursor], true);
+    }
+  };
+
+  // Wait until the new list has mounted before resetting its scroll container.
+  useLayoutEffect(() => {
+    if (!loading) scrollRef?.current?.scrollTo({ top: 0, behavior: "instant" });
+  }, [page, loading, scrollRef]);
 
   useEffect(() => {
     posterRefreshRef.current.attempts = 0;
@@ -1280,13 +1298,16 @@ export default function Library() {
       )}
 
       {!sourcesLoading && !sourcesError && !err && totalCount !== null && filters.limit === "all" && (
-        <nav aria-label="Pagination de la bibliothèque" aria-busy={loading}
-          style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "0.75rem", margin: "1.5rem 0", width: "100%", gridColumn: "1 / -1" }}>
-          <button type="button" className="btn" disabled={loading || !page.previous.length}
-            onClick={() => load(page.previous.at(-1), page.previous.slice(0, -1), true)}>Précédent</button>
+        <nav className="library-pagination" aria-label="Pagination de la bibliothèque" aria-busy={loading}>
+          <button type="button" className="btn library-pagination__button" disabled={loading || !page.previous.length}
+            aria-label="Page précédente" title="Page précédente" onClick={() => navigatePage("previous")}>
+            <ChevronLeft size={18} aria-hidden="true" />
+          </button>
           <span className="muted" aria-live="polite">Page {page.previous.length + 1} sur {Math.max(1, Math.ceil(totalCount / 100))}</span>
-          <button type="button" className="btn" disabled={loading || !page.nextCursor}
-            onClick={() => load(page.nextCursor, [...page.previous, page.cursor], true)}>Suivant</button>
+          <button type="button" className="btn library-pagination__button" disabled={loading || !page.nextCursor}
+            aria-label="Page suivante" title="Page suivante" onClick={() => navigatePage("next")}>
+            <ChevronRight size={18} aria-hidden="true" />
+          </button>
         </nav>
       )}
 
