@@ -29,6 +29,19 @@ public sealed class VideoMatchingFailureTests
         Assert.Equal(422, VideoMatchingFailure.Classify(new InvalidOperationException(), "ranking").Status);
     }
     [Fact]
+    public void PublicationErrorsAreRetryableWithoutReclassifyingCollectionOrProgrammingErrors()
+    {
+        foreach (var error in new Exception[] { new InvalidDataException("private"), new IOException("private"), new Microsoft.Data.Sqlite.SqliteException("private", 19) })
+        {
+            var failure = VideoMatchingFailure.Classify(error, "publication");
+            Assert.Equal(503, failure.Status);
+            Assert.Equal("publication_error", failure.Category);
+            Assert.DoesNotContain("private", failure.ToString());
+        }
+        Assert.Equal(422, VideoMatchingFailure.Classify(new InvalidDataException(), "collection").Status);
+        Assert.Equal(422, VideoMatchingFailure.Classify(new InvalidOperationException(), "publication").Status);
+    }
+    [Fact]
     public async Task ProviderParseFailurePersistsSafeReasonWithoutPartialIdentity()
     {
         using var rig = new PosterMatchingContractTestRig(PosterContractScenario.SeriesTvmazeMissTmdb,

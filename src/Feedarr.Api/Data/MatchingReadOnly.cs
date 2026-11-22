@@ -19,6 +19,7 @@ internal static class MatchingReadOnly
     internal static MatchingShadowState? ReadState(SqliteConnection connection, long id) =>
         connection.QueryFirstOrDefault<MatchingShadowState>("""
             SELECT r.id Id, r.entity_id EntityId, me.match_revision Revision,
+                   r.raw_json RssEvidenceJson,
                    r.title RawTitle, r.title_clean TitleClean, r.year Year, r.unified_category Category,
                    r.season Season, r.episode Episode, r.media_type MediaType,
                    r.category_id CategoryId,r.std_category_id StdCategoryId,r.spec_category_id SpecCategoryId,r.category_ids CategoryIds,

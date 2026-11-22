@@ -8,6 +8,20 @@ namespace Feedarr.Api.Data.Repositories;
 
 public sealed partial class ReleaseRepository
 {
+    internal int? FindVerifiedRssTmdbIdentity(string provider, string externalId, string type)
+    {
+        if (provider is not ("imdb" or "tvdb") || type is not ("movie" or "tv")) return null;
+        using var conn = _db.Open();
+        var ids = conn.Query<int>("""
+            SELECT DISTINCT tmdb_id FROM media_entities
+            WHERE ext_snapshot_version=1 AND ext_provider='tmdb'
+              AND ext_provider_id=CAST(tmdb_id AS TEXT) AND tmdb_id>0 AND tmdb_media_type=@type
+              AND ((@provider='imdb' AND imdb_id=@externalId) OR (@provider='tvdb' AND tvdb_id=@externalId))
+            LIMIT 2
+            """, new { provider, externalId, type }).ToArray();
+        return ids.Length == 1 ? ids[0] : null;
+    }
+
     // Shared matching publication boundary, using the historical writers' exact SQL/helpers.
     // The complete image already exists; no network or filesystem IO inside this transaction.
     internal void PublishAcceptedVideo(long id, string provider, string providerId, int? tmdbId, string? type,

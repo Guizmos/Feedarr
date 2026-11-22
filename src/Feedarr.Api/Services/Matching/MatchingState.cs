@@ -10,6 +10,7 @@ internal sealed record MatchingShadowState
     public long? EntityId { get; init; }
     public string? Revision { get; init; }
     public string? RawTitle { get; init; }
+    public string? RssEvidenceJson { get; init; }
     public string? TitleClean { get; init; }
     public int? Year { get; init; }
     public string? Category { get; init; }

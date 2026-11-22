@@ -33,6 +33,8 @@ public sealed partial class TitleParser
 
     private static Match? FindVideoReleaseYear(string raw, UnifiedCategory category, TechnicalSuffix suffix)
     {
+        if (category == UnifiedCategory.Film && FindFilmEditionEvidence(raw, suffix) is { } filmEdition)
+            return filmEdition.Year;
         var matches = FindYearCandidates(raw);
         if (matches.Count == 0) return null; // A leading number belongs to the title.
         var explicitYear = matches.LastOrDefault(m => IsExplicitYear(raw, m));
@@ -80,6 +82,8 @@ public sealed partial class TitleParser
     private static string CleanContextualTitle(string raw, UnifiedCategory category, ParsedTitle parsed, TechnicalSuffix suffix, Match? year)
     {
         var boundary = FindTitleBoundaryForYear(raw, suffix, year);
+        if (category == UnifiedCategory.Film && FindFilmEditionEvidence(raw, suffix) is { } edition)
+            boundary = Math.Min(boundary, edition.TitleEnd);
         if (category is UnifiedCategory.Serie or UnifiedCategory.Anime or UnifiedCategory.Emission)
         {
             foreach (var rx in new[] { RxSeasonEpisode, RxAltSeasonEpisode, RxSeasonDisc, RxSeasonOnly, RxSeasonWord, RxEpisodeOnly, RxSYearEpisode })
@@ -116,6 +120,9 @@ public sealed partial class TitleParser
                 @"(?i)^[\s._-]*" + Regex.Escape(flag.Groups["tag"].Value) + @"\b"))
                 title = title[..flag.Index];
         }
+        // A season and an uppercase pack-like word do not distinguish a pack
+        // from a genuine title word. Only a pack year range supplies extra context;
+        // the existing metadata-chain cleanup remains available in TrimVideoSuffix.
         title = TrimVideoSuffix(title, category, boundary < raw.Length, hasPackRange,
             suffix.Rich);
         return FinishTitle(title);

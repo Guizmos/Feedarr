@@ -44,7 +44,12 @@ public sealed class EpisodeCalendarTests
         if (scenario == "homonym")
         {
             Assert.Equal(2, rows.Length);
-            Assert.Empty(rows[0].KnownExternalIdentities ?? Array.Empty<SearchIdentity>());
+            // Official catalogue IDs are now retained for RSS corroboration.
+            // Different TVDB IDs must still prevent a cross-provider merge.
+            Assert.Contains(new SearchIdentity("tvdb", SearchMediaType.Series, "100"), rows[0].KnownExternalIdentities!);
+            Assert.Contains(new SearchIdentity("tvdb", SearchMediaType.Series, "200"), rows[1].KnownExternalIdentities!);
+            Assert.DoesNotContain(new SearchIdentity("tvmaze", SearchMediaType.Series, "2"), rows[0].KnownExternalIdentities!);
+            Assert.All(rows, row => Assert.Null(row.Television?.CorroboratingIdentity));
             Assert.NotEqual(CandidateDecision.Accept, result.Decision);
         }
         else

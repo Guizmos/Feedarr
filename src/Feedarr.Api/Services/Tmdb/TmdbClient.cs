@@ -10,7 +10,7 @@ namespace Feedarr.Api.Services.Tmdb;
 
 public sealed partial class TmdbClient : IDisposable
 {
-    public sealed record SearchResult(int TmdbId, string Title, string? OriginalTitle, string? PosterPath, string MediaType, int? Year, string? OriginalLanguage);
+    public sealed record SearchResult(int TmdbId, string Title, string? OriginalTitle, string? PosterPath, string MediaType, int? Year, string? OriginalLanguage, string? Overview = null);
     public sealed record DetailsResult(
         string? Title,
         string? Overview,
@@ -360,7 +360,7 @@ public sealed partial class TmdbClient : IDisposable
     internal Task<DetailsResult?> GetMoviePublicationDetailsAsync(int tmdbId, CancellationToken ct, bool forceRefresh = false)
         => GetPublicationDetailsAsync(tmdbId, "movie", ct, forceRefresh);
 
-    private async Task<DetailsResult?> GetMovieDetailsCoreAsync(int tmdbId, CancellationToken ct, bool verifyIdentity)
+    private async Task<DetailsResult?> GetMovieDetailsCoreAsync(int tmdbId, CancellationToken ct, bool verifyIdentity, Action? identityVerified = null)
     {
         var key = TryGetApiKey();
         if (string.IsNullOrWhiteSpace(key)) return null;
@@ -381,6 +381,7 @@ public sealed partial class TmdbClient : IDisposable
         if (verifyIdentity && (!MatchesResponseIdentity(r.Id, tmdbId) ||
             (r.MediaType is { } media && (media.ValueKind != JsonValueKind.String || media.GetString() != "movie"))))
             throw new InvalidDataException("tmdb_details_identity_mismatch");
+        if (verifyIdentity && !string.IsNullOrWhiteSpace(r.Title)) identityVerified?.Invoke();
         var credits = await GetMovieCreditsAsync(tmdbId, mediaInfoLanguage, ct, verifyIdentity).ConfigureAwait(false);
         if (verifyIdentity && credits is null) throw new InvalidDataException("tmdb_credits_unavailable");
         return new DetailsResult(
@@ -404,6 +405,11 @@ public sealed partial class TmdbClient : IDisposable
     internal Task<DetailsResult?> GetTvPublicationDetailsAsync(int tmdbId, CancellationToken ct, bool forceRefresh = false)
         => GetPublicationDetailsAsync(tmdbId, "tv", ct, forceRefresh);
 
+    // Report existence/type before credits: a later metadata failure must never
+    // send an authoritative RSS identity back through textual selection.
+    internal Task<DetailsResult?> GetRssPublicationDetailsAsync(int id, string type, CancellationToken ct, Action identityVerified)
+        => type == "tv" ? GetTvDetailsCoreAsync(id, ct, true, identityVerified) : GetMovieDetailsCoreAsync(id, ct, true, identityVerified);
+
     private Task<DetailsResult?> GetPublicationDetailsAsync(int id, string type, CancellationToken ct, bool forceRefresh)
     {
         Task<DetailsResult?> Fetch(CancellationToken token) => type == "tv"
@@ -415,7 +421,7 @@ public sealed partial class TmdbClient : IDisposable
         return _matchingResponses.GetAsync($"publication:{credential}:{type}:{id}:{GetMediaInfoLanguage()}", Fetch, details => !string.IsNullOrWhiteSpace(details.Title), ct);
     }
 
-    private async Task<DetailsResult?> GetTvDetailsCoreAsync(int tmdbId, CancellationToken ct, bool verifyIdentity)
+    private async Task<DetailsResult?> GetTvDetailsCoreAsync(int tmdbId, CancellationToken ct, bool verifyIdentity, Action? identityVerified = null)
     {
         var key = TryGetApiKey();
         if (string.IsNullOrWhiteSpace(key)) return null;
@@ -433,7 +439,10 @@ public sealed partial class TmdbClient : IDisposable
             return null;
         }
         if (r is null) return null;
-        if (verifyIdentity && !MatchesResponseIdentity(r.Id, tmdbId)) throw new InvalidDataException("tmdb_details_identity_mismatch");
+        if (verifyIdentity && (!MatchesResponseIdentity(r.Id, tmdbId) ||
+            (r.MediaType is { } media && (media.ValueKind != JsonValueKind.String || media.GetString() != "tv"))))
+            throw new InvalidDataException("tmdb_details_identity_mismatch");
+        if (verifyIdentity && !string.IsNullOrWhiteSpace(r.Name)) identityVerified?.Invoke();
         var credits = await GetTvCreditsAsync(tmdbId, mediaInfoLanguage, ct, verifyIdentity).ConfigureAwait(false);
         if (verifyIdentity && credits is null) throw new InvalidDataException("tmdb_credits_unavailable");
         var runtime = r.EpisodeRunTime?.FirstOrDefault(x => x > 0);
@@ -466,6 +475,8 @@ public sealed partial class TmdbClient : IDisposable
 
     private sealed class SearchItem
     {
+        [JsonPropertyName("overview")]
+        public string? Overview { get; set; }
         [JsonPropertyName("media_type")]
         public JsonElement? MediaType { get; set; }
         [JsonPropertyName("id")]
@@ -576,6 +587,8 @@ public sealed partial class TmdbClient : IDisposable
 
     private sealed class TvDetailsResponse
     {
+        [JsonPropertyName("media_type")]
+        public JsonElement? MediaType { get; set; }
         [JsonPropertyName("id")] public JsonElement? Id { get; set; }
         [JsonPropertyName("name")]
         public string? Name { get; set; }

@@ -110,7 +110,19 @@ internal static class TelevisionCandidates
                         episodeIdentity = new(row.Identity, Number(matches[0], "id")!.Value, parsed.Season.Value, parsed.Episode.Value);
                 }
             }
-            rows[i] = row with { OfficialTitles = titles, Season = seasonExists == true ? parsed.Season : null,
+            var externalIds = (row.KnownExternalIdentities ?? Array.Empty<SearchIdentity>()).ToList();
+            var externalField = row.Identity.Provider == "tmdb" ? "external_ids" : "externals";
+            if (details.TryGetProperty(externalField, out var externalData))
+            {
+                var tvdbId = Number(externalData, row.Identity.Provider == "tmdb" ? "tvdb_id" : "thetvdb");
+                var imdbId = Text(externalData, row.Identity.Provider == "tmdb" ? "imdb_id" : "imdb");
+                if (tvdbId is > 0) externalIds.Add(new("tvdb", SearchMediaType.Series, tvdbId.Value.ToString(CultureInfo.InvariantCulture)));
+                if (imdbId is not null && System.Text.RegularExpressions.Regex.IsMatch(imdbId, @"^tt\d{7,10}$"))
+                    externalIds.Add(new("imdb", SearchMediaType.Series, imdbId));
+            }
+            var overview = Text(details, row.Identity.Provider == "tmdb" ? "overview" : "summary");
+            rows[i] = row with { OfficialTitles = titles, KnownExternalIdentities = externalIds.Distinct().ToArray(),
+                OfficialOverviews = (row.OfficialOverviews ?? Array.Empty<string>()).Concat(overview is null ? Array.Empty<string>() : new[] { overview }).Distinct().ToArray(), Season = seasonExists == true ? parsed.Season : null,
                 Episode = episodeExists == true ? parsed.Episode : null, Television = new(row.Identity, seasonExists, episodeExists, airDate, EpisodeIdentity: episodeIdentity,
                     AirDates: airDate is null ? Array.Empty<EpisodeAirDate>() : new[] { new EpisodeAirDate(row.Identity, airDate) }) };
         }
@@ -144,7 +156,10 @@ internal static class TelevisionCandidates
                     episode is null || otherEpisode is null || episode.Series != canonical.Identity ||
                     otherEpisode.Series != enrichedMaze.Identity || episode.Season != otherEpisode.Season || episode.Number != otherEpisode.Number))
                     throw new InvalidDataException("tv_episode_date_conflict");
-                rows[index] = canonical with { OfficialTitles = (canonical.OfficialTitles ?? Array.Empty<OfficialProviderTitle>())
+                rows[index] = canonical with {
+                    OfficialOverviews = (canonical.OfficialOverviews ?? Array.Empty<string>())
+                        .Concat(enrichedMaze.OfficialOverviews ?? Array.Empty<string>()).Distinct().ToArray(),
+                    OfficialTitles = (canonical.OfficialTitles ?? Array.Empty<OfficialProviderTitle>())
                     .Append(new(Text(show, "name")!, tmdb.Identity, ProviderTitleKind.Alternative, ProviderTitleSource.AlternativeTitlesEndpoint)).ToArray(),
                     Season = canonical.Season ?? enrichedMaze.Season, Episode = canonical.Episode ?? enrichedMaze.Episode,
                     Television = canonical.Television is { } proof && enrichedMaze.Television is { } mazeProof
@@ -153,7 +168,8 @@ internal static class TelevisionCandidates
                             SeasonExists = proof.SeasonExists ?? mazeProof.SeasonExists, EpisodeExists = proof.EpisodeExists ?? mazeProof.EpisodeExists,
                             CorroboratingIdentity = tmdb.Year.HasValue && enrichedMaze.Year.HasValue &&
                                 Math.Abs((long)tmdb.Year.Value - enrichedMaze.Year.Value) <= new CandidateRankingPolicy().ParsedYearTolerance ? maze.Identity : null } : canonical.Television,
-                    KnownExternalIdentities = (canonical.KnownExternalIdentities ?? Array.Empty<SearchIdentity>()).Append(maze.Identity).ToArray() };
+                    KnownExternalIdentities = (canonical.KnownExternalIdentities ?? Array.Empty<SearchIdentity>())
+                        .Concat(enrichedMaze.KnownExternalIdentities ?? Array.Empty<SearchIdentity>()).Append(maze.Identity).Distinct().ToArray() };
                 rows.RemoveAll(r => r.Identity == maze.Identity);
             }
         }

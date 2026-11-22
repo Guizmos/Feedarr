@@ -67,47 +67,50 @@ public sealed partial class PosterFetchService
             var parsingCategory = type == "tv" && context.UnifiedCategory is not (UnifiedCategory.Serie or UnifiedCategory.Emission)
                 ? new TitleParser().Parse(current.RawTitle ?? "", UnifiedCategory.Emission).AirDate is not null ? UnifiedCategory.Emission : UnifiedCategory.Serie
                 : context.UnifiedCategory == UnifiedCategory.Autre ? UnifiedCategory.Film : context.UnifiedCategory;
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(60));
+            var rssEvidence = RssMatchingEvidence.Read(current.RssEvidenceJson);
+            if (await TryFetchRssIdentityAsync(context, current, rssEvidence, timeout.Token, Enter,
+                error => Record("derived_pending", error is OperationCanceledException ? "cancellation" : "materialization_error", error.GetType().Name)).ConfigureAwait(false) is { } direct)
+                return direct;
             var queries = SearchCandidateGenerator.Generate(new(current.RawTitle ?? "", parsingCategory));
             if (queries.Count == 0) return Abstain("no_query");
             // Explicitly bounded plan: every generated title, configured locale + English official search fields,
             // unfiltered years, and every page. Any uncovered part abstains, even after an excellent hit.
-            var observed = new List<TmdbClient.ObservedSearchResult>();
+            IReadOnlyList<TmdbClient.ObservedSearchResult> observed = Array.Empty<TmdbClient.ObservedSearchResult>();
             var used = 0;
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromSeconds(60));
+            var searchQueries = 0;
+            var searchRequests = 0;
+            var pagesReceived = 0;
             if (type == "movie" || _tmdb.MatchingConfigured)
-            foreach (var title in queries.Select(q => q.Title).Distinct(StringComparer.Ordinal))
-            foreach (var language in _tmdb.VideoMatchingLanguages)
             {
-                var pages = 1;
-                int? total = null;
-                var ids = new HashSet<int>();
-                for (var page = 1; page <= pages; page++)
+                var collection = await VideoSearchCollector.CollectAsync(queries.Select(q => q.Title),
+                    _tmdb.VideoMatchingLanguages,
+                    (title, language, page, token) => RunTmdbAsync(
+                        inner => _tmdb.SearchVideoMatchingPageAsync(title, language, page, type, inner), token),
+                    timeout.Token).ConfigureAwait(false);
+                used = searchRequests = collection.Counters.SearchRequests;
+                searchQueries = collection.Counters.SearchQueries;
+                pagesReceived = collection.Counters.PagesReceived;
+                if (!collection.Complete)
                 {
-                    if (++used > 12) return Abstain("not_evaluable_search_budget");
-                    var response = await RunTmdbAsync(inner => _tmdb.SearchVideoMatchingPageAsync(title, language, page, type, inner), timeout.Token).ConfigureAwait(false);
-                    if (response is null) return Abstain("not_evaluable_provider_coverage");
-                    if (total.HasValue && (response.TotalResults != total || response.TotalPages != pages))
-                        return Abstain("not_evaluable_provider_changed_during_pagination");
-                    total = response.TotalResults;
-                    pages = response.TotalPages;
-                    // A per-query three-page cutoff rejected complete searches that fit both
-                    // existing limits. Keep the full competitor set and bound work by the
-                    // actual request allowance and ranking capacity instead.
-                    if (response.TotalResults > new CandidateRankingPolicy().MaximumResults)
-                        return Abstain("not_evaluable_result_budget");
-                    if (pages - page > 12 - used)
-                        return Abstain("not_evaluable_search_budget");
-                    foreach (var result in response.Results)
-                    {
-                        if (!ids.Add(result.TmdbId)) return Abstain("not_evaluable_duplicate_page_identity");
-                        observed.Add(new(result, language));
-                    }
+                    if (collection.FailureReason == "not_evaluable_search_budget" &&
+                        VideoResultBudgetDiagnostic.CheckSearchPages(collection.RequiredPages,
+                            VideoSearchCollector.MaximumPages, collection.Counters) is { } pageBudget)
+                        pageBudget.Log(_logger, context.ReleaseId, context.UnifiedCategory);
+                    return Abstain(collection.FailureReason!);
                 }
+                observed = collection.Observed;
             }
             if (type == "tv" && !_tmdb.MatchingConfigured && !context.TvmazeEnabled) return Abstain("not_evaluable_no_tv_provider");
-            var projected = TmdbShadowCandidateAdapter.Project(observed);
-            if (projected.Length > new CandidateRankingPolicy().MaximumResults) return Abstain("not_evaluable_result_budget");
+            var projected = TmdbShadowCandidateAdapter.Project(observed,
+                new(queries, parsingCategory, type == "movie" ? SearchMediaType.Movie : SearchMediaType.Series));
+            if (VideoResultBudgetDiagnostic.CheckProjection(projected.Length, new CandidateRankingPolicy().MaximumResults,
+                new(searchQueries, searchRequests, pagesReceived, observed.Count)) is { } projectionBudget)
+            {
+                projectionBudget.Log(_logger, context.ReleaseId, context.UnifiedCategory);
+                return Abstain(VideoResultBudgetDiagnostic.AbstentionReason, diagnosticReason: projectionBudget.Reason);
+            }
             Enter("enrichment", null);
             if (type == "tv")
                 projected = await TelevisionCandidates.EnrichAsync(queries, parsingCategory, current.RawTitle ?? "", projected,
@@ -117,10 +120,17 @@ public sealed partial class PosterFetchService
                         return evidenceProvider == "tmdb" ? await RunTmdbAsync(inner => _tmdb.GetTelevisionEvidenceAsync(path, inner), token).ConfigureAwait(false) :
                             await RunTvMazeAsync(inner => _tvmaze.GetMatchingEvidenceAsync(path, inner), token).ConfigureAwait(false);
                     }, context.TvmazeEnabled, timeout.Token).ConfigureAwait(false);
+            if (type == "movie" && parsingCategory == UnifiedCategory.Film)
+            {
+                provider = "tmdb";
+                projected = await MovieTitleCandidates.EnrichAsync(new(queries, parsingCategory, SearchMediaType.Movie, RssEvidence: rssEvidence), projected,
+                    (id, token) => RunTmdbAsync(inner => _tmdb.GetMovieMatchingTitlesAsync(id, inner), token),
+                    timeout.Token).ConfigureAwait(false);
+            }
             var parsed = new TitleParser().Parse(current.RawTitle ?? "", parsingCategory);
             Enter("ranking", null);
             var ranked = SearchCandidateRanker.Rank(new(queries, parsingCategory, type == "movie" ? SearchMediaType.Movie : SearchMediaType.Series,
-                Season: parsed.Season, Episode: parsed.Episode, AirDate: type == "tv" ? parsed.AirDate : null), projected);
+                Season: parsed.Season, Episode: parsed.Episode, AirDate: type == "tv" ? parsed.AirDate : null, RssEvidence: rssEvidence), projected);
             if (ranked.Decision != CandidateDecision.Accept || ranked.SelectedIdentity is not { } identity)
                 return Abstain(ranked.Decision.ToString().ToLowerInvariant(), diagnosticReason: ranked.Decision == CandidateDecision.Reject ? ranked.Candidates.Count == 0 ? "no_candidates" : "candidates_rejected" : "ambiguous");
             if (_releases.ReadMatchingShadowState(context.ReleaseId) != current) return Abstain("identity_changed", 409);

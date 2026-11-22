@@ -91,6 +91,8 @@ public sealed class TorznabRssParser
 
             var desc = (string?)it.Element("description") ?? (string?)it.Element("summary");
 
+            item.Description = desc;
+
             // Certains indexers mettent "seeders/leechers" ou "grabs" en texte.
             if (item.Seeders is null || item.Leechers is null || item.Grabs is null)
             {

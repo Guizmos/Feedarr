@@ -131,7 +131,7 @@ public sealed partial class ReleaseRepository
                     @size, @seed, @leech, @grabs, @hash, @dl, @cat,
                     @stdCat, @specCat, @unifiedCat, @catIds,
                     @titleNormalized, @dedupeKey, @topCategoryKey,
-          NULL, {defaultSeen}, @now,
+          @rssEvidence, {defaultSeen}, @now,
 
           @titleClean, @year, @season, @episode, @resolution, @source, @codec, @group, @mediaType
         )
@@ -140,6 +140,7 @@ public sealed partial class ReleaseRepository
                     WHEN (COALESCE(releases.title_manual_override, 0) = 1 OR @preserveIdentity = 1) THEN releases.title
                     ELSE excluded.title
                   END,
+          raw_json = excluded.raw_json,
           link = excluded.link,
           tracker_page_url = COALESCE(excluded.tracker_page_url, releases.tracker_page_url),
           published_at_ts = excluded.published_at_ts,
@@ -239,6 +240,7 @@ public sealed partial class ReleaseRepository
                     sourceId = sourceId,
                     Guid = stableGuid,
                     Title = it.Title,
+                    RssEvidence = System.Text.Json.JsonSerializer.Serialize(RssMatchingEvidence.From(it)),
                     Link = it.Link,
                     TrackerPageUrl = TrackerPageUrlQualifier.Qualify(it.TrackerPageUrl),
                     PublishedAtTs = it.PublishedAtTs,
@@ -347,6 +349,7 @@ public sealed partial class ReleaseRepository
         AddParameter(cmd, "@sourceId", SqliteType.Integer);
         AddParameter(cmd, "@guid", SqliteType.Text);
         AddParameter(cmd, "@title", SqliteType.Text);
+        AddParameter(cmd, "@rssEvidence", SqliteType.Text);
         AddParameter(cmd, "@link", SqliteType.Text);
         AddParameter(cmd, "@trackerPageUrl", SqliteType.Text);
         AddParameter(cmd, "@pub", SqliteType.Integer);
@@ -389,6 +392,7 @@ public sealed partial class ReleaseRepository
             SetParameterValue(cmd, "@sourceId", row.sourceId);
             SetParameterValue(cmd, "@guid", row.Guid);
             SetParameterValue(cmd, "@title", row.Title);
+            SetParameterValue(cmd, "@rssEvidence", row.RssEvidence);
             SetParameterValue(cmd, "@link", row.Link);
             SetParameterValue(cmd, "@trackerPageUrl", row.TrackerPageUrl);
             SetParameterValue(cmd, "@pub", row.PublishedAtTs);
@@ -451,6 +455,7 @@ public sealed partial class ReleaseRepository
         public long sourceId { get; init; }
         public string Guid { get; init; } = "";
         public string? Title { get; init; }
+        public string? RssEvidence { get; init; }
         public string? Link { get; init; }
         public string? TrackerPageUrl { get; init; }
         public long? PublishedAtTs { get; init; }

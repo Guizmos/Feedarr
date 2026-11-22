@@ -5,6 +5,75 @@ namespace Feedarr.Api.Tests;
 
 public sealed class TitleParserSuffixSequenceTests
 {
+    [Theory]
+    [InlineData("American.Psycho.2000.MULTi.2160p.BDRemux.10bits.HDR.DTS-HD.MA.5.1.TrueHD.Atmos.7.1.H265", "American Psycho", 2000, "2160p")]
+    [InlineData("36th.Precinct.2004.MULTi.2160p.BDRemux.10bits.DV.HDR.DTS-HD.MA.5.1.H265-NAHOM", "36th Precinct", 2004, "2160p")]
+    [InlineData("Mes.heros.2012.VOF.1080p.FRTV.WEB-DL.H.264.AAC.2.0-Caren.mkv", "Mes heros", 2012, "1080p")]
+    [InlineData("Le.Roi.de.Paris.1995.VOF.1080p.TV5M.WEB-DL.H.264.AAC.2.0-Caren.mkv", "Le Roi de Paris", 1995, "1080p")]
+    [InlineData("La.Bataille.du.rail.1946.REMASTERED.VOF.1080p.TV5P.WEB-DL.H.264.AAC.2.0-Caren.mkv", "La Bataille du rail", 1946, "1080p")]
+    [InlineData("Toute.première.fois.2015.VOF.1080p.AMAZN.WEB-DL.H.264.EAC3.5.1-Caren.mkv", "Toute première fois", 2015, "1080p")]
+    public void Parse_KnownDistributionTagsBridgeTechnicalSequence(string raw, string title, int year, string resolution)
+    {
+        var parsed = new TitleParser().Parse(raw, UnifiedCategory.Film);
+
+        Assert.Equal(title, parsed.TitleClean);
+        Assert.Equal(year, parsed.Year);
+        Assert.Equal(resolution, parsed.Resolution);
+    }
+
+    [Fact]
+    public void Parse_SeriesDistributionTagPreservesEpisodeAndTechnicalFields()
+    {
+        var parsed = new TitleParser().Parse("Show.S01E02.VOF.1080p.FRTV.WEB-DL.H.264-TEAM", UnifiedCategory.Serie);
+
+        Assert.Equal("Show", parsed.TitleClean);
+        Assert.Null(parsed.Year);
+        Assert.Equal(1, parsed.Season);
+        Assert.Equal(2, parsed.Episode);
+        Assert.Equal("1080p", parsed.Resolution);
+        Assert.Equal("WEB-DL", parsed.Source);
+        Assert.Equal("x264", parsed.Codec);
+        Assert.Equal("TEAM", parsed.ReleaseGroup);
+    }
+
+    [Theory]
+    [InlineData("BDRemux")]
+    [InlineData("FRTV")]
+    [InlineData("TV5M")]
+    [InlineData("TV5P")]
+    [InlineData("AMAZN")]
+    public void Parse_DistributionLikeTitleWordsAreNotSuffixAnchors(string word)
+    {
+        var parser = new TitleParser();
+        var embedded = parser.Parse($"The.{word}.Story.2020.1080p.WEB-DL.x264-TEAM", UnifiedCategory.Film);
+        var trailing = parser.Parse($"The.{word}.1080p.WEB-DL.x264-TEAM", UnifiedCategory.Film);
+
+        Assert.Equal($"The {word} Story", embedded.TitleClean);
+        Assert.Equal(2020, embedded.Year);
+        Assert.Equal($"The {word}", trailing.TitleClean);
+        Assert.Null(trailing.Year);
+    }
+
+    [Fact]
+    public void Parse_UnknownWordsStillBreakTechnicalSequence()
+    {
+        var parsed = new TitleParser().Parse("The.1080p.Unknown.Story.2020.WEB-DL.x264-TEAM", UnifiedCategory.Film);
+
+        Assert.Equal("The 1080p Unknown Story", parsed.TitleClean);
+        Assert.Equal(2020, parsed.Year);
+    }
+
+    [Theory]
+    [InlineData(UnifiedCategory.Animation)]
+    [InlineData(UnifiedCategory.Emission)]
+    public void Parse_DistributionTagRecognitionDoesNotExtendToOtherCategories(UnifiedCategory category)
+    {
+        var parsed = new TitleParser().Parse("American.Psycho.2000.MULTi.2160p.BDRemux.10bits.HDR.DTS-HD.MA.5.1.H265", category);
+
+        Assert.Equal("American Psycho 2000 MULTi 2160p BDRemux", parsed.TitleClean);
+        Assert.Null(parsed.Year);
+    }
+
     // Public work titles; private release signatures replaced with structural equivalents.
     // These are lexical parser references, never assertions of provider identity.
     [Theory]

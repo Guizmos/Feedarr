@@ -79,6 +79,27 @@ public sealed class TitleParserContextTests
         Assert.Equal(season, parsed.Season); Assert.Equal(episode, parsed.Episode);
         Assert.Equal(mediaType, parsed.MediaType);
     }
+
+    // Before a season marker, COMPLETE alone is ambiguous and must be retained.
+    [Theory]
+    [InlineData("CUTIE.PIE.COMPLETE.S01.VOSTFR.720p.AAC.2.0.H264-1", "CUTIE PIE COMPLETE", null, 1, null)]
+    [InlineData("BLUEMING.COMPLETE.S01.2022.VOSTFR.1080p.AAC.2.0.x264.VOSTFR", "BLUEMING COMPLETE", 2022, 1, null)]
+    [InlineData("Mission.Complete.S01.1080p.WEB.H264-GRP", "Mission Complete", null, 1, null)]
+    [InlineData("Mission.COMPLETE.S01.1080p.WEB.H264-TEAM", "Mission COMPLETE", null, 1, null)]
+    [InlineData("Mission.COMPLETE.S01E01.1080p.WEB.H264-GRP", "Mission COMPLETE", null, 1, 1)]
+    [InlineData("Mission.Complete.S01E01.1080p", "Mission Complete", null, 1, 1)]
+    [InlineData("Mission.COMPLETE", "Mission COMPLETE", null, null, null)]
+    public void Parse_SeasonPackContextPreservesGenuineTitleWords(string raw, string title,
+        int? year, int? season, int? episode)
+    {
+        var parsed = new TitleParser().Parse(raw, UnifiedCategory.Serie);
+
+        Assert.Equal(title, parsed.TitleClean);
+        Assert.Equal(year, parsed.Year);
+        Assert.Equal(season, parsed.Season);
+        Assert.Equal(episode, parsed.Episode);
+    }
+
     [Fact]
     public void Parse_KeepsTechnicalFieldsAndGenuineHyphensSeparate()
     {

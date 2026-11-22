@@ -87,6 +87,7 @@ public sealed partial class PosterFetchStoreMaterializationTests
 
         var result = await ctx.Posters.FetchPosterAsync(releaseId, CancellationToken.None, logSingle: false, skipIfExists: true);
         Assert.False(result.Ok);
+        Assert.Contains("v2:publication:publication_error", ctx.Releases.GetForPoster(releaseId)!.PosterLastError);
         Assert.Equal(503, result.StatusCode);
 
         var release = ctx.Releases.GetForPoster(releaseId);
@@ -94,6 +95,10 @@ public sealed partial class PosterFetchStoreMaterializationTests
         Assert.True(string.IsNullOrEmpty(release!.PosterFile));
         Assert.Null(release.TmdbId);
         Assert.Null(release.ExtOverview);
+        Assert.Null(release.ExtProviderId);
+        Assert.Null(release.PosterKey);
+        using (var conn = ctx.Db.Open())
+            Assert.Equal(0, conn.ExecuteScalar<int>("SELECT COUNT(*) FROM poster_store_refs WHERE release_id=@releaseId", new { releaseId }));
         Assert.Empty(Directory.EnumerateFiles(ctx.PostersDir, "*.jpg", SearchOption.AllDirectories));
         Assert.False(File.Exists(Path.Combine(ctx.PostersDir, "tmdb-100-w500.jpg")));
         Assert.False(File.Exists(Path.Combine(ctx.StoreDir, "tmdb-movie-100", "w500.webp")));
@@ -504,6 +509,8 @@ public sealed partial class PosterFetchStoreMaterializationTests
 
             var match = System.Text.RegularExpressions.Regex.Match(path, @"/movie/(?<id>\d+)(?:/|$)");
             var movieId = match.Success ? int.Parse(match.Groups["id"].Value) : 0;
+            if (movieId > 0 && path.EndsWith("/alternative_titles"))
+                return Task.FromResult(JsonResponse("{\"id\":" + movieId + ",\"titles\":[]}"));
             if (movieId > 0 && path.EndsWith("/images"))
             {
                 return Task.FromResult(JsonResponse(

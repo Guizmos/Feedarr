@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.Data.Sqlite;
 
 namespace Feedarr.Api.Services.Posters;
 
@@ -12,6 +13,10 @@ internal sealed record VideoMatchingFailure(string Category, int Status, string?
         TimeoutException => new("provider_timeout", 503),
         HttpRequestException http when http.StatusCode is null or HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests || (int?)http.StatusCode >= 500 => new("provider_transient", 503),
         HttpRequestException => new("provider_permanent", 422),
+        // Selection has already succeeded. Invalid downloaded bytes, filesystem
+        // failures and a rolled-back database transaction are publication failures,
+        // not insufficient matching evidence. Keep the job retryable and atomic.
+        InvalidDataException or IOException or SqliteException when stage == "publication" => new("publication_error", 503),
         InvalidDataException data when data.Message == "tv_http_budget" => new("coverage_budget", 422, "tv_http_budget"),
         JsonException => new("provider_parse", 422),
         InvalidDataException data when KnownInvariant(data.Message) => new("coverage_invalid", 422, data.Message),

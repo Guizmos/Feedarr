@@ -75,8 +75,13 @@ public sealed class TelevisionMatchingTests
         current = rig; id = rig.IngestRelease("Show.Tmdb.Hit.S01.1080p.WEB.x264-GRP", UnifiedCategory.Serie);
         if (rollback) { using var db = rig.Database.Open(); db.Execute("CREATE TRIGGER fail_tv_publication BEFORE UPDATE OF ext_provider ON media_entities BEGIN SELECT RAISE(ABORT, 'test'); END"); }
         var result = await rig.FetchAsync(id);
+        if (rollback) Assert.Contains("v2:publication:publication_error", rig.GetReleaseForPoster(id)!.PosterLastError);
         Assert.False(result.Ok); Assert.Equal(rollback ? 503 : 409, result.StatusCode);
         var row = rig.GetReleaseForPoster(id)!;
         Assert.Null(row.TmdbId); Assert.Null(row.ExtProviderId); Assert.Null(row.PosterFile);
+        Assert.Null(row.ExtTitle); Assert.Null(row.ExtOverview); Assert.Null(row.ExtSnapshotVersion);
+        using var check = rig.Database.Open();
+        Assert.Equal(0, check.ExecuteScalar<int>("SELECT COUNT(*) FROM poster_store_refs WHERE release_id=@id", new { id }));
+        Assert.Empty(Directory.EnumerateFiles(rig.PostersDirectory, "*.jpg", SearchOption.AllDirectories));
     }
 }

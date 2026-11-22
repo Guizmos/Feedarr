@@ -39,23 +39,24 @@ public sealed class ActiveMoviePaginationTests
         else Assert.Equal(100, rig.GetReleaseForPoster(id)!.TmdbId);
     }
     [Fact]
-    public async Task CollectionBeyondExistingCandidateCapacityStillAbstainsImmediately()
+    public async Task CollectionBeyondCandidateCapacityUsesFullPageBudgetBeforeAbstaining()
     {
+        // Pure collector fixture: no database or real provider access.
         var calls = 0;
-        using var rig = new PosterMatchingContractTestRig(PosterContractScenario.MovieTmdbHit,
-            completeTmdbMetadata: true, tmdbResponse: (request, _) => {
-                if (!request.RequestUri!.AbsolutePath.Contains("search/movie")) return Task.FromResult<HttpResponseMessage?>(null);
+        var collection = await Feedarr.Api.Services.Posters.VideoSearchCollector.CollectAsync(
+            new[] { "A Distinct Film" }, new[] { "fr-FR", "en-US" }, (_, _, page, _) => {
                 calls++;
-                return Task.FromResult<HttpResponseMessage?>(new HttpResponseMessage(HttpStatusCode.OK) {
-                    Content = new StringContent(JsonSerializer.Serialize(new { page = 1, total_pages = 6, total_results = 120,
-                        results = Enumerable.Range(1, 20).Select(id => new { id, title = "The Matrix", original_title = "The Matrix", release_date = "1999-03-31" }) }), Encoding.UTF8, "application/json") });
-            });
-        var id = rig.IngestRelease("The.Matrix.1999.1080p.BluRay.x264-GRP", UnifiedCategory.Film);
-        var result = await rig.FetchAsync(id);
-        Assert.False(result.Ok);
-        Assert.Contains("not_evaluable_result_budget", JsonSerializer.Serialize(result.Body));
-        Assert.Equal(1, calls);
-        Assert.Null(rig.GetReleaseForPoster(id)!.TmdbId);
-        Assert.Null(rig.GetReleaseForPoster(id)!.PosterFile);
+                var response = VideoSearchCollectorTests.Page(120, page);
+                return Task.FromResult<Feedarr.Api.Services.Tmdb.TmdbClient.VideoMatchingPage?>(response with {
+                    Results = response.Results.Select(r => r with { Year = 2020 }).ToArray()
+                });
+            }, default);
+        Assert.True(collection.Complete);
+        Assert.Equal(12, calls);
+        var projected = Feedarr.Api.Services.Matching.TmdbShadowCandidateAdapter.Project(collection.Observed);
+        var diagnostic = Feedarr.Api.Services.Posters.VideoResultBudgetDiagnostic.CheckProjection(
+            projected.Length, 100, collection.Counters);
+        Assert.Equal("not_evaluable_projected_candidate_budget", diagnostic!.Reason);
+        Assert.Equal("not_evaluable_result_budget", Feedarr.Api.Services.Posters.VideoResultBudgetDiagnostic.AbstentionReason);
     }
 }

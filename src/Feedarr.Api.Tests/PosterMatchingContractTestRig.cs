@@ -657,6 +657,9 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             if (path.Contains("/search/tv"))
                 return Task.FromResult(JsonResponse(TvSearchPayload()));
 
+            if (path.EndsWith("/alternative_titles"))
+                return Task.FromResult(JsonResponse(WithIdentity("{\"titles\":[]}", path)));
+
             if (path.Contains("/images"))
                 return Task.FromResult(JsonResponse(WithIdentity(ImagesPayload(path), path)));
 

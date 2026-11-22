@@ -60,7 +60,12 @@ public sealed partial class TitleParser
             @"(?<distribution>(?i)(?:^|[._+-])(?:complete|conversion)(?=[._+-]|$))"
         }), RegexOptions.Compiled), true));
 
-        private static List<SuffixToken> ReadSuffixTokens(string raw, bool game, bool forGroup = false)
+        // Distribution labels bridge known technical tokens, but never establish a
+        // work boundary on their own. Keep this vocabulary scoped to films/series.
+        private static readonly Regex VideoDistributionTags = new(
+            @"(?i)\b(?:BDREMUX|FRTV|TV5M|TV5P|AMAZN)\b", RegexOptions.Compiled);
+
+        private static List<SuffixToken> ReadSuffixTokens(string raw, bool game, bool forGroup = false, UnifiedCategory category = UnifiedCategory.Autre)
         {
             var result = new List<SuffixToken>();
             var scan = game ? new string(raw.Select(c => char.IsWhiteSpace(c) || "[]():".Contains(c) ? '.' : c).ToArray()) : raw;
@@ -74,6 +79,12 @@ public sealed partial class TitleParser
                     result.Add(new(match.Index, match.Index + match.Length, match.Value, rule.Kind, rule.Value));
                     break;
                 }
+            }
+            if (!game && category is UnifiedCategory.Film or UnifiedCategory.Serie)
+            {
+                foreach (Match match in VideoDistributionTags.Matches(scan))
+                    result.Add(new(match.Index, match.Index + match.Length, match.Value, "distribution"));
+                result.Sort((left, right) => left.Start.CompareTo(right.Start));
             }
             return result;
         }
@@ -115,11 +126,11 @@ public sealed partial class TitleParser
                     // Leave languages to TrimVideoSuffix: it tracks their removal as
                     // evidence for the existing edition/pack cleanup rules.
                     if (token.Kind == "language") break;
-                    if (token.Kind is "flag" or "service")
+                    if (token.Kind is "flag" or "service" or "distribution")
                     {
                         var yearBefore = Regex.IsMatch(raw[..token.Start].TrimEnd(' ', '.', '_'), @"\b(?:19|20)\d{2}$");
                         if (!rich && !yearBefore) break;
-                        if (token.Kind == "service" || Regex.IsMatch(token.Value, @"(?i)^(SD|AD|PCM)$"))
+                        if (token.Kind is "service" or "distribution" || Regex.IsMatch(token.Value, @"(?i)^(SD|AD|PCM)$"))
                         {
                             var previousMetadata = j > 0 && TokenGap(raw[tokens[j - 1].End..token.Start]) &&
                                 (tokens[j - 1].Kind is "language" or "flag");
@@ -223,7 +234,7 @@ public sealed partial class TitleParser
         public static TechnicalSuffix Analyze(string raw, string original, UnifiedCategory category)
         {
             var game = category == UnifiedCategory.JeuWindows;
-            var tokens = ReadSuffixTokens(raw, game);
+            var tokens = ReadSuffixTokens(raw, game, category: category);
             var boundary = game ? FindGameMetadataStart(raw, tokens) : FindVideoTechnicalStart(raw, tokens);
             var suffix = tokens.Where(t => t.Start >= boundary).ToList();
             var source = suffix.FirstOrDefault(t => t.Kind == "source")?.Normalized;
@@ -243,7 +254,7 @@ public sealed partial class TitleParser
         {
             // Search after technical context, rather than blindly taking the last hyphen
             // of a compound group or a natural title such as Half-Life.
-            var originalTokens = ReadSuffixTokens(raw, category == UnifiedCategory.JeuWindows, forGroup: true);
+            var originalTokens = ReadSuffixTokens(raw, category == UnifiedCategory.JeuWindows, forGroup: true, category: category);
             foreach (Match dash in Regex.Matches(raw, "[-_]"))
             {
                 if (originalTokens.Any(t => t.Start < dash.Index && t.End > dash.Index)) continue;

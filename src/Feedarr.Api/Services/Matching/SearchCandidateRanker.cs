@@ -17,13 +17,13 @@ internal sealed record ProviderSearchCandidate(
     IReadOnlyList<string>? AlternativeTitles = null, UnifiedCategory? Category = null,
     int? Season = null, int? Episode = null,
     IReadOnlyList<SearchIdentity>? KnownExternalIdentities = null,
-    IReadOnlyList<OfficialProviderTitle>? OfficialTitles = null, TelevisionEvidence? Television = null, AnimeEvidence? Anime = null, GameEvidence? Game = null, AudioEvidence? Audio = null, PrintEvidence? Print = null);
+    IReadOnlyList<OfficialProviderTitle>? OfficialTitles = null, TelevisionEvidence? Television = null, AnimeEvidence? Anime = null, GameEvidence? Game = null, AudioEvidence? Audio = null, PrintEvidence? Print = null, IReadOnlyList<string>? OfficialOverviews = null);
 
 internal sealed record CandidateRankingContext(
     IReadOnlyList<SearchCandidate> Queries, UnifiedCategory Category, SearchMediaType ExpectedMediaType,
     int? ConfirmedYear = null, int? Season = null, int? Episode = null,
     SearchIdentity? TrustedIdentityHint = null, SearchIdentity? EstablishedIdentity = null,
-    bool IsLocked = false, bool HasManualCorrection = false, string? AirDate = null, string? AnimeFormat = null, string? GameEdition = null, string? AudioArtist = null, string? AudioKind = null, string? AudioEdition = null, string? PrintAuthor = null, string? PrintIsbn = null, string? PrintScope = null, string? PrintNumber = null, string? PrintLanguage = null, string? PrintEdition = null);
+    bool IsLocked = false, bool HasManualCorrection = false, string? AirDate = null, string? AnimeFormat = null, string? GameEdition = null, string? AudioArtist = null, string? AudioKind = null, string? AudioEdition = null, string? PrintAuthor = null, string? PrintIsbn = null, string? PrintScope = null, string? PrintNumber = null, string? PrintLanguage = null, string? PrintEdition = null, RssMatchingEvidence? RssEvidence = null);
 
 internal sealed record CandidateRankingPolicy(
     double MinimumTitleSimilarity = 0.90, double AcceptConfidence = 0.92,
@@ -45,7 +45,7 @@ internal sealed record CandidateContradiction(string Code, bool IsStrong);
 internal sealed record RankedSearchCandidate(
     SearchIdentity Identity, int QueryIndex, double Confidence,
     IReadOnlyList<string> PositiveReasons, IReadOnlyList<CandidateContradiction> Contradictions,
-    CandidateDecision Decision, CompoundTitleEvidence? CompoundTitle = null, int? TrailingYearHypothesis = null);
+    CandidateDecision Decision, CompoundTitleEvidence? CompoundTitle = null, int? TrailingYearHypothesis = null, double? EvidenceScore = null);
 internal sealed record CandidateRankingResult(
     CandidateDecision Decision, SearchIdentity? SelectedIdentity, bool PreserveExisting,
     IReadOnlyList<string> Reasons, IReadOnlyList<RankedSearchCandidate> Candidates);
@@ -77,7 +77,7 @@ internal static class SearchCandidateRanker
             var rows = group.ToArray();
             var evaluated = rows.SelectMany(r => context.Queries.Select((q, i) => Evaluate(context, q, i, r, policy)))
                 .OrderBy(r => r.Decision == CandidateDecision.Reject ? 1 : 0)
-                .ThenByDescending(r => r.Confidence).ThenBy(r => r.QueryIndex)
+                .ThenByDescending(r => r.EvidenceScore ?? r.Confidence).ThenBy(r => r.QueryIndex)
                 .ThenBy(r => string.Join("|", r.PositiveReasons), StringComparer.Ordinal)
                 .ThenBy(r => string.Join("|", r.Contradictions.Select(c => c.Code)), StringComparer.Ordinal).First();
             // Repeated hits for one identity are not independent votes. Inconsistent
@@ -93,12 +93,12 @@ internal static class SearchCandidateRanker
             evaluations.Add(evaluated);
         }
         var ranked = evaluations.OrderBy(r => r.Decision == CandidateDecision.Reject ? 1 : 0)
-            .ThenByDescending(r => r.Confidence).ThenBy(r => Key(r.Identity).Provider, StringComparer.Ordinal)
+            .ThenByDescending(r => r.EvidenceScore ?? r.Confidence).ThenBy(r => Key(r.Identity).Provider, StringComparer.Ordinal)
             .ThenBy(r => r.Identity.MediaType).ThenBy(r => Key(r.Identity).Id, StringComparer.Ordinal).ToArray();
         var eligible = ranked.Where(r => r.Decision != CandidateDecision.Reject).ToArray();
         if (eligible.Length == 0)
             return new(CandidateDecision.Reject, null, false, Array.AsReadOnly(new[] { "all-provider-results-rejected" }), Array.AsReadOnly(ranked));
-        if (eligible.Length > 1 && eligible[0].Confidence - eligible[1].Confidence < policy.MinimumConfidenceGap)
+        if (eligible.Length > 1 && (eligible[0].EvidenceScore ?? eligible[0].Confidence) - (eligible[1].EvidenceScore ?? eligible[1].Confidence) < policy.MinimumConfidenceGap)
         {
             ranked = ranked.Select(r => r.Decision == CandidateDecision.Accept
                 ? r with { Decision = CandidateDecision.Ambiguous,
@@ -110,6 +110,47 @@ internal static class SearchCandidateRanker
             Array.AsReadOnly(new[] { best.Decision == CandidateDecision.Accept ? "unique-supported-identity" : "insufficient-independent-evidence" }),
             Array.AsReadOnly(ranked));
     }
+
+    internal static ProviderSearchCandidate[] PruneMovieYearContradictionsBeforeBudget(
+        CandidateRankingContext context, ProviderSearchCandidate[] results)
+    {
+        var policy = new CandidateRankingPolicy();
+        // TV evidence/aliases are enriched after projection. Do not pre-judge them,
+        // other categories, protected contexts, or uncertain query years.
+        if (results.Length <= policy.MaximumResults || context.Category != UnifiedCategory.Film ||
+            context.ExpectedMediaType != SearchMediaType.Movie || context.IsLocked || context.HasManualCorrection ||
+            context.EstablishedIdentity is not null || context.TrustedIdentityHint is not null ||
+            context.ConfirmedYear.HasValue || context.AirDate is not null || context.Season.HasValue || context.Episode.HasValue ||
+            context.Queries.Count == 0 || context.Queries.Count > SearchCandidateGenerator.MaxCandidates ||
+            context.Queries.Any(q => q.YearEvidence != CandidateYearEvidence.Parsed || q.Year is not (> 0 and <= 9999)))
+            return results;
+
+        var excluded = new HashSet<(string Provider, SearchMediaType Type, string Id)>();
+        foreach (var group in results.GroupBy(r => Key(r.Identity)))
+        {
+            var rows = group.ToArray();
+            // Keep every record of a surviving identity, including conflicting and
+            // missing metadata: even a rejected row can make its identity ambiguous.
+            if (rows.Any(r => r.Year is not (> 0 and <= 9999) || string.IsNullOrWhiteSpace(r.Title) ||
+                    r.Identity.Provider != "tmdb" || r.Identity.MediaType != SearchMediaType.Movie ||
+                    string.IsNullOrWhiteSpace(r.Identity.Id)) ||
+                rows.Select(r => r.Year).Distinct().Count() != 1)
+                continue;
+            if (rows.All(r => context.Queries.All(q => Evaluate(context, q, 0, r, policy)
+                    .Contradictions.Any(c => c.IsStrong && c.Code == "parsed-year-mismatch"))))
+                excluded.Add(group.Key);
+        }
+        var retained = results.Where(r => !excluded.Contains(Key(r.Identity))).ToArray();
+        // Preserve the empty/nonempty rejection distinction and budget diagnosis.
+        return retained.Length == 0 || retained.Length == results.Length ? results : retained;
+    }
+
+    // An official alias can repair title evidence, never type/year/identity contradictions.
+    internal static bool CanGainMovieTitleEvidence(CandidateRankingContext context, ProviderSearchCandidate candidate)
+        => context.Category == UnifiedCategory.Film && context.ExpectedMediaType == SearchMediaType.Movie &&
+            candidate.Identity.Provider == "tmdb" && candidate.Identity.MediaType == SearchMediaType.Movie &&
+            context.Queries.Any(q => Evaluate(context, q, 0, candidate, new CandidateRankingPolicy()).Contradictions
+                .All(c => !c.IsStrong || c.Code is "title-similarity-insufficient" or "title-number-mismatch" or "title-numeric-punctuation-mismatch"));
 
     private static RankedSearchCandidate Evaluate(CandidateRankingContext context, SearchCandidate query,
         int queryIndex, ProviderSearchCandidate candidate, CandidateRankingPolicy policy)
@@ -298,6 +339,9 @@ internal static class SearchCandidateRanker
         // Weights are evidence classes, not a promise of statistical precision:
         // title .80, media .10, independent year/identity support up to .10.
         var confidence = .80 * best.Score + (identity.MediaType == context.ExpectedMediaType && identity.MediaType != SearchMediaType.Unknown ? .10 : 0);
+        var rssSupport = context.Category is UnifiedCategory.Film or UnifiedCategory.Serie &&
+            context.RssEvidence?.Supports(candidate) == true;
+        if (rssSupport) positive.Add("rss-id-and-official-synopsis-agree");
         if (trusted || tvSupport || corroboratedTv || animeSupport || gameSupport || audioSupport || printSupport) confidence += .10;
         if (corroboratedTv) positive.Add("verified-cross-provider-tv-identity");
         if (animeSupport) positive.Add("verified-anime-structure");
@@ -334,10 +378,14 @@ internal static class SearchCandidateRanker
             else positive.Add(field + "-agrees");
         }
         confidence = Math.Round(Math.Clamp(confidence, 0, 1), 6, MidpointRounding.AwayFromZero);
+        // Preserve the decision margin when base confidence is already saturated.
+        // RSS corroboration is one additional evidence class, not a trusted ID override.
+        var evidenceScore = confidence + (rssSupport ? .10 : 0);
+        confidence = Math.Min(1, evidenceScore);
         var decision = contradictions.Any(c => c.IsStrong) ? CandidateDecision.Reject :
             sufficient && confidence >= policy.AcceptConfidence ? CandidateDecision.Accept : CandidateDecision.Ambiguous;
         var canonical = Key(identity);
-        return new(new SearchIdentity(canonical.Provider, canonical.Type, canonical.Id), queryIndex, confidence, Array.AsReadOnly(positive.ToArray()), Array.AsReadOnly(contradictions.ToArray()), decision, compound, trailingYearHypothesis);
+        return new(new SearchIdentity(canonical.Provider, canonical.Type, canonical.Id), queryIndex, confidence, Array.AsReadOnly(positive.ToArray()), Array.AsReadOnly(contradictions.ToArray()), decision, compound, trailingYearHypothesis, evidenceScore);
     }
 
     internal static bool ValidTitleSource(OfficialProviderTitle title) =>
