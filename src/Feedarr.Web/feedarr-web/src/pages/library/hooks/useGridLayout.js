@@ -8,7 +8,7 @@ import { useMemo } from "react";
  * with a fixed gap between columns.
  *
  * estimatedRowHeight is an initial approximation for the virtualizer's row height
- * seed. It will be replaced by real measurements (measureElement) in later PRs.
+ * seed. Card rows use live measurements; poster rows keep their exact 2:3 geometry.
  *
  * @param {number} containerWidth  - Width of the grid container in pixels.
  * @param {number} cardSize        - Minimum card width (the minmax() min value), in pixels.
@@ -26,7 +26,7 @@ export function computeGridLayout(containerWidth, cardSize, { gap = 20, cardHeig
 
   const numCols = Math.max(minCols, Math.max(1, Math.floor((containerWidth + gap) / (cardSize + gap))));
   const colWidth = (containerWidth - (numCols - 1) * gap) / numCols;
-  const estimatedRowHeight = Math.round(colWidth * cardHeightRatio + titleAreaPx);
+  const estimatedRowHeight = colWidth * cardHeightRatio + titleAreaPx;
 
   return { numCols, colWidth, estimatedRowHeight };
 }

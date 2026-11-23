@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useScrollContainer } from "../../../context/ScrollContainerContext.js";
 import { useContainerWidth } from "../../../hooks/useContainerWidth.js";
@@ -15,12 +15,9 @@ import { useGridLayout } from "./useGridLayout.js";
  *  - item chunking into rows of numCols items
  *  - TanStack Virtual row-based virtualizer instance
  *
- * estimateSize is fixed (no measureElement) to keep getTotalSize() stable
- * during scrollbar drag — same reasoning as the PR2 list view fix.
- *
- * The row height seed includes the gap so virtualizer row boundaries
- * match the rendered CSS grid spacing. The trailing gap on the last row
- * adds a negligible ~gap-px over-estimation to the total height.
+ * Poster rows have a predictable aspect ratio. Card rows opt into measurement
+ * so font metrics, responsive CSS and the hover expansion determine their size.
+ * TanStack owns the gap separately from the row height (no trailing empty row gap).
  *
  * @param {object[]} items        - Flat array of items to virtualise.
  * @param {number}   cardSize     - Minimum card width in px (minmax min).
@@ -47,6 +44,7 @@ export function useVirtualGrid(items, cardSize, {
   estimatedCardHeightFn = null,
   overscan = 5,
   minColsFn = null,
+  measureRows = false,
 } = {}) {
   const scrollRef = useScrollContainer();
   const containerRef = useRef(null);
@@ -94,23 +92,44 @@ export function useVirtualGrid(items, cardSize, {
     const containerRect = containerRef.current.getBoundingClientRect();
     const scrollRect = scrollEl.getBoundingClientRect();
     setScrollMargin(containerRect.top - scrollRect.top + scrollEl.scrollTop);
-  }, [scrollRef, items.length]);
+  }, [scrollRef, items.length, containerWidth]);
 
-  // Row height = card area + gap. The gap accounts for the vertical spacing
-  // between rows in the CSS grid. Fallback to 200 before first measurement.
-  // When estimatedCardHeight is provided (fixed-scale cards like PosterCard),
-  // it takes precedence over the colWidth-based estimatedRowHeight.
-  const rowHeight = resolvedEstimatedCardHeight != null
-    ? Math.max(1, resolvedEstimatedCardHeight) + resolvedRowGap
-    : (estimatedRowHeight > 0 ? estimatedRowHeight + resolvedRowGap : 200);
+  const geometryKey = `${cardSize}:${numCols}:${colWidth}`;
+  const [measuredEstimate, setMeasuredEstimate] = useState(null);
+  const fallbackHeight = resolvedEstimatedCardHeight ?? (estimatedRowHeight > 0 ? estimatedRowHeight : 200);
+  const rowHeight = measureRows && measuredEstimate?.key === geometryKey
+    ? measuredEstimate.height : fallbackHeight;
+
+  const measureRow = useCallback((element, entry) => {
+    // Keep fractional CSS pixels; rounding creates visible drift between posters.
+    const height = entry?.borderBoxSize?.[0]?.blockSize ?? element.getBoundingClientRect().height;
+    // Seed off-screen estimates from actual resting rows, never a future hover size.
+    if (height > 0 && !element.matches(":hover")) {
+      setMeasuredEstimate(previous => previous?.key === geometryKey
+        ? previous : { key: geometryKey, height });
+    }
+    return height;
+  }, [geometryKey]);
 
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef?.current ?? null,
     estimateSize: () => rowHeight,
+    gap: resolvedRowGap,
+    ...(measureRows ? { measureElement: measureRow } : {}),
     overscan,
     scrollMargin,
   });
+
+  useLayoutEffect(() => {
+    // Updating estimateSize alone does not invalidate TanStack's cached sizes.
+    virtualizer.measure();
+    if (measureRows) {
+      for (const element of virtualizer.elementsCache.values()) {
+        virtualizer.measureElement(element);
+      }
+    }
+  }, [virtualizer, cardSize, numCols, colWidth, rowHeight, measureRows]);
 
   return {
     containerRef,

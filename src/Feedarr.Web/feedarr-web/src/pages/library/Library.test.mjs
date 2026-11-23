@@ -42,7 +42,7 @@ test("Library loads beyond 200, displays the SQL total, reaches the end and rese
   const originalRect = window.HTMLElement.prototype.getBoundingClientRect;
   window.HTMLElement.prototype.getBoundingClientRect = function () {
     const rect = originalRect.call(this);
-    return this.classList.contains("library-tbody-virtual") ? { ...rect.toJSON(), top: 96 } : rect;
+    return this.classList.contains("library-tbody-virtual") ? { ...rect, top: 96 } : rect;
   };
   const scrolls = [];
   content.scrollTo = options => { scrolls.push(options); };
@@ -65,6 +65,18 @@ test("Library loads beyond 200, displays the SQL total, reaches the end and rese
     assert.equal(document.querySelector(".library-tbody-virtual").style.height, "3900px",
       "the virtual container must reserve all 100 rows without subtracting the 96px offset again");
     assert.equal(scrolls.at(-1)?.top, 0);
+    const renderedRows = () => [...document.querySelectorAll(".library-trow")];
+    for (const row of renderedRows()) {
+      const releaseId = Number(row.textContent.match(/Release (\d+)/)[1]);
+      assert.equal(row.classList.contains("library-trow--alternate"), releaseId % 2 === 0);
+    }
+    await act(async () => { content.scrollTop = 1200; content.dispatchEvent(new window.Event("scroll")); });
+    await f.waitFor(() => !renderedRows()[0]?.textContent.includes("Release 101"));
+    for (const row of renderedRows()) {
+      const releaseId = Number(row.textContent.match(/Release (\d+)/)[1]);
+      assert.equal(row.classList.contains("library-trow--alternate"), releaseId % 2 === 0);
+    }
+
     const count = calls.length;
     await clickPage("Page précédente");
     await f.waitFor(() => nav()?.textContent.includes("Page 1 sur 4"));

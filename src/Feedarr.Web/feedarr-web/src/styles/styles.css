@@ -7127,6 +7127,13 @@ body.nav-open{ overflow: hidden; }
   border-bottom: 1px solid rgba(0,0,0,.06);
 }
 .library-trow:last-child{ border-bottom: 0; }
+/* Use catalogue parity, not :nth-child: virtual DOM rows are recycled while scrolling. */
+.page--library .library-trow--alternate:not(:hover):not(.is-selected){
+  background: rgba(0,0,0,.025);
+}
+:root[data-theme="dark"] .page--library .library-trow--alternate:not(:hover):not(.is-selected){
+  background: rgba(255,255,255,.035);
+}
 .library-trow:hover{ background: rgba(0,0,0,.03); }
 .library-trow.is-selected{
   outline: 3px solid var(--topbar);
@@ -7567,6 +7574,9 @@ body.library-select-mode .list-edit{ display: none; }
 /* ===== VIRTUALIZED GRID/LIST ===== */
 .grid-virtualized{
   min-height: 400px;
+}
+.page--library .grid-virtualized{
+  min-height: 0;
 }
 .grid-virtual-container{
   scrollbar-width: thin;

@@ -224,7 +224,7 @@ function LibraryPoster({
   const { containerRef, rows, numCols, scrollMargin, virtualizer } = useVirtualGrid(
     items,
     cardSize,
-    { gap: GAP, cardHeightRatio: 1.5, titleAreaPx: 0, minColsFn: POSTER_MIN_COLS_FN },
+    { gap: GAP, cardHeightRatio: 1.5, titleAreaPx: 0, minColsFn: POSTER_MIN_COLS_FN, measureRows: true },
   );
 
   const scaleStyle = useMemo(
@@ -246,6 +246,8 @@ function LibraryPoster({
         return (
           <div
             key={virtualRow.key}
+            data-index={virtualRow.index}
+            ref={virtualizer.measureElement}
             style={{
               position: "absolute",
               top: 0,

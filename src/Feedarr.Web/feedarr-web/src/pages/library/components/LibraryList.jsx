@@ -160,7 +160,7 @@ function LibraryList({
           return (
             <div
               key={it.id}
-              className={`library-trow${selectedIds.has(it.id) ? " is-selected" : ""}`}
+              className={`library-trow${virtualItem.index % 2 === 1 ? " library-trow--alternate" : ""}${selectedIds.has(it.id) ? " is-selected" : ""}`}
               style={{
                 position: "absolute",
                 top: 0,
