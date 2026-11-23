@@ -22,7 +22,7 @@ const run = (name, args) => new Promise((resolve, reject) => {
   const child = spawn(name, args); let error = "", output = "";
   child.stdout.on("data", data => { output += data; });
   child.stderr.on("data", data => { error += data; });
-  child.once("error", reject); child.once("exit", code => code === 0 ? resolve(output) : reject(new Error(`${name} failed: ${error}`)));
+  child.once("error", reject); child.once("close", code => code === 0 ? resolve(output) : reject(new Error(`${name} failed: ${error}`)));
 });
 const freePort = () => new Promise((resolve, reject) => {
   const probe = createServer(); probe.once("error", reject);
