@@ -144,4 +144,41 @@ public sealed class RssIdentityMatchingTests
             Assert.Equal(100, rig.GetReleaseForPoster(id)!.TmdbId);
         }
     }
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public async Task EmptyLanguageImagesUseOnlyTheResolvedPrimaryPoster(bool tv, bool primary)
+    {
+        var tmdbId = tv ? 600 : 100;
+        using var rig = new PosterMatchingContractTestRig(tv ? PosterContractScenario.SeriesTvmazeMissTmdb : PosterContractScenario.MovieTmdbHit,
+            completeTmdbMetadata: true, tmdbResponse: (request, _) => {
+                var path = request.RequestUri!.AbsolutePath;
+                if (path.EndsWith($"/{tmdbId}/images"))
+                    return Task.FromResult<HttpResponseMessage?>(Json(new { id = tmdbId, posters = Array.Empty<object>() }));
+                if (path.EndsWith($"/{tmdbId}"))
+                    return Task.FromResult<HttpResponseMessage?>(Json(new { id = tmdbId, title = "Official", name = "Official",
+                        poster_path = primary ? "/official-primary.jpg" : null }));
+                return Task.FromResult<HttpResponseMessage?>(null);
+            });
+        var id = rig.IngestRelease("Unrelated.Title.S01E02.1080p.WEB.H264-TEAM", tv ? UnifiedCategory.Serie : UnifiedCategory.Film);
+        Rss(rig, id, tmdb: tmdbId);
+        var result = await rig.FetchAsync(id);
+        Assert.Empty(rig.TmdbSearchRequests);
+        var row = rig.GetReleaseForPoster(id)!;
+        Assert.Equal(primary, result.Ok);
+        if (primary)
+        {
+            Assert.Equal(tmdbId, row.TmdbId);
+            Assert.Equal("/official-primary.jpg", row.PosterPath);
+            Assert.NotNull(row.PosterFile);
+        }
+        else
+        {
+            Assert.Equal(422, result.StatusCode);
+            Assert.Contains("selected_identity_poster_unavailable", row.PosterLastError);
+            Assert.Null(row.PosterFile); Assert.Null(row.TmdbId);
+        }
+    }
+
 }

@@ -15,7 +15,10 @@ public sealed class FinalVideoRoutingTests
     [InlineData(UnifiedCategory.Spectacle, null, "Show.S01E02.1080p.WEB", "tv")]
     [InlineData(UnifiedCategory.Autre, "5040", "Show.1080p.WEB", "tv")]
     [InlineData(UnifiedCategory.Autre, null, "Show.2026.11.14.1080p.WEB", "tv")]
-    [InlineData(UnifiedCategory.Animation, "2040", "Show.S01E02.1080p.WEB", null)]
+    [InlineData(UnifiedCategory.Animation, "2040", "Show.S01E02.1080p.WEB", "tv")]
+    [InlineData(UnifiedCategory.Animation, "2020,102060", "Le.Gros.Laboratoire.S07E09.VFQ.1080p.WEB", "tv")]
+    [InlineData(UnifiedCategory.Animation, "2040", "Show.S01.1080p.WEB", null)]
+    [InlineData(UnifiedCategory.Spectacle, "2040", "Show.S01E02.1080p.WEB", null)]
     [InlineData(UnifiedCategory.Spectacle, "2040,5040", "Show.1080p.WEB", null)]
     [InlineData(UnifiedCategory.Autre, "3040", "Album.S01E02.1080p", null)]
     [InlineData(UnifiedCategory.Autre, null, "Unknown.2020.1080p.BluRay", null)]
@@ -95,4 +98,12 @@ public sealed class FinalVideoRoutingTests
         Assert.Equal("9900", rig.GetReleaseForPoster(manual)!.ManualMatchId);
         Assert.Empty(rig.TmdbSearchRequests);
     }
+    [Fact]
+    public void EpisodicAnimationNeverOverridesAnEstablishedMovieNamespace()
+    {
+        Assert.Null(PosterFetchService.ResolveVideoType(new ReleaseForPoster {
+            Title = "Show.S01E02.1080p.WEB", CategoryIds = "2020", TmdbMediaType = "movie", TmdbId = 85113
+        }, UnifiedCategory.Animation));
+    }
+
 }

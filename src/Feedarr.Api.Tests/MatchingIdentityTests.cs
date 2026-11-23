@@ -321,4 +321,29 @@ public sealed partial class PosterFetchStoreMaterializationTests
         Assert.NotNull(cache.TryGet(PosterMatchCacheService.BuildFingerprint(new("series", "same", 2024, null, null))));
     }
 
+    [Theory]
+    [InlineData("Sœurs de sort", "Soeurs de sort")]
+    [InlineData("CŒUR", "COEUR")]
+    public void LigaturesCompareEquallyWithoutChangingDisplayTitles(string official, string release)
+    {
+        Assert.Equal(Feedarr.Api.Services.Matching.TitleNormalizer.NormalizeTitleStrict(official),
+            Feedarr.Api.Services.Matching.TitleNormalizer.NormalizeTitleStrict(release));
+        Assert.Equal(Feedarr.Api.Services.Matching.TitleNormalizer.NormalizeTitle(official),
+            Feedarr.Api.Services.Matching.TitleNormalizer.NormalizeTitle(release));
+    }
+
+    [Fact]
+    public void LigatureAgreementStillRequiresMatchingTypeAndYear()
+    {
+        var context = new CandidateRankingContext(new[] { new SearchCandidate("Soeurs de sort", 2026,
+            CandidateYearEvidence.Parsed, SearchCandidateOrigin.Primary) }, UnifiedCategory.Animation, SearchMediaType.Movie);
+        var correct = new ProviderSearchCandidate(new("tmdb", SearchMediaType.Movie, "1595124"), "Sœurs de sort", 2026);
+        Assert.Equal(CandidateDecision.Accept, SearchCandidateRanker.Rank(context, new[] { correct }).Decision);
+        Assert.Equal(CandidateDecision.Reject, SearchCandidateRanker.Rank(context, new[] { correct with { Year = 1996 } }).Decision);
+        Assert.Equal(CandidateDecision.Reject, SearchCandidateRanker.Rank(context, new[] { correct with {
+            Identity = new("tmdb", SearchMediaType.Series, "1595124") } }).Decision);
+        Assert.Equal(CandidateDecision.Ambiguous, SearchCandidateRanker.Rank(context, new[] { correct,
+            correct with { Identity = new("tmdb", SearchMediaType.Movie, "99999") } }).Decision);
+    }
+
 }

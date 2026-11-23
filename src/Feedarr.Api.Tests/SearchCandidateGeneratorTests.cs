@@ -97,4 +97,26 @@ public sealed class SearchCandidateGeneratorTests
         var result = SearchCandidateGenerator.Generate(new("Film.2049.1080p", UnifiedCategory.Film));
         Assert.Throws<NotSupportedException>(() => ((IList<SearchCandidate>)result)[0] = result[1]);
     }
+    [Theory]
+    [InlineData("Yu.Yu.Hakusho.2023.S01E01.MULTi.1080p.WEB.H264-TEAM")]
+    [InlineData("Class.1984.S01E01.MULTi.1080p.WEB.H264-TEAM")]
+    public void UnbracketedSeriesYearKeepsBothInterpretations(string raw)
+    {
+        var queries = SearchCandidateGenerator.Generate(new(raw, UnifiedCategory.Serie));
+        Assert.Equal(2, queries.Count);
+        Assert.Null(queries[0].Year);
+        Assert.Equal(CandidateYearEvidence.None, queries[0].YearEvidence);
+        Assert.Equal(CandidateYearEvidence.Hypothesis, queries[1].YearEvidence);
+        Assert.EndsWith(queries[1].Year!.Value.ToString(), queries[0].Title);
+    }
+
+    [Fact]
+    public void ExplicitSeriesPublicationYearIsExtracted()
+    {
+        var query = Assert.Single(SearchCandidateGenerator.Generate(new("Yu.Yu.Hakusho.(2023).S01E01.MULTi.1080p.WEB.H264-TEAM", UnifiedCategory.Serie)));
+        Assert.Equal("Yu Yu Hakusho", query.Title);
+        Assert.Equal(2023, query.Year);
+        Assert.Equal(CandidateYearEvidence.Parsed, query.YearEvidence);
+    }
+
 }

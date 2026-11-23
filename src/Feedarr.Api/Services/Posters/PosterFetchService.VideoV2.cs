@@ -28,6 +28,10 @@ public sealed partial class PosterFetchService
         var broadcast = parser.Parse(snapshot.Title, UnifiedCategory.Emission);
         var tv = snapshot.Season.HasValue || snapshot.Episode.HasValue || episodic.Season.HasValue ||
             episodic.Episode.HasValue || broadcast.AirDate is not null;
+        // Animation is often filed under Movies/Anime by indexers. A complete
+        // season+episode token proves episodic scope, but never overrides a typed association.
+        if (category == UnifiedCategory.Animation && episodic.Season.HasValue && episodic.Episode.HasValue &&
+            TmdbIdentity.NormalizeType(snapshot.TmdbMediaType) != "movie") return "tv";
         if (parents.Contains(2000))
             return tv || TmdbIdentity.NormalizeType(snapshot.MediaType) == "tv" || TmdbIdentity.NormalizeType(snapshot.TmdbMediaType) == "tv" ? null : "movie";
         if (tv || parents.Contains(5000))

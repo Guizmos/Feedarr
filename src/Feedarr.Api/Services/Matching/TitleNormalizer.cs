@@ -93,7 +93,7 @@ public static class TitleNormalizer
     public static string RemoveDiacritics(string input)
     {
         if (string.IsNullOrEmpty(input)) return input;
-        var normalized = input.Normalize(NormalizationForm.FormD);
+        var normalized = input.Replace("œ", "oe").Replace("Œ", "OE").Normalize(NormalizationForm.FormD);
         var sb = new StringBuilder(normalized.Length);
         foreach (var c in normalized)
         {

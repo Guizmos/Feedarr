@@ -19,6 +19,7 @@ public sealed partial class PosterFetchService
         if (!refreshExisting && await TryPublishSharedVideoPosterAsync(context, "tmdb", selected.TmdbId.ToString(CultureInfo.InvariantCulture),
             selected.TmdbId, type, details, ct, diagnosticStage).ConfigureAwait(false) is { } reused) return reused;
         var posterPath = await RunTmdbAsync(token => _tmdb.GetPreferredPosterPathAsync(selected.TmdbId, type == "tv" ? "series" : "movie", token, verifyIdentity: true), ct).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(posterPath)) posterPath = details.PosterPath;
         if (string.IsNullOrWhiteSpace(posterPath)) posterPath = selected.PosterPath;
         var posterProvider = "tmdb";
         byte[]? bytes = null;
@@ -54,7 +55,12 @@ public sealed partial class PosterFetchService
         if (bytes is not { Length: > 0 } || string.IsNullOrWhiteSpace(posterPath))
         {
             if (string.IsNullOrWhiteSpace(posterPath))
+            {
+                diagnosticStage?.Invoke("preparation", "tmdb");
+                PosterAudit.UpdateAttemptFailure(_releases, id, null, null, null, null,
+                    "v2:preparation:business_abstention:selected_identity_poster_unavailable");
                 return new(false, 422, new { error = "matching_v2_abstained", reason = "selected_identity_poster_unavailable" }, context.SourceId);
+            }
             throw new InvalidDataException("tmdb_poster_unavailable");
         }
         _releases.ValidateMatching(id);

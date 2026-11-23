@@ -22,7 +22,8 @@ public sealed partial class TmdbClient : IDisposable
         int? Votes,
         string? Directors,
         string? Writers,
-        string? Cast);
+        string? Cast,
+        string? PosterPath = null);
 
     private readonly Feedarr.Api.Services.Matching.ProviderResponseCache _matchingResponses = new();
     public void Dispose() => _matchingResponses.Dispose();
@@ -395,7 +396,8 @@ public sealed partial class TmdbClient : IDisposable
             r.VoteCount > 0 ? r.VoteCount : null,
             credits?.Directors,
             credits?.Writers,
-            credits?.Cast
+            credits?.Cast,
+            r.PosterPath
         );
     }
 
@@ -457,7 +459,8 @@ public sealed partial class TmdbClient : IDisposable
             r.VoteCount > 0 ? r.VoteCount : null,
             credits?.Directors,
             credits?.Writers,
-            credits?.Cast
+            credits?.Cast,
+            r.PosterPath
         );
     }
 
@@ -558,6 +561,7 @@ public sealed partial class TmdbClient : IDisposable
 
     private sealed class MovieDetailsResponse
     {
+        [JsonPropertyName("poster_path")] public string? PosterPath { get; set; }
         [JsonPropertyName("id")] public JsonElement? Id { get; set; }
         [JsonPropertyName("media_type")] public JsonElement? MediaType { get; set; }
         [JsonPropertyName("title")]
@@ -587,6 +591,7 @@ public sealed partial class TmdbClient : IDisposable
 
     private sealed class TvDetailsResponse
     {
+        [JsonPropertyName("poster_path")] public string? PosterPath { get; set; }
         [JsonPropertyName("media_type")]
         public JsonElement? MediaType { get; set; }
         [JsonPropertyName("id")] public JsonElement? Id { get; set; }

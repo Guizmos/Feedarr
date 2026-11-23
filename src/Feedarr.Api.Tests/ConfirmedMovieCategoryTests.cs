@@ -21,7 +21,9 @@ public sealed class ConfirmedMovieCategoryTests
         Assert.False(PosterFetchService.UseVideoV2(release, category));
         release.CategoryIds = "2040";
         release.Title = "A.Show.S01E02.2024.1080p.WEB.x264-GRP";
-        Assert.False(PosterFetchService.UseVideoV2(release, category));
+        // Explicit episodes route Animation to TV; Spectacle keeps the movie conflict guard.
+        Assert.Equal(category == UnifiedCategory.Animation ? "tv" : null,
+            PosterFetchService.ResolveVideoType(release, category));
         release.Title = "A.Show.2024.02.01.1080p.WEB.x264-GRP";
         Assert.False(PosterFetchService.UseVideoV2(release, category));
         release.Title = "The.Matrix.1999.1080p.BluRay.x264-GRP";
