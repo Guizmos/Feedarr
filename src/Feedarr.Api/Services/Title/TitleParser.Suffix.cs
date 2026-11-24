@@ -63,7 +63,7 @@ public sealed partial class TitleParser
         // Distribution labels bridge known technical tokens, but never establish a
         // work boundary on their own. Keep this vocabulary scoped to films/series.
         private static readonly Regex VideoDistributionTags = new(
-            @"(?i)\b(?:BDREMUX|FRTV|TV5M|TV5P|AMAZN)\b", RegexOptions.Compiled);
+            @"(?i)\b(?:BDREMUX|FRTV|TV5M|TV5P|AMAZN|INTERNAL)\b", RegexOptions.Compiled);
 
         private static List<SuffixToken> ReadSuffixTokens(string raw, bool game, bool forGroup = false, UnifiedCategory category = UnifiedCategory.Autre)
         {
@@ -83,7 +83,23 @@ public sealed partial class TitleParser
             if (!game && category is UnifiedCategory.Film or UnifiedCategory.Serie)
             {
                 foreach (Match match in VideoDistributionTags.Matches(scan))
+                {
+                    // INTERNAL can close a full-disc suffix (one source anchor), but
+                    // must not become a title boundary without date/language/source evidence.
+                    if (match.Value.Equals("INTERNAL", StringComparison.OrdinalIgnoreCase) &&
+                        !(category == UnifiedCategory.Film && result.Any(t => t.Kind == "source" && t.End <= match.Index &&
+                            TokenGap(scan[t.End..match.Index]) && FindYearCandidates(scan[..t.Start]).Count > 0 &&
+                            result.Any(l => l.Kind == "language" && l.End <= t.Start)))) continue;
                     result.Add(new(match.Index, match.Index + match.Length, match.Value, "distribution"));
+                }
+                if (category == UnifiedCategory.Film)
+                foreach (Match match in Regex.Matches(scan, @"(?i)\bGER\b"))
+                {
+                    // Bridge a resolution and a known source, never a standalone title word.
+                    if (result.Any(t => t.Kind == "resolution" && t.End <= match.Index && TokenGap(scan[t.End..match.Index])) &&
+                        result.Any(t => t.Kind == "source" && t.Start >= match.Index + match.Length))
+                        result.Add(new(match.Index, match.Index + match.Length, match.Value, "language"));
+                }
                 result.Sort((left, right) => left.Start.CompareTo(right.Start));
             }
             return result;

@@ -63,7 +63,8 @@ public sealed partial class TitleParser
         // before an established rich technical suffix. Never strip it from a title.
         if (suffix.Rich)
             tail = Regex.Replace(tail, @"(?:^|[\s._-])MUET(?=$|[\s._-])", " ").Trim(' ', '.', '_', '-');
-        if (tail.Length > 0 && !IsMetadataWords(tail)) return null;
+        if (tail.Length > 0 && !IsMetadataWords(tail) &&
+            !(category == UnifiedCategory.Film && suffix.Rich && IsDatedFilmLanguageMetadata(tail))) return null;
         if ((category is UnifiedCategory.Serie or UnifiedCategory.Anime) && firstSeries is not null &&
             matches.Count == 1 && tail.Length == 0) return null; // A show's own numeric title is ambiguous.
         // A bare trailing number without a format/season/pack signal remains ambiguous.
@@ -81,7 +82,11 @@ public sealed partial class TitleParser
 
     private static string CleanContextualTitle(string raw, UnifiedCategory category, ParsedTitle parsed, TechnicalSuffix suffix, Match? year)
     {
-        var boundary = FindTitleBoundaryForYear(raw, suffix, year);
+        var boundary = FindTitleBoundaryForYear(raw, suffix, year, category);
+        var broadcastDate = category == UnifiedCategory.Film ? FindSportsBroadcastDate(raw, suffix) : null;
+        // NFL dates terminate the fixture; NBA ISO dates precede the team names.
+        if (broadcastDate is not null && !raw.StartsWith("NBA-", StringComparison.OrdinalIgnoreCase))
+            boundary = Math.Min(boundary, broadcastDate.Index);
         if (category == UnifiedCategory.Film && FindFilmEditionEvidence(raw, suffix) is { } edition)
             boundary = Math.Min(boundary, edition.TitleEnd);
         if (category is UnifiedCategory.Serie or UnifiedCategory.Anime or UnifiedCategory.Emission)
@@ -110,7 +115,13 @@ public sealed partial class TitleParser
             if (years.Count > 0 && year is not null && IsMetadataWords(raw[(years[0].Index + years[0].Length)..year.Index]))
             { boundary = years[0].Index; parsed.Year = null; }
         }
-        var title = PrepareTitle(raw, boundary);
+        var titleRaw = raw[..Math.Clamp(boundary, 0, raw.Length)];
+        if (broadcastDate is not null && broadcastDate.Index + broadcastDate.Length <= boundary)
+        {
+            var start = broadcastDate.Index > 0 && raw[broadcastDate.Index - 1] == '-' ? broadcastDate.Index - 1 : broadcastDate.Index;
+            titleRaw = raw[..start] + " " + raw[(broadcastDate.Index + broadcastDate.Length)..boundary];
+        }
+        var title = PrepareTitle(titleRaw, titleRaw.Length);
         // A repeated edition flag on both sides of an explicit release year is
         // distribution metadata. A lone significant title word remains untouched.
         if (year is not null && suffix.Rich)
@@ -128,7 +139,7 @@ public sealed partial class TitleParser
         return FinishTitle(title);
     }
 
-    private static int FindTitleBoundaryForYear(string raw, TechnicalSuffix suffix, Match? year)
+    private static int FindTitleBoundaryForYear(string raw, TechnicalSuffix suffix, Match? year, UnifiedCategory category = UnifiedCategory.Autre)
     {
         var boundary = suffix.Start;
         if (year is not null)
@@ -137,11 +148,41 @@ public sealed partial class TitleParser
             if (IsExplicitYear(raw, year)) start = raw[..start].TrimEnd().Length - 1;
             // Repeated release dates separated only by language tags describe one suffix.
             foreach (Match previous in RxYear.Matches(raw[..year.Index]))
-                if (previous.Index > 0 && previous.Value == year.Value && IsMetadataWords(raw[(previous.Index + previous.Length)..year.Index]))
+                if (previous.Index > 0 && previous.Value == year.Value &&
+                    (IsMetadataWords(raw[(previous.Index + previous.Length)..year.Index]) ||
+                     category == UnifiedCategory.Film && suffix.Rich && IsDatedFilmLanguageMetadata(raw[(previous.Index + previous.Length)..year.Index])))
                 { start = previous.Index; break; }
             boundary = Math.Min(boundary, start);
         }
         return boundary;
+    }
+
+    private static bool IsDatedFilmLanguageMetadata(string value)
+        => Regex.IsMatch(value.Trim(), @"(?i)^(?:Tamil|Tamoul)\s+(?:VOSTFR|VOST|SUBFRENCH)$");
+
+    // A broadcast date is not a generic movie suffix. Recognize only an explicit
+    // league/fixture with a validated full date and established broadcast metadata.
+    private static Match? FindSportsBroadcastDate(string raw, TechnicalSuffix suffix)
+    {
+        if (!suffix.Rich) return null;
+        if ((suffix.Source is "WEB-DL" or "HDTV") && raw.StartsWith("NBA-", StringComparison.OrdinalIgnoreCase))
+        {
+            var date = RxAirDateYmd.Match(raw[..suffix.Start]);
+            if (date.Success && date.Index == 4 && EpisodeRecognition.TryExtractAirDate(date.Value, out _, out _) &&
+                Regex.Match(raw[(date.Index + date.Length)..suffix.Start],
+                    @"(?i)^\s+[A-Z0-9]{2,4}\s+VS\s+[A-Z0-9]{2,4}\s+(?<year>(?:19|20)\d{2})\s+(?<metadata>.+)$") is { Success: true } fixture &&
+                fixture.Groups["year"].Value == date.Groups["y"].Value && IsMetadataWords(fixture.Groups["metadata"].Value))
+                return date;
+        }
+        if (suffix.Source != "HDTV") return null;
+        foreach (Match date in RxAirDateDmy.Matches(raw[..suffix.Start]))
+        {
+            if (!Regex.IsMatch(raw[..date.Index], @"(?i)^NFL\s+W(?:[1-9]|1\d|2[0-2])\s+.+\s+at\s+.+\s+$") ||
+                !IsMetadataWords(raw[(date.Index + date.Length)..suffix.Start]) ||
+                !EpisodeRecognition.TryExtractAirDate(date.Value, out _, out _)) continue;
+            return date;
+        }
+        return null;
     }
 
     private static string PrepareTitle(string raw, int boundary)

@@ -20,6 +20,10 @@ public sealed partial class TitleParser
         if (!p.Year.HasValue)
             p.Year = releaseYear is { } year ? TryInt(year.Value) : null;
 
+        if (category == UnifiedCategory.Film && FindSportsBroadcastDate(input.Tokens, suffix) is { } broadcastDate &&
+            EpisodeRecognition.TryExtractAirDate(broadcastDate.Value, out var airDate, out _))
+            p.AirDate = airDate;
+
         p.Resolution = suffix.Resolution;
         p.Source = suffix.Source;
         p.Codec = suffix.Codec;

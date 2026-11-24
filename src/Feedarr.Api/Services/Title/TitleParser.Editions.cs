@@ -7,7 +7,7 @@ public sealed partial class TitleParser
     private sealed record FilmEditionEvidence(Match? Year, int TitleEnd);
 
     private static readonly Regex RxFilmEdition = new(
-        @"(?i)\b(?:remastered|theatrical(?:\s+cut)?|encore\s+edition|\d+(?:st|nd|rd|th)\s+anniversary(?:\s+edition)?)\b",
+        @"(?i)\b(?:doc|internal|dc|limited|imax|ai\s+sub|remastered|exten(?:ded|ted)\s+cut|(?-i:RM)|theatrical(?:\s+cut)?|encore\s+edition|\d+(?:st|nd|rd|th)\s+anniversary(?:\s+edition)?)\b",
         RegexOptions.Compiled);
 
     private static FilmEditionEvidence? FindFilmEditionEvidence(string raw, TechnicalSuffix suffix)
@@ -26,6 +26,22 @@ public sealed partial class TitleParser
             if (!IsMetadataWords(remaining)) continue;
 
             var previous = FindYearCandidates(raw[..marker.Index]).LastOrDefault();
+            // Short distribution/format labels need a dated, single-work suffix.
+            // Unknown title words, conflicting dates and composite packs remain intact.
+            if (Regex.IsMatch(marker.Value, @"(?i)^(?:DOC|INTERNAL|DC|LIMITED|IMAX|AI\s+SUB)$"))
+            {
+                if (previous is null || !IsMetadataWords(raw[(previous.Index + previous.Length)..marker.Index]) ||
+                    FindYearCandidates(raw[..marker.Index]).Select(m => m.Value).Distinct().Count() != 1 ||
+                    RxSeriesPackWords.IsMatch(raw[marker.Index..]) ||
+                    datedEdition.Success && datedEdition.Groups["year"].Value != previous.Value ||
+                    !Regex.IsMatch(remaining, @"(?i)\b(?:MULTI\d*|FRENCH|VOF|VFF|VFQ|VFI|VF\d*|VOSTFR|VOST|ENGLISH|ENG)\b") ||
+                    Regex.IsMatch(marker.Value, @"(?i)^AI\s+SUB$") && !Regex.IsMatch(remaining.Trim(), @"(?i)^(?:VOSTFR|VOST|SUBFRENCH)$"))
+                    continue;
+            }
+            // The abbreviation alone is not proof: require a preceding year, a
+            // language declaration and an established technical block after it.
+            if (marker.Value == "RM" && !RxContextHardLanguage.IsMatch(remaining.Trim()) &&
+                !Regex.IsMatch(remaining, @"(?i)\b(?:MULTI\d*|VFF|VFQ|VFI|VOSTFR)\b")) continue;
             if (previous is not null &&
                 IsMetadataWords(raw[(previous.Index + previous.Length)..marker.Index]))
             {
