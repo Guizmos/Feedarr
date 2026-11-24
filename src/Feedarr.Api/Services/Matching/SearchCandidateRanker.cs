@@ -213,7 +213,9 @@ internal static class SearchCandidateRanker
             if (game?.Pc is null) { sufficient = false; Contradict("pc-platform-unavailable", false); }
             else if (game.Pc == false) Contradict("pc-platform-mismatch");
             else positive.Add("verified-pc-platform");
-            if (context.GameEdition != game?.Edition && !(context.GameEdition is null && game?.Edition is "remake" or "remaster" &&
+            var gameEdition = game?.Edition ?? (context.GameEdition is "remake" or "remaster" &&
+                string.Equals(context.GameEdition, game?.Kind, StringComparison.OrdinalIgnoreCase) ? context.GameEdition : null);
+            if (context.GameEdition != gameEdition && !(context.GameEdition is null && game?.Edition is "remake" or "remaster" &&
                 (context.ConfirmedYear ?? query.Year) is { } gameYear && candidate.Year == gameYear)) Contradict("game-edition-mismatch");
             // Related remakes/editions omitted by provider search remain competitors, not votes.
             if (game?.RelatedIdentities.Count > 0 && context.GameEdition is null && context.ConfirmedYear is null && query.Year is null)

@@ -8,32 +8,39 @@ namespace Feedarr.Api.Services.Matching;
 
 // Missing platform data never supplies positive PC evidence.
 internal sealed record GameEvidence(SearchIdentity Identity, bool? Pc, string? Edition,
-    IReadOnlyList<SearchIdentity> RelatedIdentities);
+    IReadOnlyList<SearchIdentity> RelatedIdentities, string? Kind = null);
 internal sealed record GameObservation(ProviderSearchCandidate Candidate, string? Image, TmdbClient.DetailsResult Details);
 
 // Thin provider projection. Decisions and thresholds belong exclusively to SearchCandidateRanker.
 internal static class GameCandidateAdapter
 {
-    private static readonly Regex Edition = new(@"\b(remaster(?:ed)?|remake|(?:deluxe|ultimate|definitive|complete|collector[’']?s|gold|enhanced)(?:\s+edition)|game\s+of\s+the\s+year(?:\s+edition)?|goty(?:\s+edition)?)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex Edition = new(@"\b(remaster(?:ed)?|remake|(?:(?:digital\s+)?deluxe|ultimate|definitive|complete|collector[’']?s|gold|enhanced)(?:\s+edition)|game\s+of\s+the\s+year(?:\s+edition)?|goty(?:\s+edition)?)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     private static string Words(string title) => title.Replace('.', ' ').Replace('_', ' ').Replace('-', ' ');
     internal static string? EditionOf(string? title)
     {
-        var editions = Edition.Matches(Words(title ?? "")).Select(m => Regex.Replace(m.Value.ToLowerInvariant(), @"\s+", " ").Replace("remastered", "remaster").Replace("game of the year", "goty").Replace(" edition", "")).Distinct().Order().ToArray();
+        var editions = Edition.Matches(Words(title ?? "")).Select(m => Regex.Replace(m.Value.ToLowerInvariant(), @"\s+", " ").Replace("remastered", "remaster").Replace("game of the year", "goty").Replace(" edition", "").Replace("digital deluxe", "deluxe")).Distinct().Order().ToArray();
         return editions.Length == 0 ? null : string.Join("|", editions);
     }
     private static string BaseTitle(string title) => Regex.Replace(Edition.Replace(Words(title), " "), @"\s+", " ").Trim();
     internal static CandidateRankingContext Context(string raw)
     {
         var queries = SearchCandidateGenerator.Generate(new(raw, UnifiedCategory.JeuWindows));
-        return new(queries.Select(q => q with { Title = BaseTitle(q.Title) }).ToArray(), UnifiedCategory.JeuWindows, SearchMediaType.Game, GameEdition: EditionOf(raw));
+        var edition = EditionOf(raw);
+        var parsed = new Feedarr.Api.Services.Titles.TitleParser().Parse(raw, UnifiedCategory.JeuWindows);
+        var bareDeluxe = edition is null && parsed.ReleaseGroup is not null &&
+            queries.Any(q => Regex.IsMatch(q.Title, @"(?i)^.+\s+Deluxe$"));
+        if (bareDeluxe) edition = "deluxe";
+        return new(queries.Select(q => q with { Title = bareDeluxe
+            ? Regex.Replace(BaseTitle(q.Title), @"(?i)\s+Deluxe$", "") : BaseTitle(q.Title) }).ToArray(),
+            UnifiedCategory.JeuWindows, SearchMediaType.Game, GameEdition: edition);
     }
-    internal static IReadOnlyList<GameObservation> Project(string provider, JsonElement root)
+    internal static IReadOnlyList<GameObservation> Project(string provider, JsonElement root, bool completeIgdbCollection = false)
     {
         JsonElement data;
         if (provider == "igdb")
         {
             data = root;
-            if (data.ValueKind != JsonValueKind.Array || data.GetArrayLength() > 25) throw new InvalidDataException("game_search_coverage_unavailable");
+            if (data.ValueKind != JsonValueKind.Array || data.GetArrayLength() > (completeIgdbCollection ? 100 : 25)) throw new InvalidDataException("game_search_coverage_unavailable");
         }
         else
         {
@@ -64,13 +71,13 @@ internal static class GameCandidateAdapter
             if (Number(item, "version_parent") is > 0) related.Add(new(provider, SearchMediaType.Game, Number(item, "version_parent")!.Value.ToString(CultureInfo.InvariantCulture)));
             var version = Text(item, "version_title");
             var kind = item.TryGetProperty("game_type", out var gameType) ? Text(gameType, "type") : null;
-            var edition = EditionOf(name + " " + (version is null ? "" : version + " edition") + " " +
-                (kind is not null && (kind.Equals("Remake", StringComparison.OrdinalIgnoreCase) || kind.Equals("Remaster", StringComparison.OrdinalIgnoreCase)) ? kind : ""));
+            // Provider nature (Remake/Remaster) is not a commercial edition claim.
+            var edition = EditionOf(name + " " + (version is null ? "" : version + " edition"));
             var aliases = new List<OfficialProviderTitle>();
             if (item.TryGetProperty("alternative_names", out var names) && names.ValueKind == JsonValueKind.Array)
                 foreach (var alias in names.EnumerateArray())
                     if (Text(alias, "name") is { Length: > 0 } text) aliases.Add(new(BaseTitle(text), identity, ProviderTitleKind.Alternative, ProviderTitleSource.ProviderTitles));
-            var evidence = new GameEvidence(identity, pc, edition, related);
+            var evidence = new GameEvidence(identity, pc, edition, related, kind);
             string? image = Text(item, "background_image");
             if (provider == "igdb" && item.TryGetProperty("cover", out var cover)) image = Text(cover, "url");
             if (image?.StartsWith("//", StringComparison.Ordinal) == true) image = "https:" + image;

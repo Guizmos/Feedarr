@@ -17,8 +17,8 @@ public sealed class GameMatchingDiagnosticsTests
     [InlineData("rejected", 422, "reject", "ranking:contradiction:candidates_rejected", 1)]
     [InlineData("ambiguous", 422, "ambiguous", "ranking:ambiguity:ambiguous", 2)]
     [InlineData("missing_pc", 422, "ambiguous", "ranking:ambiguity:ambiguous", 1)]
-    [InlineData("coverage", 422, "game_search_coverage_unavailable", "projection:coverage_insufficient:game_search_coverage_unavailable", null)]
-    [InlineData("invalid_identity", 422, "game_search_identity_invalid", "projection:provider_error:game_search_identity_invalid", null)]
+    [InlineData("coverage", 422, "game_search_coverage_unavailable", "collection:coverage_insufficient:game_search_coverage_unavailable", null)]
+    [InlineData("invalid_identity", 422, "game_search_identity_invalid", "collection:provider_error:game_search_identity_invalid", null)]
     [InlineData("no_cover", 422, "selected_identity_poster_unavailable", "image_selection:poster_unavailable:selected_identity_poster_unavailable", 1)]
     [InlineData("provider_error", 503, "game_provider_unavailable", "collection:provider_error:game_provider_unavailable", null)]
     [InlineData("invalid_json", 503, "game_provider_or_publication_unavailable", "collection:provider_error:game_provider_or_publication_unavailable", null)]
@@ -33,6 +33,9 @@ public sealed class GameMatchingDiagnosticsTests
                 if (request.RequestUri!.Host == "api.igdb.com")
                 {
                     searches++;
+                    var body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+                    if (mode != "coverage" && System.Text.RegularExpressions.Regex.Match(body, @"offset\s+(\d+)") is { Success: true } offset &&
+                        int.Parse(offset.Groups[1].Value) > 0) return Task.FromResult<HttpResponseMessage?>(Json("[]"));
                     if (mode == "provider_error") return Task.FromResult<HttpResponseMessage?>(new(HttpStatusCode.ServiceUnavailable));
                     var payload = mode switch {
                         "empty" => "[]",
@@ -66,7 +69,8 @@ public sealed class GameMatchingDiagnosticsTests
         Assert.Contains("candidates=" + (count?.ToString() ?? "unknown"), release.PosterLastError);
         Assert.InRange(release.PosterLastAttemptTs!.Value, before, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         Assert.Null(release.ExtProviderId); Assert.Null(release.TmdbId); Assert.Null(release.PosterFile);
-        Assert.Equal(1, searches); Assert.Empty(rig.RawgSearchRequests);
+        Assert.Equal(mode is "empty" or "provider_error" or "invalid_json" or "invalid_identity" ? 1 : 2, searches);
+        Assert.Empty(rig.RawgSearchRequests);
         Assert.Equal(mode is "empty_image" or "bad_image" ? 1 : 0, images);
         var fields = Assert.Single(logger.Diagnostics);
         Assert.Equal(id, fields["ReleaseId"]); Assert.Equal("JeuWindows", fields["Category"]);

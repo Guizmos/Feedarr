@@ -73,6 +73,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
     private readonly Func<AppOptions, PosterFetchService> _createPosters;
     private readonly TmdbHandler _tmdbHandler;
     private readonly TvMazeHandler _tvmazeHandler;
+    internal IgdbClient Igdb => _igdbDetails;
     internal TmdbClient Tmdb { get; }
     internal TvMazeClient Tvmaze { get; }
     internal int TvmazeMatchingRequests => _tvmazeHandler.MatchingRequests;
@@ -835,6 +836,12 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
                     if (BeforeDetails is { } callback) { BeforeDetails = null; await callback(); }
                     return JsonResponse("[{\"id\":901,\"name\":\"Game Hit\",\"summary\":\"Mock\",\"genres\":[],\"total_rating\":0,\"total_rating_count\":0}]");
                 }
+
+                // Default game fixtures are complete single-page results. Terminal
+                // probes have no additional candidates; overrides can model pagination.
+                if (System.Text.RegularExpressions.Regex.Match(body, @"offset\s+(\d+)") is { Success: true } offset &&
+                    int.Parse(offset.Groups[1].Value) > 0)
+                    return JsonResponse("[]");
 
                 if (_scenario == PosterContractScenario.GameIgdbHit)
                 {

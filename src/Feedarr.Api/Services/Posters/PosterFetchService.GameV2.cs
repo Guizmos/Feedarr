@@ -66,7 +66,7 @@ public sealed partial class PosterFetchService
                     if (response.ValueKind == System.Text.Json.JsonValueKind.Array) providerResultCount = response.GetArrayLength();
                     else if (response.ValueKind == System.Text.Json.JsonValueKind.Object && response.TryGetProperty("count", out var count) &&
                         count.ValueKind == System.Text.Json.JsonValueKind.Number && count.TryGetInt32(out var total)) providerResultCount = total;
-                    rows.AddRange(GameCandidateAdapter.Project(source, response));
+                    rows.AddRange(GameCandidateAdapter.Project(source, response, completeIgdbCollection: source == "igdb"));
                     candidateCount = rows.Count;
                 }
             }
@@ -145,6 +145,7 @@ public sealed partial class PosterFetchService
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (InvalidDataException ex) when (ex.Message.StartsWith("game_", StringComparison.Ordinal))
         {
+            if (ex.Data["ProviderResultCount"] is int observedCount) providerResultCount = observedCount;
             var code = ex.Message is "game_provider_unavailable" or "game_search_coverage_unavailable" or
                 "game_search_identity_invalid" or "game_shared_entity_scope_unverified" ? ex.Message : "game_invariant_unavailable";
             return Abstain(ex.Message, ex.Message == "game_provider_unavailable" ? 503 : 422, diagnosticReason: code,

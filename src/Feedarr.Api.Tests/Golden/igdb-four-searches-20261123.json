@@ -1,0 +1,579 @@
+{
+  "Provenance": "Curated metadata from four authorized IGDB searches, 2026-11-23. Motorfest is a 26-result sentinel window, not a complete search. Cover URLs/response bodies and secrets were not retained.",
+  "Responses": [
+    {
+      "Query": "The Crew Motorfest",
+      "CompleteWithinOriginalBudget": false,
+      "Candidates": [
+        {
+          "id": 234256,
+          "name": "The Crew: Motorfest",
+          "platforms": [
+            169,
+            48,
+            508,
+            6,
+            167,
+            49
+          ],
+          "game_type": {
+            "type": "Main Game"
+          },
+          "first_release_date": 1694649600,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": [
+            {
+              "name": "TheCrewMotorfest.exe"
+            }
+          ]
+        },
+        {
+          "id": 305242,
+          "name": "The Crew: Motorfest - Season 4",
+          "platforms": [
+            169,
+            48,
+            6,
+            167,
+            49
+          ],
+          "game_type": {
+            "type": "Season"
+          },
+          "first_release_date": 1719964800,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 305243,
+          "name": "The Crew: Motorfest - Season 7",
+          "platforms": [
+            169,
+            48,
+            6,
+            167,
+            49
+          ],
+          "game_type": {
+            "type": "Season"
+          },
+          "first_release_date": 1751414400,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 305245,
+          "name": "The Crew: Motorfest - Season 6",
+          "platforms": [
+            169,
+            48,
+            6,
+            167,
+            49
+          ],
+          "game_type": {
+            "type": "Season"
+          },
+          "first_release_date": 1741132800,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 305244,
+          "name": "The Crew: Motorfest - Season 5",
+          "platforms": [
+            169,
+            48,
+            6,
+            167,
+            49
+          ],
+          "game_type": {
+            "type": "Season"
+          },
+          "first_release_date": 1730419200,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 408847,
+          "name": "The Crew: Motorfest - Season 8",
+          "platforms": [
+            169,
+            48,
+            6,
+            167,
+            49
+          ],
+          "game_type": {
+            "type": "Season"
+          },
+          "first_release_date": 1762300800,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 408911,
+          "name": "The Crew: Motorfest - Season 9",
+          "platforms": [
+            169,
+            48,
+            6,
+            167,
+            49
+          ],
+          "game_type": {
+            "type": "Season"
+          },
+          "first_release_date": 1772582400,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 408914,
+          "name": "The Crew: Motorfest - Season 10",
+          "platforms": [
+            169,
+            48,
+            6,
+            167,
+            49
+          ],
+          "game_type": {
+            "type": "Season"
+          },
+          "first_release_date": 1782864000,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 423601,
+          "name": "The Crew: Motorfest - Season 11",
+          "platforms": [],
+          "game_type": {
+            "type": "Season"
+          },
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 408788,
+          "name": "The Crew: Motorfest - Drift Pack",
+          "platforms": [
+            169,
+            48,
+            6,
+            167,
+            49
+          ],
+          "game_type": {
+            "type": "DLC"
+          },
+          "first_release_date": 1782864000,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 408787,
+          "name": "The Crew: Motorfest - Dodge Pack",
+          "platforms": [
+            169,
+            48,
+            6,
+            167,
+            49
+          ],
+          "game_type": {
+            "type": "DLC"
+          },
+          "first_release_date": 1782864000,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 298706,
+          "name": "The Crew Motorfest: Year 1 Pass",
+          "platforms": [
+            169,
+            48,
+            6,
+            167,
+            49
+          ],
+          "game_type": {
+            "type": "DLC"
+          },
+          "first_release_date": 1694390400,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 335098,
+          "name": "The Crew: Motorfest - Year 2 Pass",
+          "platforms": [
+            169,
+            48,
+            6,
+            167,
+            49
+          ],
+          "game_type": {
+            "type": "DLC"
+          },
+          "first_release_date": 1730851200,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 408884,
+          "name": "The Crew: Motorfest - Year 3 Pass",
+          "platforms": [
+            169,
+            48,
+            6,
+            167,
+            49
+          ],
+          "game_type": {
+            "type": "DLC"
+          },
+          "first_release_date": 1762300800,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 254082,
+          "name": "The Crew: Motorfest - Gold Edition",
+          "platforms": [
+            169,
+            48,
+            6,
+            167,
+            49
+          ],
+          "game_type": {
+            "type": "Main Game"
+          },
+          "version_title": "Gold Edition",
+          "version_parent": 234256,
+          "first_release_date": 1694390400,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 408844,
+          "name": "The Crew: Motorfest - Chevrolet Pack",
+          "platforms": [
+            169,
+            48,
+            6,
+            167,
+            49
+          ],
+          "game_type": {
+            "type": "DLC"
+          },
+          "first_release_date": 1782864000,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 275807,
+          "name": "The Crew: Motorfest - Deluxe Edition",
+          "platforms": [
+            169,
+            6,
+            49
+          ],
+          "game_type": {
+            "type": "Main Game"
+          },
+          "version_title": "Deluxe Edition",
+          "version_parent": 234256,
+          "first_release_date": 1699488000,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 408845,
+          "name": "The Crew: Motorfest - RC Frenzy Pack",
+          "platforms": [
+            6
+          ],
+          "game_type": {
+            "type": "DLC"
+          },
+          "first_release_date": 1778025600,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 408883,
+          "name": "The Crew: Motorfest - Chase Squad Pack",
+          "platforms": [
+            169,
+            48,
+            6,
+            167,
+            49
+          ],
+          "game_type": {
+            "type": "DLC"
+          },
+          "first_release_date": 1762300800,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 427878,
+          "name": "The Crew: Motorfest - Tomb Raider Pack",
+          "platforms": [
+            6
+          ],
+          "game_type": {
+            "type": "DLC"
+          },
+          "first_release_date": 1791331200,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": [
+            {
+              "name": "飙酷车神: 轰鸣盛典 - Tomb Raider 组合包"
+            },
+            {
+              "name": "飆酷車神: 動力慶典 - Tomb Raider 組合包"
+            }
+          ]
+        },
+        {
+          "id": 422381,
+          "name": "The Crew: Motorfest - Special Edition",
+          "platforms": [
+            169,
+            48,
+            49
+          ],
+          "game_type": {
+            "type": "Main Game"
+          },
+          "version_title": "Special Edition",
+          "version_parent": 234256,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 253057,
+          "name": "The Crew: Motorfest - Limited Edition",
+          "platforms": [
+            169,
+            48,
+            167,
+            49
+          ],
+          "game_type": {
+            "type": "Main Game"
+          },
+          "version_title": "Limited Edition",
+          "version_parent": 234256,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 393737,
+          "name": "The Crew: Motorfest - Triple Bike Pack",
+          "platforms": [
+            169,
+            48,
+            6,
+            167
+          ],
+          "game_type": {
+            "type": "DLC"
+          },
+          "first_release_date": 1772582400,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 253064,
+          "name": "The Crew: Motorfest - Ultimate Edition",
+          "platforms": [
+            169,
+            6,
+            167,
+            49
+          ],
+          "game_type": {
+            "type": "Main Game"
+          },
+          "version_title": "Ultimate Edition",
+          "version_parent": 234256,
+          "first_release_date": 1694390400,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 393736,
+          "name": "The Crew Motorfest: JDM Custom Car Pack",
+          "platforms": [
+            169,
+            48,
+            6,
+            167
+          ],
+          "game_type": {
+            "type": "DLC"
+          },
+          "first_release_date": 1772582400,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 408885,
+          "name": "The Crew: Motorfest - Ford Triple Car Pack",
+          "platforms": [
+            6
+          ],
+          "game_type": {
+            "type": "DLC"
+          },
+          "first_release_date": 1762300800,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        }
+      ]
+    },
+    {
+      "Query": "The Binding of Isaac Rebirth",
+      "CompleteWithinOriginalBudget": true,
+      "Candidates": [
+        {
+          "id": 309607,
+          "name": "The Binding of Isaac: Rebirth",
+          "platforms": [
+            38
+          ],
+          "game_type": {
+            "type": "Main Game"
+          },
+          "first_release_date": 1627084800,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": []
+        },
+        {
+          "id": 7789,
+          "name": "The Binding of Isaac: Rebirth",
+          "platforms": [
+            48,
+            3,
+            37,
+            6,
+            39,
+            14,
+            41,
+            46,
+            137,
+            49
+          ],
+          "game_type": {
+            "type": "Remake"
+          },
+          "first_release_date": 1415059200,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": [
+            {
+              "name": "isaac-ng.exe"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "Query": "Phantom Blade Zero voices38",
+      "CompleteWithinOriginalBudget": true,
+      "Candidates": []
+    },
+    {
+      "Query": "Phantom Blade Zero",
+      "CompleteWithinOriginalBudget": true,
+      "Candidates": [
+        {
+          "id": 250618,
+          "name": "Phantom Blade Zero",
+          "platforms": [
+            6,
+            167
+          ],
+          "game_type": {
+            "type": "Main Game"
+          },
+          "first_release_date": 1793232000,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": [
+            {
+              "name": "影之刃零"
+            },
+            {
+              "name": "PBZ.exe"
+            },
+            {
+              "name": "影之刃零"
+            }
+          ]
+        },
+        {
+          "id": 413260,
+          "name": "Phantom Blade Zero: Digital Deluxe Edition",
+          "platforms": [
+            6,
+            167
+          ],
+          "game_type": {
+            "type": "Main Game"
+          },
+          "version_title": "Digital Deluxe Edition",
+          "version_parent": 250618,
+          "first_release_date": 1793232000,
+          "remakes": [],
+          "remasters": [],
+          "alternative_names": [
+            {
+              "name": "Phantom Blade Ø: Digital Deluxe Edition"
+            },
+            {
+              "name": "Phantom Blade 0: Digital Deluxe Edition"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

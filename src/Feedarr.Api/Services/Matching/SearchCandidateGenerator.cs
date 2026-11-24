@@ -15,7 +15,8 @@ internal enum CandidateYearEvidence
 internal enum SearchCandidateOrigin
 {
     Primary,
-    AmbiguousTrailingNumber
+    AmbiguousTrailingNumber,
+    IsolatedDistributionSuffix
 }
 
 /// <summary>Parsed is lexical evidence, never a provider-confirmed release year.</summary>
@@ -60,6 +61,15 @@ internal static class SearchCandidateGenerator
         var primary = new SearchCandidate(parsed.TitleClean, parsed.Year,
             parsed.Year.HasValue ? CandidateYearEvidence.Parsed : CandidateYearEvidence.None,
             SearchCandidateOrigin.Primary);
+
+        // An isolated uploader suffix supplies a search alternative, never a display
+        // rewrite or a reason to remove editions, DLC names or title numbers.
+        if (input.Category == UnifiedCategory.JeuWindows &&
+            Regex.IsMatch(input.RawTitle.Trim(), @"(?i)\S\s*-\s*voices38$") &&
+            Regex.Match(primary.Title, @"(?i)^(?<title>.+?)\s*-\s*voices38$") is { Success: true } distribution &&
+            distribution.Groups["title"].Value.Any(char.IsLetter))
+            return Array.AsReadOnly(new[] { primary, primary with {
+                Title = distribution.Groups["title"].Value.Trim(), Origin = SearchCandidateOrigin.IsolatedDistributionSuffix } });
 
         // Movie title-number ambiguity needs resolution evidence. Episodic TV can
         // also propose a season-year hypothesis; other media keep the primary query.
