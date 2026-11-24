@@ -64,7 +64,7 @@ public sealed partial class TitleParser
         if (suffix.Rich)
             tail = Regex.Replace(tail, @"(?:^|[\s._-])MUET(?=$|[\s._-])", " ").Trim(' ', '.', '_', '-');
         if (tail.Length > 0 && !IsMetadataWords(tail) &&
-            !(category == UnifiedCategory.Film && suffix.Rich && IsDatedFilmLanguageMetadata(tail))) return null;
+            !(suffix.Rich && IsDatedSubtitleMetadata(tail, category))) return null;
         if ((category is UnifiedCategory.Serie or UnifiedCategory.Anime) && firstSeries is not null &&
             matches.Count == 1 && tail.Length == 0) return null; // A show's own numeric title is ambiguous.
         // A bare trailing number without a format/season/pack signal remains ambiguous.
@@ -159,6 +159,15 @@ public sealed partial class TitleParser
 
     private static bool IsDatedFilmLanguageMetadata(string value)
         => Regex.IsMatch(value.Trim(), @"(?i)^(?:Tamil|Tamoul)\s+(?:VOSTFR|VOST|SUBFRENCH)$");
+
+    private static bool IsDatedSubtitleMetadata(string value, UnifiedCategory category)
+    {
+        if (category == UnifiedCategory.Film && IsDatedFilmLanguageMetadata(value)) return true;
+        // A language/fansub label is evidence only between a release year and a
+        // rich video suffix, with an explicit subtitle declaration.
+        return category is UnifiedCategory.Film or UnifiedCategory.Animation &&
+            Regex.IsMatch(value.Trim(), @"(?i)^(?:KOREAN\s+VOSTFR|FANSUB\s+VOSTFR|VOSTFR\s+FANSUB)$");
+    }
 
     // A broadcast date is not a generic movie suffix. Recognize only an explicit
     // league/fixture with a validated full date and established broadcast metadata.

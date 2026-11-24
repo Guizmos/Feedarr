@@ -5,6 +5,16 @@ namespace Feedarr.Api.Services.Titles;
 
 public sealed partial class TitleParser
 {
+    private static bool IsKnownGameVersionTail(string tail)
+    {
+        var distribution = Regex.Match(tail,
+            @"(?i)^(?:[._+-]incl[._+-]DLCs[._+-]MULTI\d+[._+-]Repack|[._+-]RECOMPILED[._+-]MULTI\d+)(?<signature>-[A-Za-z0-9_]+)$");
+        if (!distribution.Success) return false;
+        var signature = distribution.Groups["signature"].Value;
+        var scene = RxGameScene.Match(signature);
+        return scene.Success && scene.Index == 0 && scene.Length == signature.Length;
+    }
+
     // PC game identity numbers/annual editions are not video release years. This
     // policy owns that distinction and its distribution-aware title normalization.
     private sealed class GameCategoryParser : CategoryParser

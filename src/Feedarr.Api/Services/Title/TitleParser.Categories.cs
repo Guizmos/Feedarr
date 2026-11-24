@@ -37,6 +37,12 @@ public sealed partial class TitleParser
         {
             var s = raw.Replace('.', ' ').Replace('_', ' ').Replace('+', ' ');
             s = RxYearLangGlue.Replace(s, "${year} ${tag}");
+            // FranceTV's theatre exports omit the resolution's p. Require the
+            // complete service/date/language/format chain; never strip a title word alone.
+            if (category == UnifiedCategory.Spectacle)
+                s = Regex.Replace(s,
+                    @"(?i)(?<=\S\s)FranceTV\s+(?<year>(?:19|20)\d{2})\s+VFF\s+1080(?=\s+WEB\s+AVC\s+AAC\s+NoTag\s+FRENCH$)",
+                    "${year} VFF 1080p");
             // Fansub labels describe the release, unlike arbitrary bracketed title words.
             s = Regex.Replace(s, @"^\[(?=[^\]]*(?i:subs|raws))[^\]]+\]\s*", "");
             if (category == UnifiedCategory.Anime &&

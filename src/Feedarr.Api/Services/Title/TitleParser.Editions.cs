@@ -7,7 +7,7 @@ public sealed partial class TitleParser
     private sealed record FilmEditionEvidence(Match? Year, int TitleEnd);
 
     private static readonly Regex RxFilmEdition = new(
-        @"(?i)\b(?:doc|internal|dc|limited|imax|ai\s+sub|remastered|exten(?:ded|ted)\s+cut|(?-i:RM)|theatrical(?:\s+cut)?|encore\s+edition|\d+(?:st|nd|rd|th)\s+anniversary(?:\s+edition)?)\b",
+        @"(?i)\b(?:doc|internal|dc|limited|imax|ai\s+sub|remastered|resmastered|unrated|exten(?:ded|ted)\s+cut|(?-i:RM)|theatrical(?:\s+cut)?|encore\s+edition|\d+(?:st|nd|rd|th)\s+anniversary(?:\s+edition)?)\b",
         RegexOptions.Compiled);
 
     private static FilmEditionEvidence? FindFilmEditionEvidence(string raw, TechnicalSuffix suffix)
@@ -38,6 +38,11 @@ public sealed partial class TitleParser
                     Regex.IsMatch(marker.Value, @"(?i)^AI\s+SUB$") && !Regex.IsMatch(remaining.Trim(), @"(?i)^(?:VOSTFR|VOST|SUBFRENCH)$"))
                     continue;
             }
+            // These release labels are removed only after a dated work and a
+            // language declaration. Preserve the same words inside official titles.
+            if (Regex.IsMatch(marker.Value, @"(?i)^(?:RESMASTERED|UNRATED)$") &&
+                (previous is null || !Regex.IsMatch(remaining,
+                    @"(?i)\b(?:MULTI\d*|VFF|VFQ|VFI|VOSTFR|FRENCH)\b"))) continue;
             // The abbreviation alone is not proof: require a preceding year, a
             // language declaration and an established technical block after it.
             if (marker.Value == "RM" && !RxContextHardLanguage.IsMatch(remaining.Trim()) &&

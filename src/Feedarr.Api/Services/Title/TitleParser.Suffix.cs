@@ -171,6 +171,11 @@ public sealed partial class TitleParser
             {
                 var token = tokens[i];
                 if (token.Kind == "distribution") continue; // Evidence within a suffix, never a work boundary by itself.
+                // The query generator already handles this isolated signature with
+                // an alternative. It must not make a named edition disposable.
+                if (token.Kind == "metadata" && RxGameEditionFull.IsMatch(token.Value) &&
+                    Regex.IsMatch(raw, @"(?i)\S-voices38$") &&
+                    !tokens.Any(t => t.Kind is "version" or "build")) continue;
                 // An edition is not disposable merely because language/platform tags follow.
                 // Retain legacy cleanup only inside an explicit version/build distribution.
                 if (token.Kind == "edition" && !tokens.Skip(i + 1).Any(t => t.Kind is "version" or "build"))
@@ -188,6 +193,11 @@ public sealed partial class TitleParser
                 var accepted = token.Kind is "version" or "build" or "platform"
                     ? EstablishedSequence(raw, tokens, i)
                     : GameTailIsKnown(raw, tokens, i);
+                // Unknown words after a version normally keep it in the title.
+                // Recognize only two complete distribution chains observed locally,
+                // at the version boundary so preceding editions/DLC names survive.
+                if (token.Kind == "version" && IsKnownGameVersionTail(raw[token.End..]))
+                    accepted = true;
                 if (token.Kind is "version" or "build")
                 {
                     var block = Math.Max(raw.LastIndexOf('(', start), raw.LastIndexOf('[', start));
