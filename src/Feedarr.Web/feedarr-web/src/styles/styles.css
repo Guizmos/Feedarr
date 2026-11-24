@@ -2861,6 +2861,17 @@ body.modal-open .content{
 .releaseModal__pillsRight .banner-pill{
   white-space: normal;
 }
+.releaseModal__pillsRight a.banner-pill{
+  cursor: pointer;
+  text-decoration: none;
+}
+.releaseModal__pillsRight a.banner-pill:hover{
+  filter: brightness(1.06);
+}
+.releaseModal__pillsRight a.banner-pill:focus-visible{
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
 .releaseModal__pills .banner-pill,
 .releaseModal__pills .cat-bubble{
   display: inline-flex;

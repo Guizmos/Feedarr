@@ -4,6 +4,7 @@ import { apiPost, resolveApiUrl } from "../api/client.js";
 import Modal from "./Modal.jsx";
 import { buildIndexerPillStyle } from "../utils/sourceColors.js";
 import AppIcon from "./AppIcon.jsx";
+import { getTrackerPageUrl } from "../utils/trackerPageUrl.js";
 import { getAppLabel, normalizeRequestMode } from "../utils/appTypes.js";
 import { normalizeCategoryGroupKey } from "../domain/categories/index.js";
 import { extractArtworkAccent } from "../utils/artworkAccent.js";
@@ -234,6 +235,8 @@ export default function ReleaseModal({
   );
   const indexer = String(indexerLabel || "").trim();
   const indexerClass = getIndexerClass(indexer);
+  const trackerPageUrl = getTrackerPageUrl(item?.trackerPageUrl);
+  const IndexerPill = trackerPageUrl ? "a" : "span";
   const indexerStyle = useMemo(
     () => buildIndexerPillStyle(indexerColor),
     [indexerColor]
@@ -525,12 +528,19 @@ export default function ReleaseModal({
                     </div>
                     {indexer ? (
                       <div className="releaseModal__pillsRight">
-                        <span
+                        <IndexerPill
                           className={`banner-pill banner-pill--indexer${indexerClass ? ` ${indexerClass}` : ""}`}
                           style={indexerStyle || undefined}
+                          {...(trackerPageUrl ? {
+                            href: trackerPageUrl,
+                            target: "_blank",
+                            rel: "noopener noreferrer",
+                            title: "Ouvrir sur le tracker",
+                            onClick: (event) => event.stopPropagation(),
+                          } : {})}
                         >
                           {indexer}
-                        </span>
+                        </IndexerPill>
                       </div>
                     ) : null}
                   </div>
