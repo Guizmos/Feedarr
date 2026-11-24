@@ -91,7 +91,8 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? musicBrainzResponse = null,
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? booksResponse = null,
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? openLibraryResponse = null,
-        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? comicResponse = null)
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? comicResponse = null,
+        Microsoft.Extensions.Logging.ILogger<PosterFetchService>? posterLogger = null)
     {
         _workspace = new TestWorkspace();
 
@@ -196,7 +197,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             new TestWebHostEnvironment(_workspace.RootDir),
             orchestrator,
             resolver,
-            NullLogger<PosterFetchService>.Instance);
+            posterLogger ?? NullLogger<PosterFetchService>.Instance);
 
         _posters = _createPosters(posterOptions);
         SeedSource();
