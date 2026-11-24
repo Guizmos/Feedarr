@@ -74,6 +74,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
     private readonly TmdbHandler _tmdbHandler;
     private readonly TvMazeHandler _tvmazeHandler;
     internal IgdbClient Igdb => _igdbDetails;
+    internal RawgClient Rawg { get; }
     internal TmdbClient Tmdb { get; }
     internal TvMazeClient Tvmaze { get; }
     internal int TvmazeMatchingRequests => _tvmazeHandler.MatchingRequests;
@@ -173,7 +174,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         _rawgHandler = new RawgContractHandler();
         HttpMessageHandler rawgTransport = scenario == PosterContractScenario.GameRawgHit ? _rawgHandler : new NullHttpHandler();
         if (rawgResponse is not null) rawgTransport = new OverrideTmdbHandler(rawgTransport, rawgResponse);
-        var rawg = new RawgClient(new HttpClient(rawgTransport), stats, resolver);
+        var rawg = Rawg = new RawgClient(new HttpClient(rawgTransport), stats, resolver);
         HttpMessageHandler musicTransport = new NullHttpHandler();
         if (musicBrainzResponse is not null) musicTransport = new OverrideTmdbHandler(musicTransport, musicBrainzResponse);
         var musicBrainz = new MusicBrainzClient(new HttpClient(musicTransport), resolver, stats);
