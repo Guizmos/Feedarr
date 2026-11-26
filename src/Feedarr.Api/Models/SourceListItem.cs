@@ -6,6 +6,7 @@ namespace Feedarr.Api.Models;
 public sealed class SourceListItem
 {
     public long Id { get; set; }
+    public string SourceKind { get; set; } = "torznab";
     public string Name { get; set; } = "";
     public bool Enabled { get; set; }
     public string TorznabUrl { get; set; } = "";

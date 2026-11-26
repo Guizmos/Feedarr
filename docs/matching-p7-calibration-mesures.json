@@ -1,0 +1,136 @@
+{
+  "date": "2026-11-26",
+  "scope": "Offline calibration only; no runtime policy changes. Diagnostic projections are not full replays.",
+  "csv": {
+    "path": ".tmp/local-dev/data/logs/retro-fetch-20261126-113147-66544d.csv",
+    "sha256": "ea6277591f20a30a00975f7d568d46b51317c2dbf3fd82d198ed156a65eb3476",
+    "rows": 197,
+    "statuses": {
+      "truncated": 32,
+      "complete_diagnostic": 136,
+      "no_ranking": 29
+    }
+  },
+  "captured": {
+    "selected": 35,
+    "complete": 34,
+    "missingIds": [
+      531
+    ],
+    "providerTransports": 0,
+    "completeByCategory": {
+      "Emission": 4,
+      "Serie": 29,
+      "Film": 1
+    },
+    "selectedIds": [
+      53,
+      101,
+      106,
+      109,
+      251,
+      252,
+      255,
+      262,
+      274,
+      406,
+      409,
+      425,
+      449,
+      452,
+      469,
+      531,
+      534,
+      537,
+      539,
+      553,
+      554,
+      563,
+      578,
+      582,
+      600,
+      623,
+      761,
+      767,
+      768,
+      772,
+      824,
+      825,
+      908,
+      915,
+      925
+    ],
+    "datasetHash": "db1b01adbeeb3bcd827f3d296815975c352ae87ee9c8880834f8cdc315cf00b5",
+    "selectionSha256": "458aaa544e75e608e6517401f21718ec0cfe8890490745de2588b7d051ac9989"
+  },
+  "profiles": {
+    "Actuel": {
+      "synthetic": {
+        "positiveAccepted": 34,
+        "abstentionContractViolations": 0,
+        "unverifiedAuditSubsetAccepted": 0
+      },
+      "verifiedCaptures": {
+        "truePositives": 34,
+        "falsePositives": 0
+      },
+      "conditionalDiagnosticAccepts": []
+    },
+    "Leger": {
+      "synthetic": {
+        "positiveAccepted": 34,
+        "abstentionContractViolations": 0,
+        "unverifiedAuditSubsetAccepted": 0
+      },
+      "verifiedCaptures": {
+        "truePositives": 34,
+        "falsePositives": 0
+      },
+      "conditionalDiagnosticAccepts": []
+    },
+    "Equilibre": {
+      "synthetic": {
+        "positiveAccepted": 34,
+        "abstentionContractViolations": 1,
+        "unverifiedAuditSubsetAccepted": 0
+      },
+      "verifiedCaptures": {
+        "truePositives": 34,
+        "falsePositives": 0
+      },
+      "conditionalDiagnosticAccepts": []
+    },
+    "Permissif": {
+      "synthetic": {
+        "positiveAccepted": 34,
+        "abstentionContractViolations": 3,
+        "unverifiedAuditSubsetAccepted": 4
+      },
+      "verifiedCaptures": {
+        "truePositives": 34,
+        "falsePositives": 0
+      },
+      "conditionalDiagnosticAccepts": [
+        {
+          "id": "35191",
+          "identity": "712022"
+        },
+        {
+          "id": "29071",
+          "identity": "799815"
+        },
+        {
+          "id": "29072",
+          "identity": "1412141"
+        }
+      ]
+    }
+  },
+  "syntheticTotals": {
+    "positive": 34,
+    "abstention": 35,
+    "unverifiedAuditSubset": 6,
+    "total": 75
+  },
+  "ablationRemoveExactVeto": "Same counts in all four profiles for the selected corpus and complete historical diagnostics; no proven new true positive."
+}

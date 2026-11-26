@@ -14,7 +14,7 @@ internal static class RankingCorpus
         var payload = JsonSerializer.SerializeToElement(new {
             Version = 1, ReleaseId = observation.ReleaseId,
             EngineVersion = typeof(RankingCorpus).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion,
-            Pages = observation.CollectedPages, Context = context, Candidates = observation.ProviderCandidates,
+            Pages = observation.CollectedPages, Context = context, Policy = observation.RankingPolicy, Candidates = observation.ProviderCandidates,
             ExpectedDecision = observation.V2.Decision, ExpectedIdentity = observation.V2.SelectedIdentity
         });
         // Reject the whole input instead of redacting evidence and silently changing replay decisions.
@@ -33,6 +33,7 @@ internal static class RankingCorpus
             throw new InvalidDataException("ranking_corpus_invalid");
         var context = payload.GetProperty("Context").Deserialize<CandidateRankingContext>()!;
         var candidates = payload.GetProperty("Candidates").Deserialize<ProviderSearchCandidate[]>()!;
-        return SearchCandidateRanker.Rank(context, candidates);
+        var policy = payload.TryGetProperty("Policy", out var p) && p.ValueKind != JsonValueKind.Null ? p.Deserialize<CandidateRankingPolicy>() : null;
+        return SearchCandidateRanker.Rank(context, candidates, policy);
     }
 }

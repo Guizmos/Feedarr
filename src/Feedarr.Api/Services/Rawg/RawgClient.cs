@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Feedarr.Api.Services.ExternalProviders;
@@ -8,6 +7,7 @@ namespace Feedarr.Api.Services.Rawg;
 public sealed partial class RawgClient
 {
     private readonly HttpClient _http;
+    private readonly RawgAuthenticationState _authentication;
     private readonly ProviderStatsService _stats;
     private readonly ActiveExternalProviderConfigResolver _activeConfigResolver;
 
@@ -19,9 +19,11 @@ public sealed partial class RawgClient
     public RawgClient(
         HttpClient http,
         ProviderStatsService stats,
-        ActiveExternalProviderConfigResolver activeConfigResolver)
+        ActiveExternalProviderConfigResolver activeConfigResolver,
+        RawgAuthenticationState? authentication = null)
     {
         _http = http;
+        _authentication = authentication ?? new RawgAuthenticationState();
         _stats = stats;
         _activeConfigResolver = activeConfigResolver;
     }
@@ -50,17 +52,11 @@ public sealed partial class RawgClient
         if (string.IsNullOrWhiteSpace(apiKey)) return false;
 
         var url = $"https://api.rawg.io/api/games?key={Uri.EscapeDataString(apiKey)}&page_size=1&search=halo";
-        var sw = Stopwatch.StartNew();
         try
         {
-            using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);            _stats.RecordExternal(ExternalProviderKeys.Rawg, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
-            return resp.IsSuccessStatusCode;
+            return (await RawgConnectionProbe.TestAsync(_http, new Uri(url), apiKey, _authentication, _stats, ct).ConfigureAwait(false)).Ok;
         }
-        catch
-        {
-            _stats.RecordExternal(ExternalProviderKeys.Rawg, false, sw.ElapsedMilliseconds);
-            return false;
-        }
+        catch { return false; }
     }
 
     public async Task<List<(int rawgId, string title, int? year, string coverUrl)>> SearchGameListAsync(
@@ -100,27 +96,19 @@ public sealed partial class RawgClient
 
     private async Task<List<RawgGameItem>?> SearchRawAsync(string title, int pageSize, CancellationToken ct)
     {
-        var apiKey = ResolveApiKey();
-        if (string.IsNullOrWhiteSpace(apiKey)) return null;
-
-        var url = $"https://api.rawg.io/api/games?key={Uri.EscapeDataString(apiKey)}&search={Uri.EscapeDataString(title)}&page_size={pageSize}";
-        var sw = Stopwatch.StartNew();
+        var key = ResolveApiKey();
+        if (string.IsNullOrWhiteSpace(key)) return null;
         try
         {
-            using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);            sw.Stop();
-            _stats.RecordExternal(ExternalProviderKeys.Rawg, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
-
-            if (!resp.IsSuccessStatusCode) return null;
-
-            var content = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);            var parsed = JsonSerializer.Deserialize<RawgSearchResponse>(content, JsonOpts);
-            return parsed?.Results;
+            // Manual first-page responses have a separate key and never prove matching coverage.
+            var page = await _authentication.Responses.GetAsync(
+                $"manual:{RawgAuthenticationState.Fingerprint(key)}:{pageSize}:1:{title}",
+                async token => new SearchPage(await ReadMatchingPageAsync(title, key, token, pageSize).ConfigureAwait(false)),
+                value => value.Value.ValueKind == JsonValueKind.Object && value.Value.TryGetProperty("results", out var rows) && rows.ValueKind == JsonValueKind.Array,
+                ct).ConfigureAwait(false);
+            return page!.Value.Deserialize<RawgSearchResponse>(JsonOpts)?.Results;
         }
-        catch
-        {
-            sw.Stop();
-            _stats.RecordExternal(ExternalProviderKeys.Rawg, false, sw.ElapsedMilliseconds);
-            return null;
-        }
+        catch { return null; }
     }
 
     private static (int rawgId, string title, int? year, string coverUrl) ToTuple(RawgGameItem r)

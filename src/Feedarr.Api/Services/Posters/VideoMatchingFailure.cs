@@ -44,5 +44,6 @@ internal sealed record VideoMatchingFailure(string Category, int Status, string?
         "tvmaze_publication_identity_unavailable" or
         "tvmaze_publication_title_unavailable" or
         "tvmaze_search_coverage_unavailable" or
+        "tvmaze_alias_coverage_unavailable" or
         "tvmaze_search_invalid";
 }

@@ -18,7 +18,11 @@ public sealed class ActiveMoviePaginationTests
             completeTmdbMetadata: true, tmdbResponse: (request, _) => {
                 if (!request.RequestUri!.AbsolutePath.Contains("search/movie")) return Task.FromResult<HttpResponseMessage?>(null);
                 calls++;
-                var page = int.Parse(QueryHelpers.ParseQuery(request.RequestUri.Query)["page"]!);
+                var parameters = QueryHelpers.ParseQuery(request.RequestUri.Query);
+                if (parameters.GetValueOrDefault("primary_release_year") is var year && year.Count > 0 && year != "1999")
+                    return Task.FromResult<HttpResponseMessage?>(new(HttpStatusCode.OK) {
+                        Content = new StringContent("{\"page\":1,\"total_pages\":0,\"total_results\":0,\"results\":[]}", Encoding.UTF8, "application/json") });
+                var page = int.Parse(parameters["page"]!);
                 var rows = Enumerable.Range((page - 1) * 20 + 1, 20).Select(id => new {
                     id = id == 80 ? 100 : id, title = id == 80 || competitor && id == 79 ? "The Matrix" : $"Unrelated Work {id}",
                     original_title = id == 80 || competitor && id == 79 ? "The Matrix" : $"Unrelated Work {id}",
@@ -30,7 +34,7 @@ public sealed class ActiveMoviePaginationTests
         var id = rig.IngestRelease("The.Matrix.1999.1080p.BluRay.x264-GRP", UnifiedCategory.Film);
         var result = await rig.FetchAsync(id);
         Assert.Equal(!competitor, result.Ok);
-        Assert.Equal(8, calls);
+        Assert.Equal(12, calls); // Four pages per locale plus four empty neighboring-year first pages.
         if (competitor) {
             Assert.Contains("ambiguous", JsonSerializer.Serialize(result.Body));
             Assert.Null(rig.GetReleaseForPoster(id)!.TmdbId);

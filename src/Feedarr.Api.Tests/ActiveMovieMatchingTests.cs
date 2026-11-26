@@ -33,7 +33,7 @@ public sealed partial class ActiveMovieMatchingTests
         var result = await rig.FetchAsync(Movie(rig));
         Assert.False(result.Ok);
         Assert.Contains("\"reason\":\"reject\"", JsonSerializer.Serialize(result.Body));
-        Assert.Equal(2, searches);
+        Assert.Equal(8, searches); // Six targeted first pages, then the two-page general fallback.
     }
 
     [Fact]
@@ -47,7 +47,10 @@ public sealed partial class ActiveMovieMatchingTests
         Assert.Equal(100, release.TmdbId); Assert.Equal("movie", release.TmdbMediaType);
         Assert.Equal("100", release.ExtProviderId);
         Assert.Contains("movie-100", release.PosterFile!);
-        Assert.All(rig.TmdbSearchRequests, request => { Assert.Contains("page=1", request.Query); Assert.DoesNotContain("year=", request.Query); });
+        Assert.Equal(6, rig.TmdbSearchRequests.Count);
+        Assert.All(rig.TmdbSearchRequests, request => Assert.Contains("page=1", request.Query));
+        Assert.Equal(new[] { "1998", "1999", "2000" }, rig.TmdbSearchRequests
+            .Select(request => QueryHelpers.ParseQuery(request.Query)["primary_release_year"].ToString()).Distinct().Order());
     }
 
     [Theory]
@@ -114,14 +117,17 @@ public sealed partial class ActiveMovieMatchingTests
             tmdbResponse: (r, _) =>
             {
                 requests++;
-                var page = int.Parse(QueryHelpers.ParseQuery(r.RequestUri!.Query)["page"]!);
+                var parameters = QueryHelpers.ParseQuery(r.RequestUri!.Query);
+                if (parameters.GetValueOrDefault("primary_release_year") is var year && year.Count > 0 && year != "1999")
+                    return Task.FromResult<HttpResponseMessage?>(Page());
+                var page = int.Parse(parameters["page"]!);
                 var rows = page == 1 ? Enumerable.Range(100, 20).Select(i => Row(i, i == 100 ? "The Matrix" : $"Different Work {i}")).ToArray() : new[] { Row(999) };
                 return Task.FromResult<HttpResponseMessage?>(Json(new { page, total_pages = 2, total_results = 21, results = rows }));
             });
         var id = Movie(rig);
         Assert.False((await rig.FetchAsync(id)).Ok);
         Assert.Null(rig.GetReleaseForPoster(id)!.TmdbId);
-        Assert.InRange(requests, 2, 4);
+        Assert.Equal(8, requests);
     }
 
     [Fact]

@@ -13,6 +13,17 @@ internal static class XmlSecureParser
     // 5 million characters ≈ 5 MB — generous for Torznab responses
     private const long MaxDocumentCharacters = 5_000_000;
 
+    internal static XDocument Parse(Stream xml)
+    {
+        using var reader = XmlReader.Create(xml, new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit,
+            XmlResolver = null,
+            MaxCharactersInDocument = MaxDocumentCharacters,
+        });
+        return XDocument.Load(reader, LoadOptions.None);
+    }
+
     /// <summary>
     /// Parses <paramref name="xml"/> into an <see cref="XDocument"/>.
     /// Throws <see cref="XmlException"/> if the input contains a DTD declaration

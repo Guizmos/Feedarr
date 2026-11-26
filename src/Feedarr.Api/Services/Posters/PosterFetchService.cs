@@ -27,6 +27,7 @@ namespace Feedarr.Api.Services.Posters;
 public sealed record PosterFetchResult(bool Ok, int StatusCode, object? Body, long? SourceId)
 {
     internal bool PublicationCommitted { get; init; }
+    internal bool Retryable { get; init; } = true;
 }
 
 public sealed partial class PosterFetchService
@@ -1104,6 +1105,36 @@ public sealed partial class PosterFetchService
             return await RefreshEstablishedMatchAsync(r, ct, skipIfExists).ConfigureAwait(false);
         }
 
+        var reuse = _releases.TryReuseLocalIdentity(id);
+        if (reuse.Reason == "historical_identity_requires_validation")
+        {
+            var validated = await ValidateHistoricalDonorAsync(reuse, ct).ConfigureAwait(false);
+            reuse = validated is null ? reuse with { Reason = "historical_identity_validation_failed" } : _releases.TryReuseLocalIdentity(id, validated.Value.Snapshot, validated.Value.Details);
+        }
+        MatchingAttemptDiagnostics.Current?.Collection("local_identity_reuse",
+            $"{reuse.Reason};donor={reuse.DonorId};source={reuse.SourceId};provider={reuse.Provider};identity={reuse.ProviderId}");
+        _logger.LogInformation("Local identity reuse releaseId={ReleaseId} reused={Reused} reason={Reason} donorReleaseId={DonorReleaseId} donorSourceId={DonorSourceId} provider={Provider} identity={Identity}",
+            id, reuse.Reused, reuse.Reason, reuse.DonorId, reuse.SourceId, reuse.Provider, reuse.ProviderId);
+        if (reuse.Reused)
+        {
+            MatchingAttemptDiagnostics.Current?.SetStrategy("local_identity_reuse");
+            var known = _releases.GetForPoster(id)!;
+            var posterUsable = reuse.ImageReusable && !string.IsNullOrWhiteSpace(known.PosterFile) &&
+                Path.GetFileName(known.PosterFile) == known.PosterFile && File.Exists(Path.Combine(PostersDirAbs, known.PosterFile));
+            if (posterUsable && !string.IsNullOrWhiteSpace(known.PosterHash))
+            {
+                try { posterUsable = string.Equals(known.PosterHash, ComputeSha256Hex(await File.ReadAllBytesAsync(Path.Combine(PostersDirAbs, known.PosterFile!), ct).ConfigureAwait(false)), StringComparison.OrdinalIgnoreCase); }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException) { posterUsable = false; }
+            }
+            var preferred = posterUsable && string.Equals(known.PosterLang, _tmdb.PreferredPosterLanguage, StringComparison.OrdinalIgnoreCase);
+            var result = await RefreshEstablishedMatchAsync(known, ct, skipIfExists, upgradePosterLanguage: !preferred).ConfigureAwait(false);
+            // A verified same-identity EN image remains usable if FR is unavailable.
+            if (!result.Ok && skipIfExists && posterUsable && !string.IsNullOrWhiteSpace(known.PosterFile) &&
+                Path.GetFileName(known.PosterFile) == known.PosterFile && File.Exists(Path.Combine(PostersDirAbs, known.PosterFile)))
+                return new(true, 200, new { ok = true, preserved = true, imageFallback = true, posterFile = known.PosterFile }, known.SourceId);
+            return result;
+        }
+
         if (initialCategory is UnifiedCategory.Book or UnifiedCategory.Comic)
             return await FetchPrintV2Async(id, r.SourceId, initialCategory, ct, skipIfExists).ConfigureAwait(false);
 
@@ -1116,9 +1147,17 @@ public sealed partial class PosterFetchService
         if (initialCategory == UnifiedCategory.Anime)
             return await FetchAnimeV2Async(id, r.SourceId, ct).ConfigureAwait(false);
 
-        var type = ResolveVideoType(r, initialCategory);
+        var type = ResolveVideoType(r, initialCategory, out var routingReason);
         if (type is null)
-            return new(false, 422, new { error = "matching_v2_abstained", reason = "video_type_unproven_or_conflicting" }, r.SourceId);
+        {
+            const string reason = "video_type_unproven_or_conflicting";
+            MatchingAttemptDiagnostics.Current?.SetOutcome("routing", reason);
+            PosterAudit.UpdateAttemptFailure(_releases, id, null, null, null, null,
+                $"v2:routing:business_abstention:{reason};routingReason={routingReason}");
+            _logger.LogWarning("Matching V2 routing refused releaseId={ReleaseId} attemptedAtUtc={AttemptedAtUtc} provider=none strategy=none coverage=not_started reason={Reason}",
+                id, DateTimeOffset.UtcNow, routingReason);
+            return new(false, 422, new { error = "matching_v2_abstained", reason }, r.SourceId);
+        }
         var context = new PosterFetchRoutingContext(id, initialCategory, IsTvmazeEnabled(), forceRefresh, r.SourceId) { VideoType = type };
         return await _matchingOrchestrator.FetchPosterAsync(this, context, ct).ConfigureAwait(false);
     }

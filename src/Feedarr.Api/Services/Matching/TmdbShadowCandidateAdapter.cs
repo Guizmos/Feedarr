@@ -26,6 +26,8 @@ internal static class TmdbShadowCandidateAdapter
                     rows.First().Result.Title, rows.Key, OfficialTitles: titles,
                     OfficialOverviews: rows.Select(r => r.Result.Overview).Where(o => !string.IsNullOrWhiteSpace(o)).Cast<string>().Distinct().ToArray()));
             }).ToArray();
-        return context is null ? projected : SearchCandidateRanker.PruneMovieYearContradictionsBeforeBudget(context, projected);
+        return context is null ? projected : context.ExpectedMediaType == SearchMediaType.Series
+            ? SearchCandidateRanker.PruneTelevisionPremiereContradictions(context, projected)
+            : SearchCandidateRanker.PruneMovieYearContradictionsBeforeBudget(context, projected);
     }
 }

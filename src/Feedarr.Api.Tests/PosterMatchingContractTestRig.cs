@@ -75,6 +75,8 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
     private readonly TvMazeHandler _tvmazeHandler;
     internal IgdbClient Igdb => _igdbDetails;
     internal RawgClient Rawg { get; }
+    internal RawgAuthenticationState RawgState { get; } = new();
+    internal ExternalProviderInstanceRepository ExternalInstances { get; private set; } = null!;
     internal TmdbClient Tmdb { get; }
     internal TvMazeClient Tvmaze { get; }
     internal int TvmazeMatchingRequests => _tvmazeHandler.MatchingRequests;
@@ -94,7 +96,9 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? booksResponse = null,
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? openLibraryResponse = null,
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? comicResponse = null,
-        Microsoft.Extensions.Logging.ILogger<PosterFetchService>? posterLogger = null)
+        Microsoft.Extensions.Logging.ILogger<PosterFetchService>? posterLogger = null,
+        IgdbMatchingState? igdbMatchingState = null,
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? tvmazeResponse = null)
     {
         _workspace = new TestWorkspace();
 
@@ -107,7 +111,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         new MigrationsRunner(_db, NullLogger<MigrationsRunner>.Instance).Run();
 
         var protection = new DeterministicProtectionService();
-        var settings = new SettingsRepository(_db, protection, NullLogger<SettingsRepository>.Instance);
+        var settings = Settings = new SettingsRepository(_db, protection, NullLogger<SettingsRepository>.Instance);
         var stats = new ProviderStatsService(new StatsRepository(_db, new MemoryCache(new MemoryCacheOptions())));
 
         var registry = new ExternalProviderRegistry();
@@ -118,6 +122,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
             registry,
             NullLogger<ExternalProviderInstanceRepository>.Instance);
 
+        ExternalInstances = externalInstances;
         SeedExternalInstances(externalInstances);
         if (scenario == PosterContractScenario.GameRawgHit)
             externalInstances.Create(new ExternalProviderCreateDto { ProviderKey = ExternalProviderKeys.Rawg, Enabled = true,
@@ -134,15 +139,17 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         _tmdbHandler = new TmdbHandler(scenario);
         HttpMessageHandler tmdbTransport = completeTmdbMetadata ? new CompleteSearchMetadataHandler(_tmdbHandler, tmdbTotalPages, localizedMovieTitle) : _tmdbHandler;
         if (tmdbResponse is not null) tmdbTransport = new OverrideTmdbHandler(tmdbTransport, tmdbResponse);
-        var tmdb = Tmdb = new TmdbClient(new HttpClient(tmdbTransport), settings, stats, resolver);
+        var tmdb = Tmdb = new TmdbClient(new HttpClient(new MatchingProviderRequestHandler(tmdbTransport)), settings, stats, resolver);
         var fanart = new FanartClient(new HttpClient(new FanartHandler(scenario)), stats, resolver, settings);
         _igdbHandler = new IgdbHandler(scenario);
         HttpMessageHandler igdbTransport = _igdbHandler;
         if (igdbResponse is not null) igdbTransport = new OverrideTmdbHandler(igdbTransport, igdbResponse);
-        var igdb = new IgdbClient(new HttpClient(igdbTransport), stats, resolver);
+        var igdb = new IgdbClient(new HttpClient(new MatchingProviderRequestHandler(igdbTransport)), stats, resolver, igdbMatchingState);
         _igdbDetails = igdb;
         _tvmazeHandler = new TvMazeHandler(scenario);
-        var tvmaze = Tvmaze = new TvMazeClient(new HttpClient(_tvmazeHandler), stats, resolver);
+        HttpMessageHandler tvmazeTransport = _tvmazeHandler;
+        if (tvmazeResponse is not null) tvmazeTransport = new OverrideTmdbHandler(tvmazeTransport, tvmazeResponse);
+        var tvmaze = Tvmaze = new TvMazeClient(new HttpClient(new MatchingProviderRequestHandler(tvmazeTransport)), stats, resolver);
         HttpMessageHandler jikanTransport = new JikanHandler(scenario);
         if (jikanResponse is not null) jikanTransport = new OverrideTmdbHandler(jikanTransport, jikanResponse);
         var jikan = new JikanClient(new HttpClient(jikanTransport), resolver, stats);
@@ -174,7 +181,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         _rawgHandler = new RawgContractHandler();
         HttpMessageHandler rawgTransport = scenario == PosterContractScenario.GameRawgHit ? _rawgHandler : new NullHttpHandler();
         if (rawgResponse is not null) rawgTransport = new OverrideTmdbHandler(rawgTransport, rawgResponse);
-        var rawg = Rawg = new RawgClient(new HttpClient(rawgTransport), stats, resolver);
+        var rawg = Rawg = new RawgClient(new HttpClient(new MatchingProviderRequestHandler(rawgTransport)), stats, resolver, RawgState);
         HttpMessageHandler musicTransport = new NullHttpHandler();
         if (musicBrainzResponse is not null) musicTransport = new OverrideTmdbHandler(musicTransport, musicBrainzResponse);
         var musicBrainz = new MusicBrainzClient(new HttpClient(musicTransport), resolver, stats);
@@ -317,6 +324,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
         conn.Execute("UPDATE releases SET title_manual_override=1 WHERE id=@id", new { id });
     }
 
+    internal SettingsRepository Settings { get; }
     internal Feedarr.Api.Data.Db Database => _db;
     internal Feedarr.Api.Services.Matching.Replay.MatchingReplayReader ReplayReader => new(_db, new DeterministicProtectionService());
     internal PosterFetchService Posters => _posters;
@@ -508,6 +516,7 @@ internal sealed class PosterMatchingContractTestRig : IDisposable
     {
         Tmdb.Dispose();
         Tvmaze.Dispose();
+        RawgState.Dispose();
         _workspace.Dispose();
     }
 

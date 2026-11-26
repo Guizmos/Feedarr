@@ -14,6 +14,9 @@ public sealed class ConfigurationDocument
     public required Dictionary<string, JsonObject> Settings { get; init; }
     public required List<JsonObject> Providers { get; init; }
     public required List<JsonObject> Sources { get; init; }
+    // Optional extension: archives containing only existing providers retain their exact schema.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<JsonObject>? RssSources { get; init; }
     public required List<JsonObject> ExternalProviders { get; init; }
     public required List<JsonObject> Applications { get; init; }
     public required List<JsonObject> Categories { get; init; }

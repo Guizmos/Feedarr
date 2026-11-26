@@ -90,6 +90,25 @@ public sealed class ConfigurationRestoreService(Db db, ConfigurationArchiveServi
             var id = Upsert("sources", plan.Sources[Text(row, "key")], values); sourceIds[Text(row, "key")] = id;
             c.Execute("DELETE FROM source_selected_categories WHERE source_id=@id; DELETE FROM source_category_mappings WHERE source_id=@id;", new { id }, tx);
         }
+        foreach (var rss in model.RssSources ?? [])
+        {
+            var values = new JsonObject {
+                ["name"] = rss["name"]?.DeepClone(), ["enabled"] = rss["enabled"]?.DeepClone(),
+                ["color"] = rss["color"]?.DeepClone(), ["source_kind"] = "rss",
+                ["torznab_url"] = Text(rss, "identity"), ["api_key"] = "", ["auth_mode"] = "query"
+            };
+            var id = Upsert("sources", plan.Sources[Text(rss, "key")], values);
+            sourceIds[Text(rss, "key")] = id;
+            c.Execute("DELETE FROM direct_rss_feeds WHERE source_id=@id", new { id }, tx);
+            foreach (var entry in rss["feeds"]!.AsObject())
+            {
+                var feed = entry.Value!.AsObject();
+                c.Execute("""
+                    INSERT INTO direct_rss_feeds(source_id,url_encrypted,name,category_key,enabled)
+                    VALUES(@id,@url,@name,@category,@enabled)
+                    """, new { id, url = Text(feed, "url"), name = Text(feed, "name"), category = Text(feed, "category_key"), enabled = feed["enabled"]!.GetValue<long>() }, tx);
+            }
+        }
         foreach (var row in model.Applications)
         { var values = Clone(row); values.Remove("key"); appIds[Text(row, "key")] = Upsert("arr_applications", plan.Applications[Text(row, "key")], values); }
         var ordinal = 0;
@@ -163,6 +182,8 @@ public sealed class ConfigurationRestoreService(Db db, ConfigurationArchiveServi
     {
         foreach (var row in model.Providers.Concat(model.Sources)) Protect(row, "api_key");
         foreach (var row in model.Applications) Protect(row, "api_key_encrypted");
+        foreach (var rss in model.RssSources ?? [])
+            foreach (var feed in rss["feeds"]!.AsObject()) Protect(feed.Value!.AsObject(), "url");
         foreach (var row in model.ExternalProviders)
         {
             registry.TryGet(Text(row, "provider_key"), out var definition);
@@ -182,6 +203,10 @@ public sealed class ConfigurationRestoreService(Db db, ConfigurationArchiveServi
         foreach (var row in model.Providers.Concat(model.Applications).Concat(model.ExternalProviders))
             if (Text(row, "base_url").Length > 0 && !OutboundUrlGuard.TryNormalizeHttpBaseUrl(Text(row, "base_url"), false, out _, out _, outboundPolicy,
                 model.ExternalProviders.Contains(row) ? OutboundDestinationContext.Strict : OutboundDestinationContext.TrustedIntegration)) throw new BackupOperationException("configuration_restore_destination_not_allowed", 422);
+        foreach (var rss in model.RssSources ?? [])
+            foreach (var entry in rss["feeds"]!.AsObject())
+                if (!OutboundUrlGuard.TryNormalizeTorznabUrl(Text(entry.Value!.AsObject(), "url"), out _, out _))
+                    throw new BackupOperationException("configuration_restore_destination_not_allowed", 422);
         foreach (var row in model.Sources)
             if (!OutboundUrlGuard.TryNormalizeTorznabUrl(Text(row, "torznab_url"), out _, out _, outboundPolicy, OutboundDestinationContext.TrustedIntegration)) throw new BackupOperationException("configuration_restore_destination_not_allowed", 422);
     }

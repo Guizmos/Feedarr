@@ -11,6 +11,7 @@ import AppIcon from "../ui/AppIcon.jsx";
 import { startNewIndexerTest, completeNewIndexerTest } from "../tasks/indexerTasks.js";
 import { startCapsRefresh, completeCapsRefresh } from "../tasks/categoriesTasks.js";
 import ItemRow, { CategoryBubble } from "../ui/ItemRow.jsx";
+import DirectRssForm from "../components/indexers/DirectRssForm.jsx";
 import IndexersSyncSettingsCard from "../components/indexers/IndexersSyncSettingsCard.jsx";
 import useIndexerModal from "./indexers/hooks/useIndexerModal.js";
 import useIndexerSync from "./indexers/hooks/useIndexerSync.js";
@@ -112,6 +113,14 @@ export default function Indexers() {
         await Promise.allSettled(
           batch.map(async (s) => {
             try {
+              if (s.sourceKind === "rss") {
+                const feeds = await apiGet(`/api/sources/rss/${s.id}/feeds`);
+                catsMap[s.id] = feeds.filter((f) => f.enabled).map((f) => ({
+                  id: f.id, unifiedKey: f.categoryKey,
+                  unifiedLabel: CATEGORY_GROUP_LABELS[f.categoryKey], name: CATEGORY_GROUP_LABELS[f.categoryKey],
+                }));
+                return;
+              }
               const mappings = await apiGet(`/api/sources/${s.id}/category-mappings`);
               catsMap[s.id] = (Array.isArray(mappings) ? mappings : []).map((mapping) => ({
                 id: Number(mapping?.catId),
@@ -207,7 +216,7 @@ export default function Indexers() {
   }, []);
 
   useEffect(() => {
-    if (!selectedProviderId) {
+    if (!selectedProviderId || selectedProviderId === "__rss__") {
       indexerRequestRef.current++;
       setIndexerOptions([]);
       setIndexerOptionsWarning("");
@@ -718,7 +727,7 @@ export default function Indexers() {
                 key={s.id}
                 id={s.id}
                 title={s._name}
-                meta={s._url}
+                meta={s.sourceKind === "rss" ? "RSS direct" : s._url}
                 enabled={s.enabled}
                 badges={categoryBadges}
                 statusClass={statusClass}
@@ -733,7 +742,7 @@ export default function Indexers() {
                   {
                     icon: "science",
                     title: isTesting ? "Test en cours..." : "Test",
-                    onClick: () => testSource(s),
+                    onClick: () => s.sourceKind === "rss" ? openEdit(s) : testSource(s),
                     disabled: isTesting || isSyncing || !s.enabled,
                     spinning: isTesting,
                   },
@@ -811,7 +820,16 @@ export default function Indexers() {
         title={editing ? `Modifier : ${editing?.name ?? editing?.id}` : "Ajouter une source"}
         onClose={closeModal}
         width={indexerModalWidth}
+        modalClassName={selectedProviderId === "__rss__" || editing?.sourceKind === "rss" ? "modal--direct-rss" : ""}
       >
+        {selectedProviderId === "__rss__" || editing?.sourceKind === "rss" ? <>
+          {!editing && <div className="field"><label className="muted">Fournisseur</label>
+            <select value={selectedProviderId} onChange={(e) => setSelectedProviderId(e.target.value)}>
+              <option value="__rss__">RSS direct</option>
+              {providerOptions.map((p) => <option key={p.id} value={p.id}>{p.name || p.type}</option>)}
+            </select></div>}
+          <DirectRssForm source={editing} onCancel={closeModal} onSaved={async () => { await load(); closeModal(); }} />
+        </> : (
         <form onSubmit={(e) => e.preventDefault()} className="formgrid formgrid--edit">
           {/* Step 1 fields - hidden in step 2 */}
           {modalStep === 1 && (
@@ -837,11 +855,12 @@ export default function Indexers() {
                       setTestPassed(false);
                       setTestSourceId(null);
                     }}
-                    disabled={providerOptionsLoading || providerOptions.length === 0}
+                    disabled={providerOptionsLoading}
                   >
                     <option value="" disabled>
                       Choisir un fournisseur...
                     </option>
+                    <option value="__rss__">RSS direct</option>
                     {providerOptions.map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.name || (String(p.type || "").toLowerCase() === "prowlarr" ? "Prowlarr" : "Jackett")}
@@ -1178,7 +1197,7 @@ export default function Indexers() {
               </div>
             )}
           </div>
-        </form>
+        </form>)}
       </Modal>
     </div>
     </ErrorBoundary>

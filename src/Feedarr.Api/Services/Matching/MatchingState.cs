@@ -51,6 +51,7 @@ internal sealed record MatchingShadowObservation(long ReleaseId, string Status,
 {
     internal IReadOnlyList<CollectedSearchPage> CollectedPages { get; init; } = Array.Empty<CollectedSearchPage>();
     internal CandidateRankingContext? RankingContext { get; init; }
+    internal CandidateRankingPolicy? RankingPolicy { get; init; }
     internal MatchingShadowState? InputState { get; init; }
     internal IReadOnlyList<ProviderSearchCandidate> ProviderCandidates { get; init; } = Array.Empty<ProviderSearchCandidate>();
     internal IReadOnlyList<SearchCandidate> Queries { get; init; } = Array.Empty<SearchCandidate>();

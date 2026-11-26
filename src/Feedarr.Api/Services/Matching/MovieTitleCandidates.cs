@@ -12,15 +12,8 @@ internal static class MovieTitleCandidates
         CandidateRankingContext context, ProviderSearchCandidate[] candidates,
         Func<string, CancellationToken, Task<JsonElement?>> get, CancellationToken ct)
     {
-        if (context.Category != Models.UnifiedCategory.Film || context.ExpectedMediaType != SearchMediaType.Movie ||
-            context.IsLocked || context.HasManualCorrection || context.EstablishedIdentity is not null ||
-            SearchCandidateRanker.Rank(context, candidates).Decision == CandidateDecision.Accept)
-            return candidates;
-
-        var identities = candidates.Where(c => SearchCandidateRanker.CanGainMovieTitleEvidence(context, c))
-            .Select(c => c.Identity).Distinct().ToArray();
-        // No partial enrichment followed by acceptance: all repairable competitors or none.
-        if (identities.Length == 0 || identities.Length > MaximumIdentities) return candidates;
+        var identities = EvidenceIdentities(context, candidates);
+        if (identities.Length == 0) return candidates;
         var titles = new Dictionary<SearchIdentity, OfficialProviderTitle[]>();
         foreach (var identity in identities)
         {
@@ -44,4 +37,14 @@ internal static class MovieTitleCandidates
             ? c with { OfficialTitles = (c.OfficialTitles ?? Array.Empty<OfficialProviderTitle>()).Concat(aliases).Distinct().ToArray() }
             : c).ToArray();
     }
+    internal static SearchIdentity[] EvidenceIdentities(CandidateRankingContext context, ProviderSearchCandidate[] candidates)
+    {
+        if (context.ExpectedMediaType != SearchMediaType.Movie || context.IsLocked || context.HasManualCorrection ||
+            context.EstablishedIdentity is not null || SearchCandidateRanker.Rank(context, candidates).Decision == CandidateDecision.Accept)
+            return Array.Empty<SearchIdentity>();
+        var identities = candidates.Where(c => SearchCandidateRanker.CanGainMovieTitleEvidence(context, c))
+            .Select(c => c.Identity).Distinct().ToArray();
+        return identities.Length <= MaximumIdentities ? identities : Array.Empty<SearchIdentity>();
+    }
+
 }

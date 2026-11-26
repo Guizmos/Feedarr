@@ -627,6 +627,7 @@ public sealed partial class ReleaseRepository
     private static string BuildStableGuid(TorznabItem it, string? titleClean)
     {
         var guid = it.Guid?.Trim() ?? "";
+        if (it.PreserveGuid && !string.IsNullOrWhiteSpace(guid)) return guid;
         if (!string.IsNullOrWhiteSpace(guid) &&
             !string.Equals(guid, it.Title ?? "", StringComparison.OrdinalIgnoreCase))
         {
@@ -1619,6 +1620,14 @@ public sealed partial class ReleaseRepository
         return (total, done, pending);
     }
 
+    public bool IsDirectRssRelease(long releaseId)
+    {
+        using var conn = _db.Open();
+        return conn.ExecuteScalar<bool>(
+            "SELECT EXISTS(SELECT 1 FROM releases r JOIN sources s ON s.id=r.source_id WHERE r.id=@releaseId AND s.source_kind='rss')",
+            new { releaseId });
+    }
+
     public string? GetDownloadUrl(long releaseId)
     {
         using var conn = _db.Open();
@@ -1876,6 +1885,7 @@ public sealed partial class ReleaseRepository
                 me.match_revision as MatchRevision,
                 releases.id as Id,
                 releases.source_id as SourceId,
+                EXISTS(SELECT 1 FROM sources s WHERE s.id = releases.source_id AND s.source_kind = 'rss') as IsDirectRss,
                 releases.entity_id as EntityId,
                 releases.title as Title,
                 releases.title_clean as TitleClean,

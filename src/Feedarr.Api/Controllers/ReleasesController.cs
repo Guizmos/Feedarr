@@ -89,8 +89,9 @@ public sealed class ReleasesController : ControllerBase
             _log.LogWarning("Download rejected: missing download_url for releaseId={ReleaseId}", id);
             return NotFound(new { error = "release not found or no download_url" });
         }
+        var directRss = _releases.IsDirectRssRelease(id);
         if (!OutboundUrlGuard.TryNormalizeDownloadUrl(url, out var normalizedUrl, out var validationError,
-                _outboundPolicy, OutboundDestinationContext.TrustedIntegration))
+                _outboundPolicy, directRss ? OutboundDestinationContext.Strict : OutboundDestinationContext.TrustedIntegration))
         {
             if (validationError == "download_url host not allowed") RecordDownloadFailure(SsrfBlockedException.Code);
             _log.LogWarning("Download rejected: invalid download_url for releaseId={ReleaseId}", id);
@@ -110,12 +111,12 @@ public sealed class ReleasesController : ControllerBase
         // Redirecting would fail when the indexer host is only reachable from the server (e.g. Docker network).
         try
         {
-            var client = _httpFactory.CreateClient("torrent-download");
+            var client = _httpFactory.CreateClient(directRss ? "rss-torrent-download" : "torrent-download");
             HttpResponseMessage? response = null;
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get, normalizedUrl);
-                request.Options.Set(ProtocolDowngradeRedirectHandler.AllowHttpsToHttpDowngradeOption, true);
+                if (!directRss) request.Options.Set(ProtocolDowngradeRedirectHandler.AllowHttpsToHttpDowngradeOption, true);
                 response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
 
                 if (!response.IsSuccessStatusCode)
@@ -174,7 +175,10 @@ public sealed class ReleasesController : ControllerBase
         catch (Exception ex)
         {
             RecordDownloadFailure(SsrfBlockedException.IsBlocked(ex) ? SsrfBlockedException.Code : "network_error");
-            _log.LogWarning(ex, "Download proxy failed for releaseId={ReleaseId} host={IndexerHost}", id, indexerHost);
+            if (directRss)
+                _log.LogWarning("RSS download proxy failed for releaseId={ReleaseId} host={IndexerHost} errorType={ErrorType}", id, indexerHost, ex.GetType().Name);
+            else
+                _log.LogWarning(ex, "Download proxy failed for releaseId={ReleaseId} host={IndexerHost}", id, indexerHost);
             return StatusCode(502, new { error = "could not fetch torrent from indexer" });
         }
     }

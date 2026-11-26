@@ -267,6 +267,20 @@ builder.Services.AddHttpClient("torrent-download", c =>
 }).AddHttpMessageHandler(sp => new ProtocolDowngradeRedirectHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), OutboundDestinationContext.TrustedIntegration))
   .AddHttpMessageHandler(sp => new SsrfGuardHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), sp.GetRequiredService<IOutboundDnsResolver>(), OutboundDestinationContext.TrustedIntegration));
 
+// RSS downloads remain public-only even when private integrations are trusted elsewhere.
+builder.Services.AddHttpClient("rss-torrent-download", c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(60);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
+}).RemoveAllLoggers().ConfigurePrimaryHttpMessageHandler(sp => new SocketsHttpHandler
+{
+    AllowAutoRedirect = false,
+    UseProxy = false,
+    ConnectCallback = (connection, ct) => sp.GetRequiredService<ValidatedOutboundConnector>()
+        .ConnectAsync(connection.DnsEndPoint.Host, connection.DnsEndPoint.Port, OutboundDestinationContext.Strict, ct)
+}).AddHttpMessageHandler(sp => new ProtocolDowngradeRedirectHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), OutboundDestinationContext.Strict))
+  .AddHttpMessageHandler(sp => new SsrfGuardHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), sp.GetRequiredService<IOutboundDnsResolver>(), OutboundDestinationContext.Strict));
+
 // Resilience: transient retry handler for external HTTP clients
 builder.Services.AddTransient<TransientHttpRetryHandler>();
 builder.Services.AddOptions<OutboundSecurityOptions>()
@@ -311,13 +325,30 @@ builder.Services.AddHttpClient<TorznabClient>(c =>
   .AddHttpMessageHandler(sp => new ProtocolDowngradeRedirectHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), OutboundDestinationContext.TrustedIntegration))
   .AddHttpMessageHandler(sp => new SsrfGuardHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), sp.GetRequiredService<IOutboundDnsResolver>(), OutboundDestinationContext.TrustedIntegration));
 
+builder.Services.AddSingleton<DirectRssRepository>();
+builder.Services.AddTransient<Feedarr.Api.Services.DirectRss.DirectRssSyncService>();
+// Direct RSS uses the strict destination policy and never logs signed request URIs.
+builder.Services.AddSingleton<Feedarr.Api.Services.DirectRss.DirectRssParser>();
+builder.Services.AddHttpClient<Feedarr.Api.Services.DirectRss.DirectRssClient>(c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(45);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
+}).RemoveAllLoggers().ConfigurePrimaryHttpMessageHandler(sp => new SocketsHttpHandler
+{
+    AllowAutoRedirect = false,
+    UseProxy = false,
+    ConnectCallback = (connection, ct) => sp.GetRequiredService<ValidatedOutboundConnector>()
+        .ConnectAsync(connection.DnsEndPoint.Host, connection.DnsEndPoint.Port, OutboundDestinationContext.Strict, ct)
+}).AddHttpMessageHandler(sp => new ProtocolDowngradeRedirectHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), OutboundDestinationContext.Strict))
+  .AddHttpMessageHandler(sp => new SsrfGuardHandler(sp.GetRequiredService<OutboundDestinationPolicy>(), sp.GetRequiredService<IOutboundDnsResolver>(), OutboundDestinationContext.Strict));
+
 // TMDB
 builder.Services.AddHttpClient<TmdbClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(30);
     c.BaseAddress = new Uri("https://api.themoviedb.org/3/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).UsePublicProviderTransport()
+}).RemoveAllLoggers().UsePublicProviderTransport()
   .AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
@@ -340,6 +371,7 @@ builder.Services.AddHttpClient<FanartClient>(c =>
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
 // IGDB
+builder.Services.AddSingleton<IgdbMatchingState>();
 builder.Services.AddHttpClient<IgdbClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(25);
@@ -419,13 +451,18 @@ builder.Services.AddHttpClient<MusicBrainzClient>(c =>
   .AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 
+builder.Services.AddSingleton<RawgAuthenticationState>();
+
+// Authenticated RAWG URLs must never reach HttpClient's default URI loggers.
+builder.Services.AddHttpClient("rawg-connection-test").RemoveAllLoggers().UsePublicProviderTransport();
+
 // RAWG — free tier API key required (rawg.io/apidocs)
 builder.Services.AddHttpClient<RawgClient>(c =>
 {
     c.Timeout = TimeSpan.FromSeconds(20);
     c.BaseAddress = new Uri("https://api.rawg.io/api/");
     c.DefaultRequestHeaders.UserAgent.ParseAdd("Feedarr/1.0");
-}).UsePublicProviderTransport()
+}).RemoveAllLoggers().UsePublicProviderTransport()
   .AddHttpMessageHandler<ProviderCircuitBreakerHandler>()
   .AddHttpMessageHandler<TransientHttpRetryHandler>();
 

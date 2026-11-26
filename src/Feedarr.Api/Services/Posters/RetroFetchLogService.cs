@@ -9,11 +9,18 @@ public sealed record RetroFetchLogEntry(
     string? MediaType,
     string? Provider,
     string? Query,
-    string? Reason);
+    string? Reason,
+    long? ReleaseId = null,
+    DateTimeOffset? AttemptedAtUtc = null,
+    string? Strategy = null,
+    string? Coverage = null,
+    string? Stage = null,
+    string? Ranking = null);
 
 public sealed class RetroFetchLogService
 {
     private readonly AppOptions _opt;
+    private readonly object _writeLock = new();
     private readonly IWebHostEnvironment _env;
 
     public RetroFetchLogService(IOptions<AppOptions> opt, IWebHostEnvironment env)
@@ -38,7 +45,7 @@ public sealed class RetroFetchLogService
         var file = $"retro-fetch-{stamp}-{suffix}.csv";
         var full = Path.Combine(LogsDirPath, file);
 
-        var header = "category,mediaType,provider,query,reason" + Environment.NewLine;
+        var header = "category,mediaType,provider,query,reason,releaseId,attemptedAtUtc,strategy,coverage,stage,ranking" + Environment.NewLine;
         File.WriteAllText(full, header, Encoding.UTF8);
 
         return file;
@@ -56,15 +63,19 @@ public sealed class RetroFetchLogService
 
             var full = Path.Combine(LogsDirPath, safeFile);
 
-            var line = string.Join(",",
-                EscapeCsv(entry.Category),
-                EscapeCsv(entry.MediaType),
-                EscapeCsv(entry.Provider),
-                EscapeCsv(entry.Query),
-                EscapeCsv(entry.Reason)
-            );
+            lock (_writeLock)
+            {
+                var fields = new List<string?> {
+                    entry.Category, entry.MediaType, entry.Provider, entry.Query, entry.Reason };
+                // A job queued before an upgrade may still point at a five-column CSV.
+                using (var reader = new StreamReader(full))
+                    if (reader.ReadLine()?.Contains("releaseId", StringComparison.Ordinal) == true)
+                        fields.AddRange(new[] { entry.ReleaseId?.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            entry.AttemptedAtUtc?.ToUniversalTime().ToString("O"), entry.Strategy, entry.Coverage, entry.Stage, entry.Ranking });
+                var line = string.Join(",", fields.Select(EscapeCsv));
 
-            File.AppendAllText(full, line + Environment.NewLine, Encoding.UTF8);
+                File.AppendAllText(full, line + Environment.NewLine, Encoding.UTF8);
+            }
         }
         catch
         {
@@ -103,7 +114,9 @@ public sealed class RetroFetchLogService
     private static string EscapeCsv(string? value)
     {
         if (string.IsNullOrEmpty(value)) return "";
-        var sanitized = value.Replace("\r", " ").Replace("\n", " ");
+        var safe = System.Text.RegularExpressions.Regex.Replace(value, @"(?i)https?://[^\s""<>]+|\bbearer\s+[^\s""<>]+|\b(?:api[_-]?key|passkey|token|password)[""']?\s*[=:]\s*[""']?[^\s,;""<>]+", "[redacted]",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+        var sanitized = safe.Replace("\r", " ").Replace("\n", " ");
         if (sanitized.Contains('"'))
             sanitized = sanitized.Replace("\"", "\"\"");
         if (sanitized.Contains(',') || sanitized.Contains('"'))

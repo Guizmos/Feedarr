@@ -3,6 +3,7 @@ using Feedarr.Api.Dtos.Providers;
 using Feedarr.Api.Models;
 using Feedarr.Api.Services.ExternalProviders;
 using Microsoft.AspNetCore.Mvc;
+using Feedarr.Api.Services.Rawg;
 
 namespace Feedarr.Api.Controllers;
 
@@ -13,13 +14,15 @@ public sealed class ExternalProvidersController : ControllerBase
     private readonly ExternalProviderRegistry _registry;
     private readonly ExternalProviderInstanceRepository _instances;
     private readonly ExternalProviderTestService _testService;
+    private readonly RawgAuthenticationState? _rawgState;
 
     public ExternalProvidersController(
         ExternalProviderRegistry registry,
         ExternalProviderInstanceRepository instances,
-        ExternalProviderTestService testService)
+        ExternalProviderTestService testService, RawgAuthenticationState? rawgState = null)
     {
         _registry = registry;
+        _rawgState = rawgState;
         _instances = instances;
         _testService = testService;
     }
@@ -162,7 +165,7 @@ public sealed class ExternalProvidersController : ControllerBase
         };
     }
 
-    private static ExternalProviderInstanceDto MapInstance(
+    private ExternalProviderInstanceDto MapInstance(
         ExternalProviderInstance instance,
         ExternalProviderDefinitionDto? definition)
     {
@@ -188,6 +191,18 @@ public sealed class ExternalProvidersController : ControllerBase
             }
         }
 
+        if (instance.ProviderKey.Equals("rawg", StringComparison.OrdinalIgnoreCase) && _rawgState is not null)
+        {
+            try
+            {
+                var current = _instances.GetWithSecrets(instance.InstanceId);
+                dto.Availability = _rawgState.GetStatus(current is null ? null : current.Auth.GetValueOrDefault("apiKey"));
+            }
+            catch (Feedarr.Api.Services.Security.ApiKeyDecryptionException)
+            {
+                dto.Availability = new("configuration_error", "rawg_configuration_unavailable", true, null, null, "explicit_test");
+            }
+        }
         return dto;
     }
 

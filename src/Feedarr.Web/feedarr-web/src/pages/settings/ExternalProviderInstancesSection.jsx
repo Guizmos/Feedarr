@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import Modal from "../../ui/Modal.jsx";
 import ItemRow, { CategoryBubble } from "../../ui/ItemRow.jsx";
 import ToggleSwitch from "../../ui/ToggleSwitch.jsx";
+import { describeProviderAvailability } from "../../domain/providers/providerAvailability.js";
 import { tr } from "../../app/uiText.js";
 
 function toHasFlagName(fieldKey) {
@@ -130,6 +131,7 @@ export default function ExternalProviderInstancesSection({
             const statusErr = testStatusByExternal[instance.instanceId] === "error";
             const isTesting = testingExternal === instance.instanceId;
             const isConfigured = isInstanceConfigured(instance);
+            const availability = isConfigured ? describeProviderAvailability(instance) : null;
             const stats = providerStats?.[providerKey] || { calls: 0, failures: 0 };
 
             const statusClass = [
@@ -158,13 +160,14 @@ export default function ExternalProviderInstancesSection({
                 id={idx + 1}
                 title={instance.displayName || definition?.displayName || providerKey.toUpperCase()}
                 meta={`Appels: ${Number(stats.calls || 0)} | Echecs: ${Number(stats.failures || 0)}`}
+                metaSub={availability?.detailFr ? tr(availability.detailFr, availability.detailEn) : undefined}
                 enabled={instance.enabled !== false}
                 statusClass={statusClass}
                 badges={[
                   ...kindBubbles,
                   {
-                    label: isConfigured ? "OK" : "NO",
-                    className: `${isConfigured ? "pill-ok" : "pill-warn"} pill--trailing`,
+                    label: availability ? tr(availability.fr, availability.en) : isConfigured ? "OK" : "NO",
+                    className: `${availability ? availability.warning ? "pill-warn" : "pill-ok" : isConfigured ? "pill-ok" : "pill-warn"} pill--trailing`,
                   },
                 ]}
                 actions={[
@@ -174,7 +177,9 @@ export default function ExternalProviderInstancesSection({
                       ? tr("Test en cours...", "Test in progress...")
                       : instance.enabled === false
                         ? tr("Activez d'abord le provider", "Enable provider first")
-                        : tr("Tester", "Test"),
+                        : availability?.suspended
+                          ? tr("Vérifier et réactiver (un appel RAWG)", "Check and reactivate (one RAWG request)")
+                          : tr("Tester", "Test"),
                     onClick: () => testExternal(instance.instanceId),
                     disabled: isTesting || instance.enabled === false,
                     spinning: isTesting,

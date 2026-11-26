@@ -1,0 +1,581 @@
+{
+  "Provenance": "Targeted read-only IGDB probe 2026-11-25. Public metadata only. Two windows captured; stability recheck is synthetic in unit tests, not a completed production matching run.",
+  "Windows": [
+    {
+      "offset": 0,
+      "limit": 101,
+      "candidates": [
+        {
+          "id": 79238,
+          "name": "Flick Fishing",
+          "platforms": [
+            9,
+            39,
+            38
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 125152,
+          "name": "The Flick of the Dead",
+          "platforms": [
+            39
+          ],
+          "game_type": {
+            "id": 11,
+            "type": "Port"
+          }
+        },
+        {
+          "id": 409649,
+          "name": "Flick",
+          "platforms": [
+            6
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 41516,
+          "name": "Flick Soccer!",
+          "platforms": [
+            39
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 250762,
+          "name": "Flick Shot Rogues",
+          "platforms": [
+            6
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 427870,
+          "name": "Fix & Flick",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 239398,
+          "name": "Chick Flick",
+          "platforms": [
+            82
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 427223,
+          "name": "Swish and Flick: Tidy Up Together",
+          "platforms": [
+            6
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 58302,
+          "name": "Flick Pool",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 58201,
+          "name": "Flick Golf!",
+          "platforms": [
+            34,
+            39
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 11769,
+          "name": "Miku Flick",
+          "platforms": [
+            39
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 232615,
+          "name": "Flick Cola",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 151931,
+          "name": "Flick Club",
+          "platforms": [
+            6,
+            14
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 117727,
+          "name": "Flick Shoot",
+          "platforms": [
+            34,
+            39
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 103998,
+          "name": "Flick Arena",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 223937,
+          "name": "Flick Chess!",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 104094,
+          "name": "Flick Arena",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 262463,
+          "name": "Arrow Flick",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 53042,
+          "name": "Wonder Flick",
+          "platforms": [
+            34,
+            39
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 108334,
+          "name": "Zombie Flick",
+          "platforms": [
+            6
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 223598,
+          "name": "Flick Tennis",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 58184,
+          "name": "Zombie Flick",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 85141,
+          "name": "Flick Golf 3D",
+          "platforms": [
+            37
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 88782,
+          "name": "Flick Home Run!",
+          "platforms": [
+            34,
+            39
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 58197,
+          "name": "Flick Rugby 16",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 58192,
+          "name": "Flick Soccer 15",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 100402,
+          "name": "Flick Soccer 17",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 257011,
+          "name": "Flick Soccer 22",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 89008,
+          "name": "Flick Kick Football",
+          "platforms": [
+            34,
+            39
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 89537,
+          "name": "Flick Home Run ! HD",
+          "platforms": [
+            39
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 343993,
+          "name": "Om Nom: Candy Flick",
+          "platforms": [
+            39
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 123375,
+          "name": "Our Flick Erasers",
+          "platforms": [
+            130
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 58208,
+          "name": "Flick Field Goal 16",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 88646,
+          "name": "Flick Champions XS",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 82238,
+          "name": "Flick Field Goal 18",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 65220,
+          "name": "Fibble: Flick 'n' Roll",
+          "platforms": [
+            39
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 58206,
+          "name": "Flick Golf Extreme",
+          "platforms": [
+            34
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 58207,
+          "name": "Flick Quarterback 16",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 58193,
+          "name": "Flick Soccer Brazil",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 58182,
+          "name": "Flick Nations Rugby",
+          "platforms": [
+            34,
+            39
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 58189,
+          "name": "NFL Flick Quarterback",
+          "platforms": [
+            39
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 82239,
+          "name": "Flick Golf World Tour",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 86846,
+          "name": "Flick Champions Classic",
+          "platforms": [
+            39
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 58204,
+          "name": "Flick Soccer France 2016",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 106776,
+          "name": "Flick Ball - Physics Game",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 340147,
+          "name": "Flick Headers Euro 2012",
+          "platforms": [
+            82
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 305151,
+          "name": "Flick Kick Football Legends",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 103916,
+          "name": "Skee Ball Flick - Hole King",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 315834,
+          "name": "Flick Erasers Battle Royale",
+          "platforms": [
+            130
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 86871,
+          "name": "Flick Champions Summer Sports",
+          "platforms": [
+            39
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 89308,
+          "name": "Flick Champions Winter Sports",
+          "platforms": [
+            39
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 19614,
+          "name": "Boogerman: A Pick and Flick Adventure",
+          "platforms": [
+            19,
+            5,
+            29
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 287146,
+          "name": "A Game About Flicking A Switch",
+          "platforms": [
+            6
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 79679,
+          "name": "NFL Kicker!",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 58179,
+          "name": "NFL Kicker 15",
+          "platforms": [
+            39
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 427279,
+          "name": "FragField",
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        },
+        {
+          "id": 347884,
+          "name": "Art of Solitaire",
+          "platforms": [
+            34,
+            6,
+            39
+          ],
+          "game_type": {
+            "id": 0,
+            "type": "Main Game"
+          }
+        }
+      ]
+    },
+    {
+      "offset": 57,
+      "limit": 101,
+      "candidates": []
+    }
+  ]
+}

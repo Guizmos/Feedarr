@@ -18,7 +18,12 @@ public sealed partial class PosterFetchService
         if (details is null) throw new InvalidDataException("tmdb_details_unavailable");
         if (!refreshExisting && await TryPublishSharedVideoPosterAsync(context, "tmdb", selected.TmdbId.ToString(CultureInfo.InvariantCulture),
             selected.TmdbId, type, details, ct, diagnosticStage).ConfigureAwait(false) is { } reused) return reused;
-        var posterPath = await RunTmdbAsync(token => _tmdb.GetPreferredPosterPathAsync(selected.TmdbId, type == "tv" ? "series" : "movie", token, verifyIdentity: true), ct).ConfigureAwait(false);
+        var preferredImage = await RunTmdbAsync(token => _tmdb.GetPreferredPosterAsync(selected.TmdbId, type == "tv" ? "series" : "movie", token,
+            verifyIdentity: true, forceRefresh: context.ForceRefresh), ct).ConfigureAwait(false);
+        var posterPath = preferredImage.Path;
+        var posterLanguage = preferredImage.Language;
+        if (!refreshExisting && posterPath is not null && await TryPublishSharedVideoPosterAsync(context, "tmdb", selected.TmdbId.ToString(CultureInfo.InvariantCulture),
+            selected.TmdbId, type, details, ct, diagnosticStage, posterPath).ConfigureAwait(false) is { } fallbackShared) return fallbackShared;
         if (string.IsNullOrWhiteSpace(posterPath)) posterPath = details.PosterPath;
         if (string.IsNullOrWhiteSpace(posterPath)) posterPath = selected.PosterPath;
         var posterProvider = "tmdb";
@@ -49,7 +54,7 @@ public sealed partial class PosterFetchService
             if (!string.IsNullOrWhiteSpace(fanartPath))
             {
                 bytes = await RunFanartAsync(token => _fanart.DownloadAsync(fanartPath, token), ct).ConfigureAwait(false);
-                if (bytes is { Length: > 0 }) { posterPath = fanartPath; posterProvider = "fanart"; }
+                if (bytes is { Length: > 0 }) { posterPath = fanartPath; posterProvider = "fanart"; posterLanguage = null; }
             }
         }
         if (bytes is not { Length: > 0 } || string.IsNullOrWhiteSpace(posterPath))
@@ -97,7 +102,7 @@ public sealed partial class PosterFetchService
             _releases.ValidateMatching(id);
             PosterAudit.UpdateAttemptSuccess(_releases, id, posterProvider,
                 posterProvider == "tmdb" ? selected.TmdbId.ToString(CultureInfo.InvariantCulture) : $"{type}:{selected.TmdbId}",
-                null, posterProvider == "tmdb" ? "w500" : null, ComputeSha256Hex(bytes));
+                posterLanguage, posterProvider == "tmdb" ? "w500" : null, ComputeSha256Hex(bytes));
         }
         catch (ReleaseRepository.StaleMatchException) { throw; }
         catch (OperationCanceledException error) { storePending = true; diagnosticFailure?.Invoke(error); }

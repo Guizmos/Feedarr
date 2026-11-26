@@ -14,6 +14,10 @@ internal static class ConfigurationRestorePlanner
     {
         var providers = Match("providers", model.Providers, "base_url", "type");
         var sources = Match("sources", model.Sources, "torznab_url", null);
+        foreach (var rss in model.RssSources ?? [])
+            sources[Text(rss, "key")] = conn.QuerySingleOrDefault<long?>(
+                "SELECT id FROM sources WHERE source_kind='rss' AND torznab_url=@identity",
+                new { identity = Text(rss, "identity") }, tx);
         var apps = Match("arr_applications", model.Applications, "base_url", "type");
         var external = new Dictionary<string, string?>(); var used = new HashSet<string>();
         var rows = conn.Query<(string Id, string Provider, string? Url, string? Name)>("SELECT instance_id,provider_key,base_url,display_name FROM external_provider_instances", transaction: tx).ToArray();
@@ -51,7 +55,8 @@ internal static class ConfigurationRestorePlanner
         var queries = new[]{
             "SELECT key,value_json FROM app_settings WHERE key IN ('general','ui','arr','maintenance') ORDER BY key",
             "SELECT id,type,name,base_url,api_key_encrypted,enabled FROM providers ORDER BY id",
-            "SELECT id,name,enabled,torznab_url,api_key,auth_mode,rss_mode,provider_id,color FROM sources ORDER BY id",
+            "SELECT id,name,enabled,torznab_url,api_key,auth_mode,rss_mode,provider_id,color,source_kind FROM sources ORDER BY id",
+            "SELECT id,source_id,url_encrypted,name,category_key,enabled FROM direct_rss_feeds ORDER BY id",
             "SELECT * FROM arr_applications ORDER BY id",
             "SELECT * FROM external_provider_instances ORDER BY instance_id",
             "SELECT source_id,cat_id,name,parent_cat_id,is_sub,unified_key,unified_label FROM source_categories ORDER BY source_id,cat_id",

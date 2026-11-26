@@ -6,7 +6,7 @@ namespace Feedarr.Api.Services.Titles;
 public sealed partial class TitleParser
 {
     private static readonly Regex RxContextSuffix = new(
-        @"(?i)(?:[\s._+]+|^)(?<tag>directors?['’]?\s*cut(?:\s*\d+)?|(?:diamond|collector'?s?|ultimate|special|limited|extended|anniversary|deluxe)\s+edition|multi\d*|dual|vff|vfq|vfi|vf\d*|vostfr|vost|vof|truefrench|subfrench|french|english|eng|fr|en|vo|integrale|intégrale|intergale|complete|collection|pack|trilogy|trilogie|saga|anthology|anthologie|coffret|boxset|custom|hybrid|extended|reedition|réédition|repack|restored|remastered|animation|animated|oav|ova)\s*$", RegexOptions.Compiled);
+        @"(?i)(?:[\s._+]+|^)(?<tag>directors?['’]?\s*cut(?:\s*\d+)?|(?:diamond|collector'?s?|ultimate|special|limited|extended|anniversary|deluxe)\s+edition|vfcut|commentary|jap|vosten|multi\d*|dual|vff|vfq|vfi|vf\d*|vostfr|vost|vof|truefrench|subfrench|french|english|eng|fr|en|vo|integrale|intégrale|intergale|complete|collection|pack|trilogy|trilogie|saga|anthology|anthologie|coffret|boxset|custom|hybrid|extended|reedition|réédition|repack|restored|remastered|animation|animated|oav|ova)\s*$", RegexOptions.Compiled);
     private static readonly Regex RxContextHardLanguage = new(
         @"(?i)^(?:multi\d*|vff|vfq|vfi|vf\d*|vostfr|vost|vof|truefrench|subfrench)$", RegexOptions.Compiled);
     private static readonly Regex RxContextCertainPack = new(@"(?i)\b(?:integrale|intégrale|intergale|complete)\s*$", RegexOptions.Compiled);
@@ -64,7 +64,9 @@ public sealed partial class TitleParser
         if (suffix.Rich)
             tail = Regex.Replace(tail, @"(?:^|[\s._-])MUET(?=$|[\s._-])", " ").Trim(' ', '.', '_', '-');
         if (tail.Length > 0 && !IsMetadataWords(tail) &&
-            !(suffix.Rich && IsDatedSubtitleMetadata(tail, category))) return null;
+            !(suffix.Rich && (IsDatedSubtitleMetadata(tail, category) ||
+                category is UnifiedCategory.Film or UnifiedCategory.Animation or UnifiedCategory.Spectacle &&
+                IsVideoEditorialMetadata(tail)))) return null;
         if ((category is UnifiedCategory.Serie or UnifiedCategory.Anime) && firstSeries is not null &&
             matches.Count == 1 && tail.Length == 0) return null; // A show's own numeric title is ambiguous.
         // A bare trailing number without a format/season/pack signal remains ambiguous.
@@ -208,6 +210,12 @@ public sealed partial class TitleParser
         title = Regex.Replace(title, @"(?<=\p{L})-(?=\s)", " -");
         title = Regex.Replace(title, @"\s{2,}", " ").Trim();
         return title.TrimEnd(' ', '-', '.', '(', '[');
+    }
+
+    private static bool IsVideoEditorialMetadata(string value)
+    {
+        var marker = Regex.Match(value, @"(?i)^version\s+(?:longue|restaur[eé]e?)(?=\s|$)");
+        return marker.Success && IsMetadataWords(value[marker.Length..]);
     }
 
     private static bool IsMetadataWords(string value)

@@ -12,6 +12,14 @@ internal sealed class ProviderResponseCache : IDisposable
     private readonly TimeSpan _ttl;
     internal ProviderResponseCache(TimeSpan? ttl = null) => _ttl = ttl ?? TimeSpan.FromMinutes(2);
 
+    internal T? Peek<T>(string key) where T : class => _cache.TryGetValue(key, out T? value) ? value : null;
+
+    internal void Remember<T>(string key, T value, Func<T, bool> complete) where T : class
+    {
+        if (!complete(value) || JsonSerializer.Serialize(value).Length > 65536) return;
+        lock (_gate) _cache.Set(key, value, new MemoryCacheEntryOptions().SetSize(1).SetAbsoluteExpiration(_ttl));
+    }
+
     private sealed class Flight
     {
         internal readonly CancellationTokenSource Cancellation = new();

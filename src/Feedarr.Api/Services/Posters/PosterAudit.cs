@@ -26,5 +26,7 @@ public static class PosterAudit
         string? error)
     {
         releases.UpdatePosterAttemptFailure(releaseId, provider, providerId, lang, size, error);
+        if (error?.StartsWith("v2:", StringComparison.Ordinal) == true && error.Split(':', 4) is { Length: 4 } parts)
+            MatchingAttemptDiagnostics.Current?.SetOutcome(parts[1], parts[3].Split(';', 2)[0]);
     }
 }

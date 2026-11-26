@@ -24,6 +24,8 @@ internal static class ConfigurationSchema
     // ? = nullable string, s = string, i = integer, b = SQLite 0/1 boolean.
     internal static readonly Dictionary<string, string> ProviderFields = Fields("key:s type:s name:s base_url:s api_key:? enabled:b");
     internal static readonly Dictionary<string, string> SourceFields = Fields("key:s providerKey:? name:s enabled:b torznab_url:s api_key:? auth_mode:s rss_mode:? color:?");
+    internal static readonly Dictionary<string, string> RssSourceFields = Fields("key:s identity:s name:s enabled:b color:? feeds:o");
+    internal static readonly Dictionary<string, string> RssFeedFields = Fields("url:s name:? category_key:s enabled:b");
     internal static readonly Dictionary<string, string> ExternalFields = Fields("key:s provider_key:s display_name:? enabled:b base_url:? auth_json:o options_json:o priority:i");
     internal static readonly Dictionary<string, string> ApplicationFields = Fields("key:s type:s name:? base_url:s api_key_encrypted:? is_enabled:b is_default:b root_folder_path:? quality_profile_id:n tags:? series_type:? season_folder:b monitor_mode:? search_missing:b search_cutoff:b minimum_availability:? search_for_movie:b");
     internal static readonly Dictionary<string, string> CategoryFields = Fields("sourceKey:s cat_id:i name:s parent_cat_id:n is_sub:b unified_key:? unified_label:?");
@@ -59,15 +61,34 @@ internal static class ConfigurationSchema
         if (model.Settings["ui"].ContainsKey("onboardingDone")) Fail();
         ValidateRows(model.Providers, ProviderFields);
         ValidateRows(model.Sources, SourceFields);
+        var rssSources = model.RssSources ?? [];
+        ValidateRows(rssSources, RssSourceFields);
+        foreach (var rss in rssSources)
+        {
+            var identity = Text(rss, "identity");
+            if (!identity.StartsWith("rss:", StringComparison.Ordinal) || !Guid.TryParseExact(identity[4..], "N", out _)) Fail();
+            var feeds = rss["feeds"]!.AsObject();
+            if (feeds.Count > 100) Fail();
+            foreach (var value in feeds)
+            {
+                if (value.Value is not JsonObject) Fail();
+                var feed = value.Value!.AsObject();
+                ValidateRows([feed], RssFeedFields);
+                if (!OutboundUrlGuard.TryNormalizeTorznabUrl(Text(feed, "url"), out _, out _) ||
+                    !Categories.CategoryGroupCatalog.CanonicalKeys.Contains(Text(feed, "category_key"))) Fail();
+            }
+            CheckStrings(rss);
+        }
+        if (rssSources.Select(s => Text(s, "identity")).Distinct(StringComparer.Ordinal).Count() != rssSources.Count) Fail();
         ValidateRows(model.ExternalProviders, ExternalFields);
         ValidateRows(model.Applications, ApplicationFields);
         ValidateRows(model.Categories, CategoryFields);
         ValidateRows(model.Mappings, MappingFields);
         ValidateRows(model.Selections, SelectionFields);
-        if (new[] { model.Providers, model.Sources, model.ExternalProviders, model.Applications, model.Categories, model.Mappings, model.Selections }.Sum(x => x.Count) > MaxRows)
+        if (new[] { model.Providers, model.Sources, model.ExternalProviders, model.Applications, model.Categories, model.Mappings, model.Selections, rssSources }.Sum(x => x.Count) + rssSources.Sum(r => r["feeds"]!.AsObject().Count) > MaxRows)
             throw new ConfigurationArchiveException(ConfigurationArchiveError.SizeLimitExceeded);
         var providers = UniqueKeys(model.Providers);
-        var sources = UniqueKeys(model.Sources);
+        var sources = UniqueKeys(model.Sources.Concat(rssSources).ToList());
         var apps = UniqueKeys(model.Applications);
         _ = UniqueKeys(model.ExternalProviders);
         foreach (var p in model.Providers)
@@ -116,7 +137,7 @@ internal static class ConfigurationSchema
         foreach (var rows in new[] { model.Providers, model.Sources, model.ExternalProviders, model.Applications, model.Categories, model.Mappings, model.Selections })
             foreach (var row in rows) CheckStrings(row);
         var missing = MissingRequiredSecrets(model, registry).Count;
-        return new(model.Sources.Count, model.Providers.Count, model.ExternalProviders.Count, model.Applications.Count, model.Settings.Count, missing);
+        return new(model.Sources.Count + rssSources.Count, model.Providers.Count, model.ExternalProviders.Count, model.Applications.Count, model.Settings.Count, missing);
     }
 
     internal static List<ConfigurationSecretRequirement> MissingRequiredSecrets(ConfigurationDocument model, ExternalProviderRegistry registry)

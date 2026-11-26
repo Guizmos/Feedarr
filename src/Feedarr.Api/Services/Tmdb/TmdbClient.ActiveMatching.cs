@@ -39,21 +39,47 @@ public sealed partial class TmdbClient
         return await GetJsonAsync<JsonElement>(path, ct, disableRetries: true).ConfigureAwait(false);
     }
 
-    // Full pages only: historical list helpers deliberately truncate and cannot prove coverage.
-    internal async Task<VideoMatchingPage?> SearchVideoMatchingPageAsync(string title, string language, int page, string type, CancellationToken ct)
+    private sealed record MoviePriorityResponse(JsonElement Value);
+
+    internal async Task<JsonElement?> GetMoviePriorityEvidenceAsync(string id, CancellationToken ct)
     {
-        var key = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(GetApiKeyOrThrow())));
-        return await _matchingResponses.GetAsync($"search:{key}:{type}:{language}:{page}:{title}",
-            token => SearchVideoMatchingPageCoreAsync(title, language, page, type, token), _ => true, ct).ConfigureAwait(false);
+        if (!int.TryParse(id, out var number) || number <= 0) throw new ArgumentException(nameof(id));
+        var key = GetApiKeyOrThrow();
+        var language = GetMediaInfoLanguage();
+        var credential = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)));
+        // Reuse both alias and date evidence across sources, without caching a decision.
+        var response = await _matchingResponses.GetAsync($"movie-original-year:{credential}:{number}:{language}", async token =>
+        {
+            var path = $"movie/{number}?api_key={Uri.EscapeDataString(key)}&language={Uri.EscapeDataString(language)}&append_to_response=alternative_titles,release_dates";
+            return new MoviePriorityResponse(await GetJsonAsync<JsonElement>(path, token, disableRetries: true).ConfigureAwait(false));
+        }, value => value.Value.ValueKind == JsonValueKind.Object &&
+            Feedarr.Api.Services.Matching.TelevisionCandidates.Number(value.Value, "id") == number &&
+            value.Value.TryGetProperty("alternative_titles", out var aliases) && aliases.ValueKind == JsonValueKind.Object &&
+            aliases.TryGetProperty("titles", out var titles) && titles.ValueKind == JsonValueKind.Array &&
+            value.Value.TryGetProperty("release_dates", out var dates) && dates.ValueKind == JsonValueKind.Object &&
+            dates.TryGetProperty("results", out var countries) && countries.ValueKind == JsonValueKind.Array, ct).ConfigureAwait(false);
+        return response?.Value;
     }
 
-    private async Task<VideoMatchingPage?> SearchVideoMatchingPageCoreAsync(string title, string language, int page, string type, CancellationToken ct)
+    // Full pages only: historical list helpers deliberately truncate and cannot prove coverage.
+    internal async Task<VideoMatchingPage?> SearchVideoMatchingPageAsync(string title, string language, int page, string type, CancellationToken ct, int? primaryReleaseYear = null)
+    {
+        if (primaryReleaseYear is not null && (type != "movie" || primaryReleaseYear is < 1800 or > 2100))
+            throw new ArgumentOutOfRangeException(nameof(primaryReleaseYear));
+        var key = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(GetApiKeyOrThrow())));
+        return await _matchingResponses.GetAsync($"search:{key}:{type}:{language}:{page}:{primaryReleaseYear?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "all"}:{title}",
+            token => SearchVideoMatchingPageCoreAsync(title, language, page, type, token, primaryReleaseYear), _ => true, ct).ConfigureAwait(false);
+    }
+
+    private async Task<VideoMatchingPage?> SearchVideoMatchingPageCoreAsync(string title, string language, int page, string type, CancellationToken ct, int? primaryReleaseYear = null)
     {
         if (type is not ("movie" or "tv")) throw new ArgumentException(nameof(type));
         if (string.IsNullOrWhiteSpace(title) || title.Length > 200) return null;
         var key = GetApiKeyOrThrow();
-        // No year filter: hypothetical years must not hide competitors; parsed-year tolerance stays in the ranker.
+        // A filter is supplied only by the reliable-film plan, which also covers neighboring admissible years.
         var url = $"search/{type}?api_key={Uri.EscapeDataString(key)}&query={Uri.EscapeDataString(title)}&language={Uri.EscapeDataString(language)}&include_adult=false&page={page}";
+        if (primaryReleaseYear.HasValue)
+            url += "&primary_release_year=" + primaryReleaseYear.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var data = await GetJsonAsync<SearchResponse>(url, ct, disableRetries: true).ConfigureAwait(false);
         static int? Number(JsonElement? element) => element is { ValueKind: JsonValueKind.Number } e && e.TryGetInt32(out var n) ? n : null;
         if (data?.Results is null || Number(data.Page) != page || Number(data.TotalPages) is not { } pages || pages is < 0 or > 500 ||

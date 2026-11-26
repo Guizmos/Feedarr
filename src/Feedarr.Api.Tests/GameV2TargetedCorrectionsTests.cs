@@ -104,11 +104,11 @@ public sealed class GameV2TargetedCorrectionsTests
 
     [Theory]
     [InlineData(0, 1)]
-    [InlineData(25, 2)]
-    [InlineData(26, 4)]
-    [InlineData(51, 5)]
-    [InlineData(100, 6)]
-    public async Task CompletePaginationHonorsSentinelsTerminalProbeAndHeadRecheck(int total, int expectedCalls)
+    [InlineData(25, 3)]
+    [InlineData(26, 3)]
+    [InlineData(51, 3)]
+    [InlineData(100, 3)]
+    public async Task CompleteBoundedWindowHonorsTerminalProbeAndStabilityRecheck(int total, int expectedCalls)
     {
         var data = Items(total); var calls = 0;
         using var rig = new PosterMatchingContractTestRig(PosterContractScenario.GameIgdbHit, igdbResponse: (request, _) => {
@@ -125,9 +125,9 @@ public sealed class GameV2TargetedCorrectionsTests
     [InlineData("over_budget")]
     [InlineData("duplicate")]
     [InlineData("short_page")]
-    [InlineData("overlap_drift")]
+    [InlineData("terminal_nonempty")]
     [InlineData("head_drift")]
-    [InlineData("missing_tail")]
+    [InlineData("head_omits_tail")]
     public async Task IncompleteOrInconsistentCoverageAlwaysAbstains(string mode)
     {
         var data = Items(mode == "over_budget" ? 101 : 51); var calls = 0; var heads = 0;
@@ -135,23 +135,26 @@ public sealed class GameV2TargetedCorrectionsTests
             if (request.RequestUri!.Host != "api.igdb.com") return Task.FromResult<HttpResponseMessage?>(null);
             calls++; var (offset, limit) = Window(request);
             var page = data.Skip(offset).Take(limit).ToArray();
-            if (offset == 0 && limit == 26) heads++;
+            if (offset == 0 && limit == 101) heads++;
             if (mode == "duplicate" && offset == 0) page[2] = page[1];
             if (mode == "short_page" && offset == 0) page = page.Take(10).ToArray();
-            if (mode == "overlap_drift" && offset == 25) page[0] = data[24];
-            if (mode == "missing_tail" && offset == 25) page = Array.Empty<JsonElement>();
+            if (mode == "terminal_nonempty" && offset > 0) page = new[] { data[0] };
+            if (mode == "head_omits_tail" && heads > 1 && offset == 0) page = page[..^1];
             if (mode == "head_drift" && heads > 1 && offset == 0) page[0] = JsonSerializer.SerializeToElement(new { id = 1, name = "Changed", platforms = new[] { 6 } });
             return Task.FromResult<HttpResponseMessage?>(Json(page));
         });
         var error = await Assert.ThrowsAsync<InvalidDataException>(() => rig.Igdb.ReadMatchingCandidatesAsync("Example", default));
         Assert.Equal("game_search_coverage_unavailable", error.Message); Assert.InRange(calls, 1, 6);
+        Assert.NotNull(error.Data["IgdbCoverageReason"]);Assert.Equal(101,error.Data["IgdbLimit"]);
     }
 
-    [Fact]
-    public async Task LastPageCompetitorIsRetainedBeforeAnyAcceptance()
+    [Theory]
+    [InlineData(26)]
+    [InlineData(100)]
+    public async Task LastWindowCompetitorIsRetainedBeforeAnyAcceptance(int total)
     {
-        var data = Items(26); data[0] = JsonSerializer.SerializeToElement(new { id = 1, name = "Game Hit", platforms = new[] { 6 } });
-        data[25] = JsonSerializer.SerializeToElement(new { id = 26, name = "Game Hit", platforms = new[] { 6 } });
+        var data = Items(total); data[0] = JsonSerializer.SerializeToElement(new { id = 1, name = "Game Hit", platforms = new[] { 6 } });
+        data[total - 1] = JsonSerializer.SerializeToElement(new { id = total, name = "Game Hit", platforms = new[] { 6 } });
         using var rig = new PosterMatchingContractTestRig(PosterContractScenario.GameIgdbHit, igdbResponse: (request, _) => {
             if (request.RequestUri!.Host != "api.igdb.com") return Task.FromResult<HttpResponseMessage?>(null);
             var (offset, limit) = Window(request); return Task.FromResult<HttpResponseMessage?>(Json(data.Skip(offset).Take(limit)));

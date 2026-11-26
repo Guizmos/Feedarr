@@ -1,0 +1,1638 @@
+{
+  "Origin": "Existing local audit captures, 2026-11-25. IDs, titles and years observed; release histories in tests are explicitly synthetic additional evidence, not live captures.",
+  "Cases": [
+    {
+      "ReleaseId": 32718,
+      "RawTitle": "Oppenheimer.2023.MULTi.TRUEFRENCH.1080p.10bit.BluRay.6CH.x265.HEVC-Slay3R.mkv",
+      "Title": "Oppenheimer",
+      "Year": 2023,
+      "Category": "Film",
+      "SourceKind": "torznab",
+      "SelectedId": "872585",
+      "Candidates": [
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "872585"
+          },
+          "Title": "Oppenheimer",
+          "Year": 2023,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Oppenheimer",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "872585"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "Oppenheimer",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "872585"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "en"
+            },
+            {
+              "Title": "Oppenheimer",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "872585"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        },
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "1149947"
+          },
+          "Title": "Oppenheimer, l'homme et la bombe",
+          "Year": 2023,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Oppenheimer, l'homme et la bombe",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1149947"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "To End All War: Oppenheimer & the Atomic Bomb",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1149947"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "en"
+            },
+            {
+              "Title": "To End All War: Oppenheimer & the Atomic Bomb",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1149947"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        },
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "1143770"
+          },
+          "Title": "Oppenheimer After Trinity",
+          "Year": 2023,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Oppenheimer After Trinity",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1143770"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "Oppenheimer After Trinity",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1143770"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "en"
+            },
+            {
+              "Title": "Oppenheimer After Trinity",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1143770"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        },
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "1142906"
+          },
+          "Title": "Oppenheimer: The Real Story",
+          "Year": 2023,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Oppenheimer: The Real Story",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1142906"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "Oppenheimer: The Real Story",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1142906"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "en"
+            },
+            {
+              "Title": "Oppenheimer: The Real Story",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1142906"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        },
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "1230570"
+          },
+          "Title": "The Real Oppenheimer",
+          "Year": 2023,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "The Real Oppenheimer",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1230570"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "The Real Oppenheimer",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1230570"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "en"
+            },
+            {
+              "Title": "The Real Oppenheimer",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1230570"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        },
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "1189676"
+          },
+          "Title": "Oppenheimer: Genius or Madman?",
+          "Year": 2023,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Oppenheimer: Genius or Madman?",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1189676"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "Oppenheimer: Genius or Madman?",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1189676"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "en"
+            },
+            {
+              "Title": "Oppenheimer: Genius or Madman?",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1189676"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        },
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "1811080"
+          },
+          "Title": "The Story of Our Time: The Making of Oppenheimer",
+          "Year": 2023,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "The Story of Our Time: The Making of Oppenheimer",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1811080"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "The Story of Our Time: The Making of Oppenheimer",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1811080"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "en"
+            },
+            {
+              "Title": "The Story of Our Time: The Making of Oppenheimer",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1811080"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        },
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "1152711"
+          },
+          "Title": "Inside Christopher Nolan's Oppenheimer",
+          "Year": 2023,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Inside Christopher Nolan's Oppenheimer",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1152711"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "Inside Christopher Nolan's Oppenheimer",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1152711"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "en"
+            },
+            {
+              "Title": "Inside Christopher Nolan's Oppenheimer",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1152711"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        },
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "1156443"
+          },
+          "Title": "Oppenheimer: O Gênio Arrependido",
+          "Year": 2023,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Oppenheimer: O Gênio Arrependido",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1156443"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "Oppenheimer: O Gênio Arrependido",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1156443"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "pt"
+            },
+            {
+              "Title": "Oppenheimer: O Gênio Arrependido",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1156443"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        },
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "1243157"
+          },
+          "Title": "Innovations in Film: 65mm Black and White Film in Oppenheimer",
+          "Year": 2023,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Innovations in Film: 65mm Black and White Film in Oppenheimer",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1243157"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "Innovations in Film: 65mm Black and White Film in Oppenheimer",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1243157"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "en"
+            },
+            {
+              "Title": "Innovations in Film: 65mm Black and White Film in Oppenheimer",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1243157"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        },
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "1318686"
+          },
+          "Title": "Oppenheimer Or How I Learned To Stop Worrying And Love The Volcano",
+          "Year": 2023,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Oppenheimer Or How I Learned To Stop Worrying And Love The Volcano",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1318686"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "Oppenheimer Or How I Learned To Stop Worrying And Love The Volcano",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1318686"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "en"
+            },
+            {
+              "Title": "Oppenheimer Or How I Learned To Stop Worrying And Love The Volcano",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1318686"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        },
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "1442040"
+          },
+          "Title": "Die Akte Oppenheimer - Und ewig grüßt der Antisemit",
+          "Year": 2022,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Die Akte Oppenheimer - Und ewig grüßt der Antisemit",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1442040"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "Die Akte Oppenheimer - Und ewig grüßt der Antisemit",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1442040"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "de"
+            },
+            {
+              "Title": "Die Akte Oppenheimer - Und ewig grüßt der Antisemit",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1442040"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        },
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "1634345"
+          },
+          "Title": "Oppenheimer",
+          "Year": 2024,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Oppenheimer",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1634345"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "Oppenheimer",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1634345"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "pt"
+            },
+            {
+              "Title": "Oppenheimer",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1634345"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        },
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "881366"
+          },
+          "Title": "The End",
+          "Year": 2024,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "The End",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "881366"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "The End",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "881366"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "en"
+            },
+            {
+              "Title": "The End",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "881366"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "ReleaseId": 32103,
+      "RawTitle": "Sentimental.Value.2025.MULTi.1080p.WEB.EAC3.2.0.H265-GL0P",
+      "Title": "Sentimental Value",
+      "Year": 2025,
+      "Category": "Film",
+      "SourceKind": "rss",
+      "SelectedId": "1124566",
+      "Candidates": [
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "1124566"
+          },
+          "Title": "Valeur sentimentale",
+          "Year": 2025,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Valeur sentimentale",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "Affeksjonsverdi",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "no"
+            },
+            {
+              "Title": "Sentimental Value",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            },
+            {
+              "Title": "Valeur sentimentale",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Érzelmi érték",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Căn Nhà Ký Ức",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Mənəvi Dəyər",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Manevi Değer",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Sentimentali vertė",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Affektionsværdi",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Affeksjonsverdi",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Citová hodnota",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Valor Sentimental",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "情感价值",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Sentimentalna vrijednost",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Sentimentaalne väärtus",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Συναισθηματική αξία",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "情感的價值",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Erekh Sentimentali",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "センチメンタル・バリュー",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Sentimentāla vērtība",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Valor sentimental",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Wartość sentymentalna",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Valoare sentimentale",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Сентиментальная ценность",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Сентиментална вредност",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Sentimentalna vrednost",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Сентиментальна цінність",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Giá Trị Tình Cảm",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1124566"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            }
+          ]
+        },
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "1466351"
+          },
+          "Title": "Sentimental Values",
+          "Year": 2024,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Sentimental Values",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1466351"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "Sentimental Values",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1466351"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "en"
+            },
+            {
+              "Title": "Sentimental Values",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1466351"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        },
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "1697369"
+          },
+          "Title": "Sentimental Value",
+          "Year": 2026,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Sentimental Value",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1697369"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "Sentimental Value",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1697369"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "en"
+            },
+            {
+              "Title": "Sentimental Value",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1697369"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "ReleaseId": 29344,
+      "RawTitle": "Short.Circuit.1986.MULTi.VFF.CUSTOM.1080p.BluRay.AC3.x264-eMux.FRENCH",
+      "Title": "Short Circuit",
+      "Year": 1986,
+      "Category": "Film",
+      "SourceKind": "torznab",
+      "SelectedId": "2605",
+      "Candidates": [
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "2605"
+          },
+          "Title": "Short Circuit",
+          "Year": 1986,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Short Circuit",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "2605"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "Short Circuit",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "2605"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "en"
+            },
+            {
+              "Title": "Short Circuit",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "2605"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            },
+            {
+              "Title": "Rövidzárlat",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "2605"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Short Circuit 1",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "2605"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "ショート・サーキット",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "2605"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Um Robô em Curto Circuito",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "2605"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Cortocircuito",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "2605"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "霹雳五号",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "2605"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Curto-Circuito",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "2605"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            }
+          ]
+        },
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "923983"
+          },
+          "Title": "Short Circuit",
+          "Year": 1985,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Short Circuit",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "923983"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "Short Circuit",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "923983"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "en"
+            },
+            {
+              "Title": "Short Circuit",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "923983"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        },
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "949842"
+          },
+          "Title": "快樂寶貝",
+          "Year": 1985,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "快樂寶貝",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "949842"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "快樂寶貝",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "949842"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "zh"
+            },
+            {
+              "Title": "Short Circuit",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "949842"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        },
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "556578"
+          },
+          "Title": "Συζυγικά Βραχυκυκλώματα",
+          "Year": 1987,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Συζυγικά Βραχυκυκλώματα",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "556578"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "Συζυγικά Βραχυκυκλώματα",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "556578"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "el"
+            },
+            {
+              "Title": "Conjugal Short Circuits",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "556578"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "ReleaseId": 32082,
+      "RawTitle": "Piece.By.Piece.2024.MULTi.SD.BDRip.AAC.2.0.x264",
+      "Title": "Piece By Piece",
+      "Year": 2024,
+      "Category": "Animation",
+      "SourceKind": "rss",
+      "SelectedId": "1236419",
+      "Candidates": [
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "1236419"
+          },
+          "Title": "Piece by Piece",
+          "Year": 2024,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Piece by Piece",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1236419"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "Piece by Piece",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1236419"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "en"
+            },
+            {
+              "Title": "Piece by Piece",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1236419"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            },
+            {
+              "Title": "Out of the Box",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1236419"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Peça por Peça",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1236419"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "ファレル・ウィリアムス：ピース・バイ・ピース",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1236419"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "פארל: סיפור בחלקים",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1236419"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Шаг за шагом",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1236419"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Кусочек за кусочком",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1236419"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            },
+            {
+              "Title": "Цеглинка до цеглинки",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1236419"
+              },
+              "Kind": 3,
+              "Source": 2,
+              "Language": null
+            }
+          ]
+        },
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "1133973"
+          },
+          "Title": "Stück für Stück",
+          "Year": 2023,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Stück für Stück",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1133973"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "Stück für Stück",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1133973"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "de"
+            },
+            {
+              "Title": "Piece by Piece",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "1133973"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "NegativeCases": [
+    {
+      "ReleaseId": 33461,
+      "RawTitle": "Le.Voyage.en.douce.1982.FRENCH.1080p.AC3.2.0.x264",
+      "Title": "Le Voyage en douce",
+      "Year": 1982,
+      "Category": "Film",
+      "SourceKind": "rss",
+      "SelectedId": "",
+      "Candidates": [
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "81195"
+          },
+          "Title": "Le Voyage en douce",
+          "Year": 1980,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Le Voyage en douce",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "81195"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "Le Voyage en douce",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "81195"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "fr"
+            },
+            {
+              "Title": "A Sweet Journey",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "81195"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "ReleaseId": 31829,
+      "RawTitle": "Dedo.prince.des.tenebres.2012.FRENCH.1080p.WEBRip.AAC.2.0.H264-XTGMKV",
+      "Title": "Dedo prince des tenebres",
+      "Year": 2012,
+      "Category": "Spectacle",
+      "SourceKind": "rss",
+      "SelectedId": "",
+      "Candidates": [
+        {
+          "Identity": {
+            "Provider": "tmdb",
+            "MediaType": 1,
+            "Id": "352615"
+          },
+          "Title": "Dédo, prince des ténèbres",
+          "Year": 2015,
+          "AlternativeTitles": null,
+          "OfficialTitles": [
+            {
+              "Title": "Dédo, prince des ténèbres",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "352615"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "fr-FR"
+            },
+            {
+              "Title": "Dédo, prince des ténèbres",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "352615"
+              },
+              "Kind": 2,
+              "Source": 1,
+              "Language": "fr"
+            },
+            {
+              "Title": "Dédo, prince des ténèbres",
+              "Identity": {
+                "Provider": "tmdb",
+                "MediaType": 1,
+                "Id": "352615"
+              },
+              "Kind": 1,
+              "Source": 0,
+              "Language": "en-US"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

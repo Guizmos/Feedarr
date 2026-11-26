@@ -19,3 +19,17 @@ src/Feedarr.Api/Data/posters/**
 **/*.log
 README.md
 scripts/
+
+# Local diagnostics, credentials and developer launchers never enter build context
+.tmp
+.tmp-build
+.tmp-test-obj
+.agents
+.codex
+.aws
+dev.sh
+**/.env
+**/.env.*
+**/keys
+**/*.db-*
+**/*.sqlite*

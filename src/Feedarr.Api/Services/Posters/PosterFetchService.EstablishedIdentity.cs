@@ -9,11 +9,11 @@ namespace Feedarr.Api.Services.Posters;
 
 public sealed partial class PosterFetchService
 {
-    private async Task<PosterFetchResult> RefreshEstablishedMatchAsync(ReleaseForPoster known, CancellationToken ct, bool skipIfExists)
+    private async Task<PosterFetchResult> RefreshEstablishedMatchAsync(ReleaseForPoster known, CancellationToken ct, bool skipIfExists, bool upgradePosterLanguage = false)
     {
         var id = known.Id;
         _releases.ValidateMatching(id);
-        if (skipIfExists && !string.IsNullOrWhiteSpace(known.PosterFile) && File.Exists(Path.Combine(PostersDirAbs, known.PosterFile)))
+        if (skipIfExists && !upgradePosterLanguage && !string.IsNullOrWhiteSpace(known.PosterFile) && File.Exists(Path.Combine(PostersDirAbs, known.PosterFile)))
             return new(true, 200, new { ok = true, preserved = true, posterFile = known.PosterFile }, known.SourceId);
         var provider = known.ManualMatchProvider ?? known.ExtProvider ?? (known.TmdbId is > 0 ? "tmdb" : known.PosterProvider);
         var providerId = known.ManualMatchId ?? known.ExtProviderId ?? (known.TmdbId is > 0 ? known.TmdbId.Value.ToString(CultureInfo.InvariantCulture) : known.PosterProviderId);
@@ -30,7 +30,7 @@ public sealed partial class PosterFetchService
         try
         {
             UnifiedCategoryMappings.TryParse(known.UnifiedCategory, out var category);
-            var context = new PosterFetchRoutingContext(id, category, IsTvmazeEnabled(), true, known.SourceId);
+            var context = new PosterFetchRoutingContext(id, category, IsTvmazeEnabled(), !skipIfExists, known.SourceId);
             var preservedDetails = skipIfExists && known.ExtSnapshotVersion == 1 && known.ExtProvider == provider && known.ExtProviderId == providerId
                 ? new TmdbClient.DetailsResult(known.ExtTitle, known.ExtOverview, known.ExtTagline, known.ExtGenres, known.ExtReleaseDate,
                     known.ExtRuntimeMinutes, known.ExtRating, known.ExtVotes, known.ExtDirectors, known.ExtWriters, known.ExtCast) : null;
@@ -38,6 +38,8 @@ public sealed partial class PosterFetchService
             {
                 var type = TmdbIdentity.NormalizeType(known.ManualMatchType ?? known.TmdbMediaType);
                 if (type is null || !int.TryParse(providerId, out var tmdbId) || tmdbId <= 0) return Unavailable("historical_identity_type_required", 409);
+                if (upgradePosterLanguage && preservedDetails is null)
+                    preservedDetails = await RunTmdbAsync(token => type == "tv" ? _tmdb.GetTvPublicationDetailsAsync(tmdbId, token) : _tmdb.GetMoviePublicationDetailsAsync(tmdbId, token), deadline.Token).ConfigureAwait(false);
                 return await PublishVideoV2Async(context,
                     new TmdbClient.SearchResult(tmdbId, known.ExtTitle ?? known.Title ?? "", null, null, type, known.Year, null), deadline.Token, refreshExisting: true, preservedDetails: preservedDetails).ConfigureAwait(false);
             }

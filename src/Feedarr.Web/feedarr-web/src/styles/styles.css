@@ -5870,6 +5870,78 @@ body.modal-open .content{
   margin-top: 8px;
 }
 
+/* Direct RSS: contain intrinsic fieldset/grid widths and keep long previews compact. */
+.modal--direct-rss{
+  min-width: 0;
+  max-width: calc(100vw - 32px - var(--safe-left, 0px) - var(--safe-right, 0px));
+  max-height: calc(100dvh - 32px - var(--safe-top, 0px) - var(--safe-bottom, 0px));
+}
+.modal--direct-rss .modal-head{ flex-shrink: 0; min-width: 0; }
+.modal--direct-rss .modal-title{
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.modal--direct-rss .modal-body{
+  flex: 1 1 auto;
+  min-width: 0;
+  overscroll-behavior: contain;
+}
+.direct-rss-form{
+  min-width: 0;
+  max-width: 100%;
+  grid-template-columns: minmax(0, 1fr);
+}
+.direct-rss-form > *,
+.direct-rss-form__feed > *{
+  min-width: 0;
+  max-width: 100%;
+}
+.direct-rss-form__feed{
+  grid-column: 1 / -1;
+  box-sizing: border-box;
+}
+.direct-rss-form__feed legend{
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.direct-rss-form .field :is(input, select){
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+.direct-rss-form .formactions{ flex-wrap: wrap; }
+.direct-rss-form__preview{
+  margin: 8px 0;
+  padding-inline-start: 20px;
+  max-height: 8rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.direct-rss-form__preview li{
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.direct-rss-form :is(.errorbox, .muted){
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.direct-rss-form .errorbox{
+  max-height: 8rem;
+  overflow: auto;
+}
+.direct-rss-form__actions{
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding-block: 8px;
+  background: var(--panel, #fff);
+}
+
 /* ===== SETTINGS PAGE ===== */
 .settings-grid{
   display: grid;

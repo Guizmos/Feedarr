@@ -3,6 +3,9 @@ namespace Feedarr.Api.Services.Titles;
 public sealed class ParsedTitle
 {
     public string TitleClean { get; set; } = "";
+    public string? Edition { get; set; }
+    public string? EpisodeSubject { get; set; }
+    public int? BroadcastYear { get; set; }
     public int? Year { get; set; }
     public int? Season { get; set; }
     public int? Episode { get; set; }

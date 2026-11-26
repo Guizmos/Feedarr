@@ -6,7 +6,7 @@ public sealed partial class PosterFetchService
 {
     // Called only after this release's own V2 acceptance, inside its publication lease.
     private async Task<PosterFetchResult?> TryPublishSharedVideoPosterAsync(PosterFetchRoutingContext context,
-        string provider, string providerId, int? tmdbId, string type, TmdbClient.DetailsResult details, CancellationToken ct, Action<string, string?>? diagnosticStage = null)
+        string provider, string providerId, int? tmdbId, string type, TmdbClient.DetailsResult details, CancellationToken ct, Action<string, string?>? diagnosticStage = null, string? selectedImagePath = null)
     {
         if (context.ForceRefresh) return null;
         var key = provider == "tmdb" ? $"tmdb:{type}:{providerId}" : $"{provider}:{providerId}";
@@ -32,6 +32,10 @@ public sealed partial class PosterFetchService
                     donor.PosterHash != hash || string.IsNullOrWhiteSpace(donor.PosterPath) || string.IsNullOrWhiteSpace(donor.PosterFile) ||
                     Path.GetFileName(donor.PosterFile) != donor.PosterFile ||
                     (provider == "tmdb" && (donor.TmdbId != tmdbId || donor.TmdbMediaType != type))) continue;
+                // TVmaze has no localized image selection. TMDB's lower-priority image
+                // is reusable only after the cached selection confirms FR is unavailable.
+                if (provider == "tmdb" && !string.Equals(donor.PosterLang, _tmdb.PreferredPosterLanguage, StringComparison.OrdinalIgnoreCase) &&
+                    selectedImagePath != donor.PosterPath) continue;
                 var legacy = Path.Combine(PostersDirAbs, donor.PosterFile);
                 if (!File.Exists(legacy) || ComputeSha256Hex(await File.ReadAllBytesAsync(legacy, ct).ConfigureAwait(false)) != hash) continue;
                 _releases.ValidateMatching(context.ReleaseId);

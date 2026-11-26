@@ -16,7 +16,9 @@ internal enum SearchCandidateOrigin
 {
     Primary,
     AmbiguousTrailingNumber,
-    IsolatedDistributionSuffix
+    IsolatedDistributionSuffix,
+    ProgrammeTitleHypothesis,
+    BroadcastSuffixHypothesis
 }
 
 /// <summary>Parsed is lexical evidence, never a provider-confirmed release year.</summary>
@@ -24,7 +26,7 @@ internal sealed record SearchCandidate(
     string Title,
     int? Year,
     CandidateYearEvidence YearEvidence,
-    SearchCandidateOrigin Origin);
+    SearchCandidateOrigin Origin, string? ScopeSuffix = null);
 
 /// <summary>
 /// The caller supplies identity/manual-lock state from trusted persisted
@@ -54,12 +56,16 @@ internal static class SearchCandidateGenerator
             string.IsNullOrWhiteSpace(input.RawTitle))
             return Array.Empty<SearchCandidate>();
 
+        if (input.Category is UnifiedCategory.Serie or UnifiedCategory.Emission)
+            return TelevisionSearchInput.Queries(input.RawTitle);
+
         // Reuse contextual recognition; aggressive matching normalization would
         // silently remove legitimate title numbers or edition names here.
         var parsed = new TitleParser().Parse(input.RawTitle, input.Category);
         if (string.IsNullOrWhiteSpace(parsed.TitleClean)) return Array.Empty<SearchCandidate>();
-        var primary = new SearchCandidate(parsed.TitleClean, parsed.Year,
-            parsed.Year.HasValue ? CandidateYearEvidence.Parsed : CandidateYearEvidence.None,
+        var searchYear = parsed.Year;
+        var primary = new SearchCandidate(parsed.TitleClean, searchYear,
+            searchYear.HasValue ? CandidateYearEvidence.Parsed : CandidateYearEvidence.None,
             SearchCandidateOrigin.Primary);
 
         // An isolated uploader suffix supplies a search alternative, never a display

@@ -171,10 +171,11 @@ public sealed partial class PosterFetchStoreMaterializationTests
         {
             using var c = new PosterStoreContext(ImagePayloadMode.ValidImage);
             var id = c.CreateAutomaticMovie("The Matrix", year);
+            using var diagnostic = MatchingAttemptDiagnostics.Begin(id);
             var result = await c.Posters.FetchPosterAsync(id, default, false, false);
             if (year.HasValue)
             {
-                Assert.True(result.Ok, JsonSerializer.Serialize(result.Body));
+                Assert.True(result.Ok, $"year={year};{JsonSerializer.Serialize(result.Body)};{diagnostic.Ranking}");
                 Assert.Equal(100, c.Releases.GetForPoster(id)!.TmdbId);
             }
             else

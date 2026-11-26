@@ -25,6 +25,7 @@ public sealed partial class IgdbClient
             throw new HttpRequestException("IGDB rate limit exceeded", null, HttpStatusCode.TooManyRequests);
     }
 
+    private readonly IgdbMatchingState _matchingState;
     private readonly HttpClient _http;
     private readonly ProviderStatsService _stats;
     private readonly ActiveExternalProviderConfigResolver _activeConfigResolver;
@@ -41,8 +42,10 @@ public sealed partial class IgdbClient
     public IgdbClient(
         HttpClient http,
         ProviderStatsService stats,
-        ActiveExternalProviderConfigResolver activeConfigResolver)
+        ActiveExternalProviderConfigResolver activeConfigResolver,
+        IgdbMatchingState? matchingState = null)
     {
+        _matchingState = matchingState ?? new IgdbMatchingState();
         _http = http;
         _stats = stats;
         _activeConfigResolver = activeConfigResolver;

@@ -29,7 +29,8 @@ internal sealed record CandidateRankingPolicy(
     double MinimumTitleSimilarity = 0.90, double AcceptConfidence = 0.92,
     double MinimumConfidenceGap = 0.08, int ParsedYearTolerance = 1,
     int ConfirmedYearTolerance = 0, int MaximumResults = 100,
-    bool NumericTitlesRequireTrustedIdentity = true, bool RequireExactTitleForAcceptance = true)
+    bool NumericTitlesRequireTrustedIdentity = true, bool RequireExactTitleForAcceptance = true,
+    bool ContextualVideoDecision = false)
 {
     internal void Validate()
     {
@@ -98,7 +99,8 @@ internal static class SearchCandidateRanker
         var eligible = ranked.Where(r => r.Decision != CandidateDecision.Reject).ToArray();
         if (eligible.Length == 0)
             return new(CandidateDecision.Reject, null, false, Array.AsReadOnly(new[] { "all-provider-results-rejected" }), Array.AsReadOnly(ranked));
-        if (eligible.Length > 1 && (eligible[0].EvidenceScore ?? eligible[0].Confidence) - (eligible[1].EvidenceScore ?? eligible[1].Confidence) < policy.MinimumConfidenceGap)
+        var minimumGap = policy.ContextualVideoDecision && eligible[0].PositiveReasons.Contains("p7-contextual-video") ? .05 : policy.MinimumConfidenceGap;
+        if (eligible.Length > 1 && (eligible[0].EvidenceScore ?? eligible[0].Confidence) - (eligible[1].EvidenceScore ?? eligible[1].Confidence) < minimumGap)
         {
             ranked = ranked.Select(r => r.Decision == CandidateDecision.Accept
                 ? r with { Decision = CandidateDecision.Ambiguous,
@@ -115,9 +117,9 @@ internal static class SearchCandidateRanker
         CandidateRankingContext context, ProviderSearchCandidate[] results)
     {
         var policy = new CandidateRankingPolicy();
-        // TV evidence/aliases are enriched after projection. Do not pre-judge them,
-        // other categories, protected contexts, or uncertain query years.
-        if (results.Length <= policy.MaximumResults || context.Category != UnifiedCategory.Film ||
+        // Only proven movie types may use definitive year contradictions before the budget.
+        // Functional category does not change movie identity; TV, locks and uncertain years stay untouched.
+        if (results.Length <= policy.MaximumResults ||
             context.ExpectedMediaType != SearchMediaType.Movie || context.IsLocked || context.HasManualCorrection ||
             context.EstablishedIdentity is not null || context.TrustedIdentityHint is not null ||
             context.ConfirmedYear.HasValue || context.AirDate is not null || context.Season.HasValue || context.Episode.HasValue ||
@@ -147,10 +149,28 @@ internal static class SearchCandidateRanker
 
     // An official alias can repair title evidence, never type/year/identity contradictions.
     internal static bool CanGainMovieTitleEvidence(CandidateRankingContext context, ProviderSearchCandidate candidate)
-        => context.Category == UnifiedCategory.Film && context.ExpectedMediaType == SearchMediaType.Movie &&
+        => context.ExpectedMediaType == SearchMediaType.Movie &&
             candidate.Identity.Provider == "tmdb" && candidate.Identity.MediaType == SearchMediaType.Movie &&
             context.Queries.Any(q => Evaluate(context, q, 0, candidate, new CandidateRankingPolicy()).Contradictions
                 .All(c => !c.IsStrong || c.Code is "title-similarity-insufficient" or "title-number-mismatch" or "title-numeric-punctuation-mismatch"));
+
+    // A dated, ordinal regular-season episode cannot belong to a series premiering
+    // beyond the existing year tolerance in the future. Specials, date-only broadcasts,
+    // annual numbering and unknown/conflicting premiere years stay visible.
+    internal static ProviderSearchCandidate[] PruneTelevisionPremiereContradictions(
+        CandidateRankingContext context, ProviderSearchCandidate[] candidates)
+    {
+        if (context.ExpectedMediaType != SearchMediaType.Series || context.IsLocked || context.HasManualCorrection ||
+            context.EstablishedIdentity is not null || context.TrustedIdentityHint is not null ||
+            context.Season is not (> 0 and < 100) || context.Episode is not > 0 ||
+            !DateOnly.TryParseExact(context.AirDate, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var episodeDate) ||
+            context.RssEvidence is { TmdbId: not null } or { TvdbId: not null } or { ImdbId: not null } or { ConflictingClaims: true }) return candidates;
+        return candidates.GroupBy(c => c.Identity).Where(group =>
+            group.Key.MediaType != SearchMediaType.Series || group.Key.Provider is not ("tmdb" or "tvmaze") ||
+            group.Any(c => c.Year is not (> 0 and <= 9999)) || group.Select(c => c.Year).Distinct().Count() != 1 ||
+            group.First().Year <= episodeDate.Year + new CandidateRankingPolicy().ParsedYearTolerance).SelectMany(group => group).ToArray();
+    }
 
     private static RankedSearchCandidate Evaluate(CandidateRankingContext context, SearchCandidate query,
         int queryIndex, ProviderSearchCandidate candidate, CandidateRankingPolicy policy)
@@ -187,6 +207,11 @@ internal static class SearchCandidateRanker
             !string.IsNullOrWhiteSpace(other.Id) && (candidate.KnownExternalIdentities ?? Array.Empty<SearchIdentity>()).Contains(other);
         if (context.AirDate is not null)
         {
+            if (identity.MediaType == SearchMediaType.Series && candidate.Year.HasValue &&
+                context.Season is > 0 and < 100 && context.Episode is > 0 &&
+                DateOnly.TryParseExact(context.AirDate, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var episodeDate) && candidate.Year > episodeDate.Year + policy.ParsedYearTolerance)
+                Contradict("series-premiere-after-episode-date");
             if (tv?.AirDate is null) { sufficient = false; Contradict("air-date-unavailable", false); }
             else if (tv.AirDate != context.AirDate) Contradict("air-date-mismatch");
             else positive.Add("air-date-agrees");
@@ -289,8 +314,13 @@ internal static class SearchCandidateRanker
                 Similarity(TitleNormalizer.NormalizeApostropheOmissions(query.Title), TitleNormalizer.NormalizeApostropheOmissions(t.RawTitle)))))
             .OrderByDescending(t => t.Score).ThenBy(t => t.Official is null).ThenBy(t => t.Alternate).ThenBy(t => t.Title, StringComparer.Ordinal)
             .DefaultIfEmpty(("", "", false, null, 0d)).First();
-        var compound = best.Score == 1 ? null : OfficialCompoundTitle.Match(normalizedQuery, candidate) ??
-            OfficialCompoundTitle.Match(TitleNormalizer.NormalizeApostropheOmissions(query.Title), candidate, omitApostrophes: true);
+        string? titleVariant = null;
+        if (best.Score < 1 && OfficialCompoundTitle.Recognize(query, context, candidate, out titleVariant) is { } recognized)
+            best = (normalizedQuery, recognized.Title, true, recognized, 1d);
+        var reliableCompound = query.YearEvidence == CandidateYearEvidence.Parsed && query.Year is not null && query.Year == candidate.Year &&
+            context.ExpectedMediaType == identity.MediaType;
+        var compound = best.Score == 1 ? null : OfficialCompoundTitle.Match(normalizedQuery, candidate, allowContained: reliableCompound) ??
+            OfficialCompoundTitle.Match(TitleNormalizer.NormalizeApostropheOmissions(query.Title), candidate, omitApostrophes: true, allowContained: reliableCompound);
         int? trailingYearHypothesis = null;
         if (compound is not null)
             best = (normalizedQuery, compound.First.Title + " " + compound.Second.Title, true, null, 1d);
@@ -317,9 +347,20 @@ internal static class SearchCandidateRanker
             }
         }
         if (compound is not null) positive.Add("official-composed-title-exact");
-        if (best.Score < policy.MinimumTitleSimilarity) Contradict("title-similarity-insufficient");
+        // P7 is a final-decision policy only; collection and TV competitor discovery
+        // retain their original policy. Provider ownership, type and independent
+        // work-year/episode evidence are required before relaxing lexical equality.
+        var officialVideo = best.Official is not null || compound is not null;
+        var exactWorkYear = context.AirDate is null && query.YearEvidence == CandidateYearEvidence.Parsed &&
+            query.Year is >= 1801 and <= 2099 && candidate.Year == query.Year;
+        var structureRequested = context.Season.HasValue || context.Episode.HasValue || context.AirDate is not null;
+        var contextualVideo = policy.ContextualVideoDecision && officialVideo && identity.MediaType == context.ExpectedMediaType &&
+            (identity.MediaType == SearchMediaType.Movie && exactWorkYear ||
+             identity.MediaType == SearchMediaType.Series && (tvSupport || exactWorkYear && !structureRequested));
+        if (contextualVideo) positive.Add("p7-contextual-video");
+        if (best.Score < (contextualVideo ? .85 : policy.MinimumTitleSimilarity)) Contradict("title-similarity-insufficient");
         else positive.Add(best.Score == 1 ? best.Alternate ? "known-alternate-title-agrees" : "exact-title" : "similar-title");
-        if (policy.RequireExactTitleForAcceptance && best.Score < 1 && !trusted)
+        if (policy.RequireExactTitleForAcceptance && best.Score < 1 && !trusted && !contextualVideo)
         { Contradict("non-exact-title-needs-independent-evidence", false); sufficient = false; }
         if (best.Score == 1 && best.Official is { } official)
             positive.Add(official.Kind switch
@@ -329,8 +370,9 @@ internal static class SearchCandidateRanker
                 ProviderTitleKind.Alternative => "official-alternative-title-exact",
                 _ => "official-response-title-exact"
             });
-        var queryNumbers = Numbers(trailingYearHypothesis.HasValue ? best.Title : normalizedQuery);
-        if (string.Equals(identity.Provider, "tmdb", StringComparison.OrdinalIgnoreCase) &&
+        if (titleVariant is not null) positive.Add(titleVariant);
+        var queryNumbers = Numbers(titleVariant is not null || trailingYearHypothesis.HasValue ? best.Title : normalizedQuery);
+        if (titleVariant is null && string.Equals(identity.Provider, "tmdb", StringComparison.OrdinalIgnoreCase) &&
             !OfficialCompoundTitle.NumericPunctuationAgrees(query.Title, best.RawTitle)) Contradict("title-numeric-punctuation-mismatch");
         if (!queryNumbers.SequenceEqual(Numbers(best.Title))) Contradict("title-number-mismatch");
         if (normalizedQuery.Length == 0) Contradict("empty-query-title");
@@ -344,7 +386,19 @@ internal static class SearchCandidateRanker
         var rssSupport = context.Category is UnifiedCategory.Film or UnifiedCategory.Serie &&
             context.RssEvidence?.Supports(candidate) == true;
         if (rssSupport) positive.Add("rss-id-and-official-synopsis-agree");
-        if (trusted || tvSupport || corroboratedTv || animeSupport || gameSupport || audioSupport || printSupport) confidence += .10;
+        var networkSupport = query.Origin == SearchCandidateOrigin.BroadcastSuffixHypothesis && best.Score == 1 &&
+            !string.IsNullOrWhiteSpace(query.ScopeSuffix) && tv?.NetworkNames?.Any(n =>
+                TitleNormalizer.NormalizeTitleStrict(n) == TitleNormalizer.NormalizeTitleStrict(query.ScopeSuffix)) == true;
+        if (query.Origin == SearchCandidateOrigin.BroadcastSuffixHypothesis && !networkSupport)
+        { sufficient = false; Contradict("broadcast-suffix-unverified", false); }
+        var programmeIdentity = policy.ContextualVideoDecision && best.Score == 1 && officialVideo && corroboratedTv && !structureRequested;
+        if (query.Origin == SearchCandidateOrigin.ProgrammeTitleHypothesis && !tvSupport)
+        {
+            if (programmeIdentity) positive.Add("programme-subject-programme-identity-warning");
+            else { sufficient = false; Contradict("programme-subject-needs-episode-evidence", false); }
+        }
+        if (networkSupport) positive.Add("verified-broadcast-network-suffix");
+        if (trusted || tvSupport || corroboratedTv || networkSupport || animeSupport || gameSupport || audioSupport || printSupport) confidence += .10;
         if (corroboratedTv) positive.Add("verified-cross-provider-tv-identity");
         if (animeSupport) positive.Add("verified-anime-structure");
         if (tvSupport) positive.Add("verified-tv-structure");
@@ -369,7 +423,7 @@ internal static class SearchCandidateRanker
             else { confidence += distance == 0 ? .10 : .06; positive.Add(distance == 0 ? "year-agrees" : "parsed-year-nearby"); }
         }
         else if (year.HasValue) { Contradict("provider-year-unavailable", false); sufficient &= trusted; }
-        if (hypothesis && !trusted && !tvSupport && !animeSupport) { Contradict("hypothesis-needs-independent-evidence", false); sufficient = false; }
+        if (hypothesis && !trusted && !tvSupport && !networkSupport && !animeSupport) { Contradict("hypothesis-needs-independent-evidence", false); sufficient = false; }
         CheckEpisode(context.Season, candidate.Season, "season");
         CheckEpisode(context.Episode, candidate.Episode, "episode");
         void CheckEpisode(int? expected, int? actual, string field)
@@ -385,7 +439,7 @@ internal static class SearchCandidateRanker
         var evidenceScore = confidence + (rssSupport ? .10 : 0);
         confidence = Math.Min(1, evidenceScore);
         var decision = contradictions.Any(c => c.IsStrong) ? CandidateDecision.Reject :
-            sufficient && confidence >= policy.AcceptConfidence ? CandidateDecision.Accept : CandidateDecision.Ambiguous;
+            sufficient && confidence >= (contextualVideo ? .90 : policy.AcceptConfidence) ? CandidateDecision.Accept : CandidateDecision.Ambiguous;
         var canonical = Key(identity);
         return new(new SearchIdentity(canonical.Provider, canonical.Type, canonical.Id), queryIndex, confidence, Array.AsReadOnly(positive.ToArray()), Array.AsReadOnly(contradictions.ToArray()), decision, compound, trailingYearHypothesis, evidenceScore);
     }

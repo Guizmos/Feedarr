@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Feedarr.Api.Services.DirectRss;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Feedarr.Api.Data.Repositories;
@@ -12,6 +13,7 @@ namespace Feedarr.Api.Services.Sync;
 public sealed class SyncExecutor : ISyncExecutor
 {
     private readonly TorznabClient _torznab;
+    private readonly DirectRssSyncService? _directRss;
     private readonly SourceRepository _sources;
     private readonly ReleaseRepository _releases;
     private readonly ActivityRepository _activity;
@@ -32,9 +34,10 @@ public sealed class SyncExecutor : ISyncExecutor
         UnifiedCategoryResolver resolver,
         RetentionService retention,
         ProviderStatsService providerStats,
-        ILogger<SyncExecutor> log)
+        ILogger<SyncExecutor> log, DirectRssSyncService? directRss = null)
     {
         _torznab = torznab;
+        _directRss = directRss;
         _sources = sources;
         _releases = releases;
         _activity = activity;
@@ -69,7 +72,20 @@ public sealed class SyncExecutor : ISyncExecutor
                 SensitiveUrlSanitizer.Sanitize(url),
                 plan.Fetch.PerCategoryLimit);
 
-            var rssRes = await _torznab.FetchLatestAsync(
+            DirectRssMergeResult? directMerged = null;
+            if (source.SourceKind == "rss")
+            {
+                if (_directRss is null) throw new InvalidOperationException("Direct RSS service unavailable");
+                directMerged = await _directRss.FetchAsync(plan, ct).ConfigureAwait(false);
+                var map = DirectRssSyncService.CategoryMap();
+                plan = plan with { Filter = plan.Filter with {
+                    CategoryMap = map, SelectedCategoryIds = map.Keys.ToList(),
+                    SelectedUnifiedKeys = map.Values.Select(x => x.key).ToHashSet(StringComparer.OrdinalIgnoreCase)
+                }};
+            }
+            var rssRes = directMerged is not null
+                ? (items: DirectRssSyncService.Map(directMerged), usedMode: "rss")
+                : await _torznab.FetchLatestAsync(
                 url,
                 authMode,
                 apiKey,
@@ -117,7 +133,7 @@ public sealed class SyncExecutor : ISyncExecutor
             string? fallbackMode = null;
             var usedAggregated = false;
 
-            if (plan.Fetch.EnableCategoryFallback && !plan.Fetch.RssOnly && plan.Filter.SelectedCategoryIds.Count > 0)
+            if (directMerged is null && plan.Fetch.EnableCategoryFallback && !plan.Fetch.RssOnly && plan.Filter.SelectedCategoryIds.Count > 0)
             {
                 if (rssItems.Count == 0 || fallbackCandidates.Count > 0)
                 {
@@ -181,7 +197,7 @@ public sealed class SyncExecutor : ISyncExecutor
             var rssUsed = rssItems.Count > 0 &&
                           (string.Equals(usedMode, "rss", StringComparison.OrdinalIgnoreCase) ||
                            string.Equals(usedMode, "recent", StringComparison.OrdinalIgnoreCase));
-            var syncMode = rssUsed
+            var syncMode = directMerged is { FailedFeedCount: > 0 } ? "rss_partial" : rssUsed
                 ? (!string.IsNullOrWhiteSpace(fallbackMode) ? "rss_plus_fallback" : "rss_only")
                 : string.Equals(usedMode, "search", StringComparison.OrdinalIgnoreCase)
                     ? "torznab_only"
@@ -310,6 +326,7 @@ public sealed class SyncExecutor : ISyncExecutor
 
             var nowTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             var insertedNew = _releases.UpsertMany(id, name, items, nowTs, plan.Db.DefaultSeen, plan.Filter.CategoryMap);
+            if (directMerged is not null) _directRss!.RecordProvenance(id, directMerged);
             var (retentionResult, postersPurged, failedDeletes) = _retention.ApplyRetention(id, plan.Fetch.PerCategoryLimit, plan.Db.GlobalLimit);
 
             var (posterRequested, posterEnqueued, posterCoalesced, posterTimedOut) = await EnqueuePosterJobsAsync(plan, ct).ConfigureAwait(false);
@@ -345,7 +362,8 @@ public sealed class SyncExecutor : ISyncExecutor
                 insertedNew,
                 items.Count);
 
-            _sources.UpdateLastSync(id, "ok", null);
+            _sources.UpdateLastSync(id, directMerged is { FailedFeedCount: > 0 } ? "partial" : "ok",
+                directMerged is { FailedFeedCount: > 0 } ? $"{directMerged.FailedFeedCount} RSS feeds failed" : null);
             _activity.Add(
                 id,
                 "info",

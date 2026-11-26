@@ -70,6 +70,7 @@ public sealed class SourceRepository
             """
             SELECT
                 id as Id,
+                source_kind as SourceKind,
                 name as Name,
                 enabled as Enabled,
                 torznab_url as TorznabUrl,
@@ -96,6 +97,7 @@ public sealed class SourceRepository
             """
             SELECT
                 id as Id,
+                source_kind as SourceKind,
                 name as Name,
                 enabled as Enabled,
                 torznab_url as TorznabUrl,
@@ -127,6 +129,7 @@ public sealed class SourceRepository
             """
             SELECT
                 id as Id,
+                source_kind as SourceKind,
                 name as Name,
                 enabled as Enabled,
                 torznab_url as TorznabUrl,

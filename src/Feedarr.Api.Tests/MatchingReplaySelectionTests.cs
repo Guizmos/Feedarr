@@ -169,7 +169,9 @@ public sealed partial class MatchingReplayTests
         fixture.Replay.Start(Request(fixture, Selection(fair: true), "tmdb", 8)); var report = await fixture.Done();
         Assert.Equal(8, report.RequestsUsed);
         Assert.Contains(report.Entries, e => e.Category == "films" && e.Coverage == "category_http_budget_exhausted" && !e.ProviderEvidenceComplete);
-        Assert.Contains(report.Entries, e => e.Category == "series" && e.Detail.Decision == "accept" && e.ProviderEvidenceComplete);
+        // P5: this fixture has only a lexical year, no verified season/episode.
+        // Its complete evaluation still runs in its own quota, but cannot infer a premiere year.
+        Assert.Contains(report.Entries, e => e.Category == "series" && e.Detail.Decision == "ambiguous" && e.ProviderEvidenceComplete);
         Assert.All(report.CategoryBudgets!, q => Assert.Equal(4, q.Used));
     }
 

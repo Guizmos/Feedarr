@@ -33,6 +33,7 @@ public sealed partial class TitleParser
         if (string.IsNullOrWhiteSpace(p.TitleClean))
             p.TitleClean = FallbackTitle(raw);
 
+        SeparateSearchMetadata(input, p, suffix);
         return p;
     }
 }

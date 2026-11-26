@@ -108,12 +108,15 @@ public sealed class CompoundTitleShadowTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void ContainedNames_DoNotJustifyDuplicateTitlePrefixes()
+    public void CompleteContainedNamesNeedReliableYearAndDistinctOfficialNames()
     {
         var candidate = Candidate(1, 1991, "Epic La Bataille du royaume", "Epic");
         var duplicate = SearchCandidateRanker.Rank(Context("Epic Epic La Bataille du royaume"), new[] { candidate });
-        Assert.NotEqual(CandidateDecision.Accept, duplicate.Decision);
-        Assert.Null(Assert.Single(duplicate.Candidates).CompoundTitle);
+        Assert.Equal(CandidateDecision.Accept, duplicate.Decision);
+        Assert.NotNull(Assert.Single(duplicate.Candidates).CompoundTitle);
+        var undated = Context("Epic Epic La Bataille du royaume") with { Queries = new[] {
+            new SearchCandidate("Epic Epic La Bataille du royaume", null, CandidateYearEvidence.None, SearchCandidateOrigin.Primary) } };
+        Assert.Null(Assert.Single(SearchCandidateRanker.Rank(undated, new[] { candidate }).Candidates).CompoundTitle);
         Assert.Equal(CandidateDecision.Accept, SearchCandidateRanker.Rank(Context("Epic La Bataille du royaume"), new[] { candidate }).Decision);
     }
 

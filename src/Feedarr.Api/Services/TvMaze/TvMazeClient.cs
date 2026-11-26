@@ -51,6 +51,20 @@ public sealed class TvMazeClient : IDisposable
             var value = await GetMatchingEvidenceCoreAsync(path, token).ConfigureAwait(false);
             return value is { } json ? new Feedarr.Api.Services.Matching.VideoEvidenceResponse(json) : null;
         }, value => Feedarr.Api.Services.Matching.VideoEvidenceResponse.Complete("tvmaze", path, value.Value), ct).ConfigureAwait(false);
+        if (path.StartsWith("search/shows?", StringComparison.Ordinal) && cached?.Value is { ValueKind: JsonValueKind.Array } shows)
+            foreach (var item in shows.EnumerateArray())
+                if (item.TryGetProperty("show", out var show) && Feedarr.Api.Services.Matching.TelevisionCandidates.Number(show, "id") is > 0 and var id &&
+                    Feedarr.Api.Services.Matching.VideoEvidenceResponse.CompleteTvmazePublication(show, id.ToString(System.Globalization.CultureInfo.InvariantCulture)))
+                {
+                    var key = "shows/" + id;
+                    var previous = _matchingResponses.Peek<Feedarr.Api.Services.Matching.VideoEvidenceResponse>(key);
+                    var oldYear = previous is null ? null : Feedarr.Api.Services.Matching.TelevisionCandidates.Text(previous.Value, "premiered");
+                    var newYear = Feedarr.Api.Services.Matching.TelevisionCandidates.Text(show, "premiered");
+                    if (oldYear is { Length: >= 4 } && newYear is { Length: >= 4 } && oldYear[..4] != newYear[..4])
+                        throw new InvalidDataException("tv_provider_year_conflict");
+                    _matchingResponses.Remember(key, new Feedarr.Api.Services.Matching.VideoEvidenceResponse(show),
+                        value => Feedarr.Api.Services.Matching.VideoEvidenceResponse.CompleteTvmazePublication(value.Value, id.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+                }
         return cached?.Value;
     }
 

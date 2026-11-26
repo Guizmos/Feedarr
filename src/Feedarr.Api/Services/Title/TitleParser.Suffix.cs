@@ -44,7 +44,7 @@ public sealed partial class TitleParser
                 .Concat(new[]
                 {
                     $"(?<resolution>{RxRes})",
-                    @"(?<video>(?i)\b(?:\d{3,4}[pi]|WEB|XVID|DIVX|DTS(?:[ .-]?(?:HDHRA|HD|X|MA))*|E[ .-]?AC[ .-]?3|AC-3|EAC3|AAC(?:[ .]?\d[ .]\d)?|DDP?\d?|TRUEHD|ATMOS|FLAC|OPUS|MP3|PROPER)\b)",
+                    @"(?<video>(?i)\b(?:\d{3,4}[pi]|WEB|XVID|DIVX|DTS(?:[ .-]?(?:HDHRA|HD|X|MA))*|E[ .-]?AC[ .-]?3|AC-3|EAC3|AAC(?:[ .]?\d[ .]\d)?|DDP?\d?|TRUEHD|ATMOS|FLAC|OPUS|MP3|MPEG[ .]+AUDIO|HDRIP|PROPER)\b)",
                     @"(?<flag>(?i)\b(?:SD|SDR|AD|PCM|BD|LC|NVENC|FULL|UHD|HYBRID|CUSTOM|EXTENDED|REMASTERED|RESTORED|HDR10PLUS|HDR10P|HDR(?:10\+?)?|DV|DOVI|P7|DOLBY[ .]+VISION|4KLIGHT|HDLIGHT(?:DD\d)?|\d{1,2}[ .]*bits?|[2571][ .][01]|\dch|3D|SBS|HSBS|REMUX|PAL|NTSC|SECAM|MKV|MP4|AVI|MULTIPLE[ .]+SUBTITLES?)\b)",
                     @"(?<service>(?i)\b(?:AMZN|DSNP|M6P|TF1P|ADN|CR|ATV|NF|CNLP|PAPR|IT|TVING|FTV|HMAX|MUBI|DISNEY)\b)",
                     @"(?<language>(?i)\b(?:MULTI\d*|DUAL|VFF|VFQ|VFI|VF\d*|VOSTFR|VOST|VOF|TRUEFRENCH|SUBFRENCH|FRENCH|ENGLISH|ENG|FR|EN|VO)\b)"

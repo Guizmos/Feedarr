@@ -157,7 +157,9 @@ public sealed partial class PosterFetchStoreMaterializationTests
         Assert.Equal(100, release!.TmdbId);
         Assert.StartsWith("tmdb-movie-100-v2-", release.PosterFile);
         Assert.True(File.Exists(Path.Combine(ctx.PostersDir, "tmdb-movie-999-w500.jpg")));
-        Assert.Equal(2, ctx.TmdbHandler.MovieSearchCalls);
+        // P1 already covers three admissible years in FR/EN for this reliable year.
+        // The historical title cache still cannot choose ID 999 or bypass that collection.
+        Assert.Equal(6, ctx.TmdbHandler.MovieSearchCalls);
         Assert.True((release.ExtUpdatedAtTs ?? 0) > 0);
         Assert.Equal("tmdb", release.ExtProvider);
         Assert.Equal(1, ctx.TmdbHandler.MovieDetailsCalls);

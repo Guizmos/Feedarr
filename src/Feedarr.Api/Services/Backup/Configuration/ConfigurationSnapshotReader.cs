@@ -1,3 +1,4 @@
+using Dapper;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Feedarr.Api.Models.Settings;
@@ -54,6 +55,34 @@ internal sealed class ConfigurationSnapshotReader(IApiKeyProtectionService prote
         var categories = ReadRows("source_categories", ConfigurationSchema.CategoryFields);
         var mappings = ReadRows("source_category_mappings", ConfigurationSchema.MappingFields);
         var selections = ReadRows("source_selected_categories", ConfigurationSchema.SelectionFields);
+        List<JsonObject>? rssSources = null;
+        if (conn.ExecuteScalar<int>("SELECT COUNT(*) FROM pragma_table_info('sources') WHERE name='source_kind'", transaction: tx) > 0)
+        {
+            foreach (var rss in conn.Query<(long Id, string Identity)>("SELECT id,torznab_url FROM sources WHERE source_kind='rss'", transaction: tx))
+            {
+                rssSources ??= new();
+                var source = sources.Single(s => ConfigurationSchema.Text(s, "key") == sourceMap[rss.Id]);
+                var rssFeeds = new JsonObject();
+                var rows = conn.Query<(long Id, string Url, string? Name, string Category, long Enabled)>(
+                    "SELECT id,url_encrypted,name,category_key,enabled FROM direct_rss_feeds WHERE source_id=@id ORDER BY id LIMIT 101",
+                    new { id = rss.Id }, tx).ToList();
+                if (rows.Count > 100) TooLarge();
+                foreach (var feed in rows)
+                {
+                    if (++rowCount > ConfigurationSchema.MaxRows) TooLarge();
+                    var url = Secret(feed.Url); Budget(url);
+                    rssFeeds["feed-" + feed.Id] = new JsonObject {
+                        ["url"] = url, ["name"] = feed.Name, ["category_key"] = feed.Category, ["enabled"] = feed.Enabled
+                    };
+                }
+                rssSources.Add(new JsonObject {
+                    ["key"] = source["key"]?.DeepClone(), ["identity"] = rss.Identity,
+                    ["name"] = source["name"]?.DeepClone(), ["color"] = source["color"]?.DeepClone(),
+                    ["enabled"] = source["enabled"]?.DeepClone(), ["feeds"] = rssFeeds
+                });
+                sources.Remove(source);
+            }
+        }
         foreach (var r in sources) Remap(r, "providerKey", providerMap);
         foreach (var rows in new[] { categories, mappings, selections }) foreach (var r in rows) Remap(r, "sourceKey", sourceMap);
         RemapUi("defaultFilterSourceId", sourceMap, []);
@@ -76,6 +105,7 @@ internal sealed class ConfigurationSnapshotReader(IApiKeyProtectionService prote
             Settings = settings,
             Providers = providers,
             Sources = sources,
+            RssSources = rssSources,
             ExternalProviders = external,
             Applications = apps,
             Categories = categories,

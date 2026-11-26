@@ -10,15 +10,18 @@ public sealed class ExternalProviderTestService
     private const string ComicVineUserAgent = "Feedarr/1.0";
 
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly Feedarr.Api.Services.Rawg.RawgAuthenticationState _rawgAuthentication;
     private readonly ProviderStatsService _stats;
     private readonly ILogger<ExternalProviderTestService> _logger;
 
     public ExternalProviderTestService(
         IHttpClientFactory httpClientFactory,
         ProviderStatsService stats,
-        ILogger<ExternalProviderTestService> logger)
+        ILogger<ExternalProviderTestService> logger,
+        Feedarr.Api.Services.Rawg.RawgAuthenticationState? rawgAuthentication = null)
     {
         _httpClientFactory = httpClientFactory;
+        _rawgAuthentication = rawgAuthentication ?? new();
         _stats = stats;
         _logger = logger;
     }
@@ -42,6 +45,12 @@ public sealed class ExternalProviderTestService
                     comicVineResult.Error ?? (comicVineResult.Ok ? null : "provider test failed"));
             }
 
+            if (key == ExternalProviderKeys.Rawg)
+            {
+                var rawg = await TestRawgAsync(baseUrl, auth, ct).ConfigureAwait(false);
+                return new ExternalProviderTestOutcome(rawg.Ok, sw.ElapsedMilliseconds, rawg.Error);
+            }
+
             var ok = key switch
             {
                 ExternalProviderKeys.Tmdb => await TestTmdbAsync(baseUrl, auth, ct),
@@ -53,7 +62,6 @@ public sealed class ExternalProviderTestService
                 ExternalProviderKeys.TheAudioDb => await TestTheAudioDbAsync(baseUrl, auth, ct),
                 ExternalProviderKeys.MusicBrainz => await TestMusicBrainzAsync(baseUrl, auth, ct),
                 ExternalProviderKeys.OpenLibrary => await TestOpenLibraryAsync(baseUrl, ct),
-                ExternalProviderKeys.Rawg => await TestRawgAsync(baseUrl, auth, ct),
                 _ => false
             };
 
@@ -65,7 +73,7 @@ public sealed class ExternalProviderTestService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "External provider instance test failed for providerKey={ProviderKey}", key);
+            _logger.LogWarning("External provider instance test failed for providerKey={ProviderKey} exceptionType={ExceptionType}", key, ex.GetType().Name);
             return new ExternalProviderTestOutcome(false, sw.ElapsedMilliseconds, "upstream provider unavailable");
         }
     }
@@ -219,20 +227,18 @@ public sealed class ExternalProviderTestService
         return resp.IsSuccessStatusCode;
     }
 
-    private async Task<bool> TestRawgAsync(string? baseUrl, IReadOnlyDictionary<string, string?> auth, CancellationToken ct)
+    private async Task<(bool Ok, string? Error)> TestRawgAsync(string? baseUrl, IReadOnlyDictionary<string, string?> auth, CancellationToken ct)
     {
         var apiKey = GetAuthValue(auth, "apiKey");
         if (string.IsNullOrWhiteSpace(apiKey))
-            return false;
+            return (false, "rawg_configuration_unavailable");
 
-        var client = _httpClientFactory.CreateClient();
+        var client = _httpClientFactory.CreateClient("rawg-connection-test");
         client.Timeout = TimeSpan.FromSeconds(20);
         var baseUri = BuildBaseUri(baseUrl, "https://api.rawg.io/api/");
         var url = new Uri(baseUri, $"games?key={Uri.EscapeDataString(apiKey)}&page_size=1&search=halo");
 
-        var sw = Stopwatch.StartNew();
-        using var resp = await client.GetAsync(url, ct).ConfigureAwait(false);        _stats.RecordExternal(ExternalProviderKeys.Rawg, resp.IsSuccessStatusCode, sw.ElapsedMilliseconds);
-        return resp.IsSuccessStatusCode;
+        return await Feedarr.Api.Services.Rawg.RawgConnectionProbe.TestAsync(client, url, apiKey, _rawgAuthentication, _stats, ct).ConfigureAwait(false);
     }
 
     private async Task<(bool Ok, string? Error)> TestComicVineAsync(string? baseUrl, IReadOnlyDictionary<string, string?> auth, CancellationToken ct)

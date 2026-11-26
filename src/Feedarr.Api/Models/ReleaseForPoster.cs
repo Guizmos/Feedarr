@@ -7,6 +7,7 @@ public sealed class ReleaseForPoster
 {
     public long Id { get; set; }
     public long SourceId { get; set; }
+    public bool IsDirectRss { get; set; }
     public long? EntityId { get; set; }
     public string? Title { get; set; }
     public string? TitleClean { get; set; }

@@ -69,7 +69,7 @@ public sealed class GameMatchingDiagnosticsTests
         Assert.Contains("candidates=" + (count?.ToString() ?? "unknown"), release.PosterLastError);
         Assert.InRange(release.PosterLastAttemptTs!.Value, before, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         Assert.Null(release.ExtProviderId); Assert.Null(release.TmdbId); Assert.Null(release.PosterFile);
-        Assert.Equal(mode is "empty" or "provider_error" or "invalid_json" or "invalid_identity" ? 1 : 2, searches);
+        Assert.Equal(mode is "empty" or "provider_error" or "invalid_json" or "invalid_identity" ? 1 : mode == "coverage" ? 2 : 3, searches);
         Assert.Empty(rig.RawgSearchRequests);
         Assert.Equal(mode is "empty_image" or "bad_image" ? 1 : 0, images);
         var fields = Assert.Single(logger.Diagnostics);
@@ -79,7 +79,7 @@ public sealed class GameMatchingDiagnosticsTests
         Assert.NotNull(fields["AttemptedAtTs"]);
         Assert.DoesNotContain("private-marker", release.PosterLastError);
         Assert.DoesNotContain("private-marker", string.Join(" ", fields.Values));
-        if (mode == "coverage") { Assert.Equal(26, fields["ProviderResultCount"]); Assert.Contains("providerResults=26", release.PosterLastError); }
+        if (mode == "coverage") { Assert.Contains("terminal_probe_nonempty", release.PosterLastError); Assert.Equal(26, fields["ProviderResultCount"]); Assert.Contains("providerResults=26", release.PosterLastError); }
 
         // Persisted failures now participate in the existing cooldown without scheduler changes.
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();

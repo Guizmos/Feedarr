@@ -114,13 +114,27 @@ public sealed class MovieProjectionBudgetPruningTests
     [InlineData(UnifiedCategory.Serie)]
     [InlineData(UnifiedCategory.Animation)]
     [InlineData(UnifiedCategory.Anime)]
-    public void TvEnrichmentAndOtherCategoriesAreUntouched(UnifiedCategory category)
+    public void SeriesContextsAreNotPruned(UnifiedCategory category)
     {
         var context = Context() with { Category = category,
-            ExpectedMediaType = category == UnifiedCategory.Animation ? SearchMediaType.Movie : SearchMediaType.Series };
+            ExpectedMediaType = SearchMediaType.Series };
         var rows = Padding().Append(Film(1)).ToArray();
 
         Assert.Same(rows, Prune(context, rows));
+    }
+
+    [Theory]
+    [InlineData(UnifiedCategory.Animation)]
+    [InlineData(UnifiedCategory.Spectacle)]
+    [InlineData(UnifiedCategory.Autre)]
+    public void ConfirmedMoviesShareYearPruningWithoutChangingTheRankedDecision(UnifiedCategory category)
+    {
+        var context = Context() with { Category = category };
+        var competitors = new[] { Film(1), Film(2, 2021) };
+        var rows = Padding().Concat(competitors).ToArray();
+        var retained = Prune(context, rows);
+        Assert.Equal(competitors, retained);
+        AssertDecisionMatchesKnownCompetitors(context, rows, retained, competitors);
     }
 
     [Theory]

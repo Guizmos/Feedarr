@@ -26,7 +26,8 @@ public sealed class GameMatchingStrategyContractTests
         var repeat = await rig.FetchSnapshotAsync(id);
         Assert.True(repeat.Ok);
         Assert.Equal(result.PosterFile, repeat.PosterFile);
-        Assert.Single(provider == "igdb" ? rig.IgdbSearchRequests.Select(x => x.ToString()) : rig.RawgSearchRequests.Select(x => x.ToString()));
+        if (provider == "igdb") Assert.Equal(2, rig.IgdbSearchRequests.Count); // Initial window and stability recheck; terminal probe is recorded separately.
+        else Assert.Single(rig.RawgSearchRequests);
     }
 
     [Fact]

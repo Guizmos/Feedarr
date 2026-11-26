@@ -39,6 +39,7 @@ public sealed class PosterFetchJobProcessor : IPosterFetchJobProcessor
     public async Task<PosterFetchProcessResult> ProcessJobAsync(PosterFetchJob job, int workerId, CancellationToken stoppingToken)
     {
         if (stoppingToken.IsCancellationRequested) return new PosterFetchProcessResult(false);
+        using var diagnostic = MatchingAttemptDiagnostics.Begin(job.ItemId);
         using var budgetCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         budgetCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _opt.MaxItemDurationSeconds)));
         var jobToken = budgetCts.Token;
@@ -76,6 +77,7 @@ public sealed class PosterFetchJobProcessor : IPosterFetchJobProcessor
         {
             if (stoppingToken.IsCancellationRequested) return new PosterFetchProcessResult(false);
             if (jobToken.IsCancellationRequested) return TimeBudgetExceeded(job, workerId);
+            using var attemptDiagnostic = MatchingAttemptDiagnostics.Begin(job.ItemId);
             attempt++;
             string? lastFailureOverride = null;
 
@@ -103,7 +105,7 @@ public sealed class PosterFetchJobProcessor : IPosterFetchJobProcessor
                     return new PosterFetchProcessResult(true);
                 }
 
-                if (!ShouldRetry(res.StatusCode))
+                if (!res.Retryable || !ShouldRetry(res.StatusCode))
                 {
                     _log.LogWarning(
                         "Poster worker {WorkerId} job failed (no retry) {ItemId} status={Status}",
@@ -207,7 +209,8 @@ public sealed class PosterFetchJobProcessor : IPosterFetchJobProcessor
         if (string.IsNullOrWhiteSpace(mediaType))
             mediaType = "unknown";
 
-        var provider = release.PosterProvider;
+        var diagnostic = MatchingAttemptDiagnostics.Current;
+        var provider = diagnostic?.Providers ?? "not_recorded";
         var reason = reasonOverride ?? release.PosterLastError;
         if (string.IsNullOrWhiteSpace(reason))
             reason = "unknown";
@@ -221,7 +224,13 @@ public sealed class PosterFetchJobProcessor : IPosterFetchJobProcessor
             mediaType,
             provider,
             query,
-            reason));
+            reason,
+            ReleaseId: job.ItemId,
+            AttemptedAtUtc: diagnostic?.StartedAtUtc ?? DateTimeOffset.UtcNow,
+            Strategy: diagnostic?.Strategy,
+            Coverage: diagnostic?.Coverage,
+            Stage: diagnostic?.Stage,
+            Ranking: diagnostic?.Ranking));
     }
 
     private bool ShouldSkipByTtl(ReleaseForPoster release)

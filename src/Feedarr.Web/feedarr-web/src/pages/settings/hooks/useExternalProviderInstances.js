@@ -424,6 +424,7 @@ export default function useExternalProviderInstances() {
 
     // testProviderInstance never throws — returns { ok, errorMessage? }
     const result = await testProviderInstance(instanceId);
+    await loadExternalProviders();
     const elapsed = Date.now() - startedAt;
     const wait = Math.max(2000 - elapsed, 0);
 
@@ -438,7 +439,7 @@ export default function useExternalProviderInstances() {
       }, 1600);
       setTestingExternal(null);
     }, wait);
-  }, []);
+  }, [loadExternalProviders]);
 
   const loadExternalFlags = useCallback(async () => {
     await loadExternalProviders();

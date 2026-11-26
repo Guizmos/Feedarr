@@ -265,15 +265,15 @@ public sealed partial class MatchingReplayService(MatchingReplayReader reader, I
                 catch (Exception ex) { return NotEvaluable("tv_evidence_" + ex.GetType().Name, true); }
             }
         }
+        var parsedInput = type == "tv" ? TelevisionSearchInput.Parse(expected.RawTitle ?? "") : new Feedarr.Api.Services.Titles.TitleParser().Parse(expected.RawTitle ?? "", category);
         var rankingContext = new CandidateRankingContext(queries, category, type == "movie" ? SearchMediaType.Movie : SearchMediaType.Series,
-            Season: new Feedarr.Api.Services.Titles.TitleParser().Parse(expected.RawTitle ?? "", category).Season,
-            Episode: new Feedarr.Api.Services.Titles.TitleParser().Parse(expected.RawTitle ?? "", category).Episode,
-            AirDate: type == "tv" ? new Feedarr.Api.Services.Titles.TitleParser().Parse(expected.RawTitle ?? "", category).AirDate : null);
-        var ranked = SearchCandidateRanker.Rank(rankingContext, candidates);
+            Season: parsedInput.Season, Episode: parsedInput.Episode, AirDate: type == "tv" ? parsedInput.AirDate : null);
+        var rankingPolicy = new CandidateRankingPolicy(ContextualVideoDecision: true);
+        var ranked = SearchCandidateRanker.Rank(rankingContext, candidates, rankingPolicy);
         ct.ThrowIfCancellationRequested();
         if (reader.Read(expected.Id) != expected) return NotEvaluable("persisted_state_changed_during_evaluation");
         return new(new(expected.Id, "evaluated", historical, ranked with { PreserveExisting = expected.Protected }, Array.Empty<string>(), expected.Protected)
-            { Queries = queries, ProviderCandidates = candidates, InputState = expected, RankingContext = rankingContext, CollectedPages = collectedPages }, http is null ? "offline_shadow_snapshot_complete" : null, Fingerprint: ReplayEvidence.Provider(candidates), Complete: true, QueryPlan: planFingerprint, Locale: locale);
+            { Queries = queries, ProviderCandidates = candidates, InputState = expected, RankingContext = rankingContext, RankingPolicy = rankingPolicy, CollectedPages = collectedPages }, http is null ? "offline_shadow_snapshot_complete" : null, Fingerprint: ReplayEvidence.Provider(candidates), Complete: true, QueryPlan: planFingerprint, Locale: locale);
     }
     private static bool HasIdentity(MatchingShadowState state) => state.TmdbId is > 0 || state.TvdbId is > 0 || !string.IsNullOrWhiteSpace(state.ExternalId);
     private static HistoricalShadowDecision Historical(MatchingShadowState state)

@@ -25,6 +25,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Update="Fixtures/Matching/*.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Fixtures/DirectRss/*.xml" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Golden\\*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

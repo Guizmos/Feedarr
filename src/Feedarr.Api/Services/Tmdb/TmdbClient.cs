@@ -237,11 +237,26 @@ public sealed partial class TmdbClient : IDisposable
     /// Picks a poster path with language priority based on UI media-info settings,
     /// then common fallbacks, then language-agnostic posters.
     /// </summary>
+    internal sealed record PreferredPoster(string? Path, string? Language);
+    internal string PreferredPosterLanguage => UiLanguageCatalog.GetMediaInfoIso639_1(GetMediaInfoLanguage());
+
     public async Task<string?> GetPreferredPosterPathAsync(int tmdbId, string mediaType, CancellationToken ct, bool verifyIdentity = false)
+        => (await GetPreferredPosterAsync(tmdbId, mediaType, ct, verifyIdentity).ConfigureAwait(false)).Path;
+
+    internal async Task<PreferredPoster> GetPreferredPosterAsync(int tmdbId, string mediaType, CancellationToken ct,
+        bool verifyIdentity = true, bool forceRefresh = false)
+    {
+        if (forceRefresh) return await GetPreferredPosterCoreAsync(tmdbId, mediaType, ct, verifyIdentity).ConfigureAwait(false);
+        var credential = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(TryGetApiKey() ?? "")));
+        return await _matchingResponses.GetAsync($"preferred-image:{credential}:{mediaType}:{tmdbId}:{PreferredPosterLanguage}:{verifyIdentity}",
+            async token => (PreferredPoster?)await GetPreferredPosterCoreAsync(tmdbId, mediaType, token, verifyIdentity).ConfigureAwait(false), value => value.Path is not null, ct).ConfigureAwait(false) ?? new(null, null);
+    }
+
+    private async Task<PreferredPoster> GetPreferredPosterCoreAsync(int tmdbId, string mediaType, CancellationToken ct, bool verifyIdentity = false)
     {
         var key = TryGetApiKey();
-        if (string.IsNullOrWhiteSpace(key)) return null;
-        if (tmdbId <= 0) return null;
+        if (string.IsNullOrWhiteSpace(key)) return new(null, null);
+        if (tmdbId <= 0) return new(null, null);
 
         var kind = mediaType == "series" ? "tv" : "movie";
         var posterLanguagePriority = UiLanguageCatalog.BuildPosterLanguagePriority(GetMediaInfoLanguage());
@@ -255,7 +270,7 @@ public sealed partial class TmdbClient : IDisposable
             .ThenByDescending(x => x.VoteAverage)
             .ThenByDescending(x => x.Width * x.Height)
             .ToList();
-        if (posters is null || posters.Count == 0) return null;
+        if (posters is null || posters.Count == 0) return new(null, null);
 
         static bool IsLang(ImageItem item, string lang)
             => string.Equals((item.Iso639_1 ?? "").Trim(), lang, StringComparison.OrdinalIgnoreCase);
@@ -270,13 +285,13 @@ public sealed partial class TmdbClient : IDisposable
 
             var match = posters.FirstOrDefault(x => IsLang(x, language));
             if (!string.IsNullOrWhiteSpace(match?.FilePath))
-                return match.FilePath;
+                return new(match.FilePath, match.Iso639_1);
         }
 
         var noLang = posters.FirstOrDefault(IsNoLang);
-        if (!string.IsNullOrWhiteSpace(noLang?.FilePath)) return noLang.FilePath;
+        if (!string.IsNullOrWhiteSpace(noLang?.FilePath)) return new(noLang.FilePath, "null");
 
-        return posters.FirstOrDefault()?.FilePath;
+        return new(posters.FirstOrDefault()?.FilePath, posters.FirstOrDefault()?.Iso639_1);
     }
 
     // --------- Backdrops (banner) ----------
@@ -415,7 +430,7 @@ public sealed partial class TmdbClient : IDisposable
     private Task<DetailsResult?> GetPublicationDetailsAsync(int id, string type, CancellationToken ct, bool forceRefresh)
     {
         Task<DetailsResult?> Fetch(CancellationToken token) => type == "tv"
-            ? GetTvDetailsCoreAsync(id, token, true) : GetMovieDetailsCoreAsync(id, token, true);
+            ? GetTvDetailsCoreAsync(id, token, true, allowEvidenceReuse: !forceRefresh) : GetMovieDetailsCoreAsync(id, token, true);
         if (forceRefresh) return Fetch(ct);
         var credential = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(GetApiKeyOrThrow())));
         // Localized details + credits have already passed their identity checks. Never
@@ -423,7 +438,7 @@ public sealed partial class TmdbClient : IDisposable
         return _matchingResponses.GetAsync($"publication:{credential}:{type}:{id}:{GetMediaInfoLanguage()}", Fetch, details => !string.IsNullOrWhiteSpace(details.Title), ct);
     }
 
-    private async Task<DetailsResult?> GetTvDetailsCoreAsync(int tmdbId, CancellationToken ct, bool verifyIdentity, Action? identityVerified = null)
+    private async Task<DetailsResult?> GetTvDetailsCoreAsync(int tmdbId, CancellationToken ct, bool verifyIdentity, Action? identityVerified = null, bool allowEvidenceReuse = false)
     {
         var key = TryGetApiKey();
         if (string.IsNullOrWhiteSpace(key)) return null;
@@ -434,7 +449,8 @@ public sealed partial class TmdbClient : IDisposable
         TvDetailsResponse? r;
         try
         {
-            r = await GetJsonAsync<TvDetailsResponse>(url, ct).ConfigureAwait(false);
+            var evidence = allowEvidenceReuse ? PublicationTvEvidence(tmdbId) : null;
+            r = evidence ?? await GetJsonAsync<TvDetailsResponse>(url, ct).ConfigureAwait(false);
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {

@@ -14,24 +14,27 @@ internal sealed record GameObservation(ProviderSearchCandidate Candidate, string
 // Thin provider projection. Decisions and thresholds belong exclusively to SearchCandidateRanker.
 internal static class GameCandidateAdapter
 {
-    private static readonly Regex Edition = new(@"\b(remaster(?:ed)?|remake|(?:(?:digital\s+)?deluxe|ultimate|definitive|complete|collector[’']?s|gold|enhanced)(?:\s+edition)|game\s+of\s+the\s+year(?:\s+edition)?|goty(?:\s+edition)?)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex Edition = new(@"\b(remaster(?:ed)?|remake|(?:(?:digital\s+)?deluxe|ultimate|definitive|complete|collector[’']?s|gold|enhanced)(?:\s+(?:edition|bundle))|game\s+of\s+the\s+year(?:\s+edition)?|goty(?:\s+edition)?)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     private static string Words(string title) => title.Replace('.', ' ').Replace('_', ' ').Replace('-', ' ');
     internal static string? EditionOf(string? title)
     {
         var editions = Edition.Matches(Words(title ?? "")).Select(m => Regex.Replace(m.Value.ToLowerInvariant(), @"\s+", " ").Replace("remastered", "remaster").Replace("game of the year", "goty").Replace(" edition", "").Replace("digital deluxe", "deluxe")).Distinct().Order().ToArray();
         return editions.Length == 0 ? null : string.Join("|", editions);
     }
+    private static string? WithContentKind(string? edition, string? kind)
+        => kind is null ? edition : edition is null ? kind : string.Join("|", edition.Split('|').Append(kind).Distinct().Order());
     private static string BaseTitle(string title) => Regex.Replace(Edition.Replace(Words(title), " "), @"\s+", " ").Trim();
     internal static CandidateRankingContext Context(string raw)
     {
         var queries = SearchCandidateGenerator.Generate(new(raw, UnifiedCategory.JeuWindows));
         var edition = EditionOf(raw);
-        var parsed = new Feedarr.Api.Services.Titles.TitleParser().Parse(raw, UnifiedCategory.JeuWindows);
-        var bareDeluxe = edition is null && parsed.ReleaseGroup is not null &&
-            queries.Any(q => Regex.IsMatch(q.Title, @"(?i)^.+\s+Deluxe$"));
-        if (bareDeluxe) edition = "deluxe";
-        return new(queries.Select(q => q with { Title = bareDeluxe
-            ? Regex.Replace(BaseTitle(q.Title), @"(?i)\s+Deluxe$", "") : BaseTitle(q.Title) }).ToArray(),
+        var scope = GameSearchScope.Read(raw);
+        edition ??= scope.BareEdition;
+        // Explicit standalone content requests retain their scope. Counts of
+        // included DLCs are distribution metadata, not a request for one expansion.
+        if (Regex.IsMatch(raw, @"(?i)(?:^|[:\[])\s*DLC\s*[:\-]")) edition = WithContentKind(edition, "dlc");
+        if (Regex.IsMatch(raw, @"(?i)(?:^|[:\[])\s*expansion\s*[:\-]")) edition = WithContentKind(edition, "expansion");
+        return new(queries.Select(q => q with { Title = scope.Query(BaseTitle(q.Title)) }).ToArray(),
             UnifiedCategory.JeuWindows, SearchMediaType.Game, GameEdition: edition);
     }
     internal static IReadOnlyList<GameObservation> Project(string provider, JsonElement root, bool completeIgdbCollection = false)
@@ -73,6 +76,12 @@ internal static class GameCandidateAdapter
             var kind = item.TryGetProperty("game_type", out var gameType) ? Text(gameType, "type") : null;
             // Provider nature (Remake/Remaster) is not a commercial edition claim.
             var edition = EditionOf(name + " " + (version is null ? "" : version + " edition"));
+            edition = WithContentKind(edition, kind?.Trim().ToLowerInvariant() switch {
+                "dlc / addon" or "dlc addon" or "dlc" => "dlc",
+                "expansion" => "expansion",
+                "standalone expansion" => "standalone_expansion",
+                _ => null
+            });
             var aliases = new List<OfficialProviderTitle>();
             if (item.TryGetProperty("alternative_names", out var names) && names.ValueKind == JsonValueKind.Array)
                 foreach (var alias in names.EnumerateArray())

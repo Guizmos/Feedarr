@@ -15,18 +15,22 @@ public sealed partial class PosterFetchService
         object? igdbCollectionFailure = null;
         string? rawgFailureReason = null;
         int? rawgHttpStatus = null;
+        var rawgRequestSuppressed = false;
         void CaptureRawgFailure(Exception error)
         {
             rawgFailureReason = error.Data["RawgFailureReason"] as string;
             rawgHttpStatus = error.Data["RawgHttpStatus"] as int?;
+            rawgRequestSuppressed = error.Data["RawgRequestSuppressed"] is true;
         }
         var queriedProviders = new HashSet<string>(StringComparer.Ordinal);
         void Record(string reason, string errorCategory, string exceptionType = "none", bool persist = true)
         {
+            MatchingAttemptDiagnostics.Current?.SetOutcome(stage, reason);
+            if (stage is "collection" or "projection") MatchingAttemptDiagnostics.Current?.Collection(provider ?? "game_search", reason);
             // Only controlled codes/counters: never titles, response bodies, URLs or exception messages.
             var providers = string.Join("+", queriedProviders.Order());
-            _logger.LogWarning("Matching V2 diagnostic releaseId={ReleaseId} category={Category} stage={Stage} provider={Provider} providersQueried={ProvidersQueried} candidateCount={CandidateCount} providerResultCount={ProviderResultCount} errorCategory={ErrorCategory} exceptionType={ExceptionType} attemptedAtTs={AttemptedAtTs} decision={Decision} igdbDiagnostic={IgdbDiagnostic} rawgFailureReason={RawgFailureReason} rawgHttpStatus={RawgHttpStatus}",
-                releaseId, "JeuWindows", stage, provider, providers, candidateCount, providerResultCount, errorCategory, exceptionType, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), reason, igdbDiagnostic, rawgFailureReason, rawgHttpStatus);
+            _logger.LogWarning("Matching V2 diagnostic releaseId={ReleaseId} category={Category} stage={Stage} provider={Provider} providersQueried={ProvidersQueried} candidateCount={CandidateCount} providerResultCount={ProviderResultCount} errorCategory={ErrorCategory} exceptionType={ExceptionType} attemptedAtTs={AttemptedAtTs} decision={Decision} igdbDiagnostic={IgdbDiagnostic} rawgFailureReason={RawgFailureReason} rawgHttpStatus={RawgHttpStatus} rawgRequestSuppressed={RawgRequestSuppressed}",
+                releaseId, "JeuWindows", stage, provider, providers, candidateCount, providerResultCount, errorCategory, exceptionType, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), reason, igdbDiagnostic, rawgFailureReason, rawgHttpStatus, rawgRequestSuppressed);
             if (!persist) return;
             try
             {
@@ -35,7 +39,7 @@ public sealed partial class PosterFetchService
                     (igdbDiagnostic is null ? "" : ";igdb=" + igdbDiagnostic) +
                     (rawgFailureReason is null ? "" : ";rawg=" + System.Text.Json.JsonSerializer.Serialize(new {
                         Stage = rawgFailureReason == "rawg_configuration_unavailable" ? "configuration" : stage,
-                        Reason = rawgFailureReason, HttpStatus = rawgHttpStatus })));
+                        Reason = rawgFailureReason, HttpStatus = rawgHttpStatus, RequestSuppressed = rawgRequestSuppressed })));
             }
             catch (Exception error)
             {
@@ -48,7 +52,7 @@ public sealed partial class PosterFetchService
             string errorCategory = "business_abstention", string exceptionType = "none", bool persist = true)
         {
             Record(diagnosticReason ?? reason, errorCategory, exceptionType, persist);
-            return new(false, status, new { error = "matching_v2_abstained", reason }, sourceId);
+            return new(false, status, new { error = "matching_v2_abstained", reason }, sourceId) { Retryable = rawgHttpStatus is not (400 or 401 or 403) && rawgFailureReason != "rawg_quota_exhausted" };
         }
         try
         {
@@ -59,6 +63,9 @@ public sealed partial class PosterFetchService
             timeout.CancelAfter(TimeSpan.FromSeconds(60));
             stage = "query";
             var context = GameCandidateAdapter.Context(state.RawTitle ?? "");
+            var queryScope = GameSearchScope.Read(state.RawTitle ?? "");
+            _logger.LogInformation("Matching V2 game query scope releaseId={ReleaseId} edition={GameEdition} contentScope={ContentScope} platformOrigin={PlatformOrigin} queryCount={QueryCount}",
+                releaseId, context.GameEdition, queryScope.Content, queryScope.PlatformOrigin, context.Queries.Count);
             if (context.Queries.Count == 0 || context.Queries.Any(q => q.Title.Length > 200) ||
                 System.Text.RegularExpressions.Regex.IsMatch(state.RawTitle ?? "", @"(?i)(https?://|www\.|@|(?:api[_-]?key|token|passkey|password)\s*[=:]|bearer\s+\S+)"))
                 return Abstain("game_query_unsupported");
@@ -71,6 +78,7 @@ public sealed partial class PosterFetchService
             async Task Collect(string source)
             {
                 provider = source;
+                MatchingAttemptDiagnostics.Current?.SetStrategy(string.Join("_then_", queriedProviders.Append(source).Distinct()));
                 foreach (var query in context.Queries.Select(q => q.Title).Distinct(StringComparer.Ordinal))
                 {
                     stage = "collection";
@@ -83,7 +91,8 @@ public sealed partial class PosterFetchService
                     if (response.ValueKind == System.Text.Json.JsonValueKind.Array) providerResultCount = response.GetArrayLength();
                     else if (response.ValueKind == System.Text.Json.JsonValueKind.Object && response.TryGetProperty("count", out var count) &&
                         count.ValueKind == System.Text.Json.JsonValueKind.Number && count.TryGetInt32(out var total)) providerResultCount = total;
-                    try { rows.AddRange(GameCandidateAdapter.Project(source, response, completeIgdbCollection: source == "igdb")); }
+                    try { rows.AddRange(GameCandidateAdapter.Project(source, response, completeIgdbCollection: source == "igdb"));
+                        MatchingAttemptDiagnostics.Current?.Collection(source, "complete"); }
                     catch (Exception error) when (source == "rawg")
                     {
                         // Partial but valid pagination remains a coverage abstention.
@@ -118,14 +127,18 @@ public sealed partial class PosterFetchService
                 // Snapshot the existing ranking before RAWG can fail or add rivals.
                 // Only ranker codes, numeric identities and scores; no provider text.
                 if (queriedProviders.Contains("igdb"))
+                {
+                    MatchingAttemptDiagnostics.LogRanking(_logger, releaseId, ranked);
                     igdbDiagnostic = System.Text.Json.JsonSerializer.Serialize(new {
                         Stage = "ranking", Decision = ranked.Decision.ToString().ToLowerInvariant(),
                         ranked.Reasons, CandidateCount = rows.Count, CollectionFailure = igdbCollectionFailure,
-                        Candidates = ranked.Candidates.Select(candidate => new {
+                        CandidateLimit = 6, CandidatesTruncated = ranked.Candidates.Count > 6,
+                        Candidates = ranked.Candidates.Take(6).Select(candidate => new {
                             candidate.Identity, candidate.QueryIndex, candidate.Confidence, candidate.EvidenceScore,
                             Decision = candidate.Decision.ToString().ToLowerInvariant(), candidate.Contradictions
                         })
                     });
+                }
                 if (_rawg.IsConfigured())
                 {
                     await Collect("rawg").ConfigureAwait(false);
@@ -135,6 +148,7 @@ public sealed partial class PosterFetchService
                 }
                 else rawgFailureReason = "rawg_configuration_unavailable";
             }
+            MatchingAttemptDiagnostics.LogRanking(_logger, releaseId, ranked);
             if (ranked.Decision != CandidateDecision.Accept || ranked.SelectedIdentity is not { } identity)
                 return Abstain(ranked.Decision.ToString().ToLowerInvariant(),
                     diagnosticReason: rows.Count == 0 ? "no_candidates" : ranked.Decision == CandidateDecision.Reject ? "candidates_rejected" : "ambiguous",
@@ -191,6 +205,13 @@ public sealed partial class PosterFetchService
         catch (InvalidDataException ex) when (ex.Message.StartsWith("game_", StringComparison.Ordinal))
         {
             CaptureRawgFailure(ex);
+            if (ex.Data["IgdbCoverageReason"] is string coverageReason)
+            {
+                var detail = new { Reason = coverageReason, Offset = ex.Data["IgdbOffset"], Limit = ex.Data["IgdbLimit"],
+                    UniqueCount = ex.Data["IgdbUniqueCount"], Requests = ex.Data["IgdbRequests"] };
+                igdbDiagnostic = System.Text.Json.JsonSerializer.Serialize(detail);
+                MatchingAttemptDiagnostics.Current?.Collection("igdb_single_window", coverageReason, ex.Data["IgdbRequests"] as int?);
+            }
             if (ex.Data["ProviderResultCount"] is int observedCount) providerResultCount = observedCount;
             var code = ex.Message is "game_provider_unavailable" or "game_search_coverage_unavailable" or
                 "game_search_identity_invalid" or "game_shared_entity_scope_unverified" ? ex.Message : "game_invariant_unavailable";

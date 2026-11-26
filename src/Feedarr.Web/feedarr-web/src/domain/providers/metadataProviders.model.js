@@ -30,6 +30,7 @@ export function normalizeInstance(raw) {
     enabled: raw?.enabled !== false,
     baseUrl: raw?.baseUrl || "",
     authFlags: raw?.authFlags && typeof raw.authFlags === "object" ? raw.authFlags : {},
+    availability: String(raw?.providerKey || "").toLowerCase() === "rawg" && raw?.availability && typeof raw.availability === "object" ? raw.availability : null,
   };
 }
 

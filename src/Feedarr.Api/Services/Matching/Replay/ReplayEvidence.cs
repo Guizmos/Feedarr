@@ -9,7 +9,7 @@ internal static class ReplayEvidence
     internal static string? SafeLocale(string? locale) => locale is "fr-FR" or "en-US" ? locale : null;
     internal static string QueryPlan(IReadOnlyList<SearchCandidate> queries, string mediaType) => Hash(new
     {
-        mediaType, queries = queries.Select(q => new { title = MatchingDiagnosticProjection.SafeText(q.Title), q.Year, evidence = q.YearEvidence.ToString() }).ToArray()
+        mediaType, queries = queries.Select(q => new { title = MatchingDiagnosticProjection.SafeText(q.Title), q.Year, q.Origin, q.ScopeSuffix, evidence = q.YearEvidence.ToString() }).ToArray()
     });
     internal static string Provider(IReadOnlyList<ProviderSearchCandidate> candidates)
     {

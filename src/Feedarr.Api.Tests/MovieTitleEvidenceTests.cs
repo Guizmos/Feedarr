@@ -134,13 +134,13 @@ public sealed class MovieTitleEvidenceTests
     }
 
     [Fact]
-    public async Task ExistingAcceptanceAndOtherCategoriesDoNotFetchAliases()
+    public async Task ExistingAcceptanceAndNonMovieTypesDoNotFetchAliases()
     {
         Task<JsonElement?> Unexpected(string id, CancellationToken ct) => throw new Exception("Unexpected request");
         var rows = new[] { Movie(title: "A Local Film") };
         Assert.Same(rows, await MovieTitleCandidates.EnrichAsync(Context(), rows, Unexpected, default));
-        foreach (var category in Enum.GetValues<UnifiedCategory>().Where(c => c != UnifiedCategory.Film))
-            Assert.Same(rows, await MovieTitleCandidates.EnrichAsync(Context() with { Category = category }, rows, Unexpected, default));
+        foreach (var mediaType in Enum.GetValues<SearchMediaType>().Where(t => t != SearchMediaType.Movie))
+            Assert.Same(rows, await MovieTitleCandidates.EnrichAsync(Context() with { ExpectedMediaType = mediaType }, rows, Unexpected, default));
     }
 
     [Fact]

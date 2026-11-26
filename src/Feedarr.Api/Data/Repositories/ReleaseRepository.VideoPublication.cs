@@ -57,10 +57,14 @@ public sealed partial class ReleaseRepository
                 SELECT id Id,title Title,unified_category Category,COALESCE(title_manual_override,0) ManualTitle
                 FROM releases WHERE id=@id OR entity_id=(SELECT entity_id FROM releases WHERE id=@id) ORDER BY id LIMIT 101
                 """, new { id }, tx).ToArray();
-            var context = GameCandidateAdapter.Context(rows.Single(r => r.Id == id).Title ?? "");
+            var rawTitle = rows.Single(r => r.Id == id).Title ?? "";
+            var context = GameCandidateAdapter.Context(rawTitle);
+            var distributionScope = GameSearchScope.Read(rawTitle) with { BareEdition = null };
             if (rows.Length > 100 || rows.Any(row => row.ManualTitle ||
                 !(UnifiedCategoryMappings.TryParse(row.Category, out var category) && category == UnifiedCategory.JeuWindows) ||
                 GameCandidateAdapter.Context(row.Title ?? "") is var other && (other.GameEdition != context.GameEdition ||
+                    (GameSearchScope.Read(row.Title ?? "") with { BareEdition = null }) !=
+                    distributionScope ||
                     !other.Queries.Select(q => q with { Title = TitleNormalizer.NormalizeTitleStrict(q.Title) })
                         .SequenceEqual(context.Queries.Select(q => q with { Title = TitleNormalizer.NormalizeTitleStrict(q.Title) })))))
                 throw new InvalidDataException("game_shared_entity_scope_unverified");

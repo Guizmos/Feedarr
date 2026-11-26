@@ -138,14 +138,14 @@ public sealed class TitleParserMissingPosterCorpusTests
     }
 
     [Fact]
-    public void AlbatorMovieFamilyAndSeasonOnlyRemainConflictingRoutingEvidence()
+    public void AlbatorMovieFamilyAndSeasonMetadataAllowTvRouting()
     {
         var release = new ReleaseForPoster {
             Id = 25038, Title = "Albator84.1982.S01.COMPLETE.VFF.DVDRiP.AVC-NoTag.FRENCH",
             UnifiedCategory = "Animation", CategoryId = 102101, StdCategoryId = 2000,
             SpecCategoryId = 102101, CategoryIds = "2000,102101", MediaType = "movie"
         };
-        Assert.Null(PosterFetchService.ResolveVideoType(release, UnifiedCategory.Animation));
+        Assert.Equal("tv",PosterFetchService.ResolveVideoType(release, UnifiedCategory.Animation));
         Assert.Equal("Animation", release.UnifiedCategory);
         Assert.Equal("2000,102101", release.CategoryIds);
     }

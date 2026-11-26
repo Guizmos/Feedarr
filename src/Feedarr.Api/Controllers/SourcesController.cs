@@ -159,6 +159,7 @@ public sealed class SourcesController : ControllerBase
         return Ok(new
         {
             id = src.Id,
+            sourceKind = src.SourceKind,
             name = src.Name,
             enabled = src.Enabled,
             torznabUrl = src.TorznabUrl,
@@ -257,6 +258,7 @@ public sealed class SourcesController : ControllerBase
     {
         var src = _sources.Get(id);
         if (src is null) return NotFound(new { error = "source not found" });
+        if (src.SourceKind == "rss") return BadRequest(new { error = "Test each RSS feed through api/sources/rss/test" });
 
         var req = new SourceTestRequestDto
         {
@@ -426,6 +428,7 @@ public sealed class SourcesController : ControllerBase
     {
         var current = _sources.Get(id);
         if (current is null) return NotFound(new { error = "source not found" });
+        if (current.SourceKind == "rss") return BadRequest(new { error = "Use the RSS source configuration endpoint" });
 
         var name = string.IsNullOrWhiteSpace(dto.Name) ? current.Name : dto.Name!.Trim();
         var url = string.IsNullOrWhiteSpace(dto.TorznabUrl) ? current.TorznabUrl : dto.TorznabUrl!.Trim();
