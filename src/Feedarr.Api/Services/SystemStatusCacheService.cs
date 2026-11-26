@@ -109,7 +109,7 @@ public sealed class SystemStatusCacheService
         Task<SystemStatusSnapshot> loadTask;
         lock (_inflightLock)
         {
-            if (_inflightLoad is not null)
+            if (_inflightLoad is { IsCompleted: false })
             {
                 _log.LogDebug("SystemStatus cache miss with in-flight load");
                 loadTask = _inflightLoad;
