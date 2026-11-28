@@ -105,9 +105,11 @@ Suspendre les workflows de publication et terminer/annuler leurs runs actifs.
 Lire la tête distante actuelle. Si elle diffère de la référence migrée, arrêter
 et préserver ses nouveaux commits avant toute restauration.
 
-La protection interdit volontairement le force-push : un administrateur doit
-temporairement autoriser le force-push sur main, exécuter la commande suivante,
-puis rétablir immédiatement la protection et revérifier les références.
+La protection interdit volontairement le force-push et les pushes sans PR : un
+administrateur doit sauvegarder sa configuration, lever temporairement ces
+exigences (et les contrôles requis si nécessaire), exécuter la commande suivante,
+puis rétablir immédiatement toute la protection et revérifier les références.
+Autoriser seulement le force-push ne suffit pas lorsque les PR sont obligatoires.
 
 ```bash
 git push \
