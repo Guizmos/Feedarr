@@ -1,10 +1,14 @@
 name: CI
 
 on:
+  workflow_call:
   pull_request:
-    branches: [ main, beta ]
+    branches: [ dev, beta, main ]
   push:
-    branches: [ main, beta ]
+    branches: [ dev, beta, main ]
+
+permissions:
+  contents: read
 
 jobs:
   quality:

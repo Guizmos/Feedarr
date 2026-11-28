@@ -1,0 +1,82 @@
+name: Docker stable (validated tag)
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: feedarr-docker-publication
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require stable version and main ancestry
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main --tags
+          git merge-base --is-ancestor HEAD origin/main
+          python3 .github/scripts/docker-version.py stable >> "$GITHUB_OUTPUT"
+
+  tests:
+    needs: guard
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: [guard, tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Recheck main ancestry and monotone version after tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main --tags
+          git merge-base --is-ancestor HEAD origin/main
+          python3 .github/scripts/docker-version.py stable
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: guizmos/feedarr
+          tags: |
+            type=raw,value=latest
+            type=raw,value=v${{ needs.guard.outputs.version }}
+            type=raw,value=${{ needs.guard.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.guard.outputs.version }}
+            org.opencontainers.image.created={{date 'YYYY-MM-DDTHH:mm:ss.SSS[Z]'}}
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: FEEDARR_VERSION=${{ needs.guard.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
